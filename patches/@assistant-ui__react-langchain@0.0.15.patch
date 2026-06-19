@@ -1,0 +1,13 @@
+diff --git a/dist/convertMessages.js b/dist/convertMessages.js
+index 7d08175177af6ca71dcf1ecea562ce97fc61ccd3..59e81ce8919377dc1b52785634ba350e3fcfb3d9 100644
+--- a/dist/convertMessages.js
++++ b/dist/convertMessages.js
+@@ -38,7 +38,7 @@ const contentToParts = (content) => {
+ 			};
+ 			case "reasoning": return {
+ 				type: "reasoning",
+-				text: part.summary.map((s) => s.text).join("\n\n\n")
++				text: part.summary?.map((s) => s.text).join("\n\n\n")
+ 			};
+ 			case "tool_use":
+ 			case "input_json_delta": return null;

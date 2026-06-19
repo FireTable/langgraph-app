@@ -1,0 +1,3 @@
+patchedDependencies:
+  '@assistant-ui/core@0.2.18': patches/@assistant-ui__core@0.2.18.patch
+  '@assistant-ui/react-langchain@0.0.15': patches/@assistant-ui__react-langchain@0.0.15.patch
