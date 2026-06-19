@@ -11,8 +11,8 @@ const model = new ChatOpenAI({
     : {}),
   streaming: true,
   modelKwargs: {
-    // reasoning_split: true,
-    // thinking: { "type": "disabled" }
+    // only minimax will use this params
+    reasoning_split: true,
   }
 });
 
