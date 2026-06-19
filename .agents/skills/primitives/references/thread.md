@@ -4,15 +4,15 @@ Container for the entire chat thread.
 
 ## Parts
 
-| Part | Description |
-|------|-------------|
-| `.Root` | Outermost container element |
-| `.Viewport` | Scrollable message area |
-| `.Messages` | Renders message list |
-| `.Empty` | Shown when no messages |
-| `.ScrollToBottom` | Button to scroll down |
-| `.Suggestions` | Quick reply suggestions |
-| `.If` | Conditional rendering (deprecated; prefer `AuiIf`) |
+| Part              | Description                                        |
+| ----------------- | -------------------------------------------------- |
+| `.Root`           | Outermost container element                        |
+| `.Viewport`       | Scrollable message area                            |
+| `.Messages`       | Renders message list                               |
+| `.Empty`          | Shown when no messages                             |
+| `.ScrollToBottom` | Button to scroll down                              |
+| `.Suggestions`    | Quick reply suggestions                            |
+| `.If`             | Conditional rendering (deprecated; prefer `AuiIf`) |
 
 ## Basic Structure
 
@@ -20,9 +20,7 @@ Container for the entire chat thread.
 <ThreadPrimitive.Root>
   <ThreadPrimitive.Viewport>
     <ThreadPrimitive.Messages>
-      {({ message }) =>
-        message.role === "user" ? <MyUserMessage /> : <MyAssistantMessage />
-      }
+      {({ message }) => (message.role === "user" ? <MyUserMessage /> : <MyAssistantMessage />)}
     </ThreadPrimitive.Messages>
   </ThreadPrimitive.Viewport>
 </ThreadPrimitive.Root>
@@ -33,10 +31,7 @@ Container for the entire chat thread.
 Container element. Accepts standard div props.
 
 ```tsx
-<ThreadPrimitive.Root
-  className="flex flex-col h-full"
-  data-testid="chat-thread"
->
+<ThreadPrimitive.Root className="flex flex-col h-full" data-testid="chat-thread">
   {children}
 </ThreadPrimitive.Root>
 ```
@@ -48,7 +43,7 @@ Scrollable area containing messages. Handles auto-scroll on new messages.
 ```tsx
 <ThreadPrimitive.Viewport
   className="flex-1 overflow-y-auto p-4"
-  autoScroll={true}  // Default: true
+  autoScroll={true} // Default: true
 >
   <ThreadPrimitive.Messages />
 </ThreadPrimitive.Viewport>
@@ -87,9 +82,7 @@ Rendered when thread has no messages.
 Button that appears when scrolled up, scrolls to bottom on click.
 
 ```tsx
-<ThreadPrimitive.ScrollToBottom
-  className="fixed bottom-20 right-4 rounded-full p-2 bg-white shadow"
->
+<ThreadPrimitive.ScrollToBottom className="fixed bottom-20 right-4 rounded-full p-2 bg-white shadow">
   ↓ Scroll to bottom
 </ThreadPrimitive.ScrollToBottom>
 ```
@@ -100,9 +93,7 @@ Renders suggested quick replies. The children render function receives `{ sugges
 
 ```tsx
 <ThreadPrimitive.Suggestions>
-  {({ suggestion }) => (
-    <button onClick={() => suggestion.onClick()}>{suggestion.text}</button>
-  )}
+  {({ suggestion }) => <button onClick={() => suggestion.onClick()}>{suggestion.text}</button>}
 </ThreadPrimitive.Suggestions>
 ```
 
@@ -163,11 +154,7 @@ function CustomThread() {
           <div className="max-w-3xl mx-auto p-4">
             <ThreadPrimitive.Messages>
               {({ message }) =>
-                message.role === "user" ? (
-                  <CustomUserMessage />
-                ) : (
-                  <CustomAssistantMessage />
-                )
+                message.role === "user" ? <CustomUserMessage /> : <CustomAssistantMessage />
               }
             </ThreadPrimitive.Messages>
           </div>

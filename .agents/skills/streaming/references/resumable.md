@@ -57,7 +57,9 @@ export async function POST(req: Request) {
   const { messages } = await req.json();
   const streamId = crypto.randomUUID();
 
-  const result = streamText({ /* model, messages, tools, ... */ });
+  const result = streamText({
+    /* model, messages, tools, ... */
+  });
   const sourceBody = result.toUIMessageStreamResponse().body!;
 
   const stream = await resumableContext.run(streamId, () => sourceBody);
@@ -82,10 +84,7 @@ A separate GET endpoint replays persisted bytes for reconnecting clients. `ctx.r
 import { RESUMABLE_STREAM_ID_HEADER } from "assistant-stream/resumable";
 import { resumableContext } from "@/lib/resumable-context";
 
-export async function GET(
-  _req: Request,
-  ctx: { params: Promise<{ streamId: string }> },
-) {
+export async function GET(_req: Request, ctx: { params: Promise<{ streamId: string }> }) {
   const { streamId } = await ctx.params;
   const stream = await resumableContext.resume(streamId);
   if (!stream) {
@@ -105,13 +104,13 @@ export async function GET(
 
 ## Context API
 
-| Method | Behavior |
-| --- | --- |
-| `ctx.run(streamId, makeStream)` | First caller is the producer (runs `makeStream`); reconnects become consumers. |
-| `ctx.resume(streamId)` | Returns a replay stream, or `null` if the stream is missing. |
-| `ctx.requireResume(streamId)` | Like `resume`, but throws `ResumableStreamError` with code `"missing"` when absent. |
-| `ctx.status(streamId)` | Returns `"streaming" \| "done" \| "error" \| "missing"`. |
-| `ctx.delete(streamId)` | Removes all persisted state and terminates active readers. |
+| Method                          | Behavior                                                                            |
+| ------------------------------- | ----------------------------------------------------------------------------------- |
+| `ctx.run(streamId, makeStream)` | First caller is the producer (runs `makeStream`); reconnects become consumers.      |
+| `ctx.resume(streamId)`          | Returns a replay stream, or `null` if the stream is missing.                        |
+| `ctx.requireResume(streamId)`   | Like `resume`, but throws `ResumableStreamError` with code `"missing"` when absent. |
+| `ctx.status(streamId)`          | Returns `"streaming" \| "done" \| "error" \| "missing"`.                            |
+| `ctx.delete(streamId)`          | Removes all persisted state and terminates active readers.                          |
 
 `ResumableStreamError` is exported from `assistant-stream/resumable` with codes `"missing" | "exists" | "finalized" | "invalid-id"`. Catch it in the resume route to distinguish "stream gone" from other failures.
 
@@ -212,15 +211,11 @@ import {
 
 async function createStore(): Promise<ResumableStreamStore> {
   if (!process.env.REDIS_URL) {
-    const { createInMemoryResumableStreamStore } = await import(
-      "assistant-stream/resumable"
-    );
+    const { createInMemoryResumableStreamStore } = await import("assistant-stream/resumable");
     return createInMemoryResumableStreamStore();
   }
   const { createClient } = await import("redis");
-  const { createRedisResumableStreamStore } = await import(
-    "assistant-stream/resumable/redis"
-  );
+  const { createRedisResumableStreamStore } = await import("assistant-stream/resumable/redis");
   const client = createClient({ url: process.env.REDIS_URL });
   await client.connect();
   return createRedisResumableStreamStore(client);
@@ -241,21 +236,10 @@ For Postgres, Cloudflare Durable Objects, Upstash REST, or any backend you opera
 import type { ResumableStreamStore } from "assistant-stream/resumable";
 
 export interface ResumableStreamStore {
-  acquire(
-    streamId: string,
-    options?: ResumableStreamAcquireOptions,
-  ): Promise<ResumableStreamRole>;
+  acquire(streamId: string, options?: ResumableStreamAcquireOptions): Promise<ResumableStreamRole>;
   append(streamId: string, chunk: Uint8Array): Promise<void>;
-  finalize(
-    streamId: string,
-    status: "done" | "error",
-    error?: string,
-  ): Promise<void>;
-  read(
-    streamId: string,
-    cursor: string,
-    signal: AbortSignal,
-  ): AsyncIterable<ResumableStreamEntry>;
+  finalize(streamId: string, status: "done" | "error", error?: string): Promise<void>;
+  read(streamId: string, cursor: string, signal: AbortSignal): AsyncIterable<ResumableStreamEntry>;
   status(streamId: string): Promise<ResumableStreamStatus>;
   delete(streamId: string): Promise<void>;
 }

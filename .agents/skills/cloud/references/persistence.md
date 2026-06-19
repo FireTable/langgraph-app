@@ -5,6 +5,7 @@ Thread and message persistence with assistant-cloud.
 ## Overview
 
 Cloud persistence saves threads and messages to the assistant-ui cloud backend, enabling:
+
 - Chat history across sessions
 - Multi-device sync
 - Thread management (archive, delete)
@@ -29,7 +30,7 @@ function Chat() {
     transport: new AssistantChatTransport({
       api: "/api/chat",
     }),
-    cloud,  // Enable persistence
+    cloud, // Enable persistence
   });
 
   return (
@@ -47,7 +48,7 @@ function Chat() {
 
 ```tsx
 const threads = await cloud.threads.list({
-  status: "active",     // "active" | "archived" | "all"
+  status: "active", // "active" | "archived" | "all"
   limit: 50,
   offset: 0,
 });
@@ -75,8 +76,9 @@ const thread = await cloud.threads.get(threadId);
 ```tsx
 const { thread_id } = await cloud.threads.create({
   title: "My New Chat",
-  external_id: "custom-id-123",  // Optional external reference
-  metadata: {                     // Optional custom data
+  external_id: "custom-id-123", // Optional external reference
+  metadata: {
+    // Optional custom data
     source: "web",
     category: "support",
   },
@@ -122,7 +124,7 @@ const messages = await cloud.threads.messages(threadId).list({
 
 ```tsx
 await cloud.threads.messages(threadId).create({
-  parent_id: null,  // Or parent message ID for branching
+  parent_id: null, // Or parent message ID for branching
   format: "aui/v0",
   content: {
     role: "user",
@@ -213,7 +215,7 @@ await cloud.threads.create({
 });
 
 const threads = await cloud.threads.list();
-const thread = threads.find(t => t.external_id === "your-system-id-123");
+const thread = threads.find((t) => t.external_id === "your-system-id-123");
 ```
 
 ## Metadata

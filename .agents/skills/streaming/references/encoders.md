@@ -4,11 +4,11 @@ Encode and decode streaming formats.
 
 ## Available Encoders
 
-| Encoder | Format | Use Case |
-|---------|--------|----------|
-| `DataStreamEncoder` | AI SDK Data Stream | Default (used by `toUIMessageStreamResponse`) |
-| `AssistantTransportEncoder` | Native SSE (`data: {chunk}`) | Custom backends that want all chunk types |
-| `PlainTextEncoder` | Text-only | Very simple demos |
+| Encoder                     | Format                       | Use Case                                      |
+| --------------------------- | ---------------------------- | --------------------------------------------- |
+| `DataStreamEncoder`         | AI SDK Data Stream           | Default (used by `toUIMessageStreamResponse`) |
+| `AssistantTransportEncoder` | Native SSE (`data: {chunk}`) | Custom backends that want all chunk types     |
+| `PlainTextEncoder`          | Text-only                    | Very simple demos                             |
 
 ## DataStreamEncoder
 
@@ -30,10 +30,7 @@ for await (const chunk of stream) {
 Native assistant-ui format with all features.
 
 ```ts
-import {
-  AssistantTransportEncoder,
-  AssistantTransportDecoder,
-} from "assistant-stream";
+import { AssistantTransportEncoder, AssistantTransportDecoder } from "assistant-stream";
 
 const response = AssistantStream.toResponse(stream, new AssistantTransportEncoder());
 
@@ -107,5 +104,5 @@ while (reader) {
 
 ```ts
 const contentType = response.headers.get("Content-Type");
-console.log("Content-Type:", contentType);  // Should be text/event-stream
+console.log("Content-Type:", contentType); // Should be text/event-stream
 ```

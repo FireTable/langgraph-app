@@ -93,12 +93,12 @@ const directStream = createAdkStream({
 });
 ```
 
-| Option | Type | Description |
-| --- | --- | --- |
-| `api` | `string` | URL to POST to |
-| `appName` | `string?` | Enables direct mode when set |
-| `userId` | `string?` | Required with `appName` |
-| `headers` | `Record<string, string>` or `() => ...` | Static or dynamic headers |
+| Option    | Type                                    | Description                  |
+| --------- | --------------------------------------- | ---------------------------- |
+| `api`     | `string`                                | URL to POST to               |
+| `appName` | `string?`                               | Enables direct mode when set |
+| `userId`  | `string?`                               | Required with `appName`      |
+| `headers` | `Record<string, string>` or `() => ...` | Static or dynamic headers    |
 
 ## useAdkRuntime options
 
@@ -111,7 +111,9 @@ const runtime = useAdkRuntime({
   load, // from createAdkSessionAdapter
   // or custom callbacks:
   create: async () => ({ externalId: sessionId }),
-  delete: async (externalId) => { await deleteSession(externalId); },
+  delete: async (externalId) => {
+    await deleteSession(externalId);
+  },
   // or cloud persistence:
   cloud,
 
@@ -150,11 +152,11 @@ const runtime = useAdkRuntime({
 });
 ```
 
-| Option | Type |
-| --- | --- |
-| `apiUrl` | `string` |
-| `appName` | `string` |
-| `userId` | `string` |
+| Option    | Type                                    |
+| --------- | --------------------------------------- |
+| `apiUrl`  | `string`                                |
+| `appName` | `string`                                |
+| `userId`  | `string`                                |
 | `headers` | `Record<string, string>` or `() => ...` |
 
 ## Message editing
@@ -224,10 +226,7 @@ function AgentBadge() {
 Read pending confirmation requests with `useAdkToolConfirmations` (each item exposes `toolCallId`, `toolName`, and `hint`) and respond with `useAdkConfirmTool`.
 
 ```tsx
-import {
-  useAdkToolConfirmations,
-  useAdkConfirmTool,
-} from "@assistant-ui/react-google-adk";
+import { useAdkToolConfirmations, useAdkConfirmTool } from "@assistant-ui/react-google-adk";
 
 function ToolConfirmations() {
   const pending = useAdkToolConfirmations();
@@ -235,7 +234,9 @@ function ToolConfirmations() {
 
   return pending.map((conf) => (
     <div key={conf.toolCallId}>
-      <p>{conf.toolName}: {conf.hint}</p>
+      <p>
+        {conf.toolName}: {conf.hint}
+      </p>
       <button onClick={() => confirmTool(conf.toolCallId, true)}>Allow</button>
       <button onClick={() => confirmTool(conf.toolCallId, false)}>Deny</button>
     </div>
@@ -275,11 +276,7 @@ const RequestInputUI = makeAssistantToolUI({
   toolName: "adk_request_input",
   render: ({ toolCallId, args }) => {
     const submitInput = useAdkSubmitInput();
-    return (
-      <button onClick={() => submitInput(toolCallId, "yes")}>
-        {args.prompt}
-      </button>
-    );
+    return <button onClick={() => submitInput(toolCallId, "yes")}>{args.prompt}</button>;
   },
 });
 ```
@@ -309,10 +306,7 @@ Note: `useAdkLongRunningToolIds` returns the ids of tool calls ADK is running in
 `toAdkStructuredEvents` turns a raw ADK event into typed entries; switch on `e.type` using the `AdkEventType` constants `CONTENT`, `THOUGHT`, `TOOL_CALL`, and `ERROR`.
 
 ```ts
-import {
-  toAdkStructuredEvents,
-  AdkEventType,
-} from "@assistant-ui/react-google-adk";
+import { toAdkStructuredEvents, AdkEventType } from "@assistant-ui/react-google-adk";
 
 for (const e of toAdkStructuredEvents(event)) {
   switch (e.type) {

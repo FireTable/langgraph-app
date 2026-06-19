@@ -13,7 +13,7 @@ const model = new ChatOpenAI({
   modelKwargs: {
     // only minimax will use this params
     reasoning_split: true,
-  }
+  },
 });
 
 const callModel = async (state: typeof MessagesAnnotation.State) => {

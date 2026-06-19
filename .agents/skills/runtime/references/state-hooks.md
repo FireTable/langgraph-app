@@ -97,6 +97,7 @@ function Analytics() {
 ```
 
 Available events:
+
 - `composer.send` - Message submitted from composer
 - `composer.attachmentAdd` - Attachment added in composer
 - `thread.runStart` - Generation started
@@ -153,7 +154,7 @@ import {
 
 const assistantRuntime = useAssistantRuntime();
 const threadRuntime = useThreadRuntime();
-const messageRuntime = useMessageRuntime();  // Needs message context
+const messageRuntime = useMessageRuntime(); // Needs message context
 const composerRuntime = useComposerRuntime();
 
 // State subscriptions
@@ -165,11 +166,11 @@ import {
   useThreadList,
 } from "@assistant-ui/react";
 
-const thread = useThread();           // { messages, isRunning, ... }
+const thread = useThread(); // { messages, isRunning, ... }
 const messages = useThreadMessages(); // ThreadMessage[]
-const composer = useComposer();       // { text, attachments, ... }
-const message = useMessage();         // Current message (needs context)
-const threadList = useThreadList();   // Thread list state
+const composer = useComposer(); // { text, attachments, ... }
+const message = useMessage(); // Current message (needs context)
+const threadList = useThreadList(); // Thread list state
 ```
 
 ## Context Requirements
@@ -178,21 +179,21 @@ Some hooks require being inside specific contexts:
 
 ```tsx
 // These work anywhere inside AssistantRuntimeProvider
-useAui()
-useAuiState()
-useAuiEvent()
-useAssistantRuntime()
-useThreadRuntime()
-useThread()
-useThreadMessages()
-useComposer()
+useAui();
+useAuiState();
+useAuiEvent();
+useAssistantRuntime();
+useThreadRuntime();
+useThread();
+useThreadMessages();
+useComposer();
 
 // These require message context (inside ThreadPrimitive.Messages)
-useMessageRuntime()
-useMessage()
+useMessageRuntime();
+useMessage();
 
 // These require message part context
-useMessagePartRuntime()
+useMessagePartRuntime();
 ```
 
 ## Performance Tips
@@ -217,10 +218,7 @@ function MessageList() {
   const messages = useAuiState((s) => s.thread.messages);
 
   // Memoize expensive computations
-  const userMessages = useMemo(
-    () => messages.filter((m) => m.role === "user"),
-    [messages]
-  );
+  const userMessages = useMemo(() => messages.filter((m) => m.role === "user"), [messages]);
 
   return <div>{userMessages.length} user messages</div>;
 }

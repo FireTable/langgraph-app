@@ -13,10 +13,10 @@ Wire Mastra agents into assistant-ui. There is no `@assistant-ui/react-mastra` p
 
 ## Two Deployment Modes
 
-| Mode | Where the agent runs | Backend wiring | Frontend transport |
-|------|----------------------|----------------|--------------------|
-| Full-stack | Next.js API route in the same app | `agent.stream()` + `toAISdkStream` + `createUIMessageStream` | default (`AssistantChatTransport` to `/api/chat`) |
-| Separate server | Standalone Mastra server | `chatRoute({ path })` from `@mastra/ai-sdk` | `AssistantChatTransport` pointed at the Mastra URL |
+| Mode            | Where the agent runs              | Backend wiring                                               | Frontend transport                                 |
+| --------------- | --------------------------------- | ------------------------------------------------------------ | -------------------------------------------------- |
+| Full-stack      | Next.js API route in the same app | `agent.stream()` + `toAISdkStream` + `createUIMessageStream` | default (`AssistantChatTransport` to `/api/chat`)  |
+| Separate server | Standalone Mastra server          | `chatRoute({ path })` from `@mastra/ai-sdk`                  | `AssistantChatTransport` pointed at the Mastra URL |
 
 Both modes use `useChatRuntime` from `@assistant-ui/react-ai-sdk`. Mastra never exposes a dedicated assistant-ui package; the integration rides the AI SDK v6 runtime. Do not reach for `@mastra/client-js` for the chat stream; the browser talks to the Mastra HTTP route directly through `AssistantChatTransport`.
 

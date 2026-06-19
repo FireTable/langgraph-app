@@ -61,7 +61,7 @@ import { useAui, useAuiState, useAuiEvent } from "@assistant-ui/react";
 
 const api = useAui();
 
-const messages = useAuiState(s => s.thread.messages);
+const messages = useAuiState((s) => s.thread.messages);
 
 useAuiEvent("composer.send", (e) => console.log(e));
 ```
@@ -106,10 +106,7 @@ Primitives re-render with new state
 ## Message Model
 
 ```typescript
-type ThreadMessage =
-  | ThreadUserMessage
-  | ThreadAssistantMessage
-  | ThreadSystemMessage;
+type ThreadMessage = ThreadUserMessage | ThreadAssistantMessage | ThreadSystemMessage;
 
 interface ThreadUserMessage {
   id: string;

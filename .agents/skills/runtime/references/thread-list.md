@@ -13,10 +13,10 @@ type ThreadListRuntime = {
   getState(): ThreadListState;
   subscribe(callback: () => void): Unsubscribe;
 
-  main: ThreadRuntime;              // Current active thread
+  main: ThreadRuntime; // Current active thread
   getById(threadId: string): ThreadRuntime;
 
-  mainItem: ThreadListItemRuntime;  // Current thread item
+  mainItem: ThreadListItemRuntime; // Current thread item
   getItemById(threadId: string): ThreadListItemRuntime;
   getItemByIndex(idx: number): ThreadListItemRuntime;
   getArchivedItemByIndex(idx: number): ThreadListItemRuntime;
@@ -33,9 +33,9 @@ For app-level state via `useAuiState((s) => s.threads)`, use the client `Threads
 
 ```typescript
 type ThreadListState = {
-  mainThreadId: string;              // Current thread ID
-  newThreadId: string | undefined;     // Pending new thread ID
-  threadIds: readonly string[];        // Regular thread IDs
+  mainThreadId: string; // Current thread ID
+  newThreadId: string | undefined; // Pending new thread ID
+  threadIds: readonly string[]; // Regular thread IDs
   archivedThreadIds: readonly string[];
   isLoading: boolean;
   threadItems: Record<string, Omit<ThreadListItemState, "isMain" | "threadId">>;
@@ -69,9 +69,7 @@ import { useAui, useAuiState } from "@assistant-ui/react";
 function ThreadListComponent() {
   const api = useAui();
 
-  const { threadIds, archivedThreadIds, isLoading } = useAuiState(
-    (s) => s.threads
-  );
+  const { threadIds, archivedThreadIds, isLoading } = useAuiState((s) => s.threads);
 
   const handleSwitch = (threadId: string) => {
     api.threads().switchToThread(threadId);
@@ -127,10 +125,7 @@ function ThreadItem({ threadId }: { threadId: string }) {
 ## Using ThreadList Primitives
 
 ```tsx
-import {
-  ThreadListPrimitive,
-  ThreadListItemPrimitive,
-} from "@assistant-ui/react";
+import { ThreadListPrimitive, ThreadListItemPrimitive } from "@assistant-ui/react";
 
 function ThreadList() {
   return (
@@ -142,20 +137,20 @@ function ThreadList() {
       <div className="space-y-1">
         <ThreadListPrimitive.Items>
           {() => (
-          <ThreadListItemPrimitive.Root className="flex items-center p-2 hover:bg-gray-100 rounded group">
-            <ThreadListItemPrimitive.Trigger className="flex-1 text-left truncate">
-              <ThreadListItemPrimitive.Title />
-            </ThreadListItemPrimitive.Trigger>
+            <ThreadListItemPrimitive.Root className="flex items-center p-2 hover:bg-gray-100 rounded group">
+              <ThreadListItemPrimitive.Trigger className="flex-1 text-left truncate">
+                <ThreadListItemPrimitive.Title />
+              </ThreadListItemPrimitive.Trigger>
 
-            <div className="hidden group-hover:flex gap-1">
-              <ThreadListItemPrimitive.Archive className="p-1 text-gray-500 hover:text-gray-700">
-                📁
-              </ThreadListItemPrimitive.Archive>
-              <ThreadListItemPrimitive.Delete className="p-1 text-red-500 hover:text-red-700">
-                🗑️
-              </ThreadListItemPrimitive.Delete>
-            </div>
-          </ThreadListItemPrimitive.Root>
+              <div className="hidden group-hover:flex gap-1">
+                <ThreadListItemPrimitive.Archive className="p-1 text-gray-500 hover:text-gray-700">
+                  📁
+                </ThreadListItemPrimitive.Archive>
+                <ThreadListItemPrimitive.Delete className="p-1 text-red-500 hover:text-red-700">
+                  🗑️
+                </ThreadListItemPrimitive.Delete>
+              </div>
+            </ThreadListItemPrimitive.Root>
           )}
         </ThreadListPrimitive.Items>
       </div>

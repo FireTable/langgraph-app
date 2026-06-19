@@ -137,11 +137,7 @@ npm install @assistant-ui/react-o11y
 ```
 
 ```tsx
-import {
-  SpanResource,
-  SpanPrimitive,
-  type SpanData,
-} from "@assistant-ui/react-o11y";
+import { SpanResource, SpanPrimitive, type SpanData } from "@assistant-ui/react-o11y";
 import { AuiProvider, useAui } from "@assistant-ui/store";
 
 function SpanRow() {
@@ -171,19 +167,24 @@ export function TraceView({ spans }: { spans: SpanData[] }) {
 ## Common Gotchas
 
 **No traces on Vercel/Lambda**
+
 - The function exits before OTel flushes its buffer. Langfuse: `await langfuseSpanProcessor.forceFlush()` before responding. LangSmith: `await new Client().awaitPendingTraceBatches()`.
 
 **Langfuse traces empty**
+
 - `experimental_telemetry: { isEnabled: true }` must be set on each `streamText`/`generateText` call.
 - The span processor only registers when `process.env.NEXT_RUNTIME === "nodejs"`; OTel does not run on the edge runtime.
 
 **LangSmith not tracing**
+
 - Use the destructured methods from `wrapAISDK(ai)`, not the originals from `ai`. `LANGSMITH_TRACING=true` must be set.
 
 **Helicone requests still hit OpenAI directly**
+
 - Confirm requests go to `oai.helicone.ai`, not `api.openai.com`, and carry both `Helicone-Auth` and `Authorization` headers.
 
 **react-o11y renders nothing**
+
 - Primitives must render inside `AuiProvider`; the resource mounts through `useAui({ resource: SpanResource({ spans }) })`.
 
 ## Related Skills

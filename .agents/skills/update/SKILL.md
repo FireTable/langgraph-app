@@ -30,16 +30,16 @@ npm view ai version
 
 Current latest: `@assistant-ui/react` 0.14.x, `@assistant-ui/react-ai-sdk` 1.3.x, `assistant-stream` 0.3.x.
 
-| Package | Check For |
-|---------|-----------|
-| `ai` | < 6.0.0 → needs AI SDK v6 migration |
-| `@assistant-ui/react` | < 0.14.0 → primitives `components` prop replaced by children render functions; deprecated hooks/aliases removed |
-| `@assistant-ui/react` | < 0.13.0 → `ThreadPrimitive.ViewportSlack` removed (top-anchor changes) |
-| `@assistant-ui/react` | < 0.12.0 → unified state API (`useAui`/`useAuiState`/`useAuiEvent`/`AuiIf`) |
-| `@assistant-ui/react` | < 0.11.0 → runtime rearchitecture |
-| `@assistant-ui/react` | < 0.10.0 → ESM only |
-| `@assistant-ui/react` | < 0.8.0 → UI split (shadcn registry) |
-| `@assistant-ui/react-ai-sdk` | < 1.0.0 → needs AI SDK v6 first |
+| Package                      | Check For                                                                                                       |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `ai`                         | < 6.0.0 → needs AI SDK v6 migration                                                                             |
+| `@assistant-ui/react`        | < 0.14.0 → primitives `components` prop replaced by children render functions; deprecated hooks/aliases removed |
+| `@assistant-ui/react`        | < 0.13.0 → `ThreadPrimitive.ViewportSlack` removed (top-anchor changes)                                         |
+| `@assistant-ui/react`        | < 0.12.0 → unified state API (`useAui`/`useAuiState`/`useAuiEvent`/`AuiIf`)                                     |
+| `@assistant-ui/react`        | < 0.11.0 → runtime rearchitecture                                                                               |
+| `@assistant-ui/react`        | < 0.10.0 → ESM only                                                                                             |
+| `@assistant-ui/react`        | < 0.8.0 → UI split (shadcn registry)                                                                            |
+| `@assistant-ui/react-ai-sdk` | < 1.0.0 → needs AI SDK v6 first                                                                                 |
 
 ## Phase 2: Route to Migration
 
@@ -82,13 +82,16 @@ pnpm build
 ## Troubleshooting
 
 **"Peer dependency conflict"**
+
 - Update all packages together
 - Check version compatibility in [./references/breaking-changes.md](./references/breaking-changes.md)
 
 **Type errors after upgrade**
+
 - Consult breaking changes reference
 - Check specific migration guide
 
 **Runtime errors**
+
 - Verify API patterns match new version
 - Check for renamed/moved APIs

@@ -90,7 +90,7 @@ Instructions are additive. When several components register instructions, the sy
 function App() {
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <GlobalInstructions />  {/* "You are a helpful assistant." */}
+      <GlobalInstructions /> {/* "You are a helpful assistant." */}
       <CheckoutInstructions /> {/* "When checking out, confirm the address." */}
       <Thread />
     </AssistantRuntimeProvider>

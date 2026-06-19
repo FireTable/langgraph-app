@@ -19,11 +19,7 @@ import {
   type ReasoningGroupComponent,
 } from "@assistant-ui/react";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
 const ANIMATION_DURATION = 200;
@@ -76,9 +72,7 @@ function ReasoningRoot({
   const lockScroll = useScrollLock(collapsibleRef, ANIMATION_DURATION);
 
   const isControlled = controlledOpen !== undefined;
-  const isOpen = isControlled
-    ? controlledOpen
-    : (userOpen ?? streaming ?? initialOpenRef.current);
+  const isOpen = isControlled ? controlledOpen : (userOpen ?? streaming ?? initialOpenRef.current);
   const isAutoMode = isControlled || userOpen === null;
   const isPreview = streaming === true && isOpen && isAutoMode;
 
@@ -107,10 +101,7 @@ function ReasoningRoot({
       data-variant={variant}
       open={isOpen}
       onOpenChange={handleOpenChange}
-      className={cn(
-        "group/reasoning-root",
-        reasoningVariants({ variant, className }),
-      )}
+      className={cn("group/reasoning-root", reasoningVariants({ variant, className }))}
       style={
         {
           "--animation-duration": `${ANIMATION_DURATION}ms`,
@@ -250,11 +241,7 @@ function ReasoningContent({
   );
 }
 
-function ReasoningText({
-  className,
-  children,
-  ...props
-}: React.ComponentProps<"div">) {
+function ReasoningText({ className, children, ...props }: React.ComponentProps<"div">) {
   const isPreview = useContext(ReasoningPreviewContext);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -301,11 +288,7 @@ function ReasoningText({
 
 const ReasoningImpl: ReasoningMessagePartComponent = () => <MarkdownText />;
 
-const ReasoningGroupImpl: ReasoningGroupComponent = ({
-  children,
-  startIndex,
-  endIndex,
-}) => {
+const ReasoningGroupImpl: ReasoningGroupComponent = ({ children, startIndex, endIndex }) => {
   const isReasoningStreaming = useAuiState((s) => {
     if (s.message.status?.type !== "running") return false;
     const lastIndex = s.message.parts.length - 1;
@@ -325,9 +308,7 @@ const ReasoningGroupImpl: ReasoningGroupComponent = ({
   );
 };
 
-const Reasoning = memo(
-  ReasoningImpl,
-) as unknown as ReasoningMessagePartComponent & {
+const Reasoning = memo(ReasoningImpl) as unknown as ReasoningMessagePartComponent & {
   Root: typeof ReasoningRoot;
   Trigger: typeof ReasoningTrigger;
   Content: typeof ReasoningContent;

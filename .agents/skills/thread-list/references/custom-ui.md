@@ -14,10 +14,7 @@ Build custom thread list interfaces.
 ## Using Primitives
 
 ```tsx
-import {
-  ThreadListPrimitive,
-  ThreadListItemPrimitive,
-} from "@assistant-ui/react";
+import { ThreadListPrimitive, ThreadListItemPrimitive } from "@assistant-ui/react";
 
 function CustomThreadList() {
   return (
@@ -27,9 +24,7 @@ function CustomThreadList() {
       </ThreadListPrimitive.New>
 
       <div className="flex-1 overflow-y-auto">
-        <ThreadListPrimitive.Items>
-          {() => <CustomThreadItem />}
-        </ThreadListPrimitive.Items>
+        <ThreadListPrimitive.Items>{() => <CustomThreadItem />}</ThreadListPrimitive.Items>
       </div>
 
       <div className="border-t p-2">
@@ -97,11 +92,7 @@ function FullyCustomThreadList() {
 
       <nav className="p-2 space-y-1">
         {threads.map((threadId) => (
-          <ThreadItem
-            key={threadId}
-            id={threadId}
-            isActive={threadId === mainThreadId}
-          />
+          <ThreadItem key={threadId} id={threadId} isActive={threadId === mainThreadId} />
         ))}
       </nav>
 
@@ -156,9 +147,7 @@ function ThreadItem({
         />
       ) : (
         <>
-          <span className="flex-1 truncate text-sm">
-            {state.title || "Untitled"}
-          </span>
+          <span className="flex-1 truncate text-sm">{state.title || "Untitled"}</span>
           <div className="hidden group-hover:flex gap-1">
             <button
               onClick={(e) => {
@@ -249,11 +238,7 @@ function SearchableThreadList() {
           <p className="text-gray-500 text-center py-4">No results</p>
         ) : (
           filteredThreads.map((id) => (
-            <ThreadItem
-              key={id}
-              id={id}
-              isActive={id === mainThreadId}
-            />
+            <ThreadItem key={id} id={id} isActive={id === mainThreadId} />
           ))
         )}
       </div>
@@ -380,21 +365,22 @@ function CategorizedThreadList() {
   const api = useAui();
   const { threads } = useAuiState((s) => ({ threads: s.threads.threadIds }));
 
-  const grouped = threads.reduce((acc, id) => {
-    const item = api.threads().item({ id }).getState();
-    const category = (item.title || "Untitled").charAt(0).toUpperCase();
-    if (!acc[category]) acc[category] = [];
-    acc[category].push(id);
-    return acc;
-  }, {} as Record<string, string[]>);
+  const grouped = threads.reduce(
+    (acc, id) => {
+      const item = api.threads().item({ id }).getState();
+      const category = (item.title || "Untitled").charAt(0).toUpperCase();
+      if (!acc[category]) acc[category] = [];
+      acc[category].push(id);
+      return acc;
+    },
+    {} as Record<string, string[]>,
+  );
 
   return (
     <div>
       {Object.entries(grouped).map(([category, ids]) => (
         <div key={category} className="mb-4">
-          <h3 className="text-sm font-medium text-gray-500 px-2 mb-1">
-            {category}
-          </h3>
+          <h3 className="text-sm font-medium text-gray-500 px-2 mb-1">{category}</h3>
           {ids.map((id) => (
             <ThreadItem key={id} id={id} />
           ))}

@@ -38,13 +38,16 @@ function App() {
       });
 
       const data = await response.json();
-      setMessages((prev) => [...prev, {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: [{ type: "text", text: data.text }],
-        status: { type: "complete" },
-        createdAt: new Date(),
-      }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: [{ type: "text", text: data.text }],
+          status: { type: "complete" },
+          createdAt: new Date(),
+        },
+      ]);
       setIsRunning(false);
     },
   });
@@ -321,7 +324,7 @@ const runtime = useExternalStoreRuntime({
   onNew: handleNew,
   // Only enable capabilities you implement
   capabilities: {
-    edit: false,   // Disable edit if onEdit not provided
+    edit: false, // Disable edit if onEdit not provided
     reload: true,
     cancel: true,
     copy: true,

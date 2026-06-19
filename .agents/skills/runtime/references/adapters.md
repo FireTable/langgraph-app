@@ -50,9 +50,9 @@ import type {
 
 type AttachmentAdapter = {
   accept: string;
-  add: (state: { file: File }) =>
-    | Promise<PendingAttachment>
-    | AsyncGenerator<PendingAttachment, void>;
+  add: (state: {
+    file: File;
+  }) => Promise<PendingAttachment> | AsyncGenerator<PendingAttachment, void>;
   send: (attachment: PendingAttachment) => Promise<CompleteAttachment>;
   remove: (attachment: Attachment) => Promise<void>;
 };
@@ -105,11 +105,7 @@ const runtime = useChatRuntime({
 Implement `AttachmentAdapter` to control validation and the content shape. This vision adapter rejects oversized images and emits an inline image content part.
 
 ```ts
-import {
-  AttachmentAdapter,
-  PendingAttachment,
-  CompleteAttachment,
-} from "@assistant-ui/react";
+import { AttachmentAdapter, PendingAttachment, CompleteAttachment } from "@assistant-ui/react";
 
 class VisionImageAdapter implements AttachmentAdapter {
   accept = "image/jpeg,image/png,image/webp,image/gif";
@@ -174,17 +170,27 @@ class ServerUploadAdapter implements AttachmentAdapter {
   async *add({ file }: { file: File }) {
     const id = crypto.randomUUID();
     yield {
-      id, type: "file" as const, name: file.name, file, contentType: file.type,
+      id,
+      type: "file" as const,
+      name: file.name,
+      file,
+      contentType: file.type,
       status: { type: "running" as const, reason: "uploading" as const, progress: 0 },
     };
 
     const form = new FormData();
     form.append("file", file);
-    const { url } = await fetch("/api/upload", { method: "POST", body: form }).then((r) => r.json());
+    const { url } = await fetch("/api/upload", { method: "POST", body: form }).then((r) =>
+      r.json(),
+    );
     this.urls.set(id, url);
 
     yield {
-      id, type: "file" as const, name: file.name, file, contentType: file.type,
+      id,
+      type: "file" as const,
+      name: file.name,
+      file,
+      contentType: file.type,
       status: { type: "requires-action" as const, reason: "composer-send" as const },
     };
   }
@@ -195,7 +201,14 @@ class ServerUploadAdapter implements AttachmentAdapter {
     return {
       ...attachment,
       status: { type: "complete" },
-      content: [{ type: "file", data: url, mimeType: attachment.contentType ?? "", filename: attachment.name }],
+      content: [
+        {
+          type: "file",
+          data: url,
+          mimeType: attachment.contentType ?? "",
+          filename: attachment.name,
+        },
+      ],
     };
   }
 
@@ -213,7 +226,9 @@ This pattern avoids holding large files in memory as base64: the file is uploade
 import { CloudFileAttachmentAdapter } from "@assistant-ui/react";
 import { AssistantCloud } from "@assistant-ui/react";
 
-const cloud = new AssistantCloud({ /* ... */ });
+const cloud = new AssistantCloud({
+  /* ... */
+});
 
 const runtime = useChatRuntime({
   adapters: {
@@ -324,7 +339,9 @@ export class CustomTTSAdapter implements SpeechSynthesisAdapter {
     let status: SpeechSynthesisAdapter.Status = { type: "starting" };
     let audio: HTMLAudioElement | null = null;
 
-    const notify = () => { for (const cb of subscribers) cb(); };
+    const notify = () => {
+      for (const cb of subscribers) cb();
+    };
     const finish = (reason: "finished" | "cancelled" | "error", error?: unknown) => {
       if (status.type === "ended") return;
       status = { type: "ended", reason, error };
@@ -348,9 +365,17 @@ export class CustomTTSAdapter implements SpeechSynthesisAdapter {
       .catch((err) => finish("error", err));
 
     return {
-      get status() { return status; },
-      cancel: () => { audio?.pause(); finish("cancelled"); },
-      subscribe: (cb) => { subscribers.add(cb); return () => subscribers.delete(cb); },
+      get status() {
+        return status;
+      },
+      cancel: () => {
+        audio?.pause();
+        finish("cancelled");
+      },
+      subscribe: (cb) => {
+        subscribers.add(cb);
+        return () => subscribers.delete(cb);
+      },
     };
   }
 }
@@ -458,9 +483,7 @@ import type { SuggestionAdapter, ThreadSuggestion } from "@assistant-ui/react";
 type SuggestionAdapter = {
   generate: (
     options: SuggestionAdapterGenerateOptions,
-  ) =>
-    | Promise<readonly ThreadSuggestion[]>
-    | AsyncGenerator<readonly ThreadSuggestion[], void>;
+  ) => Promise<readonly ThreadSuggestion[]> | AsyncGenerator<readonly ThreadSuggestion[], void>;
 };
 ```
 
@@ -471,10 +494,7 @@ const runtime = useChatRuntime({
   adapters: {
     suggestion: {
       generate: async (options) => {
-        return [
-          { prompt: "What can you help me with?" },
-          { prompt: "Summarize this document" },
-        ];
+        return [{ prompt: "What can you help me with?" }, { prompt: "Summarize this document" }];
       },
     },
   },
@@ -491,9 +511,7 @@ A `ThreadHistoryAdapter` persists and restores thread messages. It exposes `load
 type ThreadHistoryAdapter = {
   load: () => Promise<ExportedMessageRepository & { unstable_resume?: boolean }>;
   append: (item: ExportedMessageRepositoryItem) => Promise<void>;
-  resume?: (
-    options: ChatModelRunOptions,
-  ) => AsyncGenerator<ChatModelRunResult, void, unknown>;
+  resume?: (options: ChatModelRunOptions) => AsyncGenerator<ChatModelRunResult, void, unknown>;
   withFormat?: <TMessage, TStorageFormat extends Record<string, unknown>>(
     formatAdapter: MessageFormatAdapter<TMessage, TStorageFormat>,
   ) => GenericThreadHistoryAdapter<TMessage>;

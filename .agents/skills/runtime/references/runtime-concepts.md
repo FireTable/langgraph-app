@@ -4,7 +4,7 @@ Cross-cutting runtime concepts: the `unstable_` stability policy, how the runtim
 
 ## Contents
 
-- [The unstable_ stability policy](#the-unstable_-stability-policy)
+- [The unstable\_ stability policy](#the-unstable_-stability-policy)
 - [Runtime layering: LocalRuntime vs ExternalStoreRuntime](#runtime-layering-localruntime-vs-externalstoreruntime)
 - [useAssistantTransportRuntime (state-streaming agents)](#useassistanttransportruntime-state-streaming-agents)
 - [Reading agent state and sending commands](#reading-agent-state-and-sending-commands)
@@ -12,7 +12,7 @@ Cross-cutting runtime concepts: the `unstable_` stability policy, how the runtim
 - [Message timing (experimental)](#message-timing-experimental)
 - [Supplying timing manually](#supplying-timing-manually)
 
-## The unstable_ stability policy
+## The unstable\_ stability policy
 
 APIs prefixed with `unstable_` are publicly exported and meant to be built against, but their signature, naming, semantics, and return shape may change in any release, including patch releases. They carry no semver guarantees, so a breaking change can land in a patch or minor, not only a major.
 
@@ -38,7 +38,9 @@ Examples of currently unstable exports: `unstable_createMessageConverter`, `unst
 const runtime = useExternalStoreRuntime({
   messages,
   isRunning,
-  onNew: async (message) => { /* you mutate your store */ },
+  onNew: async (message) => {
+    /* you mutate your store */
+  },
 });
 ```
 
@@ -79,27 +81,34 @@ Options:
 
 ```ts
 interface AssistantTransportRuntimeOptions<T> {
-  initialState: T;                 // starting agent state
-  api: string;                     // backend endpoint URL
+  initialState: T; // starting agent state
+  api: string; // backend endpoint URL
   converter: (
     state: T,
     connectionMetadata: AssistantTransportConnectionMetadata,
   ) => { messages: ThreadMessage[]; isRunning: boolean; state?: ReadonlyJSONValue };
 
-  resumeApi?: string;              // optional reconnect endpoint
+  resumeApi?: string; // optional reconnect endpoint
   protocol?: "data-stream" | "assistant-transport";
   headers?: Record<string, string> | Headers | (() => Promise<Record<string, string> | Headers>);
   body?: object | (() => Promise<object | undefined>);
   prepareSendCommandsRequest?: (
     body: SendCommandsRequestBody,
   ) => Record<string, unknown> | Promise<Record<string, unknown>>;
-  capabilities?: { edit?: boolean };  // editing disabled by default
+  capabilities?: { edit?: boolean }; // editing disabled by default
   adapters?: { attachments?: AttachmentAdapter; history?: ThreadHistoryAdapter };
 
   onResponse?: (response: Response) => void;
   onFinish?: () => void;
-  onError?: (error: Error, params: { commands: Command[]; updateState: (fn: (s: T) => T) => void }) => void | Promise<void>;
-  onCancel?: (params: { commands: Command[]; updateState: (fn: (s: T) => T) => void; error?: Error }) => void;
+  onError?: (
+    error: Error,
+    params: { commands: Command[]; updateState: (fn: (s: T) => T) => void },
+  ) => void | Promise<void>;
+  onCancel?: (params: {
+    commands: Command[];
+    updateState: (fn: (s: T) => T) => void;
+    error?: Error;
+  }) => void;
 }
 ```
 
@@ -139,20 +148,13 @@ Note: `unstable_createMessageConverter` is explicitly `unstable_`. The wire form
 Inside components under the provider, read agent state with `useAssistantTransportState` (accepts an optional selector) and issue custom commands with `useAssistantTransportSendCommand`.
 
 ```tsx
-import {
-  useAssistantTransportState,
-  useAssistantTransportSendCommand,
-} from "@assistant-ui/react";
+import { useAssistantTransportState, useAssistantTransportSendCommand } from "@assistant-ui/react";
 
 function CustomField() {
   const value = useAssistantTransportState((s) => s.customField);
   const sendCommand = useAssistantTransportSendCommand();
 
-  return (
-    <button onClick={() => sendCommand({ type: "set-field", value: "x" })}>
-      {value}
-    </button>
-  );
+  return <button onClick={() => sendCommand({ type: "set-field", value: "x" })}>{value}</button>;
 }
 ```
 
@@ -197,13 +199,13 @@ The `MessageTiming` shape:
 
 ```ts
 interface MessageTiming {
-  streamStartTime: number;   // Unix timestamp when the stream started
-  firstTokenTime?: number;   // time to first text token, in ms
-  totalStreamTime?: number;  // total stream duration, in ms
-  tokenCount?: number;       // output token count from message metadata usage
-  tokensPerSecond?: number;  // throughput, requires token usage
-  totalChunks: number;       // total stream chunks received
-  toolCallCount: number;     // number of tool calls
+  streamStartTime: number; // Unix timestamp when the stream started
+  firstTokenTime?: number; // time to first text token, in ms
+  totalStreamTime?: number; // total stream duration, in ms
+  tokenCount?: number; // output token count from message metadata usage
+  tokensPerSecond?: number; // throughput, requires token usage
+  totalChunks: number; // total stream chunks received
+  toolCallCount: number; // number of tool calls
 }
 ```
 

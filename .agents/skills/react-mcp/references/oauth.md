@@ -87,10 +87,7 @@ export default function Callback() {
 
 ```tsx
 "use client";
-import {
-  McpManagerPrimitive,
-  McpServerPrimitive,
-} from "@assistant-ui/react-mcp";
+import { McpManagerPrimitive, McpServerPrimitive } from "@assistant-ui/react-mcp";
 
 const ServerCard = () => (
   <McpServerPrimitive.Root>
@@ -109,16 +106,10 @@ export default function McpPage() {
   return (
     <McpManagerPrimitive.Root>
       <h2>Connectors</h2>
-      <McpManagerPrimitive.Connectors>
-        {() => <ServerCard />}
-      </McpManagerPrimitive.Connectors>
+      <McpManagerPrimitive.Connectors>{() => <ServerCard />}</McpManagerPrimitive.Connectors>
       <h2>Your servers</h2>
-      <McpManagerPrimitive.CustomServers>
-        {() => <ServerCard />}
-      </McpManagerPrimitive.CustomServers>
-      <McpManagerPrimitive.AddCustomTrigger>
-        Add custom server
-      </McpManagerPrimitive.AddCustomTrigger>
+      <McpManagerPrimitive.CustomServers>{() => <ServerCard />}</McpManagerPrimitive.CustomServers>
+      <McpManagerPrimitive.AddCustomTrigger>Add custom server</McpManagerPrimitive.AddCustomTrigger>
     </McpManagerPrimitive.Root>
   );
 }

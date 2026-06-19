@@ -24,10 +24,7 @@ Note: with `useChatRuntime` (AI SDK), the runtime always goes through `withForma
 ## The two adapters
 
 ```ts
-import type {
-  RemoteThreadListAdapter,
-  ThreadHistoryAdapter,
-} from "@assistant-ui/react";
+import type { RemoteThreadListAdapter, ThreadHistoryAdapter } from "@assistant-ui/react";
 ```
 
 `ThreadHistoryAdapter` shape:
@@ -53,7 +50,10 @@ interface RemoteThreadListAdapter {
   unarchive: (remoteId: string) => Promise<void>;
   delete: (remoteId: string) => Promise<void>;
   fetch: (threadId: string) => Promise<RemoteThreadMetadata>;
-  generateTitle: (remoteId: string, unstable_messages: readonly ThreadMessage[]) => Promise<AssistantStream>;
+  generateTitle: (
+    remoteId: string,
+    unstable_messages: readonly ThreadMessage[],
+  ) => Promise<AssistantStream>;
   unstable_Provider?: ComponentType<PropsWithChildren>;
 }
 ```
@@ -93,7 +93,9 @@ export const threads = pgTable(
     id: text("id").primaryKey(),
     userId: text("user_id").notNull(),
     title: text("title"),
-    status: text("status", { enum: ["regular", "archived"] }).notNull().default("regular"),
+    status: text("status", { enum: ["regular", "archived"] })
+      .notNull()
+      .default("regular"),
     custom: jsonb("custom").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -105,7 +107,9 @@ export const messages = pgTable(
   "messages",
   {
     id: text("id").primaryKey(),
-    threadId: text("thread_id").notNull().references(() => threads.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
     parentId: text("parent_id"),
     format: text("format").notNull(),
     content: jsonb("content").notNull(),
@@ -131,7 +135,9 @@ import { generateId } from "ai";
 export async function GET() {
   const session = await auth();
   if (!session?.user) return new Response(null, { status: 401 });
-  const rows = await db.select().from(threads)
+  const rows = await db
+    .select()
+    .from(threads)
     .where(eq(threads.userId, session.user.id))
     .orderBy(desc(threads.updatedAt));
   return Response.json(rows);
@@ -154,15 +160,13 @@ import { threads } from "@/db/schema";
 import { auth } from "@/auth";
 import { and, eq } from "drizzle-orm";
 
-export async function PATCH(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
   if (!session?.user) return new Response(null, { status: 401 });
   const patch = (await req.json()) as { title?: string; status?: "regular" | "archived" };
-  await db.update(threads)
+  await db
+    .update(threads)
     .set({ ...patch, updatedAt: new Date() })
     .where(and(eq(threads.id, id), eq(threads.userId, session.user.id)));
   return new Response(null, { status: 204 });
@@ -177,26 +181,24 @@ import { threads, messages } from "@/db/schema";
 import { auth } from "@/auth";
 import { and, asc, eq } from "drizzle-orm";
 
-export async function GET(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
   if (!session?.user) return new Response(null, { status: 401 });
-  const [thread] = await db.select().from(threads)
+  const [thread] = await db
+    .select()
+    .from(threads)
     .where(and(eq(threads.id, id), eq(threads.userId, session.user.id)));
   if (!thread) return new Response(null, { status: 404 });
-  const rows = await db.select().from(messages)
+  const rows = await db
+    .select()
+    .from(messages)
     .where(eq(messages.threadId, id))
     .orderBy(asc(messages.createdAt));
   return Response.json(rows);
 }
 
-export async function POST(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const session = await auth();
   if (!session?.user) return new Response(null, { status: 401 });
@@ -321,11 +323,7 @@ export const threadListAdapter: RemoteThreadListAdapter = {
       }),
       [aui],
     );
-    return (
-      <RuntimeAdapterProvider adapters={{ history }}>
-        {children}
-      </RuntimeAdapterProvider>
-    );
+    return <RuntimeAdapterProvider adapters={{ history }}>{children}</RuntimeAdapterProvider>;
   },
 };
 ```
@@ -338,10 +336,7 @@ Note: `append` awaits `aui.threadListItem().initialize()` so the thread row exis
 
 ```tsx
 "use client";
-import {
-  AssistantRuntimeProvider,
-  useRemoteThreadListRuntime,
-} from "@assistant-ui/react";
+import { AssistantRuntimeProvider, useRemoteThreadListRuntime } from "@assistant-ui/react";
 import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
 import { threadListAdapter } from "./thread-adapter";
 
@@ -350,26 +345,22 @@ export function MyProvider({ children }: { children: React.ReactNode }) {
     runtimeHook: () => useChatRuntime(),
     adapter: threadListAdapter,
   });
-  return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      {children}
-    </AssistantRuntimeProvider>
-  );
+  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
 }
 ```
 
 ## API names
 
-| Name | Purpose |
-|------|---------|
-| `RemoteThreadListAdapter` | Thread metadata: list, initialize, rename, archive, unarchive, delete, fetch, generateTitle, unstable_Provider |
-| `ThreadHistoryAdapter` | Per-thread messages: load, append, withFormat |
-| `withFormat(fmt)` | Returns a history adapter whose load/append run through `fmt`; required by `useChatRuntime` |
-| `fmt.decode({ id, parent_id, format, content })` | Stored row to `UIMessage` |
-| `fmt.encode(item)` | `UIMessage` to stored `content` |
-| `fmt.getId(item.message)` | Extracts the message id |
-| `fmt.format` | Format string written to the `format` column (for example `"ai-sdk/v6"`) |
-| `aui.threadListItem().getState()` | Reads the active thread's `remoteId` for loading |
-| `aui.threadListItem().initialize()` | Awaited before appending to ensure the thread row exists |
-| `useRemoteThreadListRuntime` | Combines the thread list adapter with a per-thread `runtimeHook` |
-| `RuntimeAdapterProvider` | Mounts `{ history }` for the active thread |
+| Name                                             | Purpose                                                                                                        |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `RemoteThreadListAdapter`                        | Thread metadata: list, initialize, rename, archive, unarchive, delete, fetch, generateTitle, unstable_Provider |
+| `ThreadHistoryAdapter`                           | Per-thread messages: load, append, withFormat                                                                  |
+| `withFormat(fmt)`                                | Returns a history adapter whose load/append run through `fmt`; required by `useChatRuntime`                    |
+| `fmt.decode({ id, parent_id, format, content })` | Stored row to `UIMessage`                                                                                      |
+| `fmt.encode(item)`                               | `UIMessage` to stored `content`                                                                                |
+| `fmt.getId(item.message)`                        | Extracts the message id                                                                                        |
+| `fmt.format`                                     | Format string written to the `format` column (for example `"ai-sdk/v6"`)                                       |
+| `aui.threadListItem().getState()`                | Reads the active thread's `remoteId` for loading                                                               |
+| `aui.threadListItem().initialize()`              | Awaited before appending to ensure the thread row exists                                                       |
+| `useRemoteThreadListRuntime`                     | Combines the thread list adapter with a per-thread `runtimeHook`                                               |
+| `RuntimeAdapterProvider`                         | Mounts `{ history }` for the active thread                                                                     |

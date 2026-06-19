@@ -43,11 +43,7 @@ export function MyRuntimeProvider({ children }: { children: React.ReactNode }) {
     baseUrl: "http://localhost:9999",
   });
 
-  return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      {children}
-    </AssistantRuntimeProvider>
-  );
+  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
 }
 ```
 
@@ -96,14 +92,10 @@ const runtime = useA2ARuntime({ client });
 ## Accessing A2A State
 
 ```tsx
-import {
-  useA2ATask,
-  useA2AArtifacts,
-  useA2AAgentCard,
-} from "@assistant-ui/react-a2a";
+import { useA2ATask, useA2AArtifacts, useA2AAgentCard } from "@assistant-ui/react-a2a";
 
 function TaskStatus() {
-  const task = useA2ATask();         // current A2A task (state + status message)
+  const task = useA2ATask(); // current A2A task (state + status message)
   const artifacts = useA2AArtifacts(); // accumulated artifacts
   const agentCard = useA2AAgentCard(); // agent card (capabilities/skills)
 

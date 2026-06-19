@@ -42,15 +42,15 @@ interface MakeAssistantToolOptions<TArgs, TResult> {
   execute: (args: TArgs, context: ToolExecutionContext) => Promise<TResult>;
 
   // Optional
-  description?: string;                     // For frontend-only tools
-  disabled?: boolean;                       // Skip registering the tool
-  render?: ToolCallMessagePartComponent;    // Inline tool UI for this tool
+  description?: string; // For frontend-only tools
+  disabled?: boolean; // Skip registering the tool
+  render?: ToolCallMessagePartComponent; // Inline tool UI for this tool
 }
 
 interface ToolExecutionContext {
   toolCallId: string;
   abortSignal: AbortSignal;
-  human: (payload: unknown) => Promise<unknown>;  // Request human input (HITL)
+  human: (payload: unknown) => Promise<unknown>; // Request human input (HITL)
 }
 ```
 

@@ -37,13 +37,13 @@ import {
 
 ## Primitive Parts
 
-| Primitive | Key Parts |
-|-----------|-----------|
-| `ThreadPrimitive` | `.Root`, `.Viewport`, `.Messages`, `.Empty`, `.ScrollToBottom` |
-| `ComposerPrimitive` | `.Root`, `.Input`, `.Send`, `.Cancel`, `.Attachments` |
-| `MessagePrimitive` | `.Root`, `.Parts`/`.Content`, `.If`, `.Error` |
-| `ActionBarPrimitive` | `.Copy`, `.Edit`, `.Reload`, `.Speak`, `.FeedbackPositive`, `.FeedbackNegative`, `.ExportMarkdown` |
-| `BranchPickerPrimitive` | `.Previous`, `.Next`, `.Number`, `.Count` |
+| Primitive               | Key Parts                                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------------------- |
+| `ThreadPrimitive`       | `.Root`, `.Viewport`, `.Messages`, `.Empty`, `.ScrollToBottom`                                     |
+| `ComposerPrimitive`     | `.Root`, `.Input`, `.Send`, `.Cancel`, `.Attachments`                                              |
+| `MessagePrimitive`      | `.Root`, `.Parts`/`.Content`, `.If`, `.Error`                                                      |
+| `ActionBarPrimitive`    | `.Copy`, `.Edit`, `.Reload`, `.Speak`, `.FeedbackPositive`, `.FeedbackNegative`, `.ExportMarkdown` |
+| `BranchPickerPrimitive` | `.Previous`, `.Next`, `.Number`, `.Count`                                                          |
 
 ## Custom Thread Example
 
@@ -52,19 +52,13 @@ function CustomThread() {
   return (
     <ThreadPrimitive.Root className="flex flex-col h-full">
       <ThreadPrimitive.Empty>
-        <div className="flex-1 flex items-center justify-center">
-          Start a conversation
-        </div>
+        <div className="flex-1 flex items-center justify-center">Start a conversation</div>
       </ThreadPrimitive.Empty>
 
       <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto p-4">
         <ThreadPrimitive.Messages>
           {({ message }) =>
-            message.role === "user" ? (
-              <CustomUserMessage />
-            ) : (
-              <CustomAssistantMessage />
-            )
+            message.role === "user" ? <CustomUserMessage /> : <CustomAssistantMessage />
           }
         </ThreadPrimitive.Messages>
       </ThreadPrimitive.Viewport>
@@ -140,7 +134,9 @@ Returning `null` from the render function lets registered tool and data UIs rend
 <AuiIf condition={({ message }) => message.branchCount > 1}>
   <BranchPickerPrimitive.Root className="flex items-center gap-1">
     <BranchPickerPrimitive.Previous>←</BranchPickerPrimitive.Previous>
-    <span><BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count /></span>
+    <span>
+      <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
+    </span>
     <BranchPickerPrimitive.Next>→</BranchPickerPrimitive.Next>
   </BranchPickerPrimitive.Root>
 </AuiIf>
@@ -149,9 +145,11 @@ Returning `null` from the render function lets registered tool and data UIs rend
 ## Common Gotchas
 
 **Primitives not rendering**
+
 - Wrap in `AssistantRuntimeProvider`
 - Ensure parent primitive provides context
 
 **Styles not applying**
+
 - Primitives are unstyled by default
 - Add `className` and style with your app's Tailwind/CSS system

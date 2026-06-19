@@ -92,8 +92,7 @@ export default {
       return new Response(null, { headers: cors(request) });
     }
     const upstream =
-      (await routeAgentRequest(request, env)) ??
-      new Response("Not found", { status: 404 });
+      (await routeAgentRequest(request, env)) ?? new Response("Not found", { status: 404 });
     const res = new Response(upstream.body, upstream);
     for (const [k, v] of Object.entries(cors(request))) res.headers.set(k, v);
     return res;
@@ -114,11 +113,9 @@ The binding `name` and `class_name` must match the exported class. `new_sqlite_c
   "compatibility_date": "2026-01-01",
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": {
-    "bindings": [{ "name": "Chat", "class_name": "Chat" }]
+    "bindings": [{ "name": "Chat", "class_name": "Chat" }],
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["Chat"] }
-  ]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Chat"] }],
 }
 ```
 
@@ -185,9 +182,7 @@ NEXT_PUBLIC_AGENT_HOST=http://localhost:8787
 `useAgentChat`'s return type is `Omit<ReturnType<typeof useChat>, "addToolOutput"> & { ... }`. The `addToolOutput` option shape differs slightly: `useChat` accepts `{ state, tool, toolCallId, ... }`; `useAgentChat` accepts `{ state, toolCallId, toolName?, ... }`. At runtime the paths converge through `useAISDKRuntime` without issue. If the compiler flags the call, cast at the call site:
 
 ```tsx
-const runtime = useAISDKRuntime(
-  chat as Parameters<typeof useAISDKRuntime>[0],
-);
+const runtime = useAISDKRuntime(chat as Parameters<typeof useAISDKRuntime>[0]);
 ```
 
 If TypeScript still refuses the direct cast, use `chat as unknown as Parameters<typeof useAISDKRuntime>[0]`. Note: `satisfies` does not help; it validates assignability without changing the inferred type, so it surfaces the same error.

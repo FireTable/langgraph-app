@@ -153,14 +153,14 @@ Note: human in the loop tools (`human()` interrupts) are not supported by the da
 
 AI SDK v6 introduced breaking API changes, and `@assistant-ui/react-ai-sdk` follows v6 going forward. Differences that show up when these legacy stacks are upgraded:
 
-| Area | v4 | v5 | v6 (current) |
-|---|---|---|---|
-| `ai` package | `ai@^4` | `ai@^5` | `ai@^6` |
-| `@ai-sdk/openai` | any | `^1` | `^3` |
-| Runtime package | `@assistant-ui/react-data-stream` | `@assistant-ui/react-ai-sdk@0.x` | `@assistant-ui/react-ai-sdk` |
-| Runtime hook | `useDataStreamRuntime` | `useVercelUseChatRuntime` | `useChatRuntime` |
-| `convertToModelMessages` | not used | sync | async (`await`) |
-| Tool schema key | n/a | `parameters:` | `inputSchema:` |
-| Response method | `toDataStreamResponse()` | `toDataStreamResponse()` | `toUIMessageStreamResponse()` |
+| Area                     | v4                                | v5                               | v6 (current)                  |
+| ------------------------ | --------------------------------- | -------------------------------- | ----------------------------- |
+| `ai` package             | `ai@^4`                           | `ai@^5`                          | `ai@^6`                       |
+| `@ai-sdk/openai`         | any                               | `^1`                             | `^3`                          |
+| Runtime package          | `@assistant-ui/react-data-stream` | `@assistant-ui/react-ai-sdk@0.x` | `@assistant-ui/react-ai-sdk`  |
+| Runtime hook             | `useDataStreamRuntime`            | `useVercelUseChatRuntime`        | `useChatRuntime`              |
+| `convertToModelMessages` | not used                          | sync                             | async (`await`)               |
+| Tool schema key          | n/a                               | `parameters:`                    | `inputSchema:`                |
+| Response method          | `toDataStreamResponse()`          | `toDataStreamResponse()`         | `toUIMessageStreamResponse()` |
 
 To move off legacy, switch the runtime hook to `useChatRuntime`, update the backend to v6 `streamText`, and apply the AI SDK codemods at `ai-sdk.dev/docs/migration-guides`.

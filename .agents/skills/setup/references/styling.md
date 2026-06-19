@@ -25,7 +25,7 @@ Components use shadcn theme tokens defined in `app/globals.css` and mapped to Ta
 .dark {
   --background: oklch(0.141 0.005 285.823);
   --foreground: oklch(0.985 0 0);
-  --primary: oklch(0.9 0.001 286.0);
+  --primary: oklch(0.9 0.001 286);
   /* ...other theme tokens */
 }
 ```
@@ -40,7 +40,7 @@ import { ThemeProvider } from "next-themes";
 
 <ThemeProvider attribute="class" defaultTheme="system">
   {children}
-</ThemeProvider>
+</ThemeProvider>;
 ```
 
 ## Common Layout Patterns
@@ -72,10 +72,7 @@ Use `cn()` when customizing local component styles (including child elements lik
 
 ```tsx
 <ThreadPrimitive.Root
-  className={cn(
-    "aui-thread-root @container flex h-full flex-col bg-background",
-    className
-  )}
+  className={cn("aui-thread-root @container flex h-full flex-col bg-background", className)}
 >
   {/* ... */}
 </ThreadPrimitive.Root>

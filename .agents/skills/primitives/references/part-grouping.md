@@ -50,10 +50,10 @@ Renders parts through a `groupBy` function that maps each part to a group-key pa
 </MessagePrimitive.GroupedParts>
 ```
 
-| Prop | Type | Description |
-|------|------|-------------|
-| `groupBy` | `(part) => readonly \`group-${string}\`[]` | Maps a part to a group-key path. Return `[]` to leave it ungrouped. |
-| `children` | `({ part, children }) => ReactNode` | Render function for group nodes and leaf parts. |
+| Prop       | Type                                       | Description                                                         |
+| ---------- | ------------------------------------------ | ------------------------------------------------------------------- |
+| `groupBy`  | `(part) => readonly \`group-${string}\`[]` | Maps a part to a group-key path. Return `[]` to leave it ungrouped. |
+| `children` | `({ part, children }) => ReactNode`        | Render function for group nodes and leaf parts.                     |
 
 Render `children` only for group cases. Leaf cases (`text`, `tool-call`, `reasoning`, etc.) render the part itself; rendering `children` from a leaf case throws.
 
@@ -165,9 +165,7 @@ Note: LangGraph does not emit reasoning in the AI SDK reasoning stream format. T
 The `reasoning` registry component (`https://r.assistant-ui.com/reasoning.json`) provides a collapsible thinking accordion. Exports from `@/components/assistant-ui/reasoning`: `Reasoning`, `ReasoningRoot`, `ReasoningTrigger`, `ReasoningContent`, `ReasoningText`, `ReasoningFade`, `reasoningVariants`. `ReasoningGroup` is deprecated.
 
 ```tsx
-<MessagePrimitive.GroupedParts
-  groupBy={groupPartByType({ reasoning: ["group-reasoning"] })}
->
+<MessagePrimitive.GroupedParts groupBy={groupPartByType({ reasoning: ["group-reasoning"] })}>
   {({ part, children }) => {
     switch (part.type) {
       case "group-reasoning": {
@@ -196,13 +194,13 @@ The `reasoning` registry component (`https://r.assistant-ui.com/reasoning.json`)
 
 Wire `part.status.type === "running"` into `defaultOpen` so the accordion opens automatically while reasoning streams and stays closed once done. The `group-reasoning` case must render `{children}`; the leaf `reasoning` case must not.
 
-| Component | Notable props |
-|-----------|---------------|
-| `ReasoningRoot` | `defaultOpen?`, `open?`, `onOpenChange?`, `variant?` (`"outline"` default, `"ghost"`, `"muted"`) |
-| `ReasoningTrigger` | `active?` (shimmer while streaming), `duration?` (appends `(Ns)`) |
-| `ReasoningContent` | wraps `CollapsibleContent`; includes `ReasoningFade` |
-| `ReasoningText` | scrollable text container (`max-h-64`) |
-| `Reasoning` | leaf `ReasoningMessagePartComponent`, renders the part via markdown |
+| Component          | Notable props                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| `ReasoningRoot`    | `defaultOpen?`, `open?`, `onOpenChange?`, `variant?` (`"outline"` default, `"ghost"`, `"muted"`) |
+| `ReasoningTrigger` | `active?` (shimmer while streaming), `duration?` (appends `(Ns)`)                                |
+| `ReasoningContent` | wraps `CollapsibleContent`; includes `ReasoningFade`                                             |
+| `ReasoningText`    | scrollable text container (`max-h-64`)                                                           |
+| `Reasoning`        | leaf `ReasoningMessagePartComponent`, renders the part via markdown                              |
 
 ## Sources UI
 
@@ -216,7 +214,7 @@ import { Sources } from "@/components/assistant-ui/sources";
     if (part.type === "source") return <Sources {...part} />;
     return null;
   }}
-</MessagePrimitive.Parts>
+</MessagePrimitive.Parts>;
 ```
 
 `Sources` branches on `part.sourceType`: `"url"` renders a linked badge with favicon and title (falling back to the domain), `"document"` renders a non-linked badge with a file icon and `part.title`. Compound sub-components `Sources.Root` (`Source`), `Sources.Icon` (`SourceIcon`), `Sources.Title` (`SourceTitle`) allow custom composition.
@@ -276,8 +274,8 @@ groupBy={(part) => {
 
 ```ts
 const toolkit = {
-  ask_user: { type: "human", render: AskUI },           // standalone (forced)
-  search_web: { type: "frontend", render: SearchUI },   // inline trace (default)
+  ask_user: { type: "human", render: AskUI }, // standalone (forced)
+  search_web: { type: "frontend", render: SearchUI }, // inline trace (default)
   checkout: { type: "frontend", render: CheckoutUI, display: "standalone" },
 } satisfies Toolkit;
 ```

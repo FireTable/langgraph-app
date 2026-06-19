@@ -4,16 +4,16 @@ Individual message display.
 
 ## Parts
 
-| Part | Description |
-|------|-------------|
-| `.Root` | Message container |
-| `.Parts` | Message body with parts (canonical) |
-| `.Content` | Message body with parts |
-| `.If` | Conditional rendering (deprecated; prefer `AuiIf`) |
-| `.Error` | Render fallback when message has an error |
-| `.PartByIndex` | Render a single part by index |
-| `.Attachments` | Render message attachments |
-| `.AttachmentByIndex` | Render one attachment by index |
+| Part                 | Description                                        |
+| -------------------- | -------------------------------------------------- |
+| `.Root`              | Message container                                  |
+| `.Parts`             | Message body with parts (canonical)                |
+| `.Content`           | Message body with parts                            |
+| `.If`                | Conditional rendering (deprecated; prefer `AuiIf`) |
+| `.Error`             | Render fallback when message has an error          |
+| `.PartByIndex`       | Render a single part by index                      |
+| `.Attachments`       | Render message attachments                         |
+| `.AttachmentByIndex` | Render one attachment by index                     |
 
 ## Basic Structure
 
@@ -31,7 +31,7 @@ Container for a single message.
 ```tsx
 <MessagePrimitive.Root
   className="flex gap-2 mb-4"
-  data-role="user"  // or "assistant"
+  data-role="user" // or "assistant"
 >
   {children}
 </MessagePrimitive.Root>
@@ -91,14 +91,14 @@ Renders message content parts (text, images, tool calls, etc.). `MessagePrimitiv
 
 ### Part Types
 
-| Type | Description | Properties |
-|------|-------------|------------|
-| `Text` | Plain text | `text` |
-| `Image` | Image attachment | `image` (URL) |
-| `ToolCall` | Tool invocation | `toolName`, `args`, `argsText`, `result?`, `isError?`, `artifact?` |
-| `Reasoning` | Chain-of-thought | `text` |
-| `Source` | Citation/reference | `url`, `title` |
-| `File` | File attachment | `filename?`, `data`, `mimeType` |
+| Type        | Description        | Properties                                                         |
+| ----------- | ------------------ | ------------------------------------------------------------------ |
+| `Text`      | Plain text         | `text`                                                             |
+| `Image`     | Image attachment   | `image` (URL)                                                      |
+| `ToolCall`  | Tool invocation    | `toolName`, `args`, `argsText`, `result?`, `isError?`, `artifact?` |
+| `Reasoning` | Chain-of-thought   | `text`                                                             |
+| `Source`    | Citation/reference | `url`, `title`                                                     |
+| `File`      | File attachment    | `filename?`, `data`, `mimeType`                                    |
 
 ## MessagePrimitive.If / AuiIf
 
@@ -151,11 +151,7 @@ function CustomUserMessage() {
 function CustomAssistantMessage() {
   return (
     <MessagePrimitive.Root className="flex mb-4">
-      <Avatar
-        src="/ai-avatar.png"
-        fallback="AI"
-        className="w-8 h-8 rounded-full mr-2 shrink-0"
-      />
+      <Avatar src="/ai-avatar.png" fallback="AI" className="w-8 h-8 rounded-full mr-2 shrink-0" />
 
       <div className="max-w-[80%]">
         <div className="bg-gray-100 rounded-2xl rounded-tl-sm px-4 py-2">

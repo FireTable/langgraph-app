@@ -112,8 +112,7 @@ const aui = useAui({
   mcp: McpManagerResource({
     connectors,
     storage: McpCustomStorage({
-      loadCustomServers: async () =>
-        fetch("/api/mcp/servers").then((r) => r.json()),
+      loadCustomServers: async () => fetch("/api/mcp/servers").then((r) => r.json()),
       saveCustomServers: async (records) =>
         fetch("/api/mcp/servers", {
           method: "PUT",
@@ -126,8 +125,7 @@ const aui = useAui({
           method: "PUT",
           body: JSON.stringify(state),
         }),
-      clearAuthState: async (id) =>
-        fetch(`/api/mcp/auth/${id}`, { method: "DELETE" }),
+      clearAuthState: async (id) => fetch(`/api/mcp/auth/${id}`, { method: "DELETE" }),
     }),
   }),
 });

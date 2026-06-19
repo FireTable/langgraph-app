@@ -5,10 +5,7 @@ Type definitions for assistant-ui runtime system.
 ## Message Types
 
 ```typescript
-type ThreadMessage =
-  | ThreadUserMessage
-  | ThreadAssistantMessage
-  | ThreadSystemMessage;
+type ThreadMessage = ThreadUserMessage | ThreadAssistantMessage | ThreadSystemMessage;
 
 interface ThreadUserMessage {
   id: string;
@@ -40,11 +37,11 @@ interface ThreadSystemMessage {
 
 ```typescript
 type MessageStatus =
-  | { type: "running" }                                    // Generation in progress
+  | { type: "running" } // Generation in progress
   | { type: "requires-action"; reason: "tool-calls" | "interrupt" }
-  | { type: "complete"; reason: "stop" | "unknown" }       // Finished
+  | { type: "complete"; reason: "stop" | "unknown" } // Finished
   | {
-      type: "incomplete";                                  // Stopped early
+      type: "incomplete"; // Stopped early
       reason: "cancelled" | "tool-calls" | "length" | "content-filter" | "other" | "error";
       error?: unknown;
     };
@@ -53,13 +50,7 @@ type MessageStatus =
 ## Message Parts
 
 ```typescript
-type MessagePart =
-  | TextPart
-  | ImagePart
-  | ToolCallPart
-  | ReasoningPart
-  | SourcePart
-  | FilePart;
+type MessagePart = TextPart | ImagePart | ToolCallPart | ReasoningPart | SourcePart | FilePart;
 
 interface TextPart {
   type: "text";
@@ -117,9 +108,7 @@ interface Attachment {
   status: { type: "running" | "requires-action" | "complete" | "incomplete"; reason?: string };
 }
 
-type AttachmentContent =
-  | { type: "text"; text: string }
-  | { type: "image"; image: string };
+type AttachmentContent = { type: "text"; text: string } | { type: "image"; image: string };
 ```
 
 ## Runtime State Types
@@ -133,11 +122,11 @@ interface ThreadState {
 }
 
 interface ThreadCapabilities {
-  cancel: boolean;      // Can cancel generation
-  edit: boolean;        // Can edit messages
-  reload: boolean;      // Can regenerate
-  copy: boolean;        // Can copy messages
-  speak: boolean;       // TTS support
+  cancel: boolean; // Can cancel generation
+  edit: boolean; // Can edit messages
+  reload: boolean; // Can regenerate
+  copy: boolean; // Can copy messages
+  speak: boolean; // TTS support
   attachments: boolean; // File uploads
 }
 ```
@@ -146,10 +135,10 @@ interface ThreadCapabilities {
 
 ```typescript
 interface ThreadListState {
-  threadIds: readonly string[];         // Active thread IDs
+  threadIds: readonly string[]; // Active thread IDs
   archivedThreadIds: readonly string[]; // Archived thread IDs
   newThreadId: string | null; // Pending new thread ID
-  mainThreadId: string;      // Current active thread
+  mainThreadId: string; // Current active thread
   isLoading: boolean;
   threadItems: readonly ThreadListItemState[];
 }
@@ -168,13 +157,13 @@ interface ThreadListItemState {
 ```typescript
 interface ComposerState {
   text: string;
-  role: MessageRole;            // role of the message being composed
+  role: MessageRole; // role of the message being composed
   attachments: Attachment[];
   attachmentAccept: string;
   isEmpty: boolean;
-  isEditing: boolean;           // editing an existing message
+  isEditing: boolean; // editing an existing message
   canCancel: boolean;
-  dictation?: DictationState;   // present while dictation is active
+  dictation?: DictationState; // present while dictation is active
 }
 ```
 
@@ -182,10 +171,10 @@ interface ComposerState {
 
 ```typescript
 type ToolCallMessagePartStatus =
-  | { type: "running" }        // Tool executing
-  | { type: "complete" }       // Finished
+  | { type: "running" } // Tool executing
+  | { type: "complete" } // Finished
   | { type: "incomplete"; reason: "cancelled" | "length" | "content-filter" | "other" | "error" }
-  | { type: "requires-action"; reason: "interrupt" };  // Needs input
+  | { type: "requires-action"; reason: "interrupt" }; // Needs input
 
 // Props passed to a makeAssistantToolUI render component
 interface ToolCallMessagePartProps<TArgs = unknown, TResult = unknown> {
@@ -198,8 +187,8 @@ interface ToolCallMessagePartProps<TArgs = unknown, TResult = unknown> {
   artifact?: unknown;
   status: ToolCallMessagePartStatus;
 
-  addResult: (result: unknown) => void;   // renderer-supplied result
-  resume: (payload: unknown) => void;      // resume a context.human(...) tool
+  addResult: (result: unknown) => void; // renderer-supplied result
+  resume: (payload: unknown) => void; // resume a context.human(...) tool
   respondToApproval: (response: { approved: boolean; reason?: string }) => void;
 }
 ```

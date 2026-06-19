@@ -17,9 +17,7 @@ async function handleRequest(req: NextRequest, method: string) {
     const searchParams = new URLSearchParams(url.search);
     searchParams.delete("_path");
     searchParams.delete("nxtP_path");
-    const queryString = searchParams.toString()
-      ? `?${searchParams.toString()}`
-      : "";
+    const queryString = searchParams.toString() ? `?${searchParams.toString()}` : "";
 
     const options: RequestInit = {
       method,
@@ -33,10 +31,7 @@ async function handleRequest(req: NextRequest, method: string) {
       options.body = await req.text();
     }
 
-    const res = await fetch(
-      `${process.env.LANGGRAPH_API_URL}/${path}${queryString}`,
-      options,
-    );
+    const res = await fetch(`${process.env.LANGGRAPH_API_URL}/${path}${queryString}`, options);
 
     const headers = new Headers(res.headers);
     headers.delete("content-encoding");
@@ -55,10 +50,7 @@ async function handleRequest(req: NextRequest, method: string) {
   } catch (e: unknown) {
     if (e instanceof Error) {
       const typedError = e as Error & { status?: number };
-      return NextResponse.json(
-        { error: typedError.message },
-        { status: typedError.status ?? 500 },
-      );
+      return NextResponse.json({ error: typedError.message }, { status: typedError.status ?? 500 });
     }
     return NextResponse.json({ error: "Unknown error" }, { status: 500 });
   }

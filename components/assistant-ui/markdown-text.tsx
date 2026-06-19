@@ -41,12 +41,8 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
         {language}
       </span>
       <TooltipIconButton tooltip="Copy" onClick={onCopy}>
-        {!isCopied && (
-          <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
-        )}
-        {isCopied && (
-          <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
-        )}
+        {!isCopied && <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />}
+        {isCopied && <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />}
       </TooltipIconButton>
     </div>
   );
@@ -115,30 +111,18 @@ const defaultComponents = memoizeMarkdownComponents({
   ),
   h5: ({ className, ...props }) => (
     <h5
-      className={cn(
-        "aui-md-h5 mt-3 mb-1 text-sm font-semibold first:mt-0 last:mb-0",
-        className,
-      )}
+      className={cn("aui-md-h5 mt-3 mb-1 text-sm font-semibold first:mt-0 last:mb-0", className)}
       {...props}
     />
   ),
   h6: ({ className, ...props }) => (
     <h6
-      className={cn(
-        "aui-md-h6 mt-3 mb-1 text-sm font-medium first:mt-0 last:mb-0",
-        className,
-      )}
+      className={cn("aui-md-h6 mt-3 mb-1 text-sm font-medium first:mt-0 last:mb-0", className)}
       {...props}
     />
   ),
   p: ({ className, ...props }) => (
-    <p
-      className={cn(
-        "aui-md-p my-3 leading-relaxed first:mt-0 last:mb-0",
-        className,
-      )}
-      {...props}
-    />
+    <p className={cn("aui-md-p my-3 leading-relaxed first:mt-0 last:mb-0", className)} {...props} />
   ),
   a: ({ className, ...props }) => (
     <a
@@ -177,10 +161,7 @@ const defaultComponents = memoizeMarkdownComponents({
     />
   ),
   hr: ({ className, ...props }) => (
-    <hr
-      className={cn("aui-md-hr border-muted-foreground/20 my-3", className)}
-      {...props}
-    />
+    <hr className={cn("aui-md-hr border-muted-foreground/20 my-3", className)} {...props} />
   ),
   table: ({ className, ...props }) => (
     <table
@@ -222,16 +203,10 @@ const defaultComponents = memoizeMarkdownComponents({
     <li className={cn("aui-md-li leading-relaxed", className)} {...props} />
   ),
   strong: ({ className, ...props }) => (
-    <strong
-      className={cn("aui-md-strong font-semibold", className)}
-      {...props}
-    />
+    <strong className={cn("aui-md-strong font-semibold", className)} {...props} />
   ),
   sup: ({ className, ...props }) => (
-    <sup
-      className={cn("aui-md-sup [&>a]:text-xs [&>a]:no-underline", className)}
-      {...props}
-    />
+    <sup className={cn("aui-md-sup [&>a]:text-xs [&>a]:no-underline", className)} {...props} />
   ),
   pre: ({ className, ...props }) => (
     <pre

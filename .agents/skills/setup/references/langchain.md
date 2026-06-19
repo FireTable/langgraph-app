@@ -61,11 +61,11 @@ NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID=your_graph_id
 
 `useStreamRuntime` accepts every option upstream `useStream` does (`UseStreamOptions`), plus three assistant-ui specific fields.
 
-| Option | Type | Description |
-|---|---|---|
-| `cloud` | `AssistantCloud` | Optional. Persists threads via assistant-cloud. |
-| `adapters` | `{ attachments?, speech?, feedback? }` | Optional. Attachment, speech, and feedback adapters. |
-| `messagesKey` | `string` | The state key that holds messages. Defaults to `"messages"`. |
+| Option        | Type                                   | Description                                                  |
+| ------------- | -------------------------------------- | ------------------------------------------------------------ |
+| `cloud`       | `AssistantCloud`                       | Optional. Persists threads via assistant-cloud.              |
+| `adapters`    | `{ attachments?, speech?, feedback? }` | Optional. Attachment, speech, and feedback adapters.         |
+| `messagesKey` | `string`                               | The state key that holds messages. Defaults to `"messages"`. |
 
 ## Reading custom state keys
 
@@ -104,10 +104,7 @@ Note: reading the state key directly avoids reconstructing a list from partial t
 LangGraph interrupts pause the graph and wait for client input. `useLangChainInterruptState` exposes the current interrupt; `useLangChainSubmit` resumes the graph with a raw state update.
 
 ```tsx
-import {
-  useLangChainInterruptState,
-  useLangChainSubmit,
-} from "@assistant-ui/react-langchain";
+import { useLangChainInterruptState, useLangChainSubmit } from "@assistant-ui/react-langchain";
 import { Command } from "@langchain/langgraph-sdk";
 
 function InterruptPrompt() {
@@ -117,11 +114,7 @@ function InterruptPrompt() {
   return (
     <div>
       <pre>{JSON.stringify(interrupt.value, null, 2)}</pre>
-      <button
-        onClick={() =>
-          submit(null, { command: new Command({ resume: "approved" }) })
-        }
-      >
+      <button onClick={() => submit(null, { command: new Command({ resume: "approved" }) })}>
         Approve
       </button>
     </div>
@@ -171,14 +164,14 @@ Pick `react-langchain` when your app already depends on `@langchain/react`, when
 
 Hook name mapping:
 
-| react-langgraph | react-langchain | Notes |
-|---|---|---|
-| `useLangGraphRuntime` | `useStreamRuntime` | Options extend upstream `UseStreamOptions`; no `stream` / `create` / `load` to write. |
-| `useLangGraphInterruptState` | `useLangChainInterruptState` | Same return shape. |
-| `useLangGraphSendCommand` | `useLangChainSubmit` | `submit(values, { command })` replaces the dedicated hook. |
-| `useLangGraphSend` | use `runtime.thread.append` | No direct equivalent; send turns through the runtime. |
-| `useLangGraphMessageMetadata` | not available | Open an issue if you rely on this. |
-| `useLangGraphUIMessages` | not available | Open an issue if you rely on this. |
-| *(none)* | `useLangChainState<T>(key)` | Reads any custom state key reactively. |
+| react-langgraph               | react-langchain              | Notes                                                                                 |
+| ----------------------------- | ---------------------------- | ------------------------------------------------------------------------------------- |
+| `useLangGraphRuntime`         | `useStreamRuntime`           | Options extend upstream `UseStreamOptions`; no `stream` / `create` / `load` to write. |
+| `useLangGraphInterruptState`  | `useLangChainInterruptState` | Same return shape.                                                                    |
+| `useLangGraphSendCommand`     | `useLangChainSubmit`         | `submit(values, { command })` replaces the dedicated hook.                            |
+| `useLangGraphSend`            | use `runtime.thread.append`  | No direct equivalent; send turns through the runtime.                                 |
+| `useLangGraphMessageMetadata` | not available                | Open an issue if you rely on this.                                                    |
+| `useLangGraphUIMessages`      | not available                | Open an issue if you rely on this.                                                    |
+| _(none)_                      | `useLangChainState<T>(key)`  | Reads any custom state key reactively.                                                |
 
 See the `langgraph.md` reference for the full-featured adapter.

@@ -88,7 +88,7 @@ npm install mermaid
 
 Create `components/assistant-ui/mermaid-diagram.tsx`. The component receives `SyntaxHighlighterProps` (carrying `code`, `node`, `components`, and `language`) and uses `useAuiState` to detect when the code fence has finished streaming before rendering, so Mermaid never parses a partial diagram.
 
-```tsx
+````tsx
 "use client";
 import { useAuiState } from "@assistant-ui/react";
 import type { SyntaxHighlighterProps } from "@assistant-ui/react-markdown";
@@ -143,7 +143,7 @@ export const MermaidDiagram: FC<MermaidDiagramProps> = ({
 };
 
 MermaidDiagram.displayName = "MermaidDiagram";
-```
+````
 
 ## Wiring Mermaid in
 

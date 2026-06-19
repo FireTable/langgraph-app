@@ -100,6 +100,7 @@ d:{"finishReason":"stop","usage":{"promptTokens":0,"completionTokens":0}}
 ```
 
 Each line:
+
 - `0:` - Text content
 - `9:` - Tool call
 - `b:` - Tool call start

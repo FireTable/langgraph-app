@@ -49,15 +49,17 @@ function Chat() {
 
 ```tsx
 const runtime = useAgUiRuntime({
-  agent: HttpAgent,           // Required: AG-UI HttpAgent instance
-  logger: {                   // Optional: logging callbacks
+  agent: HttpAgent, // Required: AG-UI HttpAgent instance
+  logger: {
+    // Optional: logging callbacks
     debug: (...args) => {},
     error: (...args) => {},
   },
-  showThinking: true,         // Optional: show thinking content
-  onError: (e) => {},         // Optional: error handler
-  onCancel: () => {},         // Optional: cancel handler
-  adapters: {                 // Optional: assistant-ui adapters
+  showThinking: true, // Optional: show thinking content
+  onError: (e) => {}, // Optional: error handler
+  onCancel: () => {}, // Optional: cancel handler
+  adapters: {
+    // Optional: assistant-ui adapters
     attachments: AttachmentAdapter,
     speech: SpeechSynthesisAdapter,
     dictation: DictationAdapter,

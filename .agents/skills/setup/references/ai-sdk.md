@@ -6,14 +6,14 @@ Use this when the app uses `@assistant-ui/react-ai-sdk` and an `/api/chat` route
 
 Agents trained on older AI SDK versions will use outdated patterns. These are **AI SDK** breaking changes (not assistant-ui changes):
 
-| Concept | Old (v4/v5) | Current (v6) |
-|---------|-------------|--------------|
-| useChat import | `import { useChat } from "ai/react"` | `import { useChat } from "@ai-sdk/react"` |
-| assistant-ui wiring | `useAISDKRuntime(chat)` | `useChatRuntime({ transport })` |
-| Message conversion | Pass messages directly to `streamText` | `await convertToModelMessages(messages)` |
-| Stream response | `result.toDataStreamResponse()` | `result.toUIMessageStreamResponse()` |
-| Tool schema key | `parameters: z.object({...})` | `inputSchema: z.object({...})` |
-| Multi-step tools | `maxSteps: n` | `stopWhen: stepCountIs(n)` |
+| Concept             | Old (v4/v5)                            | Current (v6)                              |
+| ------------------- | -------------------------------------- | ----------------------------------------- |
+| useChat import      | `import { useChat } from "ai/react"`   | `import { useChat } from "@ai-sdk/react"` |
+| assistant-ui wiring | `useAISDKRuntime(chat)`                | `useChatRuntime({ transport })`           |
+| Message conversion  | Pass messages directly to `streamText` | `await convertToModelMessages(messages)`  |
+| Stream response     | `result.toDataStreamResponse()`        | `result.toUIMessageStreamResponse()`      |
+| Tool schema key     | `parameters: z.object({...})`          | `inputSchema: z.object({...})`            |
+| Multi-step tools    | `maxSteps: n`                          | `stopWhen: stepCountIs(n)`                |
 
 ## Standard Setup
 
@@ -127,13 +127,7 @@ Use `tool({ inputSchema: z.object({...}) })` and `stopWhen: stepCountIs(...)` fo
 
 ```ts
 import { openai } from "@ai-sdk/openai";
-import {
-  streamText,
-  tool,
-  stepCountIs,
-  convertToModelMessages,
-  type UIMessage,
-} from "ai";
+import { streamText, tool, stepCountIs, convertToModelMessages, type UIMessage } from "ai";
 import { z } from "zod";
 
 export async function POST(req: Request) {
@@ -180,7 +174,7 @@ const WeatherToolUI = makeAssistantToolUI({
 <AssistantRuntimeProvider runtime={runtime}>
   <WeatherToolUI />
   <Thread />
-</AssistantRuntimeProvider>
+</AssistantRuntimeProvider>;
 ```
 
 ## Using Different Providers
@@ -216,9 +210,7 @@ const runtime = useChatRuntime({
 // Backend
 const { messages, model } = await req.json();
 
-const provider = model.startsWith("claude")
-  ? anthropic(model)
-  : openai(model);
+const provider = model.startsWith("claude") ? anthropic(model) : openai(model);
 
 const result = streamText({
   model: provider,
@@ -261,12 +253,14 @@ See the `/cloud` skill for authentication and configuration details.
 ## Troubleshooting
 
 **"Module not found: @ai-sdk/react"**
+
 ```bash
 npm install @ai-sdk/react
 ```
 
 **"useChat is not a function"**
 Mixing v5 and v6. Remove old imports:
+
 ```bash
 npm uninstall ai/react  # if present
 npm install @ai-sdk/react@latest ai@latest

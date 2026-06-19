@@ -142,9 +142,7 @@ interface ModelContextRegistry {
   addInstruction?: (
     config: string | AssistantInstructionsConfig,
   ) => ModelContextRegistryInstructionHandle;
-  addProvider?: (
-    provider: ModelContextProvider,
-  ) => ModelContextRegistryProviderHandle;
+  addProvider?: (provider: ModelContextProvider) => ModelContextRegistryProviderHandle;
 }
 ```
 

@@ -4,17 +4,17 @@ Message action buttons (copy, edit, reload, etc.).
 
 ## Parts
 
-| Part | Description |
-|------|-------------|
-| `.Root` | Container |
-| `.Copy` | Copy message to clipboard |
-| `.Edit` | Enter edit mode |
-| `.Reload` | Regenerate response |
-| `.Speak` | Text-to-speech |
-| `.StopSpeaking` | Stop TTS |
-| `.FeedbackPositive` | Thumbs up |
-| `.FeedbackNegative` | Thumbs down |
-| `.ExportMarkdown` | Export message |
+| Part                | Description               |
+| ------------------- | ------------------------- |
+| `.Root`             | Container                 |
+| `.Copy`             | Copy message to clipboard |
+| `.Edit`             | Enter edit mode           |
+| `.Reload`           | Regenerate response       |
+| `.Speak`            | Text-to-speech            |
+| `.StopSpeaking`     | Stop TTS                  |
+| `.FeedbackPositive` | Thumbs up                 |
+| `.FeedbackNegative` | Thumbs down               |
+| `.ExportMarkdown`   | Export message            |
 
 ## Basic Usage
 
@@ -33,9 +33,9 @@ Container for action buttons. Usually placed inside a message.
 ```tsx
 <ActionBarPrimitive.Root
   className="flex gap-2 mt-2"
-  hideWhenRunning  // Hide while generating
-  autohide="not-last"  // "always" | "not-last" | "never"
-  autohideFloat="single-branch"  // Float behavior
+  hideWhenRunning // Hide while generating
+  autohide="not-last" // "always" | "not-last" | "never"
+  autohideFloat="single-branch" // Float behavior
 >
   {children}
 </ActionBarPrimitive.Root>
@@ -195,14 +195,10 @@ function MessageActionBar() {
       </AuiIf>
 
       <div className="border-l pl-1 ml-1">
-        <ActionBarPrimitive.FeedbackPositive
-          className="p-1.5 rounded text-gray-500 hover:text-green-600 hover:bg-green-50"
-        >
+        <ActionBarPrimitive.FeedbackPositive className="p-1.5 rounded text-gray-500 hover:text-green-600 hover:bg-green-50">
           <ThumbsUpIcon className="w-4 h-4" />
         </ActionBarPrimitive.FeedbackPositive>
-        <ActionBarPrimitive.FeedbackNegative
-          className="p-1.5 rounded text-gray-500 hover:text-red-600 hover:bg-red-50"
-        >
+        <ActionBarPrimitive.FeedbackNegative className="p-1.5 rounded text-gray-500 hover:text-red-600 hover:bg-red-50">
           <ThumbsDownIcon className="w-4 h-4" />
         </ActionBarPrimitive.FeedbackNegative>
       </div>

@@ -67,23 +67,12 @@ Other props worth knowing: `componentsByLanguage` (per-language `SyntaxHighlight
 
 ```tsx
 const defaultComponents = memoizeMarkdownComponents({
-  h1: ({ className, ...props }) => (
-    <h1 className={cn("aui-md-h1", className)} {...props} />
-  ),
-  p: ({ className, ...props }) => (
-    <p className={cn("aui-md-p", className)} {...props} />
-  ),
-  pre: ({ className, ...props }) => (
-    <pre className={cn("aui-md-pre", className)} {...props} />
-  ),
+  h1: ({ className, ...props }) => <h1 className={cn("aui-md-h1", className)} {...props} />,
+  p: ({ className, ...props }) => <p className={cn("aui-md-p", className)} {...props} />,
+  pre: ({ className, ...props }) => <pre className={cn("aui-md-pre", className)} {...props} />,
   code: function Code({ className, ...props }) {
     const isCodeBlock = useIsMarkdownCodeBlock();
-    return (
-      <code
-        className={cn(!isCodeBlock && "aui-md-inline-code", className)}
-        {...props}
-      />
-    );
+    return <code className={cn(!isCodeBlock && "aui-md-inline-code", className)} {...props} />;
   },
   CodeHeader,
   // h2-h6, a, blockquote, ul, ol, hr, table, th, td, tr, li, sup

@@ -137,16 +137,19 @@ Based on Phase 1 findings and the migration guide below, create a file-by-file p
 Group findings into categories:
 
 **Category A: Codemod-handled** (automatic)
+
 - CoreMessage → ModelMessage
 - convertToCoreMessages → convertToModelMessages
 - textEmbedding/textEmbeddingModel → embedding/embeddingModel (on providers)
 - ToolCallOptions → ToolExecutionOptions
 
 **Category B: Manual - Simple renames**
+
 - Message → UIMessage
 - maxSteps → stopWhen: stepCountIs(n)
 
 **Category C: Manual - Structural changes**
+
 - Adding await to convertToModelMessages
 - toDataStreamResponse → toUIMessageStreamResponse
 - generateObject → generateText + Output.object
@@ -154,6 +157,7 @@ Group findings into categories:
 - useChat hook changes
 
 **Category D: Manual - Complex logic**
+
 - Message parts array handling
 - Custom stream implementations
 - Tool result handling changes
@@ -218,6 +222,7 @@ npx @ai-sdk/codemod upgrade
 This is the recommended approach - it detects your current version and applies all necessary codemods (v4→v5→v6) automatically.
 
 **VERIFY:**
+
 - Review codemod output
 - Run `git diff` to see what changed
 - Check for any errors or warnings
@@ -236,6 +241,7 @@ This is the recommended approach - it detects your current version and applies a
 **IMPORTANT PATTERNS FROM GUIDE:**
 
 API Route changes:
+
 ```typescript
 // OLD
 const result = streamText({ model, messages, maxSteps: 10 });
@@ -246,12 +252,13 @@ import { stepCountIs } from "ai";
 const result = streamText({
   model,
   messages: await convertToModelMessages(messages),
-  stopWhen: stepCountIs(10)
+  stopWhen: stepCountIs(10),
 });
 return result.toUIMessageStreamResponse();
 ```
 
 Tool definitions:
+
 ```typescript
 // OLD
 tools: {
@@ -283,6 +290,7 @@ pnpm type-check
 ```
 
 If errors found:
+
 1. Read the error carefully
 2. Consult the migration guide below
 3. Fix the specific error
@@ -304,6 +312,7 @@ npx tsc --noEmit
 ### 4.2 Fix All Type Errors
 
 For each error:
+
 1. Add to todo list
 2. Read the file and surrounding context
 3. Identify which v6 change applies
@@ -467,6 +476,7 @@ npx @ai-sdk/codemod v5/move-maxsteps-to-stopwhen src/
 ```
 
 **Which command to use:**
+
 - `upgrade` - Recommended for v4 projects. Runs all v4, v5, and v6 codemods.
 - `v6` - For v5 projects. Runs only v6 codemods.
 - `v5` - For v4 projects wanting incremental migration. Runs only v5 codemods.
@@ -474,28 +484,28 @@ npx @ai-sdk/codemod v5/move-maxsteps-to-stopwhen src/
 
 ### Available v6 Codemods (v5 → v6)
 
-| Codemod | Description |
-|---------|-------------|
-| `v6/add-await-converttomodelmessages` | Adds `await` to `convertToModelMessages()` calls |
-| `v6/rename-converttocoremessages-to-converttomodelmessages` | Updates the conversion function name |
-| `v6/rename-core-message-to-model-message` | Renames `CoreMessage` → `ModelMessage` |
-| `v6/rename-mock-v2-to-v3` | Updates test mock classes from V2 to V3 |
-| `v6/rename-text-embedding-to-embedding` | Renames `textEmbeddingModel` → `embeddingModel` on providers |
-| `v6/rename-tool-call-options-to-tool-execution-options` | Renames `ToolCallOptions` → `ToolExecutionOptions` |
-| `v6/rename-vertex-provider-metadata-key` | Updates `google` → `vertex` for metadata keys |
+| Codemod                                                     | Description                                                  |
+| ----------------------------------------------------------- | ------------------------------------------------------------ |
+| `v6/add-await-converttomodelmessages`                       | Adds `await` to `convertToModelMessages()` calls             |
+| `v6/rename-converttocoremessages-to-converttomodelmessages` | Updates the conversion function name                         |
+| `v6/rename-core-message-to-model-message`                   | Renames `CoreMessage` → `ModelMessage`                       |
+| `v6/rename-mock-v2-to-v3`                                   | Updates test mock classes from V2 to V3                      |
+| `v6/rename-text-embedding-to-embedding`                     | Renames `textEmbeddingModel` → `embeddingModel` on providers |
+| `v6/rename-tool-call-options-to-tool-execution-options`     | Renames `ToolCallOptions` → `ToolExecutionOptions`           |
+| `v6/rename-vertex-provider-metadata-key`                    | Updates `google` → `vertex` for metadata keys                |
 
 ### Key v5 Codemods (v4 → v5, needed for v4 → v6)
 
-| Codemod | Description |
-|---------|-------------|
-| `v5/move-maxsteps-to-stopwhen` | Moves `maxSteps` to `stopWhen: stepCountIs(n)` |
-| `v5/rename-max-tokens-to-max-output-tokens` | Renames `maxTokens` → `maxOutputTokens` |
-| `v5/rename-tool-parameters-to-inputschema` | Renames tool `parameters` → `inputSchema` |
-| `v5/replace-usechat-api-with-transport` | Replaces `useChat({ api })` with transport |
-| `v5/replace-usechat-input-with-state` | Removes managed input state from useChat |
-| `v5/replace-content-with-parts` | Replaces `message.content` with `message.parts` |
-| `v5/rename-message-to-ui-message` | Renames `Message` → `UIMessage` |
-| `v5/rename-datastream-methods-to-uimessage` | Renames stream methods to UI message variants |
+| Codemod                                     | Description                                     |
+| ------------------------------------------- | ----------------------------------------------- |
+| `v5/move-maxsteps-to-stopwhen`              | Moves `maxSteps` to `stopWhen: stepCountIs(n)`  |
+| `v5/rename-max-tokens-to-max-output-tokens` | Renames `maxTokens` → `maxOutputTokens`         |
+| `v5/rename-tool-parameters-to-inputschema`  | Renames tool `parameters` → `inputSchema`       |
+| `v5/replace-usechat-api-with-transport`     | Replaces `useChat({ api })` with transport      |
+| `v5/replace-usechat-input-with-state`       | Removes managed input state from useChat        |
+| `v5/replace-content-with-parts`             | Replaces `message.content` with `message.parts` |
+| `v5/rename-message-to-ui-message`           | Renames `Message` → `UIMessage`                 |
+| `v5/rename-datastream-methods-to-uimessage` | Renames stream methods to UI message variants   |
 
 **Note:** Review all automated changes manually, especially around async/await additions.
 
@@ -740,7 +750,7 @@ const extractText = (messages: UIMessage[]): string => {
       m.parts
         .filter((p): p is { type: "text"; text: string } => p.type === "text")
         .map((p) => p.text)
-        .join(" ")
+        .join(" "),
     )
     .join("\n");
 };
@@ -857,8 +867,12 @@ const { messages } = useChat({
 const { messages } = useChat({
   transport: new DefaultChatTransport({
     api: "/api/chat",
-    headers: { /* ... */ },
-    body: { /* ... */ },
+    headers: {
+      /* ... */
+    },
+    body: {
+      /* ... */
+    },
     credentials: "include",
   }),
 });
@@ -883,6 +897,7 @@ const validatedMessages = await validateUIMessages({
 ## Tool System Changes
 
 **Important:** AI SDK and assistant-ui use different property names for tool schemas:
+
 - **AI SDK `tool()` helper** (backend): uses `inputSchema`
 - **assistant-ui `useAssistantTool`** (frontend): uses `parameters`
 
@@ -926,25 +941,29 @@ import { z } from "zod";
 // Option 1: Direct Zod (auto-converted to JSON Schema)
 const tool1 = tool({
   inputSchema: z.object({ query: z.string() }),
-  execute: async ({ query }) => { /* ... */ },
+  execute: async ({ query }) => {
+    /* ... */
+  },
 });
 
 // Option 2: zodSchema() wrapper (explicit, recommended for clarity)
 // This is what the assistant-ui examples use
 const tool2 = tool({
-  inputSchema: zodSchema(
-    z.object({ query: z.string() }),
-  ),
-  execute: async ({ query }) => { /* ... */ },
+  inputSchema: zodSchema(z.object({ query: z.string() })),
+  execute: async ({ query }) => {
+    /* ... */
+  },
 });
 
 // Option 3: zodSchema() with options (for recursive schemas)
 const tool3 = tool({
   inputSchema: zodSchema(
     z.object({ category: categorySchema }),
-    { useReferences: true }  // Enables recursive schema support
+    { useReferences: true }, // Enables recursive schema support
   ),
-  execute: async ({ category }) => { /* ... */ },
+  execute: async ({ category }) => {
+    /* ... */
+  },
 });
 
 // Option 4: jsonSchema() for JSON Schema objects
@@ -954,7 +973,9 @@ const tool4 = tool({
     properties: { query: { type: "string" } },
     required: ["query"],
   }),
-  execute: async ({ query }) => { /* ... */ },
+  execute: async ({ query }) => {
+    /* ... */
+  },
 });
 ```
 
@@ -986,18 +1007,18 @@ Tool invocations now have explicit states:
 
 ```typescript
 type ToolInvocationState =
-  | "input-streaming"   // Arguments being streamed
-  | "input-available"   // Arguments complete, not yet executed
-  | "output-available"  // Execution complete with result
-  | "output-error";     // Execution failed
+  | "input-streaming" // Arguments being streamed
+  | "input-available" // Arguments complete, not yet executed
+  | "output-available" // Execution complete with result
+  | "output-error"; // Execution failed
 
-message.parts.forEach(part => {
+message.parts.forEach((part) => {
   if (isToolUIPart(part)) {
-    console.log(part.state);       // One of the above states
-    console.log(part.toolCallId);  // Unique ID
-    console.log(part.input);       // Tool arguments
-    console.log(part.output);      // Result (if output-available)
-    console.log(part.errorText);   // Error (if output-error)
+    console.log(part.state); // One of the above states
+    console.log(part.toolCallId); // Unique ID
+    console.log(part.input); // Tool arguments
+    console.log(part.output); // Result (if output-available)
+    console.log(part.errorText); // Error (if output-error)
   }
 });
 ```
@@ -1009,7 +1030,9 @@ Tools now support streaming callbacks:
 ```typescript
 const myTool = tool({
   inputSchema: z.object({ query: z.string() }),
-  execute: async ({ query }) => { /* ... */ },
+  execute: async ({ query }) => {
+    /* ... */
+  },
 
   // Called when model starts generating arguments
   onInputStart: ({ toolCallId }) => {
@@ -1037,8 +1060,10 @@ Tools can require user confirmation:
 const dangerousTool = tool({
   description: "Deletes a file",
   inputSchema: z.object({ path: z.string() }),
-  needsApproval: true,  // Requires client approval
-  execute: async ({ path }) => { /* ... */ },
+  needsApproval: true, // Requires client approval
+  execute: async ({ path }) => {
+    /* ... */
+  },
 });
 
 // Client: Handle approval
@@ -1064,7 +1089,9 @@ export async function POST(req: Request) {
     messages: await convertToModelMessages(messages),
     tools: {
       ...frontendTools(tools),
-      myBackendTool: tool({ /* ... */ }),
+      myBackendTool: tool({
+        /* ... */
+      }),
     },
   });
 
@@ -1269,8 +1296,8 @@ const { output } = await generateText({
   model,
   output: Output.object({
     schema: z.object({ name: z.string(), age: z.number() }),
-    name: "person",        // Optional: helps model understand context
-    description: "...",    // Optional: additional guidance
+    name: "person", // Optional: helps model understand context
+    description: "...", // Optional: additional guidance
   }),
   prompt: "Generate a person",
 });
@@ -1461,12 +1488,12 @@ const runtime = useChatRuntime({
 
 ### 3. Transport Types Summary
 
-| Transport | Package | Auto-Forwards | Use Case |
-|-----------|---------|---------------|----------|
-| `AssistantChatTransport` | `@assistant-ui/react-ai-sdk` | Yes (system, tools, callSettings) | Default, recommended |
-| `DefaultChatTransport` | `ai` | No | Standard AI SDK usage |
-| `DirectChatTransport` | `ai` | No | SSR/testing with direct agent |
-| `TextStreamChatTransport` | `ai` | No | Plain text backends |
+| Transport                 | Package                      | Auto-Forwards                     | Use Case                      |
+| ------------------------- | ---------------------------- | --------------------------------- | ----------------------------- |
+| `AssistantChatTransport`  | `@assistant-ui/react-ai-sdk` | Yes (system, tools, callSettings) | Default, recommended          |
+| `DefaultChatTransport`    | `ai`                         | No                                | Standard AI SDK usage         |
+| `DirectChatTransport`     | `ai`                         | No                                | SSR/testing with direct agent |
+| `TextStreamChatTransport` | `ai`                         | No                                | Plain text backends           |
 
 ### 4. What AssistantChatTransport Forwards
 
@@ -1512,6 +1539,7 @@ import {
 ### API Route (Full Example)
 
 **Before (AI SDK v5):**
+
 ```typescript
 import { streamText } from "ai";
 import { openai } from "@ai-sdk/openai";
@@ -1530,14 +1558,9 @@ export async function POST(req: Request) {
 ```
 
 **After (AI SDK v6):**
+
 ```typescript
-import {
-  streamText,
-  convertToModelMessages,
-  stepCountIs,
-  tool,
-  zodSchema,
-} from "ai";
+import { streamText, convertToModelMessages, stepCountIs, tool, zodSchema } from "ai";
 import type { UIMessage } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
@@ -1574,13 +1597,7 @@ export async function POST(req: Request) {
 ### API Route with Frontend Tools
 
 ```typescript
-import {
-  streamText,
-  convertToModelMessages,
-  stepCountIs,
-  tool,
-  zodSchema,
-} from "ai";
+import { streamText, convertToModelMessages, stepCountIs, tool, zodSchema } from "ai";
 import type { UIMessage } from "ai";
 import { frontendTools } from "@assistant-ui/react-ai-sdk";
 import { openai } from "@ai-sdk/openai";
@@ -1628,6 +1645,7 @@ export async function POST(req: Request) {
 ### Custom Stream with Data Parts
 
 **Before (v5):**
+
 ```typescript
 import { createDataStreamResponse, streamText } from "ai";
 
@@ -1645,6 +1663,7 @@ return createDataStreamResponse({
 ```
 
 **After (v6):**
+
 ```typescript
 import { createUIMessageStream, createUIMessageStreamResponse, streamText } from "ai";
 
@@ -1750,14 +1769,14 @@ These are new helper functions added in v6 (not breaking changes, but useful):
 ```typescript
 import {
   // Message management
-  pruneMessages,           // Helper to prune message history by token count
-  safeValidateUIMessages,  // Validates UI messages without throwing
+  pruneMessages, // Helper to prune message history by token count
+  safeValidateUIMessages, // Validates UI messages without throwing
 
   // Type guards
-  isDataUIPart,            // Type guard for data parts
+  isDataUIPart, // Type guard for data parts
 
   // Model middleware
-  wrapEmbeddingModel,      // Wrap embedding model with middleware
+  wrapEmbeddingModel, // Wrap embedding model with middleware
 } from "ai";
 ```
 
@@ -1866,6 +1885,7 @@ npx @ai-sdk/codemod v6       # v5→v6 only
 ## Migration Checklist
 
 ### Package Updates
+
 - [ ] Update `ai` to `^6.0.0`
 - [ ] Update `@ai-sdk/react` to `^3.0.0`
 - [ ] Update `@ai-sdk/provider` to `^3.0.0`
@@ -1877,11 +1897,13 @@ npx @ai-sdk/codemod v6       # v5→v6 only
 - [ ] If using MCP: Install `@ai-sdk/mcp` to `^1.0.0`
 
 ### Automated Migration
+
 - [ ] Run `npx @ai-sdk/codemod v6` (from v5)
 - [ ] OR run `npx @ai-sdk/codemod upgrade` (from v4, runs all)
 - [ ] Review all automated changes manually
 
 ### Core Changes
+
 - [ ] Replace `CoreMessage` with `ModelMessage`
 - [ ] Replace `convertToCoreMessages` with `convertToModelMessages`
 - [ ] Add `await` to all `convertToModelMessages()` calls
@@ -1899,6 +1921,7 @@ npx @ai-sdk/codemod v6       # v5→v6 only
 - [ ] If using Agent: Rename `messages` → `uiMessages` in agent stream results
 
 ### UI & React Changes
+
 - [ ] Update message handling for `parts` array structure
 - [ ] Manage input state manually with useChat
 - [ ] Replace `append()` with `sendMessage()`
@@ -1907,12 +1930,14 @@ npx @ai-sdk/codemod v6       # v5→v6 only
 - [ ] Update to transport-based configuration
 
 ### Streaming Changes
+
 - [ ] Update stream response: `result.toUIMessageStreamResponse()` (not awaited)
 - [ ] Use custom data parts with `type: "data-*"` pattern
 - [ ] Add `x-vercel-ai-ui-message-stream: v1` header for custom backends
 - [ ] Implement `onFinish` for message persistence
 
 ### Tool Changes
+
 - [ ] Use `tool()` helper for backend tool definitions
 - [ ] Use Zod schemas in `inputSchema` (directly or with `zodSchema()` wrapper)
 - [ ] Use `frontendTools()` helper for forwarding frontend tools
@@ -1922,23 +1947,27 @@ npx @ai-sdk/codemod v6       # v5→v6 only
 - [ ] Place `.describe()` and `.meta()` calls last in Zod schema chains
 
 ### Structured Output
+
 - [ ] Replace `generateObject` with `generateText` + `Output.object()`
 - [ ] Replace `streamObject` with `streamText` + `Output.object()`
 - [ ] Use `partialOutputStream` instead of `partialObjectStream`
 - [ ] Use `elementStream` for streaming arrays
 
 ### assistant-ui Specific
+
 - [ ] Simplify client: `useChatRuntime()` works with no config for `/api/chat`
 - [ ] Use `AssistantChatTransport` (from @assistant-ui/react-ai-sdk) for custom endpoints
 - [ ] Import `DefaultChatTransport` from "ai" package (not assistant-ui)
 
 ### Provider-Specific
+
 - [ ] Handle OpenAI `strictJsonSchema` default change (now `true`)
 - [ ] Update Azure metadata key from `openai` to `azure`
 - [ ] Update Vertex metadata key from `google` to `vertex`
 - [ ] Configure Anthropic `structuredOutputMode` if needed
 
 ### Testing
+
 - [ ] Update mock classes from V2 to V3
 - [ ] Test all streaming functionality
 - [ ] Verify tool execution with new states

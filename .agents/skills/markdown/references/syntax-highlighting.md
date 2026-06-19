@@ -109,14 +109,20 @@ Pass a `{ light, dark }` object plus `defaultColor="light-dark()"`.
 Wire up `color-scheme` in `globals.css`. System based:
 
 ```css
-:root { color-scheme: light dark; }
+:root {
+  color-scheme: light dark;
+}
 ```
 
 Class based:
 
 ```css
-:root { color-scheme: light; }
-:root.dark { color-scheme: dark; }
+:root {
+  color-scheme: light;
+}
+:root.dark {
+  color-scheme: dark;
+}
 ```
 
 ## Bundle optimization (shiki)
@@ -134,10 +140,7 @@ import { createHighlighterCore, createOnigurumaEngine } from "react-shiki/core";
 
 const customHighlighter = await createHighlighterCore({
   themes: [import("@shikijs/themes/nord")],
-  langs: [
-    import("@shikijs/langs/javascript"),
-    import("@shikijs/langs/typescript"),
-  ],
+  langs: [import("@shikijs/langs/javascript"), import("@shikijs/langs/typescript")],
   engine: createOnigurumaEngine(import("shiki/wasm")),
 });
 

@@ -4,11 +4,11 @@ Authentication and authorization patterns for assistant-cloud.
 
 ## Auth Methods
 
-| Method | Use Case | Security |
-|--------|----------|----------|
-| JWT Token | Production apps | High |
-| API Key | Server-side only | Medium |
-| Anonymous | Public demos | Low |
+| Method    | Use Case         | Security |
+| --------- | ---------------- | -------- |
+| JWT Token | Production apps  | High     |
+| API Key   | Server-side only | Medium   |
+| Anonymous | Public demos     | Low      |
 
 ## JWT Token Authentication
 
@@ -160,6 +160,7 @@ const cloud = new AssistantCloud({
 ```
 
 **Limitations:**
+
 - No user isolation
 - Limited features
 - No cross-device sync
@@ -212,7 +213,7 @@ const cloud = new AssistantCloud({
   baseUrl: process.env.ASSISTANT_BASE_URL,
   apiKey: process.env.ASSISTANT_API_KEY,
   userId: user.id,
-  workspaceId: user.organization.id,  // Isolates data by org
+  workspaceId: user.organization.id, // Isolates data by org
 });
 ```
 

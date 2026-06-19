@@ -62,27 +62,27 @@ const StreamdownText = () => (
 
 ## Props
 
-| Prop | Type | Default | Notes |
-|------|------|---------|-------|
-| `mode` | `"streaming" \| "static"` | `"streaming"` | Block-based streaming vs static render |
-| `plugins` | `PluginConfig` | | `code`, `math`, `mermaid`, `cjk` |
-| `shikiTheme` | `[string, string]` | `["github-light", "github-dark"]` | Light/dark themes |
-| `components` | `object` | | Override `SyntaxHighlighter`, `CodeHeader` |
-| `componentsByLanguage` | `object` | | Per-language component overrides |
-| `preprocess` | `(text: string) => string` | | Text preprocessor |
-| `controls` | `boolean \| ControlsConfig` | `true` | Copy/download/fullscreen UI |
-| `caret` | `"block" \| "circle"` | | Streaming caret style |
-| `mermaid` | `MermaidOptions` | | Mermaid config and error handling |
-| `linkSafety` | `LinkSafetyConfig` | | External link confirmation |
-| `remend` | `RemendConfig` | | Incomplete markdown handling |
-| `allowedTags` | `Record<string, string[]>` | | HTML tag whitelist |
-| `security` | `SecurityConfig` | | URL/image restrictions |
-| `containerProps` | `object` | | Props for the container div |
-| `containerClassName` | `string` | | Container class name |
-| `remarkRehypeOptions` | `object` | | remark-rehype options |
-| `BlockComponent` | `ComponentType<BlockProps>` | | Custom block renderer |
-| `parseMarkdownIntoBlocksFn` | `(md: string) => string[]` | | Custom block parser |
-| `parseIncompleteMarkdown` | `boolean` | `false` | Toggle remend processing |
+| Prop                        | Type                        | Default                           | Notes                                      |
+| --------------------------- | --------------------------- | --------------------------------- | ------------------------------------------ |
+| `mode`                      | `"streaming" \| "static"`   | `"streaming"`                     | Block-based streaming vs static render     |
+| `plugins`                   | `PluginConfig`              |                                   | `code`, `math`, `mermaid`, `cjk`           |
+| `shikiTheme`                | `[string, string]`          | `["github-light", "github-dark"]` | Light/dark themes                          |
+| `components`                | `object`                    |                                   | Override `SyntaxHighlighter`, `CodeHeader` |
+| `componentsByLanguage`      | `object`                    |                                   | Per-language component overrides           |
+| `preprocess`                | `(text: string) => string`  |                                   | Text preprocessor                          |
+| `controls`                  | `boolean \| ControlsConfig` | `true`                            | Copy/download/fullscreen UI                |
+| `caret`                     | `"block" \| "circle"`       |                                   | Streaming caret style                      |
+| `mermaid`                   | `MermaidOptions`            |                                   | Mermaid config and error handling          |
+| `linkSafety`                | `LinkSafetyConfig`          |                                   | External link confirmation                 |
+| `remend`                    | `RemendConfig`              |                                   | Incomplete markdown handling               |
+| `allowedTags`               | `Record<string, string[]>`  |                                   | HTML tag whitelist                         |
+| `security`                  | `SecurityConfig`            |                                   | URL/image restrictions                     |
+| `containerProps`            | `object`                    |                                   | Props for the container div                |
+| `containerClassName`        | `string`                    |                                   | Container class name                       |
+| `remarkRehypeOptions`       | `object`                    |                                   | remark-rehype options                      |
+| `BlockComponent`            | `ComponentType<BlockProps>` |                                   | Custom block renderer                      |
+| `parseMarkdownIntoBlocksFn` | `(md: string) => string[]`  |                                   | Custom block parser                        |
+| `parseIncompleteMarkdown`   | `boolean`                   | `false`                           | Toggle remend processing                   |
 
 ## Streaming mode and caret
 
@@ -187,10 +187,7 @@ Override the highlighter and code header per language, or build a custom code co
 `useIsStreamdownCodeBlock` distinguishes block code from inline code; `useStreamdownPreProps` exposes the `<pre>` props for the current block.
 
 ```tsx
-import {
-  useIsStreamdownCodeBlock,
-  useStreamdownPreProps,
-} from "@assistant-ui/react-streamdown";
+import { useIsStreamdownCodeBlock, useStreamdownPreProps } from "@assistant-ui/react-streamdown";
 
 function MyCodeComponent({ children, ...props }) {
   const isCodeBlock = useIsStreamdownCodeBlock();

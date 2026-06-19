@@ -67,19 +67,24 @@ function SearchCopilot() {
 ## Common Gotchas
 
 **Assistant ignores instructions or context**
+
 - The hook or `register` call must run inside `AssistantRuntimeProvider`.
 - For `useAui().modelContext().register`, call it in `useEffect` and return the result so it unsubscribes; registering in render leaks providers.
 
 **Context is stale**
+
 - Use the `getContext` callback form, not a captured value. It is re-read at send time, so closures over fresh state work; a precomputed string will not update.
 
 **makeAssistantVisible does nothing**
+
 - Without options the component is read-only (exposes its `outerHTML`). Pass `{ clickable: true }` to allow clicks and `{ editable: true }` for `<input>` / `<textarea>` editing. Nested visible components expose only the outermost.
 
 **Interactable resets its state on every render**
+
 - Define `stateSchema` and `initialState` outside the component (or memoize). A new schema each render re-registers the interactable and wipes its state. Register the scope with `useAui({ interactables: Interactables() })`.
 
 **Partial updates drop fields**
+
 - The AI sends only the fields it changes and the merge is shallow (one level deep); nested objects are replaced, not deep-merged.
 
 ## Related Skills

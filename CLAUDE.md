@@ -11,6 +11,7 @@ assistant-ui starter for LangGraph. A minimal chat app that streams tokens from 
 This project uses assistant-ui for chat interfaces.
 Documentation: https://www.assistant-ui.com/llms-full.txt
 Key patterns:
+
 - Use AssistantRuntimeProvider at the app root
 - Thread component for full chat interface
 - AssistantModal for floating chat widget

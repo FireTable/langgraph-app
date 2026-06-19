@@ -102,9 +102,11 @@ ASSISTANT_API_KEY=your-api-key  # Server-side only
 ## Common Gotchas
 
 **Threads not persisting**
+
 - Pass `cloud` to runtime
 - Check authentication
 
 **Auth errors**
+
 - Verify `authToken` returns valid token
 - Check `baseUrl` is correct

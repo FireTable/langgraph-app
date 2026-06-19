@@ -110,12 +110,15 @@ for await (const event of stream) {
 ## Common Gotchas
 
 **Stream not updating UI**
+
 - Check Content-Type is `text/event-stream`
 - Check for CORS errors
 
 **Tool calls not rendering**
+
 - `addToolCallPart` needs both `toolCallId` and `toolName`
 - Register tool UI with `makeAssistantToolUI`
 
 **Partial text not showing**
+
 - Use `text-delta` events for streaming

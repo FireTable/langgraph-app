@@ -83,9 +83,7 @@ Registers an interactable and returns its instance `id`. Define `stateSchema` an
 import { z } from "zod";
 
 const taskBoardSchema = z.object({
-  tasks: z.array(
-    z.object({ id: z.string(), title: z.string(), done: z.boolean() }),
-  ),
+  tasks: z.array(z.object({ id: z.string(), title: z.string(), done: z.boolean() })),
 });
 
 const taskBoardInitialState = { tasks: [] };
@@ -105,11 +103,11 @@ Config fields:
 
 ```ts
 interface InteractableConfig {
-  description: string;                  // Shown to the AI
-  stateSchema: StandardSchemaV1;        // Zod schema or JSON Schema
+  description: string; // Shown to the AI
+  stateSchema: StandardSchemaV1; // Zod schema or JSON Schema
   initialState: unknown;
-  id?: string;                          // Auto-generated if omitted
-  selected?: boolean;                   // Mark as focused at registration time
+  id?: string; // Auto-generated if omitted
+  selected?: boolean; // Mark as focused at registration time
 }
 ```
 
@@ -139,9 +137,7 @@ function TaskBoard() {
               checked={task.done}
               onChange={() =>
                 setState((prev) => ({
-                  tasks: prev.tasks.map((t) =>
-                    t.id === task.id ? { ...t, done: !t.done } : t,
-                  ),
+                  tasks: prev.tasks.map((t) => (t.id === task.id ? { ...t, done: !t.done } : t)),
                 }))
               }
             />
@@ -157,8 +153,10 @@ function TaskBoard() {
 The second tuple element exposes the full control surface:
 
 ```ts
-const [state, { setState, setSelected, isPending, error, flush }] =
-  useInteractableState(id, fallback);
+const [state, { setState, setSelected, isPending, error, flush }] = useInteractableState(
+  id,
+  fallback,
+);
 ```
 
 - `setState(value | (prev) => next)`: update state; the new value is also sent to the model context for the next turn.
@@ -236,11 +234,7 @@ Marking an interactable selected tells the model to prioritize it; the AI sees `
 function NoteCard({ noteId }: { noteId: string }) {
   const [state, { setSelected }] = useInteractableState(noteId, noteInitialState);
 
-  return (
-    <div onClick={() => setSelected(true)}>
-      {state.title}
-    </div>
-  );
+  return <div onClick={() => setSelected(true)}>{state.title}</div>;
 }
 ```
 

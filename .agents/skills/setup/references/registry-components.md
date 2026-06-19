@@ -42,7 +42,7 @@ import { AssistantModalPrimitive } from "@assistant-ui/react";
   <AssistantModalPrimitive.Content sideOffset={16}>
     <Thread />
   </AssistantModalPrimitive.Content>
-</AssistantModalPrimitive.Root>
+</AssistantModalPrimitive.Root>;
 ```
 
 `AssistantModalPrimitive.Content` accepts `sideOffset` (number) and `className`. The trigger swaps a `BotIcon` for a `ChevronDownIcon` based on `data-state="open" | "closed"`.
@@ -71,11 +71,7 @@ export default function Home() {
 `AssistantSidebar` is `FC<PropsWithChildren>`; `children` fill the left panel. It depends on the shadcn `resizable` component (`components/ui/resizable`), which `add` installs automatically. Edit the generated file to tune panel sizes:
 
 ```tsx
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Thread } from "@/components/assistant-ui/thread";
 
 <ResizablePanelGroup direction="horizontal">
@@ -86,7 +82,7 @@ import { Thread } from "@/components/assistant-ui/thread";
   <ResizablePanel defaultSize={40} minSize={20}>
     <Thread />
   </ResizablePanel>
-</ResizablePanelGroup>
+</ResizablePanelGroup>;
 ```
 
 Wrap the whole thing in `AssistantRuntimeProvider` as usual.
@@ -112,13 +108,7 @@ const models = [
 
 function Toolbar() {
   const [modelId, setModelId] = useState("gpt-5.4-nano");
-  return (
-    <ModelSelector
-      models={models}
-      value={modelId}
-      onValueChange={setModelId}
-    />
-  );
+  return <ModelSelector models={models} value={modelId} onValueChange={setModelId} />;
 }
 ```
 
@@ -177,7 +167,7 @@ import {
 <ModelSelectorRoot models={models} value={modelId} onValueChange={setModelId}>
   <ModelSelectorTrigger variant="ghost" />
   <ModelSelectorContent />
-</ModelSelectorRoot>
+</ModelSelectorRoot>;
 ```
 
 Note: `ModelSelectorRoot` is presentational only. The runtime registration lives in the all-in-one `ModelSelector`, so a bare `Root` does not switch the server model on its own.
@@ -193,16 +183,13 @@ npx assistant-ui add attachment
 Wire them into your `thread.tsx`. In the composer:
 
 ```tsx
-import {
-  ComposerAttachments,
-  ComposerAddAttachment,
-} from "@/components/assistant-ui/attachment";
+import { ComposerAttachments, ComposerAddAttachment } from "@/components/assistant-ui/attachment";
 
 <ComposerPrimitive.Root>
   <ComposerAttachments />
   <ComposerAddAttachment />
   <ComposerPrimitive.Input />
-</ComposerPrimitive.Root>
+</ComposerPrimitive.Root>;
 ```
 
 In a user message, render the sent attachments above the text:
@@ -213,7 +200,7 @@ import { UserMessageAttachments } from "@/components/assistant-ui/attachment";
 <MessagePrimitive.Root>
   <UserMessageAttachments />
   <MessagePrimitive.Parts />
-</MessagePrimitive.Root>
+</MessagePrimitive.Root>;
 ```
 
 - `ComposerAttachments`: tiles for pending attachments in the composer, each with a remove button.

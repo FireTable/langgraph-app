@@ -35,13 +35,7 @@ Where does the tool execute?
 ```ts
 // Backend (app/api/chat/route.ts)
 import { openai } from "@ai-sdk/openai";
-import {
-  streamText,
-  tool,
-  stepCountIs,
-  convertToModelMessages,
-  type UIMessage,
-} from "ai";
+import { streamText, tool, stepCountIs, convertToModelMessages, type UIMessage } from "ai";
 import { z } from "zod";
 
 export async function POST(req: Request) {
@@ -72,14 +66,18 @@ const WeatherToolUI = makeAssistantToolUI({
   render: ({ args, result, status }) => {
     // status is an object; check status.type (not status === "running")
     if (status.type === "running") return <div>Loading weather...</div>;
-    return <div>{result?.city}: {result?.temp}°C</div>;
+    return (
+      <div>
+        {result?.city}: {result?.temp}°C
+      </div>
+    );
   },
 });
 
 <AssistantRuntimeProvider runtime={runtime}>
   <WeatherToolUI />
   <Thread />
-</AssistantRuntimeProvider>
+</AssistantRuntimeProvider>;
 ```
 
 ## Frontend-Only Tool
@@ -100,7 +98,7 @@ const CopyTool = makeAssistantTool({
 <AssistantRuntimeProvider runtime={runtime}>
   <CopyTool />
   <Thread />
-</AssistantRuntimeProvider>
+</AssistantRuntimeProvider>;
 ```
 
 ## API Reference
@@ -111,10 +109,10 @@ interface ToolCallMessagePartProps {
   toolCallId: string;
   toolName: string;
   args: Record<string, unknown>;
-  argsText: string;          // raw streamed JSON
+  argsText: string; // raw streamed JSON
   result?: unknown;
   isError?: boolean;
-  artifact?: unknown;        // UI-only artifact attached to the result
+  artifact?: unknown; // UI-only artifact attached to the result
 
   // status is an OBJECT, not a string. Branch on status.type.
   status:
@@ -155,13 +153,16 @@ const DeleteToolUI = makeAssistantToolUI({
 ## Common Gotchas
 
 **Tool UI not rendering**
+
 - `toolName` must match exactly (case-sensitive)
 - Register UI inside `AssistantRuntimeProvider`
 
 **Tool not being called**
+
 - Check tool description is clear
 - Use `stopWhen: stepCountIs(n)` to allow multi-step
 
 **Result not showing**
+
 - Tool must return a value
 - Check `status.type === "complete"` before accessing result

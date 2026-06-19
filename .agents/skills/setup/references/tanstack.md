@@ -99,8 +99,7 @@ export function MyRuntimeProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<MyMessage[]>([]);
 
   const onNew = async (message: AppendMessage) => {
-    if (message.content[0]?.type !== "text")
-      throw new Error("Only text messages are supported");
+    if (message.content[0]?.type !== "text") throw new Error("Only text messages are supported");
 
     const input = message.content[0].text;
     const userMessage: MyMessage = {
@@ -113,19 +112,14 @@ export function MyRuntimeProvider({ children }: { children: ReactNode }) {
     setIsRunning(true);
 
     const assistantId = generateId();
-    setMessages((prev) => [
-      ...prev,
-      { id: assistantId, role: "assistant", content: "" },
-    ]);
+    setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "" }]);
 
     try {
       // Your streaming implementation here
       const stream = await fetchStream([...messages, userMessage]);
       for await (const chunk of stream) {
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId ? { ...m, content: m.content + chunk } : m
-          )
+          prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + chunk } : m)),
         );
       }
     } finally {
@@ -140,11 +134,7 @@ export function MyRuntimeProvider({ children }: { children: ReactNode }) {
     onNew,
   });
 
-  return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      {children}
-    </AssistantRuntimeProvider>
-  );
+  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
 }
 ```
 

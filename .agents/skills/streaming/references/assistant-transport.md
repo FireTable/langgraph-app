@@ -39,10 +39,7 @@ export async function POST(req: Request) {
 ```ts
 import { AssistantStream, AssistantTransportDecoder } from "assistant-stream";
 
-const stream = AssistantStream.fromResponse(
-  response,
-  new AssistantTransportDecoder()
-);
+const stream = AssistantStream.fromResponse(response, new AssistantTransportDecoder());
 
 for await (const chunk of stream) {
   console.log(chunk);
@@ -118,10 +115,7 @@ const runtime = useLocalRuntime({
           }
         | undefined;
 
-      const stream = AssistantStream.fromResponse(
-        response,
-        new AssistantTransportDecoder()
-      );
+      const stream = AssistantStream.fromResponse(response, new AssistantTransportDecoder());
 
       for await (const chunk of stream) {
         // Convert AssistantStreamChunk into ChatModelRunResult content parts

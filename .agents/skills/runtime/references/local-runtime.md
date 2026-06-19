@@ -104,15 +104,15 @@ interface ChatModelAdapter {
 interface ChatModelRunOptions {
   messages: readonly ThreadMessage[];
   abortSignal: AbortSignal;
-  runConfig: RunConfig;     // per-run configuration
-  context: ModelContext;    // tools, system prompt, callSettings, config
+  runConfig: RunConfig; // per-run configuration
+  context: ModelContext; // tools, system prompt, callSettings, config
 }
 
 // Returned once (final) or yielded repeatedly (streaming).
 // All fields are optional; yield partial content to stream.
 interface ChatModelRunResult {
   content?: MessagePart[];
-  status?: MessageStatus;   // object form, e.g. { type: "complete" }
+  status?: MessageStatus; // object form, e.g. { type: "complete" }
   metadata?: Record<string, unknown>;
 }
 ```

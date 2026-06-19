@@ -100,10 +100,7 @@ function CustomThreadList() {
 ## Without Cloud (Local)
 
 ```tsx
-import {
-  useRemoteThreadListRuntime,
-  InMemoryThreadListAdapter,
-} from "@assistant-ui/react";
+import { useRemoteThreadListRuntime, InMemoryThreadListAdapter } from "@assistant-ui/react";
 
 const runtime = useRemoteThreadListRuntime({
   adapter: new InMemoryThreadListAdapter(),
@@ -114,9 +111,11 @@ const runtime = useRemoteThreadListRuntime({
 ## Common Gotchas
 
 **ThreadList not showing**
+
 - Pass `cloud` to runtime
 - Check authentication
 
 **Threads not persisting**
+
 - Verify cloud connection
 - Check network requests

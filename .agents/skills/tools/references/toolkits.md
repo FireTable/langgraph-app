@@ -44,15 +44,15 @@ The object keys (`get_weather`) become the tool names the model receives and use
 
 ```tsx
 interface ToolDefinition<TArgs, TResult> {
-  type: "frontend";                          // browser-executed tool
-  description?: string;                       // model-visible description
+  type: "frontend"; // browser-executed tool
+  description?: string; // model-visible description
   parameters: StandardSchemaV1<TArgs> | JSONSchema7;
-  disabled?: boolean;                         // hides the tool from the model when true
+  disabled?: boolean; // hides the tool from the model when true
   execute?: ToolExecuteFunction<TArgs, TResult>;
   toModelOutput?: ToolModelOutputFunction<TArgs, TResult>;
   experimental_onSchemaValidationError?: OnSchemaValidationErrorFunction<TResult>;
   providerOptions?: ProviderOptions;
-  display?: ToolDisplay;                       // "inline" (default) or "standalone"
+  display?: ToolDisplay; // "inline" (default) or "standalone"
   render?: ToolCallMessagePartComponent<TArgs, TResult>;
 }
 ```
@@ -76,10 +76,10 @@ function App() {
 }
 ```
 
-| Prop | Type | Notes |
-|------|------|-------|
-| `toolkit` | `Toolkit` | Tools and optional renderers to install |
-| `mcpApp` | `ResourceElement<McpAppResourceOutput>` | MCP app whose tools merge into context |
+| Prop      | Type                                    | Notes                                   |
+| --------- | --------------------------------------- | --------------------------------------- |
+| `toolkit` | `Toolkit`                               | Tools and optional renderers to install |
+| `mcpApp`  | `ResourceElement<McpAppResourceOutput>` | MCP app whose tools merge into context  |
 
 ## Carrying render per tool
 
@@ -102,7 +102,11 @@ const toolkit = {
     execute: async ({ city }) => fetchWeather(city),
     render: ({ args, result, status }) => {
       if (status.type !== "complete") return <div>Loading {args.city}...</div>;
-      return <div>{result.temperature}° in {args.city}</div>;
+      return (
+        <div>
+          {result.temperature}° in {args.city}
+        </div>
+      );
     },
   }),
 
@@ -154,11 +158,7 @@ const toolkit = { get_weather: getWeather } satisfies Toolkit;
 `<Tools mcpApp={...} />` merges the tools of an MCP app into the same context. Build the resource element with `McpAppRenderer` and a host such as `McpAppsRemoteHost`.
 
 ```tsx
-import {
-  Tools,
-  McpAppRenderer,
-  McpAppsRemoteHost,
-} from "@assistant-ui/react";
+import { Tools, McpAppRenderer, McpAppsRemoteHost } from "@assistant-ui/react";
 
 function App() {
   return (

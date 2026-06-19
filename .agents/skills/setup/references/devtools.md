@@ -45,7 +45,9 @@ export function Assistant() {
 Note: the guard keys off `process.env.NODE_ENV`. If your bundler does not define it (some non-standard setups), gate the render yourself.
 
 ```tsx
-{process.env.NODE_ENV !== "production" && <DevToolsModal />}
+{
+  process.env.NODE_ENV !== "production" && <DevToolsModal />;
+}
 ```
 
 ## Inline Frame
@@ -57,7 +59,7 @@ import { DevToolsFrame } from "@assistant-ui/react-devtools";
 
 <div className="h-96 w-full">
   <DevToolsFrame style={{ width: "100%", height: "100%", border: "none" }} />
-</div>
+</div>;
 ```
 
 `DevToolsModal` itself wraps a `DevToolsFrame`, so both surfaces show the same event log, context viewer, and runtime inspector.
@@ -72,9 +74,9 @@ A standalone Chrome extension consumes the same package and connects to any page
 
 ## Exports
 
-| Export | Purpose |
-|-------|-------|
-| `DevToolsModal` | Floating button plus modal overlay; dev-only, no props |
+| Export          | Purpose                                                    |
+| --------------- | ---------------------------------------------------------- |
+| `DevToolsModal` | Floating button plus modal overlay; dev-only, no props     |
 | `DevToolsFrame` | Inline iframe host for the inspector; accepts iframe props |
 
 Lower-level host and frame bridges (`FrameHost`, `DevToolsHost`, `ExtensionHost`, `FrameClient`) and serialization helpers (`sanitizeForMessage`, `serializeModelContext`, `normalizeToolList`) are also exported for building custom hosts such as the Chrome extension. Most apps only need `DevToolsModal`.

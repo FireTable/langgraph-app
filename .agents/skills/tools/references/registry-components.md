@@ -41,7 +41,7 @@ import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
     if (part.type === "tool-call") return <ToolFallback {...part} />;
     return null;
   }}
-</MessagePrimitive.Parts>
+</MessagePrimitive.Parts>;
 ```
 
 Props (from `ToolCallMessagePartComponent`):
@@ -60,10 +60,12 @@ Status `type` drives the visuals: `"running"` shows a spinner and shimmer, `"com
 Prefer a tool's own UI when present, falling back to `ToolFallback` otherwise:
 
 ```tsx
-{({ part }) => {
-  if (part.type === "tool-call") return part.toolUI ?? <ToolFallback {...part} />;
-  return null;
-}}
+{
+  ({ part }) => {
+    if (part.type === "tool-call") return part.toolUI ?? <ToolFallback {...part} />;
+    return null;
+  };
+}
 ```
 
 ## ToolFallback sub-components
@@ -81,14 +83,14 @@ Prefer a tool's own UI when present, falling back to `ToolFallback` otherwise:
 </ToolFallback.Root>
 ```
 
-| Part | Role |
-|------|------|
-| `ToolFallback.Root` | Collapsible container with scroll lock; accepts `open`, `onOpenChange`, `defaultOpen` |
-| `ToolFallback.Trigger` | Header with tool name, status icon, shimmer |
-| `ToolFallback.Content` | Animated collapsible wrapper |
-| `ToolFallback.Args` | Renders the tool arguments |
-| `ToolFallback.Result` | Renders the execution result |
-| `ToolFallback.Error` | Renders error or cancellation info |
+| Part                   | Role                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `ToolFallback.Root`    | Collapsible container with scroll lock; accepts `open`, `onOpenChange`, `defaultOpen` |
+| `ToolFallback.Trigger` | Header with tool name, status icon, shimmer                                           |
+| `ToolFallback.Content` | Animated collapsible wrapper                                                          |
+| `ToolFallback.Args`    | Renders the tool arguments                                                            |
+| `ToolFallback.Result`  | Renders the execution result                                                          |
+| `ToolFallback.Error`   | Renders error or cancellation info                                                    |
 
 The same parts are available as named exports: `ToolFallbackRoot`, `ToolFallbackTrigger`, `ToolFallbackContent`, `ToolFallbackArgs`, `ToolFallbackResult`, `ToolFallbackError`.
 
@@ -98,7 +100,11 @@ Collapses a run of consecutive tool calls into one expandable card. `ToolGroupRo
 
 ```ts
 import {
-  ToolGroup, ToolGroupRoot, ToolGroupTrigger, ToolGroupContent, toolGroupVariants,
+  ToolGroup,
+  ToolGroupRoot,
+  ToolGroupTrigger,
+  ToolGroupContent,
+  toolGroupVariants,
 } from "@/components/assistant-ui/tool-group";
 ```
 
@@ -121,21 +127,20 @@ Use `MessagePrimitive.GroupedParts` with `groupPartByType` to fold every `"tool-
 
 ```tsx
 import { MessagePrimitive, groupPartByType } from "@assistant-ui/react";
-import { ToolGroupRoot, ToolGroupTrigger, ToolGroupContent } from "@/components/assistant-ui/tool-group";
+import {
+  ToolGroupRoot,
+  ToolGroupTrigger,
+  ToolGroupContent,
+} from "@/components/assistant-ui/tool-group";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 
-<MessagePrimitive.GroupedParts
-  groupBy={groupPartByType({ "tool-call": ["group-tool"] })}
->
+<MessagePrimitive.GroupedParts groupBy={groupPartByType({ "tool-call": ["group-tool"] })}>
   {({ part, children }) => {
     switch (part.type) {
       case "group-tool":
         return (
           <ToolGroupRoot>
-            <ToolGroupTrigger
-              count={part.indices.length}
-              active={part.status.type === "running"}
-            />
+            <ToolGroupTrigger count={part.indices.length} active={part.status.type === "running"} />
             <ToolGroupContent>{children}</ToolGroupContent>
           </ToolGroupRoot>
         );
@@ -145,7 +150,7 @@ import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
         return null;
     }
   }}
-</MessagePrimitive.GroupedParts>
+</MessagePrimitive.GroupedParts>;
 ```
 
 Note: a legacy `ToolGroup` wrapper with `startIndex`/`endIndex` props exists only for the deprecated `components.ToolGroup` prop on `MessagePrimitive.Parts`. New code should use `GroupedParts` with `group-tool`.
@@ -163,7 +168,7 @@ import { Image } from "@/components/assistant-ui/image";
     if (part.type === "image") return <Image {...part} />;
     return null;
   }}
-</MessagePrimitive.Parts>
+</MessagePrimitive.Parts>;
 ```
 
 `Image.Root` (`ImageRootProps` = `ComponentProps<"div"> & VariantProps<typeof imageVariants>`) accepts:
@@ -200,7 +205,7 @@ const imagePart: ImageMessagePart = { type: "image", image: result.image };
 <>
   <Image {...imagePart} />
   <Image.Actions part={imagePart} onRegenerate={() => regenerate(prompt)} />
-</>
+</>;
 ```
 
 `Image.Actions` (`ImageActionsProps`) renders download, copy, and an optional regenerate button. It takes `part: ImageMessagePart`, an optional `onRegenerate?: () => void | Promise<void>` (the regenerate button only appears when supplied), and an optional `className`. A full Next.js example lives at `examples/with-image-generation` in the assistant-ui repository.
