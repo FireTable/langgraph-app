@@ -103,7 +103,7 @@ const ThreadListSkeleton: FC = () => {
           key={i}
           role="status"
           aria-label="Loading threads"
-          className="aui-thread-list-skeleton-wrapper flex h-8 items-center px-2.5"
+          className="aui-thread-list-skeleton-wrapper flex h-8 items-center"
         >
           <Skeleton className="aui-thread-list-skeleton h-3.5 w-full" />
         </div>
