@@ -22,8 +22,18 @@ export const threads = pgTable(
     custom: jsonb("custom").$type<ThreadCustom>().notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    // Denormalized "last activity" timestamp. Mirrors the max(updatedAt) of
+    // the thread's LangGraph checkpoint, but is queried directly so the
+    // sidebar can ORDER BY without joining the checkpoint_* tables.
+    // Default now() means a freshly-created thread shows up at the top
+    // immediately, instead of being sorted by NULL (which Postgres sorts
+    // last with NULLS LAST).
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("threads_status_updated_idx").on(t.status, t.updatedAt.desc())],
+  (t) => [
+    index("threads_status_updated_idx").on(t.status, t.updatedAt.desc()),
+    index("threads_status_last_message_idx").on(t.status, t.lastMessageAt.desc()),
+  ],
 );
 
 // Zod schemas derived from the Drizzle table. Used internally for type-safe

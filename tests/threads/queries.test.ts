@@ -79,6 +79,17 @@ describe("createThread", () => {
     expect(t.status).toBe("regular");
     expect(t.custom).toEqual({});
   });
+
+  it("sets lastMessageAt to ~now on insert", async () => {
+    const before = Date.now();
+    const t = await createThread();
+    const after = Date.now();
+    // Column is timestamp NOT NULL with DEFAULT now(); the DB fills the
+    // value so we just check it's within the call window.
+    expect(t.lastMessageAt).toBeInstanceOf(Date);
+    expect(t.lastMessageAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(t.lastMessageAt.getTime()).toBeLessThanOrEqual(after);
+  });
 });
 
 describe("renameThread", () => {

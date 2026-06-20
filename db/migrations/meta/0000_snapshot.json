@@ -1,5 +1,5 @@
 {
-  "id": "ae6e54bb-297d-4187-aff1-9ace4f5c6b7a",
+  "id": "f4bc7437-bb3d-47fb-8815-0b3b2df94d00",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -54,6 +54,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "last_message_at": {
+          "name": "last_message_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {
@@ -68,6 +75,27 @@
             },
             {
               "expression": "updated_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "threads_status_last_message_idx": {
+          "name": "threads_status_last_message_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "last_message_at",
               "isExpression": false,
               "asc": false,
               "nulls": "last"
