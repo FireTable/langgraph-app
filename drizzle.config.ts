@@ -1,9 +1,9 @@
 import { defineConfig } from "drizzle-kit";
-import { config } from "dotenv";
+import { loadEnvConfig } from "@next/env";
 
-// drizzle-kit doesn't auto-load .env.local. We load it ourselves so
-// `pnpm db:migrate` works the same way `pnpm dev` does.
-config({ path: ".env.local" });
+// Use Next.js's own env loader so `pnpm db:migrate` and `pnpm dev`
+// see the same variables with the same precedence (.env.local overrides .env).
+loadEnvConfig(process.cwd());
 
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL is required (check .env.local)");
