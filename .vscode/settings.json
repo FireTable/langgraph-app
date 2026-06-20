@@ -28,6 +28,7 @@
     "minimax",
     "modelkargs",
     "modelkwargs",
+    "kwargs",
     "nanoid",
     "nextjs",
     "postgres",

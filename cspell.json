@@ -47,6 +47,7 @@
     "minimax",
     "modelkargs",
     "modelkwargs",
+    "kwargs",
     "monorepo",
     "multiline",
     "nanoid",

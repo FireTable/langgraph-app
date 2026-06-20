@@ -32,8 +32,12 @@ Package manager is **pnpm** (workspace enabled, see `pnpm-workspace.yaml`).
 - `pnpm lint` — `oxlint && oxfmt --check`.
 - `pnpm lint:fix` — `oxlint --fix && oxfmt`.
 - `pnpm format:fix` — `oxfmt` (write). `pnpm format` is `--check` only.
-
-There is no test suite or test runner configured.
+- `pnpm test` — Vitest once. `NODE_ENV=test` reads `.env.test`; the globalSetup applies migrations to `langgraph_app_test`.
+- `pnpm test:watch` — Vitest in watch mode.
+- `pnpm db:generate` — generate a new SQL migration from the Drizzle schema.
+- `pnpm db:migrate` — apply pending migrations to `DATABASE_URL`.
+- `pnpm db:studio` — open Drizzle Studio.
+- `pnpm db:reset` — drop the database (Drizzle Studio only manages our business tables; LangGraph's checkpoint tables are recreated by `PostgresSaver.setup()` at backend startup).
 
 ## Environment
 
@@ -89,6 +93,48 @@ When bumping those packages, re-check whether the patches still apply; if not, d
 ### Styling
 
 Tailwind v4 via `@tailwindcss/postcss` (PostCSS plugin only, no `tailwind.config.js`). `app/globals.css` is the stylesheet entry. `cn()` from `lib/utils.ts` is the only util. Path alias `@/*` → repo root (see `tsconfig.json`).
+
+## Engineering rules
+
+These are non-negotiable. They apply to every change.
+
+### 1. API documentation must stay in sync
+
+Every HTTP endpoint under `app/api/` is documented in `docs/APIS.md`. **Any change to a route — request shape, response shape, status codes, semantics — must update the doc in the same commit.** The doc is the contract for the frontend, future contributors, and any external integrators. A change that drifts from the doc is a bug.
+
+When adding a new endpoint:
+
+1. Add the route handler.
+2. Add or update the matching Zod validator (in `lib/<module>/validators.ts`).
+3. Add tests in `tests/api/`.
+4. **Add a section to `docs/APIS.md`** before committing.
+
+### 2. TDD is mandatory for new code
+
+For every new function, route, or schema:
+
+1. Write the failing test first (`pnpm test` → RED).
+2. Write the minimum implementation to pass (`pnpm test` → GREEN).
+3. Refactor with the test still green.
+
+Skip TDD only when the code is purely declarative (type-only changes, config files, prose docs). Any code with logic — including pure validation logic, queries, and route handlers — gets tests first.
+
+Coverage targets:
+
+- `lib/<module>/queries.ts` and `validators.ts`: ≥ 90%.
+- `app/api/**/route.ts`: every status code path covered, including 400 / 404.
+
+### 3. Best practices over middle-ground solutions
+
+When investigating how to solve a problem, **find the canonical, community-standard approach first**. No "good enough for now" compromises that we'll have to redo.
+
+Examples:
+
+- env loading: use `@next/env`, not a hand-rolled `dotenv.config({ path })` call.
+- ORM migrations: use `drizzle-kit`, not a custom script that scans `migrations/`.
+- thread list adapter: use `RemoteThreadListAdapter` from `@assistant-ui/react`, not a parallel implementation.
+
+If the canonical approach has friction (e.g. setup overhead), surface the trade-off explicitly and let the user decide — don't quietly substitute a workaround.
 
 ## Things to know before editing
 

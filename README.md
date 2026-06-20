@@ -201,3 +201,15 @@ Test database stays isolated from dev — never put production-like data in `lan
 ## Patches
 
 `patches/` contains pnpm-patchedDependencies for two upstream assistant-ui packages. See `pnpm-workspace.yaml` for the registration.
+
+## Documentation
+
+- [`docs/APIS.md`](docs/APIS.md) — HTTP endpoint reference. Update whenever a route under `app/api/` changes.
+
+## Engineering rules
+
+See `CLAUDE.md` for the project's hard rules:
+
+- API documentation stays in sync with the code (per-commit).
+- Test-driven development for every new function, route, or schema.
+- Prefer canonical / community-standard solutions over ad-hoc workarounds.
