@@ -214,6 +214,18 @@ describe("POST /api/threads/[id]/title", () => {
     expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
   });
 
+  it("persists the generated title to the threads row", async () => {
+    await db.insert(threads).values({ id: "t", title: "New chat" });
+    await POSTTitle(
+      jsonRequest({
+        messages: [{ role: "user", content: [{ type: "text", text: "How do I parse JSON?" }] }],
+      }),
+      { params: Promise.resolve({ id: "t" }) },
+    );
+    const row = await db.query.threads.findFirst({ where: (t, { eq }) => eq(t.id, "t") });
+    expect(row?.title).toBe("How do I parse JSON?");
+  });
+
   it("rejects empty messages", async () => {
     const res = await POSTTitle(jsonRequest({ messages: [] }), {
       params: Promise.resolve({ id: "t" }),
