@@ -4,24 +4,11 @@ import { createAssistantStream } from "assistant-stream";
 
 // Bridges our `/api/threads/*` contract to assistant-ui's
 // RemoteThreadListAdapter. Each method is a thin fetch wrapper; no state
-// is held here.
+// is held here. URLs are built with `ufo`'s joinURL so trailing slashes
+// or `%2F` collisions can't sneak into path segments.
 //
-// URLs are built with `ufo`'s joinURL to normalize slashes and avoid the
-// surprises of plain template-literal concatenation (e.g. `//` from a
-// trailing slash on the base, or `%2F` collisions if a path segment ever
-// contains a slash).
-//
-// --- Vocabulary boundary -------------------------------------------------
-// Our API and DB speak `id` (one concept). assistant-ui's runtime expects
-// `remoteId` (the API-side identifier it uses to call back into the
-// adapter) AND `externalId` (an optional handle the runtime passes to
-// `useStream({ threadId })` so the underlying transport knows which
-// thread to load — for us this is the same value as remoteId since our
-// threadId IS our DB id). Returning `undefined` for `externalId` makes
-// sidebar clicks a no-op (no thread_id → no history load); see the
-// useStreamThreadRuntime in @assistant-ui/react-langchain. We deliberately
-// do NOT implement unstable_Provider — LangGraph's PostgresSaver already
-// restores message history via thread_id, so an additional
+// We do NOT implement unstable_Provider — LangGraph's PostgresSaver
+// already restores message history via thread_id, so an additional
 // ThreadHistoryAdapter would just shadow that.
 
 const BASE = "/api/threads";
@@ -41,9 +28,9 @@ async function patchThread(id: string, body: unknown): Promise<void> {
   });
 }
 
-// Translate our own ThreadMetadata into assistant-ui's RemoteThreadMetadata
-// at the boundary. Callers inside this file use `t.remoteId` as if it were
-// `t.id`; that's intentional — they're the same value here.
+// assistant-ui expects `remoteId` (callback into the adapter) AND
+// `externalId` (threadId passed to useStream — must NOT be undefined or
+// sidebar clicks become no-ops). Our DB has one id, so we set both to it.
 function toRemote(t: ApiThreadMetadata) {
   return {
     status: t.status,
