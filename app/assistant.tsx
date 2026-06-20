@@ -14,7 +14,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
 import { cn } from "@/lib/utils";
-import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_KEY } from "@/lib/constants";
+import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID } from "@/lib/constants";
 
 const Logo: FC = () => {
   return (
@@ -204,12 +204,12 @@ const ThreadPersistence: FC = () => {
   // Runs before the write effect on first commit so hasHydratedRef
   // suppresses the placeholder write below.
   useEffect(() => {
-    const savedId = localStorage.getItem(ACTIVE_THREAD_KEY);
+    const savedId = localStorage.getItem(ACTIVE_THREAD_ID);
     if (savedId) {
       // switchToThread is typed void but returns a Promise at runtime.
       void Promise.resolve(api.threads().switchToThread(savedId) as unknown as Promise<void>).catch(
         () => {
-          localStorage.removeItem(ACTIVE_THREAD_KEY);
+          localStorage.removeItem(ACTIVE_THREAD_ID);
         },
       );
     }
@@ -221,10 +221,10 @@ const ThreadPersistence: FC = () => {
     if (!hasHydratedRef.current) return;
     const id = activeExternalId ?? mainThreadId;
     if (!id || id.startsWith(LOCAL_THREAD_PREFIX)) {
-      localStorage.removeItem(ACTIVE_THREAD_KEY);
+      localStorage.removeItem(ACTIVE_THREAD_ID);
       return;
     }
-    localStorage.setItem(ACTIVE_THREAD_KEY, id);
+    localStorage.setItem(ACTIVE_THREAD_ID, id);
   }, [activeExternalId, mainThreadId]);
 
   return null;

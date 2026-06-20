@@ -4,4 +4,4 @@
 // the server, otherwise the next page load would try to switchToThread a
 // ghost and hit 404.
 export const LOCAL_THREAD_PREFIX = "__LOCALID_";
-export const ACTIVE_THREAD_KEY = "ACTIVE_THREAD_ID";
+export const ACTIVE_THREAD_ID = "ACTIVE_THREAD_ID";
