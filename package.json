@@ -23,9 +23,11 @@
   "dependencies": {
     "@assistant-ui/react": "^0.14.23",
     "@assistant-ui/react-langchain": "latest",
+    "@assistant-ui/react-langgraph": "^0.14.9",
     "@assistant-ui/react-markdown": "^0.14.4",
     "@langchain/langgraph": "^1.4.4",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.3",
+    "@langchain/langgraph-sdk": "^1.9.23",
     "@langchain/openai": "^1.5.1",
     "@langchain/react": "^1.0.24",
     "@radix-ui/react-avatar": "^1.2.0",

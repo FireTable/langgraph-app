@@ -77,24 +77,6 @@ model is settled. R2 access keys are not yet in `.env.example`.
 Pattern: write a PID file under `.next/` or a tempdir, refuse to start if
 it's stale-and-alive. Not urgent — manual `pkill -f next dev` works for now.
 
-## 2026-06-20 — Thread title is a placeholder
-
-**Decided**: `POST /api/threads/[id]/title` stays as a deterministic
-"first 8 words of the first user message" placeholder for now.
-
-**How it's invoked**: assistant-ui's `RemoteThreadListHookInstanceManager`
-listens for `runtime.thread.on("runEnd")` on the first run only (guarded
-by a `hasInitializedRef` flag), then calls `adapter.generateTitle()` which
-fetches our route. Title is written back to the sidebar's title state, not
-to our DB (no PATCH back to `/api/threads/[id]`).
-
-**Deferred**: Summarize via the existing `ChatOpenAI` client (same model +
-base URL as the agent). Gemini does this — we'd do the same with a
-prompt like "3-5 word sidebar label". Plumbing is clean: route.ts already
-gets the messages array; just need to call the model and stream the
-result back. Tracked for after we have a real user base to tune the
-prompt on.
-
 ## Done
 
 _Move entries here as they ship, with the closing commit hash._

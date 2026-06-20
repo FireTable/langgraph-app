@@ -90,6 +90,7 @@ export const threadListAdapter: RemoteThreadListAdapter = {
     // with that remoteId directly — earlier versions did a `list()` and
     // used `threads[0]`, which silently targeted the wrong thread any time
     // the runtime's order disagreed with the server's ORDER BY.
+
     const url = joinURL(BASE, remoteId, "title");
     return createAssistantStream(async (controller) => {
       const res = await fetch(url, {

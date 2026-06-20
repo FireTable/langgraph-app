@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type FC } from "react";
+import { useEffect, useMemo, useRef, useState, type FC } from "react";
 import { AssistantRuntimeProvider, useAui, useAuiState } from "@assistant-ui/react";
-import { useStreamRuntime } from "@assistant-ui/react-langchain";
+import { unstable_createLangGraphStream, useLangGraphRuntime } from "@assistant-ui/react-langgraph";
+import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
 import { MenuIcon, MessageSquareTextIcon, PanelLeftIcon, PlusIcon, ShareIcon } from "lucide-react";
 
@@ -135,14 +136,45 @@ const Header: FC<{
 export function Assistant() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // Resolve the LangGraph API URL. By default we point the SDK at our
+  // own /api edge proxy (so CORS and x-api-key are handled by Next.js);
+  // NEXT_PUBLIC_LANGGRAPH_API_URL lets us bypass the proxy in production
+  // (e.g. when Cloudflare Tunnel terminates in front of LangGraph).
   const apiUrl =
     process.env.NEXT_PUBLIC_LANGGRAPH_API_URL ||
     (typeof window !== "undefined" ? new URL("/api", window.location.href).href : undefined);
 
-  const runtime = useStreamRuntime({
-    assistantId: process.env.NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID!,
-    apiUrl,
+  const assistantId = process.env.NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID!;
+
+  // Build the runtime lazily (apiUrl is undefined on first SSR pass).
+  // unstable_createLangGraphStream wraps client.runs.stream so messages
+  // POSTed by the composer land on `${apiUrl}/threads/{id}/runs/stream`,
+  // which our /api/[..._path] proxy forwards to langgraphjs dev.
+  const client = useMemo(() => new Client({ apiUrl: apiUrl! }), [apiUrl]);
+
+  const stream = useMemo(
+    () => unstable_createLangGraphStream({ client, assistantId }),
+    [client, assistantId],
+  );
+
+  const runtime = useLangGraphRuntime({
     unstable_threadListAdapter: threadListAdapter,
+    stream,
+    // adapter.initialize returns { remoteId, externalId } from POST /api/threads.
+    // useLangGraphRuntime wants `create` to return { externalId }, which is the
+    // threadId the runtime hands to `stream` via `config.initialize()`.
+    create: async () => {
+      const { externalId } = await threadListAdapter.initialize!("local");
+      return { externalId: externalId! };
+    },
+    // History load: fetch the LangGraph thread state via the SDK and pull
+    // `messages` out of `state.values`. Falls back to empty on a fresh
+    // thread (state has no messages key yet).
+    load: async (externalId) => {
+      const state = await client.threads.getState(externalId);
+      const values = state.values as { messages?: unknown };
+      return { messages: (values.messages ?? []) as never };
+    },
   });
 
   return (
