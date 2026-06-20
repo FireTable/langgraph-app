@@ -147,6 +147,26 @@ Acceptable verification methods, in order of preference:
 
 For backend / database / pure-logic changes, `pnpm test` plus type-checking is enough — no browser required.
 
+### 5. Comments are short and explain why, not what
+
+Code comments should be sparse, short, and reserved for things that are non-obvious or easy to get wrong. Default to no comment.
+
+Keep a comment only when it records:
+
+- A non-obvious design constraint or invariant the code alone doesn't show (e.g. `// useLangGraphRuntime keeps _mainThreadId on the placeholder until initialize() resolves — see #2577`).
+- A workaround for a third-party API quirk the next reader would otherwise re-discover (e.g. `// switchToThread is typed void but returns a Promise at runtime`).
+- A subtle race condition or ordering dependency (e.g. `// effect must run before the write effect on first commit`).
+- The single sentence of "why" behind a non-trivial algorithm, when the algorithm itself is already short.
+
+Delete a comment that:
+
+- Restates what the code does (`// loop over items` above `for (const item of items)`).
+- Narrates a sequence the reader can follow (`// fetch user, then fetch posts, then merge`).
+- References "the official example", "the migration plan", or any process-of-writing artifact — code outlives the process that produced it.
+- Documents a function name that's already self-explanatory (`Logo`, `MobileSidebar`).
+
+When in doubt, leave it out. A diff that's 80% code and 20% comment is fine; 50/50 is a code smell.
+
 ## Things to know before editing
 
 - The graph id `agent` is referenced in three places: `langgraph.json` (`graphs.agent`), `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` in `.env.example`, and the `unstable_createLangGraphStream({ assistantId })` call. Keep them aligned.
