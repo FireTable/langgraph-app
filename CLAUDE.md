@@ -39,10 +39,9 @@ There is no test suite or test runner configured.
 
 Copy `.env.example` to `.env.local` and fill in:
 
-- `OPENAI_API_KEY` (default provider) — required for the agent to run.
+- `OPENAI_API_KEY` — required for the agent to run.
 - `OPENAI_MODEL` — optional, defaults to `gpt-4o-mini`.
 - `OPENAI_BASE_URL` — optional, swap to an OpenAI-compatible endpoint.
-- `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` — kept for the legacy Anthropic path; the agent reads these only when `ANTHROPIC_PROVIDER=1` is set (the current `backend/agent.ts` actually uses OpenAI unconditionally, so flipping the provider requires code changes — see `backend/agent.ts`).
 - `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` — optional tracing.
 - `LANGGRAPH_API_URL` — defaults to `http://localhost:2024`. The Next.js `/api/[..._path]` proxy forwards here.
 - `LANGCHAIN_API_KEY` — sent as `x-api-key` by the proxy; leave blank for local dev.

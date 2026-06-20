@@ -185,23 +185,18 @@ Test database stays isolated from dev — never put production-like data in `lan
 
 ## Environment variables
 
-| Var                                     | Used by                   | Required?                                  |
-| --------------------------------------- | ------------------------- | ------------------------------------------ |
-| `OPENAI_API_KEY`                        | backend agent             | yes                                        |
-| `OPENAI_MODEL`                          | backend agent             | optional (default `gpt-4o-mini`)           |
-| `OPENAI_BASE_URL`                       | backend agent             | optional (OpenAI-compatible gateway)       |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | (legacy, not wired)       | no                                         |
-| `LANGGRAPH_API_URL`                     | Next.js proxy             | optional (default `http://localhost:2024`) |
-| `LANGCHAIN_API_KEY`                     | Next.js proxy → LangGraph | optional (leave blank locally)             |
-| `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID`    | browser runtime           | optional (default `agent`)                 |
-| `NEXT_PUBLIC_LANGGRAPH_API_URL`         | browser runtime           | optional (uses proxy if unset)             |
-| `DATABASE_URL`                          | drizzle-kit + backend     | yes                                        |
-| `DATABASE_URL_TEST`                     | vitest                    | yes                                        |
-| `LANGSMITH_*`                           | tracing                   | optional                                   |
-
-## Deployment
-
-A production Docker Compose setup (Hytron HK VPS, Cloudflare proxy, Postgres + Redis, Caddy with Cloudflare Origin Cert) is in progress. See `langgraph-app-v2-postgres-hytron.html` for the full architecture doc.
+| Var                                  | Used by                   | Required?                                  |
+| ------------------------------------ | ------------------------- | ------------------------------------------ |
+| `OPENAI_API_KEY`                     | backend agent             | yes                                        |
+| `OPENAI_MODEL`                       | backend agent             | optional (default `gpt-4o-mini`)           |
+| `OPENAI_BASE_URL`                    | backend agent             | optional (OpenAI-compatible gateway)       |
+| `LANGGRAPH_API_URL`                  | Next.js proxy             | optional (default `http://localhost:2024`) |
+| `LANGCHAIN_API_KEY`                  | Next.js proxy → LangGraph | optional (leave blank locally)             |
+| `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` | browser runtime           | optional (default `agent`)                 |
+| `NEXT_PUBLIC_LANGGRAPH_API_URL`      | browser runtime           | optional (uses proxy if unset)             |
+| `DATABASE_URL`                       | drizzle-kit + backend     | yes                                        |
+| `DATABASE_URL_TEST`                  | vitest                    | yes                                        |
+| `LANGSMITH_*`                        | tracing                   | optional                                   |
 
 ## Patches
 
