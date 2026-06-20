@@ -12,7 +12,7 @@ import { Fragment, useMemo, type FC } from "react";
 
 export const ThreadList: FC = () => {
   return (
-    <ThreadListPrimitive.Root className="aui-root aui-thread-list-root flex flex-col gap-0.5">
+    <ThreadListPrimitive.Root className="aui-root aui-thread-list-root flex flex-col gap-1">
       <ThreadListNew />
       <AuiIf condition={(s) => s.threads.isLoading}>
         <ThreadListSkeleton />
@@ -89,11 +89,15 @@ const ThreadListItems: FC = () => {
 };
 
 const ThreadListNew: FC = () => {
+  const isLoading = useAuiState((s) => s.threads.isLoading);
+
   return (
     <ThreadListPrimitive.New asChild>
       <Button
         variant="ghost"
         className="aui-thread-list-new hover:bg-muted data-active:bg-muted h-8 justify-start gap-2 rounded-md px-2.5 text-sm font-normal"
+        // when loading hide active state
+        {...(isLoading && { "data-active": null })}
       >
         <PlusIcon className="size-4" />
         New Thread
@@ -104,7 +108,7 @@ const ThreadListNew: FC = () => {
 
 const ThreadListSkeleton: FC = () => {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-1">
       {Array.from({ length: 5 }, (_, i) => (
         <div
           key={i}
@@ -112,7 +116,7 @@ const ThreadListSkeleton: FC = () => {
           aria-label="Loading threads"
           className="aui-thread-list-skeleton-wrapper flex h-8 items-center"
         >
-          <Skeleton className="aui-thread-list-skeleton h-3.5 w-full" />
+          <Skeleton className="aui-thread-list-skeleton h-8 w-full" />
         </div>
       ))}
     </div>
