@@ -155,3 +155,37 @@ describe("threadListAdapter.fetch", () => {
     }
   });
 });
+
+describe("threadListAdapter.generateTitle", () => {
+  it("POSTs to /api/threads/[remoteId]/title using the passed remoteId, not list()[0]", async () => {
+    // The runtime hands us the exact thread id of the run that just
+    // finished. Earlier versions did a list() and used threads[0] — that
+    // silently hit the wrong thread any time the runtime order disagreed
+    // with the server. This test pins the new behavior: only one fetch,
+    // targeted at the supplied remoteId.
+    const { fn } = mockFetch([{ url: /\/api\/threads\/abc\/title$/, body: "Hi there" }]);
+    const original = globalThis.fetch;
+    globalThis.fetch = fn as unknown as typeof fetch;
+    try {
+      const messages = [
+        {
+          id: "m1",
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "hi" }],
+          createdAt: new Date(),
+        },
+      ];
+      // Drive the stream so the lazy `createAssistantStream` callback
+      // actually runs and `fetch` is invoked. We don't decode the
+      // payload — that path is the /title route's responsibility, not
+      // the adapter's.
+      await threadListAdapter.generateTitle!("abc", messages as never);
+      expect(fn).toHaveBeenCalledTimes(1);
+      const [calledUrl, init] = fn.mock.calls[0]!;
+      expect(calledUrl.toString()).toMatch(/\/api\/threads\/abc\/title$/);
+      expect(init?.method).toBe("POST");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
