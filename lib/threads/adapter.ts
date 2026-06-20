@@ -10,6 +10,13 @@ import { createAssistantStream } from "assistant-stream";
 // trailing slash on the base, or `%2F` collisions if a path segment ever
 // contains a slash).
 //
+// `externalId` is the value the runtime passes to `useStream` as
+// `threadId` — for us this is the LangGraph thread_id, which we already
+// store as the `threads.id` row. Returning `undefined` here would make
+// clicking a thread in the sidebar a no-op (no thread_id → no history
+// load). See useStreamThreadRuntime in
+// @assistant-ui/react-langchain/src/useStreamRuntime.tsx.
+//
 // We deliberately do NOT implement unstable_Provider — LangGraph's
 // PostgresSaver already restores message history via thread_id, so an
 // additional ThreadHistoryAdapter would just shadow that.
@@ -34,6 +41,7 @@ export const threadListAdapter: RemoteThreadListAdapter = {
       threads: data.threads.map((t) => ({
         status: t.status,
         remoteId: t.remoteId,
+        externalId: t.remoteId,
         title: t.title,
       })),
     };
@@ -46,7 +54,7 @@ export const threadListAdapter: RemoteThreadListAdapter = {
       body: JSON.stringify({}),
     });
     const data = (await res.json()) as { remoteId: string };
-    return { remoteId: data.remoteId, externalId: undefined };
+    return { remoteId: data.remoteId, externalId: data.remoteId };
   },
 
   async rename(remoteId, title) {
@@ -71,11 +79,12 @@ export const threadListAdapter: RemoteThreadListAdapter = {
 
   async fetch(remoteId) {
     const res = await fetch(joinURL(BASE, remoteId));
-    return (await res.json()) as {
+    const data = (await res.json()) as {
       status: "regular" | "archived";
       remoteId: string;
       title?: string;
     };
+    return { ...data, externalId: data.remoteId };
   },
 
   async generateTitle(_remoteId, messages) {

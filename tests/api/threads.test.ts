@@ -57,7 +57,9 @@ describe("POST /api/threads", () => {
     const res = await POSTList(jsonRequest({}));
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.remoteId).toHaveLength(12);
+    expect(body.remoteId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
     expect(body.title).toBe("New chat");
   });
 

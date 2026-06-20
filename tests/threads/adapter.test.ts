@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { threadListAdapter } from "@/lib/threads/adapter";
 
 function mockFetch(
@@ -19,7 +19,7 @@ function mockFetch(
 }
 
 describe("threadListAdapter.list", () => {
-  it("calls GET /api/threads and returns threads", async () => {
+  it("calls GET /api/threads and returns threads with externalId", async () => {
     const { fn } = mockFetch([
       {
         url: /\/api\/threads$/,
@@ -30,7 +30,9 @@ describe("threadListAdapter.list", () => {
     globalThis.fetch = fn as unknown as typeof fetch;
     try {
       const result = await threadListAdapter.list!();
-      expect(result.threads).toEqual([{ status: "regular", remoteId: "abc", title: "hi" }]);
+      expect(result.threads).toEqual([
+        { status: "regular", remoteId: "abc", externalId: "abc", title: "hi" },
+      ]);
       expect(fn).toHaveBeenCalledTimes(1);
       const [calledUrl] = fn.mock.calls[0]!;
       expect(calledUrl.toString()).toMatch(/\/api\/threads$/);
@@ -41,7 +43,7 @@ describe("threadListAdapter.list", () => {
 });
 
 describe("threadListAdapter.initialize", () => {
-  it("calls POST /api/threads and returns remoteId", async () => {
+  it("calls POST /api/threads and returns remoteId + externalId", async () => {
     const { fn } = mockFetch([
       {
         url: /\/api\/threads$/,
@@ -52,7 +54,7 @@ describe("threadListAdapter.initialize", () => {
     globalThis.fetch = fn as unknown as typeof fetch;
     try {
       const result = await threadListAdapter.initialize!("local-1");
-      expect(result.remoteId).toBe("new-id");
+      expect(result).toEqual({ remoteId: "new-id", externalId: "new-id" });
       const [, init] = fn.mock.calls[0]!;
       expect(init?.method).toBe("POST");
     } finally {
@@ -123,7 +125,7 @@ describe("threadListAdapter.delete", () => {
 });
 
 describe("threadListAdapter.fetch", () => {
-  it("GETs /api/threads/[id] and returns metadata", async () => {
+  it("GETs /api/threads/[id] and returns metadata with externalId", async () => {
     const { fn } = mockFetch([
       {
         url: /\/api\/threads\/abc$/,
@@ -134,7 +136,7 @@ describe("threadListAdapter.fetch", () => {
     globalThis.fetch = fn as unknown as typeof fetch;
     try {
       const result = await threadListAdapter.fetch!("abc");
-      expect(result).toMatchObject({ status: "regular", remoteId: "abc", title: "x" });
+      expect(result).toEqual({ status: "regular", remoteId: "abc", externalId: "abc", title: "x" });
     } finally {
       globalThis.fetch = original;
     }

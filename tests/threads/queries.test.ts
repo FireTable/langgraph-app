@@ -58,9 +58,10 @@ describe("getThread", () => {
 });
 
 describe("createThread", () => {
-  it("generates 12-char id", async () => {
+  it("generates a UUID id (required by LangGraph's /threads/[id] routes)", async () => {
     const t = await createThread();
-    expect(t.id).toHaveLength(12);
+    // UUID v4: 8-4-4-4-12 hex, e.g. "550e8400-e29b-41d4-a716-446655440000"
+    expect(t.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
   it("uses default title when omitted", async () => {
