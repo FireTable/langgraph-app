@@ -14,8 +14,8 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
 import { cn } from "@/lib/utils";
+import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_KEY } from "@/lib/constants";
 
-// Brand mark used in both desktop and mobile sidebar headers.
 const Logo: FC = () => {
   return (
     <div className="flex items-center gap-2 px-2 text-sm font-medium">
@@ -25,8 +25,6 @@ const Logo: FC = () => {
   );
 };
 
-// Desktop sidebar — collapses between w-12 (just a + button) and w-65
-// (logo + full ThreadList). Matches the official example structure.
 const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
   return (
     <aside
@@ -72,7 +70,6 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
   );
 };
 
-// Mobile sidebar uses a Sheet that slides in from the left.
 const MobileSidebar: FC = () => {
   return (
     <Sheet>
@@ -136,20 +133,15 @@ const Header: FC<{
 export function Assistant() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // Resolve the LangGraph API URL. By default we point the SDK at our
-  // own /api edge proxy (so CORS and x-api-key are handled by Next.js);
-  // NEXT_PUBLIC_LANGGRAPH_API_URL lets us bypass the proxy in production
-  // (e.g. when Cloudflare Tunnel terminates in front of LangGraph).
+  // Default to the in-app /api proxy so CORS + x-api-key stay in Next.js;
+  // NEXT_PUBLIC_LANGGRAPH_API_URL bypasses it (e.g. behind Cloudflare Tunnel).
   const apiUrl =
     process.env.NEXT_PUBLIC_LANGGRAPH_API_URL ||
     (typeof window !== "undefined" ? new URL("/api", window.location.href).href : undefined);
 
   const assistantId = process.env.NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID!;
 
-  // Build the runtime lazily (apiUrl is undefined on first SSR pass).
-  // unstable_createLangGraphStream wraps client.runs.stream so messages
-  // POSTed by the composer land on `${apiUrl}/threads/{id}/runs/stream`,
-  // which our /api/[..._path] proxy forwards to langgraphjs dev.
+  // apiUrl is undefined on the first SSR pass, so the runtime builds lazily.
   const client = useMemo(() => new Client({ apiUrl: apiUrl! }), [apiUrl]);
 
   const stream = useMemo(
@@ -160,16 +152,11 @@ export function Assistant() {
   const runtime = useLangGraphRuntime({
     unstable_threadListAdapter: threadListAdapter,
     stream,
-    // adapter.initialize returns { remoteId, externalId } from POST /api/threads.
-    // useLangGraphRuntime wants `create` to return { externalId }, which is the
-    // threadId the runtime hands to `stream` via `config.initialize()`.
     create: async () => {
       const { externalId } = await threadListAdapter.initialize!("local");
       return { externalId: externalId! };
     },
-    // History load: fetch the LangGraph thread state via the SDK and pull
-    // `messages` out of `state.values`. Falls back to empty on a fresh
-    // thread (state has no messages key yet).
+    // Empty messages on a fresh thread — state.values has no `messages` key yet.
     load: async (externalId) => {
       const state = await client.threads.getState(externalId);
       const values = state.values as { messages?: unknown };
@@ -198,44 +185,28 @@ export function Assistant() {
   );
 }
 
-// Placeholder mainThreadId assigned to a freshly-created "new thread" that
-// hasn't been persisted yet. Filter it out before writing to localStorage —
-// we don't want to "remember" a thread id that has no backing record on
-// the server, otherwise the next page load would try to switchToThread a
-// ghost and hit 404.
-const LOCAL_THREAD_PREFIX = "__LOCALID_";
-const ACTIVE_THREAD_KEY = "active-thread-id";
 
-/**
- * Persist the active thread id to localStorage so the chat reopens on the
- * same thread after a refresh.
- *
- * - On mount, if a saved id exists, switchToThread restores it. If the
- *   thread has been deleted server-side, switchToThread rejects and we
- *   clear the stale entry.
- * - On every subsequent `mainThreadId` change we write the new id. The
- *   initial `__LOCALID_…` placeholder from the runtime constructor is
- *   skipped via `hasHydratedRef`, so we don't wipe the entry we're about
- *   to restore from.
- *
- * Uses the imperative `useAui().threads()` API rather than touching the
- * sidebar click handlers, so the runtime's internal thread-state cache
- * and `switchToThread` no-op path keep working unchanged.
- */
+
+// Persists the active thread id to localStorage so the chat reopens on the
+// same thread after a refresh. We write the runtime's externalId (our
+// Postgres uuid) rather than mainThreadId, because the runtime keeps
+// _mainThreadId on the placeholder __LOCALID_* until the user
+// explicitly switches threads — see assistant-ui #2577 and PR #3855
+// for the related ExternalStore fix; RemoteThreadList is still affected.
 const ThreadPersistence: FC = () => {
   const api = useAui();
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
+  const activeExternalId = useAuiState((s) =>
+    s.threads.threadItems.find((t) => t.id === s.threads.mainThreadId)?.externalId,
+  );
   const hasHydratedRef = useRef(false);
 
-  // Restore once on mount. Runs before the write effect below for this
-  // first commit, so the write effect's `hasHydratedRef` check correctly
-  // suppresses the placeholder write.
+  // Runs before the write effect on first commit so hasHydratedRef
+  // suppresses the placeholder write below.
   useEffect(() => {
     const savedId = localStorage.getItem(ACTIVE_THREAD_KEY);
     if (savedId) {
-      // `switchToThread` is typed `void` by the legacy adapter even though
-      // it actually returns a Promise at runtime, so we cast through
-      // `unknown` to attach a `.catch` for the stale-id case.
+      // switchToThread is typed void but returns a Promise at runtime.
       void Promise.resolve(api.threads().switchToThread(savedId) as unknown as Promise<void>).catch(
         () => {
           localStorage.removeItem(ACTIVE_THREAD_KEY);
@@ -246,15 +217,15 @@ const ThreadPersistence: FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist on every mainThreadId transition after the initial restore.
   useEffect(() => {
     if (!hasHydratedRef.current) return;
-    if (!mainThreadId || mainThreadId.startsWith(LOCAL_THREAD_PREFIX)) {
+    const id = activeExternalId ?? mainThreadId;
+    if (!id || id.startsWith(LOCAL_THREAD_PREFIX)) {
       localStorage.removeItem(ACTIVE_THREAD_KEY);
       return;
     }
-    localStorage.setItem(ACTIVE_THREAD_KEY, mainThreadId);
-  }, [mainThreadId]);
+    localStorage.setItem(ACTIVE_THREAD_KEY, id);
+  }, [activeExternalId, mainThreadId]);
 
   return null;
 };
