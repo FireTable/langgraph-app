@@ -1,4 +1,19 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// Mock the shared LangGraph SDK Client so POST /api/threads can register
+// the id it just generated with langgraphjs dev's STORE. Without this the
+// runtime's subsequent client.threads.getState / client.runs.stream calls
+// 404 because the STORE has never heard of our id.
+//
+// vi.mock factory is hoisted above this module's imports, so the mock
+// function must be created inside the factory and re-exported through the
+// mocked module for the rest of the file to assert on.
+vi.mock("@/lib/langgraph/client", () => ({
+  langGraphClient: { threads: { create: vi.fn(async () => ({ thread_id: "ignored" })) } },
+}));
+import { langGraphClient } from "@/lib/langgraph/client";
+const mockCreate = vi.mocked(langGraphClient.threads.create);
+
 import { POST as POSTList, GET as GETList } from "@/app/api/threads/route";
 import {
   GET as GETOne,
@@ -19,6 +34,7 @@ function jsonRequest(body: unknown): Request {
 
 beforeEach(async () => {
   await db.delete(threads);
+  mockCreate.mockClear();
 });
 
 describe("GET /api/threads", () => {
@@ -66,6 +82,21 @@ describe("POST /api/threads", () => {
     const res = await POSTList(jsonRequest({ title: "My chat" }));
     const body = await res.json();
     expect(body.title).toBe("My chat");
+  });
+
+  it("registers the new thread with langgraphjs dev", async () => {
+    const res = await POSTList(jsonRequest({}));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    // The id we generated must be the one LangGraph STORE registers — and
+    // ifExists must be do_nothing so retries are safe.
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: body.id,
+        ifExists: "do_nothing",
+      }),
+    );
   });
 
   it("rejects empty title", async () => {
@@ -175,9 +206,10 @@ describe("DELETE /api/threads/[id]", () => {
 describe("POST /api/threads/[id]/title", () => {
   it("returns streaming response with title", async () => {
     await db.insert(threads).values({ id: "t" });
-    const res = await POSTTitle(jsonRequest({ messages: [{ role: "user", content: "hi" }] }), {
-      params: Promise.resolve({ id: "t" }),
-    });
+    const res = await POSTTitle(
+      jsonRequest({ messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] }),
+      { params: Promise.resolve({ id: "t" }) },
+    );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
   });

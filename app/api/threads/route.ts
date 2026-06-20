@@ -2,6 +2,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { listThreads, createThread } from "@/lib/threads/queries";
 import { CreateThreadBody } from "@/lib/threads/validators";
+import { langGraphClient } from "@/lib/langgraph/client";
 import type { Thread } from "@/lib/threads/schema";
 
 // GET /api/threads — list regular threads for the sidebar.
@@ -19,6 +20,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
   }
   const row = await createThread(parsed.data.title);
+  // Register the same id with langgraphjs dev's STORE so the runtime's
+  // client.threads.getState / client.runs.stream calls find it. The two
+  // systems hold thread_ids independently — see git history.
+  await langGraphClient.threads.create({ threadId: row.id, ifExists: "do_nothing" });
   return NextResponse.json(toThreadMetadata(row), { status: 201 });
 }
 
