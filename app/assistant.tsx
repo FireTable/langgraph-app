@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, type FC } from "react";
-import { AssistantRuntimeProvider } from "@assistant-ui/react";
+import { useEffect, useRef, useState, type FC } from "react";
+import { AssistantRuntimeProvider, useAui, useAuiState } from "@assistant-ui/react";
 import { useStreamRuntime } from "@assistant-ui/react-langchain";
-import { ThreadListPrimitive, useAuiState } from "@assistant-ui/react";
+import { ThreadListPrimitive } from "@assistant-ui/react";
 import { MenuIcon, MessageSquareTextIcon, PanelLeftIcon, PlusIcon, ShareIcon } from "lucide-react";
 
 import { Thread } from "@/components/assistant-ui/thread";
@@ -147,6 +147,7 @@ export function Assistant() {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <ThreadPersistence />
       <div className="bg-muted/30 flex h-dvh w-full">
         <Sidebar collapsed={sidebarCollapsed} />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden p-2 md:pl-0">
@@ -164,3 +165,64 @@ export function Assistant() {
     </AssistantRuntimeProvider>
   );
 }
+
+// Placeholder mainThreadId assigned to a freshly-created "new thread" that
+// hasn't been persisted yet. Filter it out before writing to localStorage —
+// we don't want to "remember" a thread id that has no backing record on
+// the server, otherwise the next page load would try to switchToThread a
+// ghost and hit 404.
+const LOCAL_THREAD_PREFIX = "__LOCALID_";
+const ACTIVE_THREAD_KEY = "active-thread-id";
+
+/**
+ * Persist the active thread id to localStorage so the chat reopens on the
+ * same thread after a refresh.
+ *
+ * - On mount, if a saved id exists, switchToThread restores it. If the
+ *   thread has been deleted server-side, switchToThread rejects and we
+ *   clear the stale entry.
+ * - On every subsequent `mainThreadId` change we write the new id. The
+ *   initial `__LOCALID_…` placeholder from the runtime constructor is
+ *   skipped via `hasHydratedRef`, so we don't wipe the entry we're about
+ *   to restore from.
+ *
+ * Uses the imperative `useAui().threads()` API rather than touching the
+ * sidebar click handlers, so the runtime's internal thread-state cache
+ * and `switchToThread` no-op path keep working unchanged.
+ */
+const ThreadPersistence: FC = () => {
+  const api = useAui();
+  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
+  const hasHydratedRef = useRef(false);
+
+  // Restore once on mount. Runs before the write effect below for this
+  // first commit, so the write effect's `hasHydratedRef` check correctly
+  // suppresses the placeholder write.
+  useEffect(() => {
+    const savedId = localStorage.getItem(ACTIVE_THREAD_KEY);
+    if (savedId) {
+      // `switchToThread` is typed `void` by the legacy adapter even though
+      // it actually returns a Promise at runtime, so we cast through
+      // `unknown` to attach a `.catch` for the stale-id case.
+      void Promise.resolve(api.threads().switchToThread(savedId) as unknown as Promise<void>).catch(
+        () => {
+          localStorage.removeItem(ACTIVE_THREAD_KEY);
+        },
+      );
+    }
+    hasHydratedRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist on every mainThreadId transition after the initial restore.
+  useEffect(() => {
+    if (!hasHydratedRef.current) return;
+    if (!mainThreadId || mainThreadId.startsWith(LOCAL_THREAD_PREFIX)) {
+      localStorage.removeItem(ACTIVE_THREAD_KEY);
+      return;
+    }
+    localStorage.setItem(ACTIVE_THREAD_KEY, mainThreadId);
+  }, [mainThreadId]);
+
+  return null;
+};

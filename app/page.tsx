@@ -1,5 +1,5 @@
-import { Assistant } from "./assistant";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  return <Assistant />;
+  redirect("/chat");
 }
