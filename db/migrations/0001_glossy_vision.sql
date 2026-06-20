@@ -1,0 +1,2 @@
+ALTER TABLE "threads" ADD COLUMN "last_message_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "threads_status_last_message_idx" ON "threads" USING btree ("status",last_message_at DESC NULLS LAST);
