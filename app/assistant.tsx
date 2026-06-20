@@ -160,28 +160,17 @@ export function Assistant() {
   const runtime = useLangGraphRuntime({
     unstable_threadListAdapter: threadListAdapter,
     stream,
-    // New threads: write our Postgres metadata row first (sidebar / rename
-    // / archive) AND register the thread with langgraphjs dev's internal
-    // store (so subsequent client.runs.stream / getState calls find it).
-    // The two systems store thread_ids independently — see #94.
+    // adapter.initialize returns { remoteId, externalId } from POST /api/threads.
+    // useLangGraphRuntime wants `create` to return { externalId }, which is the
+    // threadId the runtime hands to `stream` via `config.initialize()`.
     create: async () => {
       const { externalId } = await threadListAdapter.initialize!("local");
-      await client.threads.create(); // POST /threads — populates LangGraph STORE
       return { externalId: externalId! };
     },
-    // History load. Tries getState first; if LangGraph has never seen this
-    // id (a legacy thread row from before we wired up create-side LangGraph
-    // registration), backfill it with the same id, then read state.
-    // Threads.put is idempotent so this is safe.
-    //
-    // Note: langgraph-sdk doesn't throw on HTTP 4xx — it just parses the
-    // JSON body as a normal response. We detect a missing thread by
-    // checking state.values (undefined for a non-existent thread).
+    // History load: fetch the LangGraph thread state via the SDK and pull
+    // `messages` out of `state.values`. Falls back to empty on a fresh
+    // thread (state has no messages key yet).
     load: async (externalId) => {
-      const initial = await client.threads.getState(externalId);
-      if (!initial.values) {
-        await client.threads.create({ threadId: externalId, ifExists: "do_nothing" });
-      }
       const state = await client.threads.getState(externalId);
       const values = state.values as { messages?: unknown };
       return { messages: (values.messages ?? []) as never };
