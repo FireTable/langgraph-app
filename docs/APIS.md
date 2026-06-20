@@ -8,10 +8,23 @@ This doc exists so you can find your way around the API surface without grepping
 
 Thread metadata, backing the assistant-ui sidebar. Implementation: `lib/threads/{queries,validators}.ts`. Adapter: `lib/threads/adapter.ts`.
 
+Response shape (single row, same for list / fetch / create / update):
+
+```ts
+{
+  id: string; // LangGraph thread_id
+  status: "regular" | "archived";
+  title: string;
+  lastMessageAt: string; // ISO timestamp
+}
+```
+
+`lastMessageAt` mirrors the most recent activity for the thread (creation time until a run-end sync lands; see `lib/threads/queries.ts`). The frontend adapter translates this object into assistant-ui's `RemoteThreadMetadata` (`remoteId` + `externalId` are both set to `id`).
+
 | Endpoint                       | Purpose                                                                |
 | ------------------------------ | ---------------------------------------------------------------------- |
 | `GET /api/threads`             | List regular (non-archived) threads for the sidebar.                   |
-| `POST /api/threads`            | Create a new thread; returns the generated `remoteId`.                 |
+| `POST /api/threads`            | Create a new thread; returns the generated `id`.                       |
 | `GET /api/threads/[id]`        | Fetch one thread's metadata.                                           |
 | `PATCH /api/threads/[id]`      | Rename, archive, unarchive, or replace `custom` jsonb.                 |
 | `DELETE /api/threads/[id]`     | Remove the thread metadata row (does not touch LangGraph checkpoints). |

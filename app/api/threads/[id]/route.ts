@@ -23,7 +23,7 @@ export async function GET(_req: Request, ctx: RouteContext) {
   const { id } = await ctx.params;
   const row = await getThread(id);
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(toRemoteMetadata(row));
+  return NextResponse.json(toThreadMetadata(row));
 }
 
 // PATCH /api/threads/[id] — rename / archive / unarchive / update custom.
@@ -47,7 +47,7 @@ export async function PATCH(req: Request, ctx: RouteContext) {
     row = await getThread(id);
   }
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(toRemoteMetadata(row));
+  return NextResponse.json(toThreadMetadata(row));
 }
 
 // DELETE /api/threads/[id] — remove the thread metadata row.
@@ -59,11 +59,11 @@ export async function DELETE(_req: Request, ctx: RouteContext) {
   return new NextResponse(null, { status: 204 });
 }
 
-function toRemoteMetadata(row: Thread) {
+function toThreadMetadata(row: Thread) {
   return {
+    id: row.id,
     status: row.status,
-    remoteId: row.id,
     title: row.title,
-    externalId: undefined,
+    lastMessageAt: row.lastMessageAt,
   };
 }

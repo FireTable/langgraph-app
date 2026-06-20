@@ -2,26 +2,36 @@ import type { RemoteThreadListAdapter } from "@assistant-ui/react";
 import { joinURL } from "ufo";
 import { createAssistantStream } from "assistant-stream";
 
-// Bridges assistant-ui's RemoteThreadListAdapter to our /api/threads/* routes.
-// Each method is a thin fetch wrapper; no state is held here.
+// Bridges our `/api/threads/*` contract to assistant-ui's
+// RemoteThreadListAdapter. Each method is a thin fetch wrapper; no state
+// is held here.
 //
 // URLs are built with `ufo`'s joinURL to normalize slashes and avoid the
 // surprises of plain template-literal concatenation (e.g. `//` from a
 // trailing slash on the base, or `%2F` collisions if a path segment ever
 // contains a slash).
 //
-// `externalId` is the value the runtime passes to `useStream` as
-// `threadId` — for us this is the LangGraph thread_id, which we already
-// store as the `threads.id` row. Returning `undefined` here would make
-// clicking a thread in the sidebar a no-op (no thread_id → no history
-// load). See useStreamThreadRuntime in
-// @assistant-ui/react-langchain/src/useStreamRuntime.tsx.
-//
-// We deliberately do NOT implement unstable_Provider — LangGraph's
-// PostgresSaver already restores message history via thread_id, so an
-// additional ThreadHistoryAdapter would just shadow that.
+// --- Vocabulary boundary -------------------------------------------------
+// Our API and DB speak `id` (one concept). assistant-ui's runtime expects
+// `remoteId` (the API-side identifier it uses to call back into the
+// adapter) AND `externalId` (an optional handle the runtime passes to
+// `useStream({ threadId })` so the underlying transport knows which
+// thread to load — for us this is the same value as remoteId since our
+// threadId IS our DB id). Returning `undefined` for `externalId` makes
+// sidebar clicks a no-op (no thread_id → no history load); see the
+// useStreamThreadRuntime in @assistant-ui/react-langchain. We deliberately
+// do NOT implement unstable_Provider — LangGraph's PostgresSaver already
+// restores message history via thread_id, so an additional
+// ThreadHistoryAdapter would just shadow that.
 
 const BASE = "/api/threads";
+
+type ApiThreadMetadata = {
+  id: string;
+  status: "regular" | "archived";
+  title?: string;
+  lastMessageAt?: Date;
+};
 
 async function patchThread(id: string, body: unknown): Promise<void> {
   await fetch(joinURL(BASE, id), {
@@ -31,20 +41,24 @@ async function patchThread(id: string, body: unknown): Promise<void> {
   });
 }
 
+// Translate our own ThreadMetadata into assistant-ui's RemoteThreadMetadata
+// at the boundary. Callers inside this file use `t.remoteId` as if it were
+// `t.id`; that's intentional — they're the same value here.
+function toRemote(t: ApiThreadMetadata) {
+  return {
+    status: t.status,
+    remoteId: t.id,
+    externalId: t.id,
+    title: t.title,
+    lastMessageAt: t.lastMessageAt,
+  };
+}
+
 export const threadListAdapter: RemoteThreadListAdapter = {
   async list() {
     const res = await fetch(joinURL(BASE));
-    const data = (await res.json()) as {
-      threads: Array<{ status: "regular" | "archived"; remoteId: string; title?: string }>;
-    };
-    return {
-      threads: data.threads.map((t) => ({
-        status: t.status,
-        remoteId: t.remoteId,
-        externalId: t.remoteId,
-        title: t.title,
-      })),
-    };
+    const data = (await res.json()) as { threads: ApiThreadMetadata[] };
+    return { threads: data.threads.map(toRemote) };
   },
 
   async initialize(_localId: string) {
@@ -53,8 +67,8 @@ export const threadListAdapter: RemoteThreadListAdapter = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
-    const data = (await res.json()) as { remoteId: string };
-    return { remoteId: data.remoteId, externalId: data.remoteId };
+    const data = (await res.json()) as ApiThreadMetadata;
+    return { remoteId: data.id, externalId: data.id };
   },
 
   async rename(remoteId, title) {
@@ -79,12 +93,8 @@ export const threadListAdapter: RemoteThreadListAdapter = {
 
   async fetch(remoteId) {
     const res = await fetch(joinURL(BASE, remoteId));
-    const data = (await res.json()) as {
-      status: "regular" | "archived";
-      remoteId: string;
-      title?: string;
-    };
-    return { ...data, externalId: data.remoteId };
+    const data = (await res.json()) as ApiThreadMetadata;
+    return toRemote(data);
   },
 
   async generateTitle(remoteId, messages) {

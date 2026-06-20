@@ -19,11 +19,11 @@ function mockFetch(
 }
 
 describe("threadListAdapter.list", () => {
-  it("calls GET /api/threads and returns threads with externalId", async () => {
+  it("calls GET /api/threads and returns threads with remoteId + externalId", async () => {
     const { fn } = mockFetch([
       {
         url: /\/api\/threads$/,
-        body: { threads: [{ status: "regular", remoteId: "abc", title: "hi" }] },
+        body: { threads: [{ status: "regular", id: "abc", title: "hi" }] },
       },
     ]);
     const original = globalThis.fetch;
@@ -31,7 +31,13 @@ describe("threadListAdapter.list", () => {
     try {
       const result = await threadListAdapter.list!();
       expect(result.threads).toEqual([
-        { status: "regular", remoteId: "abc", externalId: "abc", title: "hi" },
+        {
+          status: "regular",
+          remoteId: "abc",
+          externalId: "abc",
+          title: "hi",
+          lastMessageAt: undefined,
+        },
       ]);
       expect(fn).toHaveBeenCalledTimes(1);
       const [calledUrl] = fn.mock.calls[0]!;
@@ -47,7 +53,7 @@ describe("threadListAdapter.initialize", () => {
     const { fn } = mockFetch([
       {
         url: /\/api\/threads$/,
-        body: { status: "regular", remoteId: "new-id", title: "New chat" },
+        body: { status: "regular", id: "new-id", title: "New chat" },
       },
     ]);
     const original = globalThis.fetch;
@@ -125,18 +131,24 @@ describe("threadListAdapter.delete", () => {
 });
 
 describe("threadListAdapter.fetch", () => {
-  it("GETs /api/threads/[id] and returns metadata with externalId", async () => {
+  it("GETs /api/threads/[id] and returns metadata with remoteId + externalId", async () => {
     const { fn } = mockFetch([
       {
         url: /\/api\/threads\/abc$/,
-        body: { status: "regular", remoteId: "abc", title: "x" },
+        body: { status: "regular", id: "abc", title: "x" },
       },
     ]);
     const original = globalThis.fetch;
     globalThis.fetch = fn as unknown as typeof fetch;
     try {
       const result = await threadListAdapter.fetch!("abc");
-      expect(result).toEqual({ status: "regular", remoteId: "abc", externalId: "abc", title: "x" });
+      expect(result).toEqual({
+        status: "regular",
+        remoteId: "abc",
+        externalId: "abc",
+        title: "x",
+        lastMessageAt: undefined,
+      });
     } finally {
       globalThis.fetch = original;
     }

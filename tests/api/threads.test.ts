@@ -37,18 +37,19 @@ describe("GET /api/threads", () => {
     const res = await GETList();
     const body = await res.json();
     expect(body.threads).toHaveLength(1);
-    expect(body.threads[0].remoteId).toBe("a");
+    expect(body.threads[0].id).toBe("a");
   });
 
-  it("includes status, title, remoteId in each entry", async () => {
+  it("includes status, title, id, lastMessageAt in each entry", async () => {
     await db.insert(threads).values({ id: "x", title: "hello" });
     const res = await GETList();
     const { threads: list } = await res.json();
     expect(list[0]).toMatchObject({
       status: "regular",
-      remoteId: "x",
+      id: "x",
       title: "hello",
     });
+    expect(list[0].lastMessageAt).toEqual(expect.any(String));
   });
 });
 
@@ -57,9 +58,7 @@ describe("POST /api/threads", () => {
     const res = await POSTList(jsonRequest({}));
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.remoteId).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-    );
+    expect(body.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(body.title).toBe("New chat");
   });
 
@@ -88,7 +87,7 @@ describe("GET /api/threads/[id]", () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.remoteId).toBe("get-id");
+    expect(body.id).toBe("get-id");
   });
 
   it("returns 404 when missing", async () => {
