@@ -136,6 +136,18 @@ Examples:
 
 If the canonical approach has friction (e.g. setup overhead), surface the trade-off explicitly and let the user decide — don't quietly substitute a workaround.
 
+### 4. Frontend UI changes must be visually verified
+
+Pure code edits to React components, Tailwind classes, layout primitives, or anything that affects what the user sees in the browser **must be visually verified before claiming done**. "Looks right" is not a substitute for running it.
+
+Acceptable verification methods, in order of preference:
+
+1. **Chrome DevTools MCP** (`mcp__chrome-devtools__*`) — load the page, take a screenshot, compare against the reference. Use this for any visible change in `app/`, `components/`, or styling.
+2. **Playwright** — for repeatable end-to-end flows (login, send message, switch thread, etc.). Add a test under `tests/e2e/` and run it.
+3. **Manual verification by the user** — only when neither of the above is feasible; the user must explicitly confirm the change matches their expectation.
+
+For backend / database / pure-logic changes, `pnpm test` plus type-checking is enough — no browser required.
+
 ## Things to know before editing
 
 - The graph id `agent` is referenced in three places: `langgraph.json` (`graphs.agent`), `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` in `.env.example`, and the `useStreamRuntime({ assistantId })` call. Keep them aligned.
