@@ -1,0 +1,36 @@
+import { pgTable, text, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { createInsertSchema, createSelectSchema } from "drizzle-zod";
+import { z } from "zod";
+
+// Threads metadata for assistant-ui RemoteThreadListAdapter.
+// The LangGraph checkpoint_* tables are created by PostgresSaver.setup()
+// at runtime and are NOT managed here.
+
+export type ThreadCustom = Record<string, unknown>;
+
+export const threads = pgTable(
+  "threads",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull().default("New chat"),
+    status: text("status", { enum: ["regular", "archived"] })
+      .notNull()
+      .default("regular"),
+    userId: text("user_id"),
+    // $type<> makes Drizzle treat the jsonb column as a typed record rather
+    // than the generic `unknown` json shape.
+    custom: jsonb("custom").$type<ThreadCustom>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("threads_status_updated_idx").on(t.status, t.updatedAt.desc())],
+);
+
+// Zod schemas derived from the Drizzle table. Used internally for type-safe
+// inserts/selects and re-exported for API consumers via lib/threads/validators.ts.
+
+export const ThreadInsert = createInsertSchema(threads);
+export const ThreadSelect = createSelectSchema(threads);
+
+export type Thread = z.infer<typeof ThreadSelect>;
+export type NewThread = z.infer<typeof ThreadInsert>;
