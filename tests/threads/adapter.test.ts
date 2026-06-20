@@ -139,4 +139,17 @@ describe("threadListAdapter.fetch", () => {
       globalThis.fetch = original;
     }
   });
+
+  it("does not produce double slashes when id is the only segment", async () => {
+    const { fn } = mockFetch([{ url: /\/api\/threads\/abc$/, body: {} }]);
+    const original = globalThis.fetch;
+    globalThis.fetch = fn as unknown as typeof fetch;
+    try {
+      await threadListAdapter.fetch!("abc");
+      const [calledUrl] = fn.mock.calls[0]!;
+      expect(calledUrl.toString()).not.toMatch(/\/\//);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
 });

@@ -1,8 +1,14 @@
 import type { RemoteThreadListAdapter } from "@assistant-ui/react";
+import { joinURL } from "ufo";
 import { createAssistantStream } from "assistant-stream";
 
 // Bridges assistant-ui's RemoteThreadListAdapter to our /api/threads/* routes.
 // Each method is a thin fetch wrapper; no state is held here.
+//
+// URLs are built with `ufo`'s joinURL to normalize slashes and avoid the
+// surprises of plain template-literal concatenation (e.g. `//` from a
+// trailing slash on the base, or `%2F` collisions if a path segment ever
+// contains a slash).
 //
 // We deliberately do NOT implement unstable_Provider — LangGraph's
 // PostgresSaver already restores message history via thread_id, so an
@@ -11,7 +17,7 @@ import { createAssistantStream } from "assistant-stream";
 const BASE = "/api/threads";
 
 async function patchThread(id: string, body: unknown): Promise<void> {
-  await fetch(`${BASE}/${id}`, {
+  await fetch(joinURL(BASE, id), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -20,7 +26,7 @@ async function patchThread(id: string, body: unknown): Promise<void> {
 
 export const threadListAdapter: RemoteThreadListAdapter = {
   async list() {
-    const res = await fetch(BASE);
+    const res = await fetch(joinURL(BASE));
     const data = (await res.json()) as {
       threads: Array<{ status: "regular" | "archived"; remoteId: string; title?: string }>;
     };
@@ -34,7 +40,7 @@ export const threadListAdapter: RemoteThreadListAdapter = {
   },
 
   async initialize(_localId: string) {
-    const res = await fetch(BASE, {
+    const res = await fetch(joinURL(BASE), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -60,11 +66,11 @@ export const threadListAdapter: RemoteThreadListAdapter = {
   },
 
   async delete(remoteId) {
-    await fetch(`${BASE}/${remoteId}`, { method: "DELETE" });
+    await fetch(joinURL(BASE, remoteId), { method: "DELETE" });
   },
 
   async fetch(remoteId) {
-    const res = await fetch(`${BASE}/${remoteId}`);
+    const res = await fetch(joinURL(BASE, remoteId));
     return (await res.json()) as {
       status: "regular" | "archived";
       remoteId: string;
@@ -79,7 +85,7 @@ export const threadListAdapter: RemoteThreadListAdapter = {
     const list = await this.list();
     const target = list.threads[0];
     if (!target) throw new Error("No thread to generate title for");
-    const url = `${BASE}/${target.remoteId}/title`;
+    const url = joinURL(BASE, target.remoteId, "title");
     return createAssistantStream(async (controller) => {
       const res = await fetch(url, {
         method: "POST",
