@@ -89,7 +89,6 @@ For runtimes other than AI SDK or frameworks other than Next.js, consult the ref
 | Custom streaming API                                    | `useLocalRuntime`                                  | [references/custom-backend.md](./references/custom-backend.md)           |
 | Existing state (Redux/Zustand)                          | `useExternalStoreRuntime`                          | [references/custom-backend.md](./references/custom-backend.md)           |
 | Vite / TanStack Start                                   | —                                                  | [references/tanstack.md](./references/tanstack.md)                       |
-| LangChain agents                                        | `useStreamRuntime`                                 | [references/langchain.md](./references/langchain.md)                     |
 | Google ADK agents                                       | `useAdkRuntime`                                    | [references/google-adk.md](./references/google-adk.md)                   |
 | Mastra agents                                           | `useChatRuntime`                                   | [references/mastra.md](./references/mastra.md)                           |
 | Cloudflare Agents                                       | `useAISDKRuntime`                                  | [references/cloudflare-agents.md](./references/cloudflare-agents.md)     |

@@ -17,7 +17,7 @@ Key patterns:
 - AssistantModal for floating chat widget
 - useChatRuntime hook with AI SDK transport
 
-Note: this template uses `useStreamRuntime` from `@assistant-ui/react-langchain` (LangChain transport) rather than `useChatRuntime` (AI SDK transport), and renders a full-page `Thread` rather than a modal.
+Note: this template uses `useLangGraphRuntime` from `@assistant-ui/react-langgraph` (LangGraph transport wrapping `@langchain/langgraph-sdk`) rather than `useChatRuntime` (AI SDK transport), and renders a full-page `Thread` rather than a modal.
 
 ## Commands
 
@@ -62,7 +62,7 @@ langgraph.json            CLI config: graph id, node version, env file
 app/                      Next.js App Router
   layout.tsx              Root layout, fonts, TooltipProvider
   page.tsx                Renders <Assistant /> in a full-viewport <main>
-  assistant.tsx           Builds useStreamRuntime; chooses /api vs direct URL
+  assistant.tsx           Builds useLangGraphRuntime; chooses /api vs direct URL
   api/[..._path]/route.ts Edge catch-all proxy to LANGGRAPH_API_URL
   globals.css             Tailwind v4 entry
 components/
@@ -77,7 +77,7 @@ A `StateGraph(MessagesAnnotation)` with a single `agent` node that calls `ChatOp
 
 ### Frontend runtime
 
-`app/assistant.tsx` is a client component. It instantiates the runtime with `useStreamRuntime({ assistantId, apiUrl })` from `@assistant-ui/react-langchain` (which wraps `useStream` from `@langchain/react`). `apiUrl` is `NEXT_PUBLIC_LANGGRAPH_API_URL` if set, otherwise the same-origin `/api` URL.
+`app/assistant.tsx` is a client component. It instantiates the runtime with `useLangGraphRuntime({ stream, create, load })` from `@assistant-ui/react-langgraph` (which wraps `@langchain/langgraph-sdk`'s `Client`). `stream` is built from `unstable_createLangGraphStream`; `apiUrl` is `NEXT_PUBLIC_LANGGRAPH_API_URL` if set, otherwise the same-origin `/api` URL.
 
 `app/api/[..._path]/route.ts` is an edge-runtime catch-all that proxies every method (`GET/POST/PUT/PATCH/DELETE/OPTIONS`) to `${LANGGRAPH_API_URL}/${path}` with `x-api-key: LANGCHAIN_API_KEY`, strips hop-by-hop / content-encoding headers, and adds permissive CORS. The body of mutating requests is forwarded as text.
 
@@ -86,7 +86,6 @@ A `StateGraph(MessagesAnnotation)` with a single `agent` node that calls `ChatOp
 `patches/` is non-empty and applied via `pnpm-workspace.yaml`:
 
 - `@assistant-ui/core@0.2.18` — guards `part.text?.trim()` to tolerate missing text on `text`/`reasoning` parts.
-- `@assistant-ui/react-langchain@0.0.15` — guards `part.summary?.map(...)` so the converter doesn't crash when `summary` is absent.
 
 When bumping those packages, re-check whether the patches still apply; if not, drop the patch entry from `pnpm-workspace.yaml` and delete the file.
 
@@ -150,7 +149,7 @@ For backend / database / pure-logic changes, `pnpm test` plus type-checking is e
 
 ## Things to know before editing
 
-- The graph id `agent` is referenced in three places: `langgraph.json` (`graphs.agent`), `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` in `.env.example`, and the `useStreamRuntime({ assistantId })` call. Keep them aligned.
+- The graph id `agent` is referenced in three places: `langgraph.json` (`graphs.agent`), `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` in `.env.example`, and the `unstable_createLangGraphStream({ assistantId })` call. Keep them aligned.
 - The proxy hardcodes `runtime = "edge"`; any Node-only API in the route would break the build.
 - `modelKwargs.reasoning_split` is provider-specific. If you switch back to stock OpenAI, remove it (or guard it) — OpenAI ignores unknown kwargs but it'll be a lie in the source.
 - `components.json` declares a `@assistant-ui` registry at `https://r.assistant-ui.com/{name}.json` for `shadcn`-style component adds.
