@@ -59,6 +59,7 @@
     "orm",
     "pg",
     "pid",
+    "pkill",
     "plugin",
     "postgres",
     "postgresjs",
