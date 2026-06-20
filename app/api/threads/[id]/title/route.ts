@@ -17,7 +17,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return new Response(JSON.stringify({ error: parsed.error.issues }), { status: 400 });
   }
   const firstUser = parsed.data.messages.find((m) => m.role === "user");
-  const title = (firstUser?.content ?? "New chat").split(/\s+/).slice(0, 8).join(" ");
+  const title = firstUser?.content[0]?.text ?? "New chat";
   // Stream a single chunk via ReadableStream so assistant-ui's
   // generateTitle() consumes it like a real model response.
   const stream = new ReadableStream({

@@ -71,9 +71,9 @@ describe("UpdateCustomBody", () => {
 });
 
 describe("GenerateTitleBody", () => {
-  it("accepts a messages array", () => {
+  it("accepts a messages array with BaseMessage content blocks", () => {
     const r = GenerateTitleBody.safeParse({
-      messages: [{ role: "user", content: "hi" }],
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
     });
     expect(r.success).toBe(true);
   });
@@ -83,7 +83,10 @@ describe("GenerateTitleBody", () => {
   });
 
   it("rejects > 20 messages", () => {
-    const messages = Array.from({ length: 21 }, () => ({ role: "user", content: "x" }));
+    const messages = Array.from({ length: 21 }, () => ({
+      role: "user",
+      content: [{ type: "text" as const, text: "x" }],
+    }));
     expect(GenerateTitleBody.safeParse({ messages }).success).toBe(false);
   });
 });

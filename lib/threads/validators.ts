@@ -26,7 +26,7 @@ export const GenerateTitleBody = z.object({
     .array(
       z.object({
         role: MessageRole,
-        content: z.string(),
+        content: z.array(z.object({ type: z.literal("text"), text: z.string() })).min(1),
       }),
     )
     .min(1)

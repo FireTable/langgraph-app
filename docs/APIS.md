@@ -28,7 +28,7 @@ Response shape (single row, same for list / fetch / create / update):
 | `GET /api/threads/[id]`        | Fetch one thread's metadata.                                           |
 | `PATCH /api/threads/[id]`      | Rename, archive, unarchive, or replace `custom` jsonb.                 |
 | `DELETE /api/threads/[id]`     | Remove the thread metadata row (does not touch LangGraph checkpoints). |
-| `POST /api/threads/[id]/title` | Generate a title from the first user message; streams the result.      |
+| `POST /api/threads/[id]/title` | Generate a title from the first user message; streams the result. `messages[].content` uses LangGraph `BaseMessage` content blocks (`{ type: "text", text }[]`), not a plain string. |
 
 ## Proxy
 
