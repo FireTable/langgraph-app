@@ -4,6 +4,7 @@ import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useStreamRuntime } from "@assistant-ui/react-langchain";
 
 import { Thread } from "@/components/assistant-ui/thread";
+import { threadListAdapter } from "@/lib/threads/adapter";
 
 export function Assistant() {
   const apiUrl =
@@ -13,6 +14,7 @@ export function Assistant() {
   const runtime = useStreamRuntime({
     assistantId: process.env.NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID!,
     apiUrl,
+    unstable_threadListAdapter: threadListAdapter,
   });
 
   return (
