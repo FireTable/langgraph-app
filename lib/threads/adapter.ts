@@ -84,22 +84,8 @@ export const threadListAdapter: RemoteThreadListAdapter = {
     return toRemote(data);
   },
 
-  async generateTitle(remoteId, messages) {
-    // The runtime calls this after a thread's first run ends, passing the
-    // LangGraph thread_id of the thread that just finished. Build the URL
-    // with that remoteId directly — earlier versions did a `list()` and
-    // used `threads[0]`, which silently targeted the wrong thread any time
-    // the runtime's order disagreed with the server's ORDER BY.
-
-    const url = joinURL(BASE, remoteId, "title");
-    return createAssistantStream(async (controller) => {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages }),
-      });
-      const text = await res.text();
-      controller.appendText(text);
-    });
+  async generateTitle(_remoteId, _messages) {
+    // do nothing， use custom event to set thread title
+    return createAssistantStream(async (_controller) => { });
   },
 };
