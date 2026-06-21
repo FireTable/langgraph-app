@@ -5,7 +5,7 @@ A self-hostable chat app that streams tokens from a [LangGraph](https://langchai
 ## Features
 
 - **Streaming chat UI** powered by assistant-ui's `Thread` component.
-- **LangGraph backend** with a single-node `MessagesAnnotation` graph and `ChatOpenAI` model.
+- **LangGraph backend** with a parallel `MessagesAnnotation` graph (`agent` + `renameThread` fanned out from `START`) and `ChatOpenAI` model. Title is generated once on the first turn and persisted to Postgres.
 - **Persistent threads and checkpoints** in Postgres — closing the tab doesn't lose context.
 - **Self-hosted**: runs on a single VPS with Docker Compose, no SaaS lock-in.
 - **Type-safe DB layer**: Drizzle ORM + Zod validators, derived from the same schema source.
@@ -13,16 +13,16 @@ A self-hostable chat app that streams tokens from a [LangGraph](https://langchai
 
 ## Tech stack
 
-| Layer          | Choice                                                                 |
-| -------------- | ---------------------------------------------------------------------- |
-| Agent runtime  | LangGraph.js (`StateGraph`)                                            |
-| LLM client     | `@langchain/openai` (OpenAI-compatible)                                |
-| UI             | assistant-ui (`useStreamRuntime`) + Tailwind v4 + shadcn/ui primitives |
-| App framework  | Next.js 16 (App Router, Turbopack)                                     |
-| ORM            | Drizzle ORM + postgres-js                                              |
-| API validation | Zod (schemas derived from Drizzle via `drizzle-zod`)                   |
-| Database       | Postgres 16                                                            |
-| Tests          | Vitest (real Postgres test database)                                   |
+| Layer          | Choice                                                                    |
+| -------------- | ------------------------------------------------------------------------- |
+| Agent runtime  | LangGraph.js (`StateGraph`)                                               |
+| LLM client     | `@langchain/openai` (OpenAI-compatible)                                   |
+| UI             | assistant-ui (`useLangGraphRuntime`) + Tailwind v4 + shadcn/ui primitives |
+| App framework  | Next.js 16 (App Router, Turbopack)                                        |
+| ORM            | Drizzle ORM + postgres-js                                                 |
+| API validation | Zod (schemas derived from Drizzle via `drizzle-zod`)                      |
+| Database       | Postgres 16                                                               |
+| Tests          | Vitest (real Postgres test database)                                      |
 
 ## Quick start
 
@@ -99,11 +99,18 @@ Open `http://localhost:3000` and send a message.
 ```
 app/                          Next.js App Router
   page.tsx                    Full-viewport entry, renders <Assistant />
-  assistant.tsx               Builds useStreamRuntime
-  api/[..._path]/route.ts     Edge catch-all proxy to LANGGRAPH_API_URL
+  assistant.tsx               useLangGraphRuntime + thread list adapter wiring
+  api/                        HTTP routes (see docs/APIS.md)
+    [..._path]/route.ts       Edge catch-all proxy to LANGGRAPH_API_URL
+    threads/                  Thread metadata CRUD
 
 backend/
-  agent.ts                    LangGraph graph (StateGraph + "agent" node)
+  agent.ts                    LangGraph graph (parallel agent + renameThread)
+  model.ts                    ChatOpenAI singletons (with / without thinking)
+  checkpointer.ts             PostgresSaver (Postgres checkpoint tables)
+  node/
+    call-model-node.ts        "agent" node — appends AI reply
+    rename-thread-node.ts     "renameThread" node — generates + persists title
 
 components/
   assistant-ui/               Chat primitives (thread, markdown, reasoning, …)
@@ -111,23 +118,23 @@ components/
 
 lib/
   utils.ts                    cn() = twMerge(clsx(...))
+  threads/                    Threads module
+    schema.ts                 Drizzle table + drizzle-zod derived Zod schemas
+    queries.ts                CRUD (rename, archive, unarchive, delete, fetch, list)
+    adapter.ts                RemoteThreadListAdapter for assistant-ui
+    validators.ts             Zod API body schemas
 
 db/                           Database root
   schema.ts                   Aggregate re-export of all module schemas
   client.ts                   Singleton Drizzle client (postgres-js pool)
   migrations/                 Drizzle-kit generated (committed)
 
-lib/threads/                  Threads module (one feature at a time)
-  schema.ts                   Drizzle table + drizzle-zod derived Zod schemas
-  queries.ts                  Server-only CRUD (8 functions)
-  validators.ts               Zod API body schemas
-
-tests/
-  setup.ts                    Vitest globalSetup: applies migrations to test db
-  shims/server-only.ts        No-op stub for the server-only package
-  threads/
-    queries.test.ts           15 cases against real Postgres
-    validators.test.ts        16 cases on Zod schemas
+tests/                        Vitest (NODE_ENV=test → reads .env.test)
+  setup.ts                    globalSetup: applies migrations to test db
+  api/                        Route handler tests
+  backend/                    Graph + node tests
+  db/                         Migration sanity tests
+  threads/                    queries + adapter + validators tests
 
 drizzle.config.ts             Drizzle-kit config (uses @next/env to load .env)
 vitest.config.ts              Vitest config (NODE_ENV=test → reads .env.test)
@@ -200,7 +207,7 @@ Test database stays isolated from dev — never put production-like data in `lan
 
 ## Patches
 
-`patches/` contains pnpm-patchedDependencies for two upstream assistant-ui packages. See `pnpm-workspace.yaml` for the registration.
+`patches/` contains a pnpm `patchedDependencies` entry for `@assistant-ui/core@0.2.18` (guards `part.text?.trim()` to tolerate missing text on `text`/`reasoning` parts). See `pnpm-workspace.yaml` for the registration.
 
 ## Documentation
 

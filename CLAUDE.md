@@ -57,7 +57,13 @@ LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`)
 ## Architecture
 
 ```
-backend/agent.ts          LangGraph graph (StateGraph + single "agent" node)
+backend/
+  agent.ts                LangGraph graph (StateGraph, parallel fan-out)
+  model.ts                ChatOpenAI singletons (chatModel + chatModelWithoutThink)
+  checkpointer.ts         PostgresSaver (LangGraph Postgres checkpoint tables)
+  node/
+    call-model-node.ts    "agent" node — calls the model, appends AI reply
+    rename-thread-node.ts "renameThread" node — generates + persists the title
 langgraph.json            CLI config: graph id, node version, env file
 app/                      Next.js App Router
   layout.tsx              Root layout, fonts, TooltipProvider
@@ -69,11 +75,17 @@ components/
   assistant-ui/           Chat primitives (thread, attachment, markdown, reasoning, tool-fallback, tool-group, tooltip-icon-button)
   ui/                     shadcn/ui primitives (avatar, button, collapsible, dialog, tooltip) — new-york style, lucide icons
 lib/utils.ts              cn() = twMerge(clsx(...))
+lib/threads/              Threads module (schema, queries, adapter, validators)
 ```
 
 ### Backend graph (`backend/agent.ts`)
 
-A `StateGraph(MessagesAnnotation)` with a single `agent` node that calls `ChatOpenAI` and returns the response message. The model is constructed with `modelKwargs: { reasoning_split: true }` — comment in the file says "only minimax will use this params", so this is wired for the `minimax` provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the `backend/agent.ts:graph` export registered in `langgraph.json`.
+A `StateGraph(MessagesAnnotation)` whose two nodes are fanned out in parallel from `START`:
+
+- `agent` — calls `ChatOpenAI` (via `chatModel.stream`) and returns the response so the `messages` reducer appends it.
+- `renameThread` — on the first turn only, generates a short title from the first user message via `chatModelWithoutThink.invoke(...)` (tagged `nostream` so partial tokens don't leak into the chat), persists it to the `threads` row, and returns `{ title }` so the reducer writes `state.title`. On every later turn the node's own `if (state.title) return` guard short-circuits — no LLM call.
+
+The chat models in `backend/model.ts` carry `modelKwargs: { reasoning_split: true }` (and `think: false` on the rename variant) — the inline comment says these are minimax-provider-specific, so the graph is wired for that provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set on `chatModel`. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the `backend/agent.ts:graph` export registered in `langgraph.json`.
 
 ### Frontend runtime
 

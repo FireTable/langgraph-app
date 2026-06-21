@@ -25,16 +25,18 @@ ends. Constraints the user set:
 
 **Open question**: Which sync point actually works?
 
-| Candidate                                            | Trade-off                                                                     |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Frontend PATCH `/api/threads/[id]` on stream end     | Requires a `useStream` onFinish or wrap; client-side only                     |
-| Backend `after_agent` callback in `backend/agent.ts` | Need to confirm LangGraph v1.4 exposes this; callback is per-node not per-run |
-| `langgraph-sdk` runs API polling                     | Extra dependency, polling latency                                             |
-| Don't sync — keep `last_message_at = created_at`     | Simplest; sidebar just sorts by create time, OK for v0                        |
+| Candidate                                        | Trade-off                                                 |
+| ------------------------------------------------ | --------------------------------------------------------- |
+| Frontend PATCH `/api/threads/[id]` on stream end | Requires a `useStream` onFinish or wrap; client-side only |
+| `langgraph-sdk` runs API polling                 | Extra dependency, polling latency                         |
+| Don't sync — keep `last_message_at = created_at` | Simplest; sidebar just sorts by create time, OK for v0    |
 
-**Pending follow-up**: Confirm or rule out #1/#2 with a small spike before
-shipping the sidebar's "last activity" sort (#87 in the task list, currently
-in_progress but blocked on this).
+(Removed: `after_agent` callback — the graph no longer has an afterAgent
+node, it fans out in parallel from `START`.)
+
+**Pending follow-up**: Confirm or rule out #1 with a small spike.
+`after_agent` (#2 in the original list) is moot now that the graph is
+parallel. Last-message sort is already live (#87 landed).
 
 ## 2026-06-20 — `touchThread` is unused
 
@@ -42,8 +44,9 @@ in_progress but blocked on this).
 callers in the codebase today.
 
 **Deferred**: Either wire it into rename/archive/unarchive for a real
-purpose, or delete it once we know what it's for. Tracked as #87's adjacent
-question — currently the function is only alive in tests.
+purpose, or delete it once we know what it's for. (Originally tracked as
+#87's adjacent question; #87 landed, so this is now an independent follow-up.)
+The function is still only alive in tests.
 
 ## 2026-06-20 — Production deployment kit
 
