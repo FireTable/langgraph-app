@@ -132,12 +132,11 @@
 
   /* Thin scrollbar to match the official assistant-ui base.tsx example.
      Without this, browsers render the default ~17px scrollbar, which
-     looks heavy against the muted background. 6px width with a neutral
-     thumb color keeps it visible but unobtrusive; the hover state lifts
-     to muted-foreground so the affordance is clear. */
+     looks heavy against the muted background. Width 6px / transparent
+     track keeps it nearly invisible until the user hovers. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+    scrollbar-color: var(--border) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -150,7 +149,7 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent);
+    background-color: var(--border);
     border-radius: 3px;
   }
 
