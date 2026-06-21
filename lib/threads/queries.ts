@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/db/client";
 import { threads, type Thread, type ThreadCustom } from "./schema";
 
-const DEFAULT_TITLE = "New chat";
+const DEFAULT_TITLE = "New Chat";
 
 export async function listThreads(): Promise<Thread[]> {
   return db

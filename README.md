@@ -148,7 +148,7 @@ Managed by Drizzle. Owned by the `lib/threads` module.
 | Column                      | Type                                             | Notes                                                    |
 | --------------------------- | ------------------------------------------------ | -------------------------------------------------------- |
 | `id`                        | `TEXT PRIMARY KEY`                               | nanoid, 12 chars, also used as the LangGraph `thread_id` |
-| `title`                     | `TEXT NOT NULL DEFAULT 'New chat'`               | editable from the UI                                     |
+| `title`                     | `TEXT NOT NULL DEFAULT 'New Chat'`               | editable from the UI                                     |
 | `status`                    | `TEXT NOT NULL CHECK IN ('regular', 'archived')` | sidebar filter                                           |
 | `user_id`                   | `TEXT NULL`                                      | reserved for future multi-user                           |
 | `custom`                    | `JSONB NOT NULL DEFAULT '{}'`                    | free-form metadata                                       |

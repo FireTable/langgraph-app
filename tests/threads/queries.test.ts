@@ -66,7 +66,7 @@ describe("createThread", () => {
 
   it("uses default title when omitted", async () => {
     const t = await createThread();
-    expect(t.title).toBe("New chat");
+    expect(t.title).toBe("New Chat");
   });
 
   it("uses provided title", async () => {

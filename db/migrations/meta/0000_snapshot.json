@@ -19,7 +19,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'New chat'"
+          "default": "'New Chat'"
         },
         "status": {
           "name": "status",

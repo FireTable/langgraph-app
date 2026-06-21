@@ -12,7 +12,7 @@ export const threads = pgTable(
   "threads",
   {
     id: text("id").primaryKey(),
-    title: text("title").notNull().default("New chat"),
+    title: text("title").notNull().default("New Chat"),
     status: text("status", { enum: ["regular", "archived"] })
       .notNull()
       .default("regular"),

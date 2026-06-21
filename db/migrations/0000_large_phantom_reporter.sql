@@ -1,6 +1,6 @@
 CREATE TABLE "threads" (
 	"id" text PRIMARY KEY NOT NULL,
-	"title" text DEFAULT 'New chat' NOT NULL,
+	"title" text DEFAULT 'New Chat' NOT NULL,
 	"status" text DEFAULT 'regular' NOT NULL,
 	"user_id" text,
 	"custom" jsonb DEFAULT '{}'::jsonb NOT NULL,

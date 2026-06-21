@@ -53,7 +53,7 @@ describe("threadListAdapter.initialize", () => {
     const { fn } = mockFetch([
       {
         url: /\/api\/threads$/,
-        body: { status: "regular", id: "new-id", title: "New chat" },
+        body: { status: "regular", id: "new-id", title: "New Chat" },
       },
     ]);
     const original = globalThis.fetch;

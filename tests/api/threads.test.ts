@@ -75,7 +75,7 @@ describe("POST /api/threads", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-    expect(body.title).toBe("New chat");
+    expect(body.title).toBe("New Chat");
   });
 
   it("creates thread with provided title", async () => {
@@ -215,7 +215,7 @@ describe("POST /api/threads/[id]/title", () => {
   });
 
   it("persists the generated title to the threads row", async () => {
-    await db.insert(threads).values({ id: "t", title: "New chat" });
+    await db.insert(threads).values({ id: "t", title: "New Chat" });
     await POSTTitle(
       jsonRequest({
         messages: [{ role: "user", content: [{ type: "text", text: "How do I parse JSON?" }] }],
