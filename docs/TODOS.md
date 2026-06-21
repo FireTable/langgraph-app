@@ -2,51 +2,7 @@
 
 Open decisions and follow-ups from previous sessions. Each entry records the
 date, the context it came from, what was decided, and what's still pending.
-When a TODO is implemented, move it under "Done" with the closing date and
-commit hash, or delete the entry if it's not worth tracking.
-
-## 2026-06-20 — `last_message_at` 同步 hook
-
-**Decided**: Add `threads.last_message_at` (NOT NULL DEFAULT now()) so the
-sidebar can ORDER BY last activity. Folded into the baseline 0000 migration
-(commit `fd6f197`) since there's no production deploy yet.
-
-**Deferred**: When and how to update `last_message_at` when an agent run
-ends. Constraints the user set:
-
-- DB triggers on the LangGraph checkpoint\_\* tables are off the table — those
-  tables are owned by `PostgresSaver.setup()` and we don't control their
-  schema.
-- `touchThread` keeps its current semantics (updates only `updatedAt`) —
-  renaming or expanding it was rejected.
-- No clean LangGraph v1.4 callback exists for "agent node finished" from
-  Node side. Frontend `useStreamRuntime` exposes no `onFinish` for
-  arbitrary side-effects.
-
-**Open question**: Which sync point actually works?
-
-| Candidate                                        | Trade-off                                                 |
-| ------------------------------------------------ | --------------------------------------------------------- |
-| Frontend PATCH `/api/threads/[id]` on stream end | Requires a `useStream` onFinish or wrap; client-side only |
-| `langgraph-sdk` runs API polling                 | Extra dependency, polling latency                         |
-| Don't sync — keep `last_message_at = created_at` | Simplest; sidebar just sorts by create time, OK for v0    |
-
-(Removed: `after_agent` callback — the graph no longer has an afterAgent
-node, it fans out in parallel from `START`.)
-
-**Pending follow-up**: Confirm or rule out #1 with a small spike.
-`after_agent` (#2 in the original list) is moot now that the graph is
-parallel. Last-message sort is already live (#87 landed).
-
-## 2026-06-20 — `touchThread` is unused
-
-**Decided**: Keep `touchThread` as-is (updates only `updatedAt`). No
-callers in the codebase today.
-
-**Deferred**: Either wire it into rename/archive/unarchive for a real
-purpose, or delete it once we know what it's for. (Originally tracked as
-#87's adjacent question; #87 landed, so this is now an independent follow-up.)
-The function is still only alive in tests.
+Delete entries once they're resolved — git history has the rest.
 
 ## 2026-06-20 — Production deployment kit
 
@@ -79,7 +35,3 @@ model is settled. R2 access keys are not yet in `.env.example`.
 **Open**: `#75` prevent multiple dev servers from running simultaneously.
 Pattern: write a PID file under `.next/` or a tempdir, refuse to start if
 it's stale-and-alive. Not urgent — manual `pkill -f next dev` works for now.
-
-## Done
-
-_Move entries here as they ship, with the closing commit hash._
