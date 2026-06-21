@@ -1,4 +1,3 @@
-import "server-only";
 import { NextResponse } from "next/server";
 import { listThreads, createThread } from "@/lib/threads/queries";
 import { CreateThreadBody } from "@/lib/threads/validators";

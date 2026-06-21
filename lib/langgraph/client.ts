@@ -1,4 +1,3 @@
-import "server-only";
 import { Client } from "@langchain/langgraph-sdk";
 
 // Shared LangGraph SDK Client for server-side calls (e.g. registering a

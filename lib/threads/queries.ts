@@ -1,4 +1,3 @@
-import "server-only";
 import { eq, desc } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/db/client";
