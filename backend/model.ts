@@ -23,5 +23,9 @@ export const chatModel = new ChatOpenAI({
 
 export const chatModelWithoutThink = new ChatOpenAI({
   ...commonOptions,
-  modelKwargs: { reasoning_split: true, think: false },
+  modelKwargs: {
+    reasoning_split: true,
+    // some api provider no support this param
+    think: false,
+  },
 });
