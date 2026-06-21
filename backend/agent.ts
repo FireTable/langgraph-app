@@ -1,37 +1,38 @@
-import { ChatOpenAI } from "@langchain/openai";
-import { MessagesAnnotation, StateGraph } from "@langchain/langgraph";
-import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import { Annotation, MessagesAnnotation, START, END, StateGraph } from "@langchain/langgraph";
+import { callModelNode } from "@/backend/node/call-model-node";
+import { renameThreadNode } from "@/backend/node/rename-thread-node";
+import { checkpointer } from "@/backend/checkpointer";
 
-const model = new ChatOpenAI({
-  model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-  apiKey: process.env.OPENAI_API_KEY,
-  // Override the upstream base URL when targeting an OpenAI-compatible
-  // endpoint (e.g. a local proxy, Azure, or a third-party gateway).
-  ...(process.env.OPENAI_BASE_URL
-    ? { configuration: { baseURL: process.env.OPENAI_BASE_URL } }
-    : {}),
-  streaming: true,
-  modelKwargs: {
-    // only minimax will use this params
-    reasoning_split: true,
-  },
+// Graph state extends the standard messages annotation with a `title`
+// channel. `title` is null on first run (rename-thread node fills it);
+// once set, the afterAgent conditional skips renameThread on subsequent
+// runs so we don't regenerate the title for every turn.
+const GraphState = Annotation.Root({
+  ...MessagesAnnotation.spec,
+  title: Annotation<string | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
+  }),
 });
 
-const callModel = async (state: typeof MessagesAnnotation.State) => {
-  const response = await model.invoke(state.messages);
-  return { messages: [response] };
-};
+// Run renameThread only on the first turn (state.title == null). On
+// subsequent turns jump straight to END.
+//
+// We run renameThread sequentially after `agent` rather than in parallel
+// via Send — the parallel fan-out didn't propagate the renameThread node's
+// `title` return back into the main graph state in our LangGraph version.
+// The user-visible cost is a brief delay between the chat response and
+// the title appearing in the sidebar; we can revisit parallel fan-out
+// when we move to a LangGraph version that supports it.
+const afterAgent = (state: typeof GraphState.State) => (state.title ? END : "renameThread");
 
-// Postgres checkpointer for thread persistence. `setup()` is idempotent —
-// first call creates the checkpoints / checkpoint_blobs / checkpoint_writes
-// tables; subsequent calls are no-ops. Pass `configurable.thread_id` when
-// invoking the graph to persist and resume conversations.
-const databaseUrl = process.env.DATABASE_URL;
-const checkpointer = databaseUrl ? PostgresSaver.fromConnString(databaseUrl) : undefined;
-if (checkpointer) await checkpointer.setup();
-
-export const graph = new StateGraph(MessagesAnnotation)
-  .addNode("agent", callModel)
-  .addEdge("__start__", "agent")
-  .addEdge("agent", "__end__")
+export const graph = new StateGraph(GraphState)
+  .addNode("agent", callModelNode)
+  .addNode("renameThread", renameThreadNode)
+  .addEdge(START, "agent")
+  .addConditionalEdges("agent", afterAgent, {
+    renameThread: "renameThread",
+    [END]: END,
+  })
+  .addEdge("renameThread", END)
   .compile({ checkpointer });
