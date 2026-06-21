@@ -9,7 +9,7 @@ import type { FC } from "react";
  * received any content. Two phases:
  *
  * - `isEmpty` (no parts arrived yet): 5×5 dot matrix in `connecting` state
- *   with a "Connecting" label. Replaces the model-prep "●" so the user
+ *   with a "Connecting" label. Replaces the model-prep DotMatrix so the user
  *   gets a stronger pre-first-token signal.
  * - After the first part arrives: a single pulsing dot, since the stream
  *   is now in flight and the larger affordance would be redundant.
@@ -35,7 +35,7 @@ export const WorkingIndicator: FC = () => {
       className="animate-pulse font-sans"
       aria-label="Assistant is working"
     >
-      {"●"}
+      <DotMatrix state="connecting" aria-hidden />
     </span>
   );
 };
