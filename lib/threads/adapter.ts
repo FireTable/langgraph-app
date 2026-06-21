@@ -84,8 +84,12 @@ export const threadListAdapter: RemoteThreadListAdapter = {
     return toRemote(data);
   },
 
-  async generateTitle(_remoteId, _messages) {
-    // do nothing， use custom event to set thread title
-    return createAssistantStream(async (_controller) => { });
+  async generateTitle(remoteId, _messages) {
+    return createAssistantStream(async (controller) => {
+      const threadData = await this.fetch(remoteId);
+      if (typeof threadData.title === "string") {
+        controller.appendText(threadData.title);
+      }
+    });
   },
 };

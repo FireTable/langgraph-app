@@ -19,22 +19,7 @@ export const UpdateCustomBody = z.object({
   custom: z.record(z.string(), z.unknown()),
 });
 
-export const MessageRole = z.enum(["user", "assistant", "system"]);
-
-export const GenerateTitleBody = z.object({
-  messages: z
-    .array(
-      z.object({
-        role: MessageRole,
-        content: z.array(z.object({ type: z.literal("text"), text: z.string() })).min(1),
-      }),
-    )
-    .min(1)
-    .max(20),
-});
-
 export type CreateThreadInput = z.infer<typeof CreateThreadBody>;
 export type RenameThreadInput = z.infer<typeof RenameThreadBody>;
 export type UpdateStatusInput = z.infer<typeof UpdateStatusBody>;
 export type UpdateCustomInput = z.infer<typeof UpdateCustomBody>;
-export type GenerateTitleInput = z.infer<typeof GenerateTitleBody>;

@@ -169,33 +169,33 @@ describe("threadListAdapter.fetch", () => {
 });
 
 describe("threadListAdapter.generateTitle", () => {
-  it("POSTs to /api/threads/[remoteId]/title using the passed remoteId, not list()[0]", async () => {
-    // The runtime hands us the exact thread id of the run that just
-    // finished. Earlier versions did a list() and used threads[0] — that
-    // silently hit the wrong thread any time the runtime order disagreed
-    // with the server. This test pins the new behavior: only one fetch,
-    // targeted at the supplied remoteId.
-    const { fn } = mockFetch([{ url: /\/api\/threads\/abc\/title$/, body: "Hi there" }]);
+  it("streams the current thread title back so the runtime's auto-apply doesn't clobber it", async () => {
+    // The empty-stream no-op caused the runtime to overwrite the title
+    // we set from the rename-thread custom event. Yielding the current
+    // title back makes the runtime's apply a no-op visually.
     const original = globalThis.fetch;
+    const fn = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: "abc", status: "regular", title: "Existing title" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
     globalThis.fetch = fn as unknown as typeof fetch;
     try {
-      const messages = [
-        {
-          id: "m1",
-          role: "user" as const,
-          content: [{ type: "text" as const, text: "hi" }],
-          createdAt: new Date(),
-        },
-      ];
-      // Drive the stream so the lazy `createAssistantStream` callback
-      // actually runs and `fetch` is invoked. We don't decode the
-      // payload — that path is the /title route's responsibility, not
-      // the adapter's.
-      await threadListAdapter.generateTitle!("abc", messages as never);
+      const stream = await threadListAdapter.generateTitle!("abc", [] as never);
+      // assistant-stream yields text-part objects; stringify each chunk
+      // and check the title appears somewhere in the wire output.
+      const reader = stream.getReader();
+      const text: string[] = [];
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text.push(typeof value === "string" ? value : JSON.stringify(value));
+      }
+      // The title must appear somewhere in the streamed chunks.
+      expect(text.join("")).toContain("Existing title");
+      // The adapter must have fetched the current thread to read its title.
       expect(fn).toHaveBeenCalledTimes(1);
-      const [calledUrl, init] = fn.mock.calls[0]!;
-      expect(calledUrl.toString()).toMatch(/\/api\/threads\/abc\/title$/);
-      expect(init?.method).toBe("POST");
     } finally {
       globalThis.fetch = original;
     }

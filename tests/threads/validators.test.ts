@@ -4,7 +4,6 @@ import {
   RenameThreadBody,
   UpdateStatusBody,
   UpdateCustomBody,
-  GenerateTitleBody,
 } from "@/lib/threads/validators";
 
 describe("CreateThreadBody", () => {
@@ -67,26 +66,5 @@ describe("UpdateCustomBody", () => {
   it("accepts nested object", () => {
     const r = UpdateCustomBody.safeParse({ custom: { a: 1, b: { c: "x" } } });
     expect(r.success).toBe(true);
-  });
-});
-
-describe("GenerateTitleBody", () => {
-  it("accepts a messages array with BaseMessage content blocks", () => {
-    const r = GenerateTitleBody.safeParse({
-      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
-    });
-    expect(r.success).toBe(true);
-  });
-
-  it("rejects empty messages", () => {
-    expect(GenerateTitleBody.safeParse({ messages: [] }).success).toBe(false);
-  });
-
-  it("rejects > 20 messages", () => {
-    const messages = Array.from({ length: 21 }, () => ({
-      role: "user",
-      content: [{ type: "text" as const, text: "x" }],
-    }));
-    expect(GenerateTitleBody.safeParse({ messages }).success).toBe(false);
   });
 });
