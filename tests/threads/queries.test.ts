@@ -10,7 +10,7 @@ import {
   unarchiveThread,
   deleteThread,
   updateCustom,
-  touchThread,
+  touchLastMessageAt,
 } from "@/lib/threads/queries";
 
 const testUrl = process.env.DATABASE_URL_TEST;
@@ -133,14 +133,31 @@ describe("updateCustom", () => {
   });
 });
 
-describe("touchThread", () => {
-  it("updates updatedAt without changing other fields", async () => {
+describe("touchLastMessageAt", () => {
+  it("updates lastMessageAt without changing other fields", async () => {
     const original = new Date("2024-01-01");
-    await db.insert(threads).values({ id: "t", title: "keep", updatedAt: original });
+    await db.insert(threads).values({ id: "lm", title: "keep", updatedAt: original, lastMessageAt: original });
     await new Promise((r) => setTimeout(r, 10));
-    await touchThread("t");
-    const row = await getThread("t");
+    await touchLastMessageAt("lm");
+    const row = await getThread("lm");
     expect(row?.title).toBe("keep");
-    expect(row?.updatedAt.getTime()).toBeGreaterThan(original.getTime());
+    expect(row?.updatedAt.getTime()).toBe(original.getTime());
+    expect(row?.lastMessageAt.getTime()).toBeGreaterThan(original.getTime());
+  });
+
+  it("leaves updatedAt untouched (lastMessageAt is its own clock)", async () => {
+    const originalUpdatedAt = new Date("2024-01-01");
+    const originalLastMessage = new Date("2024-01-02");
+    await db.insert(threads).values({
+      id: "lm2",
+      title: "keep",
+      updatedAt: originalUpdatedAt,
+      lastMessageAt: originalLastMessage,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    await touchLastMessageAt("lm2");
+    const row = await getThread("lm2");
+    expect(row?.updatedAt.getTime()).toBe(originalUpdatedAt.getTime());
+    expect(row?.lastMessageAt.getTime()).toBeGreaterThan(originalLastMessage.getTime());
   });
 });

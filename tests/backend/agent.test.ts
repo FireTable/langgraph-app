@@ -43,11 +43,10 @@ describe("graph end-to-end", () => {
     );
 
     // Both nodes ran: assistant reply is appended, title is persisted to DB.
-    // state.title is null because rename-thread-node no longer mutates graph
-    // state — the runtime pulls the title from the DB via generateTitle.
+    // The title is intentionally NOT in graph state — the runtime reads it
+    // from the DB via generateTitle.
     expect(result.messages).toHaveLength(2);
     expect(result.messages[1]).toBe(aiReply);
-    expect(result.title).toBeNull();
 
     const row = await db.query.threads.findFirst({
       where: (t, { eq }) => eq(t.id, threadId),
@@ -74,14 +73,13 @@ describe("graph end-to-end", () => {
     mockInvoke.mockResolvedValueOnce(new AIMessage("Second reply"));
     mockInvoke.mockResolvedValueOnce(new AIMessage("Refreshed title"));
 
-    const result = await graph.invoke(
+    await graph.invoke(
       { messages: [new HumanMessage("follow up question")] },
       { configurable: { thread_id: threadId } },
     );
 
     // Both agent and renameThread ran.
     expect(mockInvoke).toHaveBeenCalledTimes(2);
-    expect(result.title).toBeNull();
 
     const row = await db.query.threads.findFirst({
       where: (t, { eq }) => eq(t.id, threadId),

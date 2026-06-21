@@ -2,29 +2,26 @@ import { BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messag
 import { renameThread } from "@/lib/threads/queries";
 import { chatModelWithoutThink } from "@/backend/model";
 
-// Generates a short chat title from the first user message. Runs only on
-// the first turn — the `if (state.title) return` guard short-circuits on
-// every later turn and the LLM is never called. On the first turn we
-// return `{ title: trimmed }` so the reducer writes state.title and the
-// next invocation hits the guard.
+// Generates a short chat title from the first user message and writes it
+// to the threads row. Does NOT mutate graph state — the runtime's
+// generateTitle reads the title from the DB. Runs on every turn (no
+// short-circuit): the LLM call is cheap relative to the agent run, and
+// keeping state.title out of the graph avoids a reducer that would
+// otherwise need to write through on every parallel fan-out.
 //
-// The graph fans out to this node in parallel with `agent` (see agent.ts),
-// so the guard lives here in the node body — there is no conditional
-// edge to gate this on.
+// The graph fans out to this node in parallel with `agent` (see agent.ts).
 //
 // `chatModelWithoutThink.invoke()` is used (not `.stream()`) and tagged
 // `nostream` so the langgraph runtime does not broadcast partial tokens
 // as `messages/partial` events (useLangGraphMessages would render them as
 // chat messages).
 export async function renameThreadNode(
-  state: { messages: BaseMessage[]; title: string | null },
+  state: { messages: BaseMessage[] },
   config: { writer?: (chunk: unknown) => void; configurable?: { thread_id?: string } },
-): Promise<{ title: string } | null> {
-  // skip if thread already has a title
-  if (state.title) return null;
-
+): Promise<null | undefined> {
   const firstUserMessage = state.messages.find((m): m is HumanMessage => m instanceof HumanMessage);
-  if (!firstUserMessage) return null;
+  // undefined signals "didn't run" so LangGraph treats it as no-op
+  if (!firstUserMessage) return undefined;
 
   const response = await chatModelWithoutThink.invoke(
     [
@@ -47,11 +44,8 @@ export async function renameThreadNode(
   const trimmed = (typeof response.content === "string" ? response.content : "").trim();
 
   const threadId = config.configurable?.thread_id;
-
-  // write to db, will fetch by adapter generateTitle
   if (threadId) await renameThread(threadId, trimmed);
 
-  return {
-    title: trimmed,
-  };
+  // null signals "ran but no state mutation" — DB is the source of truth
+  return null;
 }

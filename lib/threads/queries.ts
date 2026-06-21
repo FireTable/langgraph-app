@@ -52,8 +52,8 @@ export async function updateCustom(id: string, custom: ThreadCustom): Promise<vo
   await db.update(threads).set({ custom, updatedAt: new Date() }).where(eq(threads.id, id));
 }
 
-export async function touchThread(id: string): Promise<void> {
-  await db.update(threads).set({ updatedAt: new Date() }).where(eq(threads.id, id));
+export async function touchLastMessageAt(id: string): Promise<void> {
+  await db.update(threads).set({ lastMessageAt: new Date() }).where(eq(threads.id, id));
 }
 
 export type { Thread, ThreadCustom };
