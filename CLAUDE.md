@@ -204,4 +204,6 @@ When in doubt, leave it out. A diff that's 80% code and 20% comment is fine; 50/
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
+at `specs/001-user-auth/plan.md` (and `spec.md`, `research.md`,
+`data-model.md`, `quickstart.md`, `contracts/`).
 <!-- SPECKIT END -->
