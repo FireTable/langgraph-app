@@ -87,6 +87,21 @@ A `StateGraph(MessagesAnnotation)` whose two nodes are fanned out in parallel fr
 
 The chat models in `backend/model.ts` carry `modelKwargs: { reasoning_split: true }` (and `think: false` on the rename variant) — the inline comment says these are minimax-provider-specific, so the graph is wired for that provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set on `chatModel`. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the `backend/agent.ts:graph` export registered in `langgraph.json`.
 
+### State persistence (dev vs prod)
+
+The checkpointer active for a run is chosen by the runner, not by us:
+
+- `langgraphjs dev` (port 2024) replaces the compiled `PostgresSaver` with its own `InMemorySaver`, flushed to `.langgraph_api/.langgraphjs_api.checkpointer.json` on every write. The Postgres `checkpoints` table stays empty in dev.
+- `langgraphjs start` / LangSmith Deployment uses the compiled `PostgresSaver` from `backend/checkpointer.ts` and writes to the `checkpoints` / `checkpoint_blobs` / `checkpoint_writes` tables.
+
+This split is upstream design — see langchain-ai/langgraph#5790, #5360, #5661. There is no `langgraph.json` field that pins the dev server to Postgres (Python's `checkpointer.path` has not been ported to JS as of `@langchain/langgraph-cli@1.3.1`).
+
+Consequences worth knowing:
+
+- `POST /api/threads` calls `langGraphClient.threads.create(...)` to register the new id with the dev server's in-process STORE; in prod the call hits a LangGraph Deployment that knows the id from the compiled `PostgresSaver` directly, so it's effectively a no-op there. Don't remove it without checking dev.
+- `last_message_at` is `now()` written by `afterAgentNode`, not a derived value from any checkpoint table.
+- `DELETE /api/threads/[id]` removes only the metadata row; the dev JSON file or prod checkpoint tables are cleaned up by the runner's own ops layer (not by us).
+
 ### Frontend runtime
 
 `app/assistant.tsx` is a client component. It instantiates the runtime with `useLangGraphRuntime({ stream, create, load })` from `@assistant-ui/react-langgraph` (which wraps `@langchain/langgraph-sdk`'s `Client`). `stream` is built from `unstable_createLangGraphStream`; `apiUrl` is `NEXT_PUBLIC_LANGGRAPH_API_URL` if set, otherwise the same-origin `/api` URL.

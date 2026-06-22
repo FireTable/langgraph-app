@@ -22,12 +22,10 @@ export const threads = pgTable(
     custom: jsonb("custom").$type<ThreadCustom>().notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-    // Denormalized "last activity" timestamp. Mirrors the max(updatedAt) of
-    // the thread's LangGraph checkpoint, but is queried directly so the
-    // sidebar can ORDER BY without joining the checkpoint_* tables.
-    // Default now() means a freshly-created thread shows up at the top
-    // immediately, instead of being sorted by NULL (which Postgres sorts
-    // last with NULLS LAST).
+    // Set to `now()` by afterAgentNode when a turn finishes; falls back to
+    // `created_at` (via defaultNow) for threads that have never seen a
+    // message. Approximates "last activity" for sidebar sort — do not
+    // treat as the actual max(updatedAt) of any checkpoint table.
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
