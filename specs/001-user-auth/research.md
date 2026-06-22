@@ -25,13 +25,14 @@
 - https://better-auth.com/docs/authentication/social-sign-on（GitHub/Google OAuth provider 配置）
 - https://better-auth.com/docs/concepts/session（session 过期与 cookie 策略）
 
-## 决策 2：邮件发送 = Resend SDK + react-email 模板
+## 决策 2：邮件发送 = Resend SDK + react-email 统一包 + Matte/activation 模板
 
-**Decision**: 使用 `resend` 官方 Node SDK + `@react-email/components` + `@react-email/render`。
+**Decision**: 使用 `resend` 官方 Node SDK + 统一包 `react-email@latest`（v6.x）+ fork 自 `resend/react-email` 仓库 canary 分支的 `apps/demo/emails/02-Matte/activation.tsx` 模板。
 
 **Rationale**:
-- Resend 免费版（100 封/日）满足 MVP 流量；spec FR-025 已约束超额行为
-- react-email 组件库覆盖跨邮件客户端兼容性（Gmail / Outlook / Apple Mail），不需要从零写 HTML table-based layout
+- `@react-email/components` npm 包已被官方标记为 **"Package no longer supported"**（npm deprecation 字段）；Resend 团队把所有 scoped 包（`@react-email/components` / `@react-email/render` 等）合并到统一包 `react-email`（从 v4.0 起），同包名同时承担 CLI + 组件库 + render 函数
+- `react-email@6.6.3` 是当前 latest tag，导出 `{ Button, Html, Container, ... }` 和 `render` 函数（已通过 `pnpm view react-email exports` 验证）
+- Matte/activation 是 Resend 团队官方模板（MIT），跨邮件客户端（Gmail / Outlook / Apple Mail）已通过测试；不需要从零设计
 - TypeScript 友好（`.tsx` 文件定义邮件内容）；宪法原则三"首选标准方案"
 - Better Auth 支持自定义 `sendVerificationEmail` 回调，Resend 可直接接进 `betterAuth({ emailVerification: { sendVerificationEmail } })`
 
@@ -42,7 +43,8 @@
 
 **Sources**:
 - https://resend.com/docs/send-with-nodejs（Node SDK 用法）
-- https://react.email/docs（组件库 + render 入口）
+- https://react.email/docs（统一包文档）
+- https://github.com/resend/react-email/tree/canary/apps/demo/emails/02-Matte（activation 模板来源，MIT）
 - https://better-auth.com/docs/authentication/email-password#send-verification-email（自定义 sendVerificationEmail 钩子）
 
 ## 决策 3：Better Auth 表结构与 Drizzle 集成
@@ -169,19 +171,27 @@ export const verification = pgTable("verification", {
 - ❌ 引入 `@upstash/ratelimit`：增加外部依赖 + Redis，超出 MVP 范围
 - ❌ 自定义 Next.js middleware：违反宪法"首选标准方案"
 
-## 决策 7：邮件模板 = react-email 官方 components
+## 决策 7：邮件模板 = fork 自 `02-Matte/activation`（MIT）
 
-**Decision**: 使用 `@react-email/components` 的 `<Html>` / `<Container>` / `<Heading>` / `<Text>` / `<Button>` / `<Tailwind>` 等组件，不手写 table-based HTML。
+**Decision**: 不从零写模板；fork 自 [resend/react-email canary 分支](https://github.com/resend/react-email/tree/canary/apps/demo/emails/02-Matte) 的 `activation.tsx`，按我们的 props 重命名（`companyName` → 我们的 brand，`url` → `verificationUrl`）。
 
 **Rationale**:
-- react-email 编译产物自带 Gmail / Outlook / Apple Mail 兼容性测试
-- TS-first；与项目风格一致
-- 模板作为 `.tsx` 文件存于 `lib/email/`，便于 review
+- Matte 模板是 Resend 官方设计 + 跨客户端测试过的现代邮件样式
+- 模板用 Tailwind v4 class（`mobile:px-6!` 等），通过 `<Tailwind config={...}>` 注入
+- 自定义字体（Inter / Press Start 2P 等）通过 `<CollageFonts>` 组件加载 Google Fonts
+- 模板引用 `${baseUrl}/static/collage/collage-image-1.png` —— 改为 Next.js `public/email/` 路径，无需外部托管
+- 保留模板顶部注释里的"Get the full source code"指向原仓库链接，便于追溯
+
+**配套文件**:
+- `lib/email/theme.ts` —— `collageTailwindConfig`（Tailwind v4 config）
+- `lib/email/collage-fonts.tsx` —— `<CollageFonts />`（Google Fonts 加载）
+- `public/email/collage-image-1.png` —— 从 demo 仓库 `apps/demo/emails/02-Matte/static/` 复制（MIT）
+- 文件头部 LICENSE 注释：`Upstream: github.com/resend/react-email (MIT); Adapted for 001-user-auth`
 
 **Alternatives considered**:
-- ❌ Maizzle（基于 Tailwind）：需要 build step 单独维护
+- ❌ 从零写最小化模板：FR-005 要求"主流客户端美观"，自写风险高
+- ❌ Maizzle（基于 Tailwind build step）：需要额外 build 配置
 - ❌ MJML：语法陌生，TS 集成弱
-- ❌ 自写 HTML table：跨客户端兼容差
 
 ## 决策 8：环境变量加载 = 现有 `@next/env`
 

@@ -16,7 +16,8 @@
 - `better-auth` — 自托管 auth 框架，Better Auth 团队官方维护
 - `better-auth/adapters/drizzle` — Drizzle ORM 原生 adapter
 - `resend` — Resend 官方 Node SDK
-- `@react-email/components` + `@react-email/render` — 社区首选 React 邮件模板库（type-safe HTML 邮件）
+- `react-email` — Resend 维护的统一包（v6.x），合并了原 `@react-email/components` + `@react-email/render`；导出 `<Html>` / `<Container>` / `<Button>` / `<Tailwind>` 等组件 + `render` 函数
+- 邮件模板 fork 自 `resend/react-email` canary 分支的 `02-Matte/activation.tsx`（MIT 许可）
 
 **Storage**: PostgreSQL 16（已有）；Better Auth 4 张表（user / session / account / verification）由 Drizzle schema 接管；`threads.userId` 改 `NOT NULL` + 外键 + `ON DELETE CASCADE`
 
@@ -111,7 +112,13 @@ lib/
 │   ├── adapter.ts               # 修改：调用 Better Auth session 注入 Authorization header
 │   └── validators.ts            # 不变
 └── email/                       # 本期新增
-    └── verification-template.tsx  # react-email 组件
+    ├── theme.ts                 # Tailwind v4 config（fork 自 Matte 模板的 collageTailwindConfig）
+    ├── collage-fonts.tsx        # 字体加载组件（fork 自 Matte 模板的 CollageFonts）
+    └── verification-template.tsx  # react-email 组件（fork 自 02-Matte/activation.tsx，props: companyName, verificationUrl, userEmail）
+
+public/
+└── email/                       # 本期新增（Next.js 静态资源）
+    └── collage-image-1.png      # 从 resend/react-email demo 复制（MIT）
 
 app/
 ├── api/

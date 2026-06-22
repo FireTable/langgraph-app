@@ -18,9 +18,9 @@
 
 **Purpose**: 项目初始化与基础结构
 
-- [ ] T001 [P] 安装 Better Auth + Resend + react-email 依赖：`pnpm add better-auth resend @react-email/components @react-email/render`
-- [ ] T002 [P] 重置数据库并清理旧 migrations：`pnpm db:reset && rm -rf db/migrations`
-- [ ] T003 [P] 更新 `.env.example` 加入 `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL` / `GITHUB_CLIENT_ID|SECRET` / `GOOGLE_CLIENT_ID|SECRET` / `RESEND_API_KEY` / `RESEND_FROM_EMAIL` 占位符与说明
+- [x] T001 [P] 安装 Better Auth + Resend + react-email 依赖：`pnpm remove @react-email/components @react-email/render && pnpm add better-auth resend react-email`（`@react-email/components` 已被 npm 标记 deprecated，统一包 `react-email@6.6.3` 取代）
+- [x] T002 [P] 重置数据库并清理旧 migrations：`pnpm db:reset && rm -rf db/migrations`
+- [x] T003 [P] 更新 `.env.example` 加入 `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL` / `GITHUB_CLIENT_ID|SECRET` / `GOOGLE_CLIENT_ID|SECRET` / `RESEND_API_KEY` / `RESEND_FROM_EMAIL` 占位符与说明
 
 ---
 
@@ -36,7 +36,10 @@
 - [ ] T007 [P] 修改 `lib/threads/schema.ts`：`userId` 改 `text("user_id").notNull()` + `.references(() => user.id, { onDelete: "cascade" })`，加 `threads_user_id_idx`
 - [ ] T008 运行 `pnpm db:generate` 生成新 migration（含 4 张 auth 表 + threads.userId NOT NULL FK），再 `pnpm db:migrate` 应用到 dev + test 数据库
 - [ ] T009 [P] 创建 Better Auth catch-all route `app/api/auth/[...all]/route.ts`（导出 `GET` + `POST`，透传 `auth.handler`）
-- [ ] T010 [P] 创建 react-email 验证邮件模板 `lib/email/verification-template.tsx`（`<Html>` + `<Heading>` + `<Text>` + `<Button>` + `<Tailwind>`，props: `verificationUrl` + `userEmail`）
+- [ ] T010a [P] fork 自 `resend/react-email` canary 分支 `apps/demo/emails/02-Matte/activation.tsx` 的验证邮件模板 `lib/email/verification-template.tsx`：props `verificationUrl` + `userEmail`，保留顶部 `Upstream: github.com/resend/react-email (MIT); Adapted for 001-user-auth` 注释
+- [ ] T010b [P] Tailwind v4 config `lib/email/theme.ts`（fork 自 `collageTailwindConfig`，含 `bg-canvas` / `bg-bg` / `bg-brand` / `text-fg` / `text-fg-2` / `font-48` / `font-15` 等 token）
+- [ ] T010c [P] 字体加载组件 `lib/email/collage-fonts.tsx`（fork 自 `<CollageFonts />`，通过 `<link>` 注入 Inter / Press Start 2P 等 Google Fonts）
+- [ ] T010d [P] 复制静态图片 `public/email/collage-image-1.png`（从 resend/react-email demo `apps/demo/emails/02-Matte/static/` 下载，MIT）；模板里的 `${baseUrl}/static/collage/...` 路径改为 `/email/...` 走 Next.js public/
 - [ ] T011 [P] 创建浏览器端 auth client `lib/auth/client.ts`（`createAuthClient` 含 emailPasswordClient + social 客户端）
 - [ ] T012 [P] 创建登录页 `app/login/page.tsx`（server component；渲染 OAuthButtons + EmailPasswordForm；处理 `?verified=1` / `?verify=1` / `?error=...` query 参数显示 banner）
 - [ ] T013 [P] 创建 OAuth buttons 组件 `components/auth/oauth-buttons.tsx`（GitHub + Google 两个按钮，client component，调用 `authClient.signIn.social({ provider })`）
@@ -89,7 +92,7 @@
 
 ### Implementation for User Story 1
 
-- [ ] T031 [US1] 实现 `sendVerificationEmail` 回调 in `lib/auth/config.ts`：调用 `resend.emails.send({ from, to, subject, html: render(<VerificationEmail .../>) })`；捕获 429 → 抛出 `EMAIL_QUOTA_EXCEEDED`；捕获其他错误 → 抛出 `INTERNAL`（FR-004 / FR-023 / FR-025）
+- [ ] T031 [US1] 实现 `sendVerificationEmail` 回调 in `lib/auth/config.ts`：调用 `resend.emails.send({ from, to, subject, html: await render(<VerificationTemplate url={url} userEmail={user.email} />) })`；`render` 从 `react-email` 导入（非 `@react-email/render`）；捕获 429 → 抛出 `EMAIL_QUOTA_EXCEEDED`；捕获其他错误 → 抛出 `INTERNAL`（FR-004 / FR-023 / FR-025）
 - [ ] T032 [US1] 实现 Zod 校验 in `lib/auth/validators.ts`：`emailSchema`（RFC 5322）+ `passwordSchema`（≥8 + `/[a-zA-Z]/` + `/[0-9]/`）+ `signUpBodySchema` + `signInBodySchema`
 - [ ] T033 [US1] 在 `components/auth/email-password-form.tsx` 接入 `authClient.signUp.email({ email, password, name })` 与 `authClient.signIn.email(...)`；错误码映射到英文文案；成功 → `router.push("/?verify=1")` 或 `"/"`
 - [ ] T034 [US1] 在 `app/verify-email/page.tsx` 用 `useEffect` 调用 `authClient.verifyEmail({ query })` 处理 token；成功 → `router.push("/login?verified=1")`；失败 → `router.push("/login?error=expired")`
