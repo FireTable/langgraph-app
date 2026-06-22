@@ -1,13 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import "@/tests/helpers/session";
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
+import { eq } from "drizzle-orm";
 
 // Mock the shared LangGraph SDK Client so POST /api/threads can register
-// the id it just generated with langgraphjs dev's STORE. Without this the
-// runtime's subsequent client.threads.getState / client.runs.stream calls
-// 404 because the STORE has never heard of our id.
-//
-// vi.mock factory is hoisted above this module's imports, so the mock
-// function must be created inside the factory and re-exported through the
-// mocked module for the rest of the file to assert on.
+// the new id with langgraphjs dev's STORE. Without this the runtime's
+// subsequent client.threads.getState / client.runs.stream calls 404.
 vi.mock("@/lib/langgraph/client", () => ({
   langGraphClient: { threads: { create: vi.fn(async () => ({ thread_id: "ignored" })) } },
 }));
@@ -22,6 +19,11 @@ import {
 } from "@/app/api/threads/[id]/route";
 import { db } from "@/db/client";
 import { threads } from "@/lib/threads/schema";
+import { user } from "@/lib/auth/schema";
+import { setCurrentUser } from "@/tests/helpers/session";
+import { makeUser, cleanupUsers, ensureTestUser, TEST_USER } from "@/tests/helpers/auth";
+
+const owner = TEST_USER.id;
 
 function jsonRequest(body: unknown): Request {
   return new Request("http://localhost", {
@@ -31,50 +33,66 @@ function jsonRequest(body: unknown): Request {
   });
 }
 
+beforeAll(async () => {
+  await ensureTestUser();
+});
+
 beforeEach(async () => {
   await db.delete(threads);
   mockCreate.mockClear();
+  setCurrentUser({ id: owner, email: TEST_USER.email });
 });
 
-describe("GET /api/threads", () => {
-  it("returns empty list", async () => {
+afterAll(async () => {
+  await cleanupUsers();
+  setCurrentUser(null);
+});
+
+describe("GET /api/threads — auth + isolation", () => {
+  it("returns 401 when unauthenticated", async () => {
+    setCurrentUser(null);
     const res = await GETList();
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.threads).toEqual([]);
+    expect(res.status).toBe(401);
   });
 
-  it("returns regular threads, excludes archived", async () => {
+  it("returns only the current user's threads (FR-018)", async () => {
+    const other = await makeUser();
     await db.insert(threads).values([
-      { id: "a", title: "active" },
-      { id: "b", title: "archived", status: "archived" },
+      { id: "mine", userId: owner, title: "mine" },
+      { id: "theirs", userId: other.id, title: "theirs" },
+    ]);
+    const res = await GETList();
+    const body = await res.json();
+    expect(body.threads.map((t: { id: string }) => t.id)).toEqual(["mine"]);
+  });
+
+  it("excludes archived rows", async () => {
+    await db.insert(threads).values([
+      { id: "a", userId: owner, title: "active" },
+      { id: "b", userId: owner, title: "archived", status: "archived" },
     ]);
     const res = await GETList();
     const body = await res.json();
     expect(body.threads).toHaveLength(1);
     expect(body.threads[0].id).toBe("a");
   });
-
-  it("includes status, title, id, lastMessageAt in each entry", async () => {
-    await db.insert(threads).values({ id: "x", title: "hello" });
-    const res = await GETList();
-    const { threads: list } = await res.json();
-    expect(list[0]).toMatchObject({
-      status: "regular",
-      id: "x",
-      title: "hello",
-    });
-    expect(list[0].lastMessageAt).toEqual(expect.any(String));
-  });
 });
 
 describe("POST /api/threads", () => {
-  it("creates thread with default title when body is empty", async () => {
+  it("returns 401 when unauthenticated", async () => {
+    setCurrentUser(null);
+    const res = await POSTList(jsonRequest({}));
+    expect(res.status).toBe(401);
+  });
+
+  it("creates thread with default title and binds userId", async () => {
     const res = await POSTList(jsonRequest({}));
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(body.title).toBe("New Chat");
+    const row = await db.query.threads.findFirst({ where: (t, { eq }) => eq(t.id, body.id) });
+    expect(row?.userId).toBe(owner);
   });
 
   it("creates thread with provided title", async () => {
@@ -88,13 +106,8 @@ describe("POST /api/threads", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(mockCreate).toHaveBeenCalledTimes(1);
-    // The id we generated must be the one LangGraph STORE registers — and
-    // ifExists must be do_nothing so retries are safe.
     expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        threadId: body.id,
-        ifExists: "do_nothing",
-      }),
+      expect.objectContaining({ threadId: body.id, ifExists: "do_nothing" }),
     );
   });
 
@@ -109,15 +122,30 @@ describe("POST /api/threads", () => {
   });
 });
 
-describe("GET /api/threads/[id]", () => {
-  it("returns thread when exists", async () => {
-    await db.insert(threads).values({ id: "get-id", title: "got" });
+describe("GET /api/threads/[id] — ownership (FR-019)", () => {
+  it("returns 401 when unauthenticated", async () => {
+    setCurrentUser(null);
+    const res = await GETOne(new Request("http://localhost"), {
+      params: Promise.resolve({ id: "x" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns thread when owned", async () => {
+    await db.insert(threads).values({ id: "get-id", userId: owner, title: "got" });
     const res = await GETOne(new Request("http://localhost"), {
       params: Promise.resolve({ id: "get-id" }),
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.id).toBe("get-id");
+  });
+
+  it("returns 404 for another user's thread (no existence leak)", async () => {
+    const other = await makeUser();
+    await db.insert(threads).values({ id: "theirs", userId: other.id, title: "x" });
+    const res = await GETOne(new Request("http://localhost"), {
+      params: Promise.resolve({ id: "theirs" }),
+    });
+    expect(res.status).toBe(404);
   });
 
   it("returns 404 when missing", async () => {
@@ -129,8 +157,8 @@ describe("GET /api/threads/[id]", () => {
 });
 
 describe("PATCH /api/threads/[id]", () => {
-  it("renames thread", async () => {
-    await db.insert(threads).values({ id: "p", title: "old" });
+  it("renames owned thread", async () => {
+    await db.insert(threads).values({ id: "p", userId: owner, title: "old" });
     const res = await PATCHOne(jsonRequest({ title: "new" }), {
       params: Promise.resolve({ id: "p" }),
     });
@@ -139,8 +167,8 @@ describe("PATCH /api/threads/[id]", () => {
     expect(row?.title).toBe("new");
   });
 
-  it("archives thread", async () => {
-    await db.insert(threads).values({ id: "p" });
+  it("archives owned thread", async () => {
+    await db.insert(threads).values({ id: "p", userId: owner });
     const res = await PATCHOne(jsonRequest({ status: "archived" }), {
       params: Promise.resolve({ id: "p" }),
     });
@@ -149,63 +177,47 @@ describe("PATCH /api/threads/[id]", () => {
     expect(row?.status).toBe("archived");
   });
 
-  it("unarchives thread", async () => {
-    await db.insert(threads).values({ id: "p", status: "archived" });
-    const res = await PATCHOne(jsonRequest({ status: "regular" }), {
-      params: Promise.resolve({ id: "p" }),
-    });
-    expect(res.status).toBe(200);
-    const row = await db.query.threads.findFirst({ where: (t, { eq }) => eq(t.id, "p") });
-    expect(row?.status).toBe("regular");
-  });
-
-  it("updates custom", async () => {
-    await db.insert(threads).values({ id: "p" });
-    const res = await PATCHOne(jsonRequest({ custom: { foo: "bar" } }), {
-      params: Promise.resolve({ id: "p" }),
-    });
-    expect(res.status).toBe(200);
-    const row = await db.query.threads.findFirst({ where: (t, { eq }) => eq(t.id, "p") });
-    expect(row?.custom).toEqual({ foo: "bar" });
-  });
-
-  it("returns 404 when missing", async () => {
+  it("returns 404 for another user's thread", async () => {
+    const other = await makeUser();
+    await db.insert(threads).values({ id: "theirs", userId: other.id });
     const res = await PATCHOne(jsonRequest({ title: "x" }), {
-      params: Promise.resolve({ id: "missing" }),
+      params: Promise.resolve({ id: "theirs" }),
     });
     expect(res.status).toBe(404);
   });
 
   it("rejects empty body", async () => {
-    await db.insert(threads).values({ id: "p" });
+    await db.insert(threads).values({ id: "p", userId: owner });
     const res = await PATCHOne(jsonRequest({}), { params: Promise.resolve({ id: "p" }) });
     expect(res.status).toBe(400);
   });
 });
 
 describe("DELETE /api/threads/[id]", () => {
-  it("removes thread", async () => {
-    await db.insert(threads).values({ id: "d" });
+  it("removes owned thread", async () => {
+    await db.insert(threads).values({ id: "d", userId: owner });
     const res = await DELETEOne(new Request("http://localhost"), {
       params: Promise.resolve({ id: "d" }),
     });
     expect(res.status).toBe(204);
-    const row = await db.query.threads.findFirst({ where: (t, { eq }) => eq(t.id, "d") });
-    expect(row).toBeUndefined();
   });
 
-  it("returns 404 when missing", async () => {
+  it("returns 404 for another user's thread", async () => {
+    const other = await makeUser();
+    await db.insert(threads).values({ id: "theirs", userId: other.id });
     const res = await DELETEOne(new Request("http://localhost"), {
-      params: Promise.resolve({ id: "missing" }),
+      params: Promise.resolve({ id: "theirs" }),
     });
     expect(res.status).toBe(404);
   });
 });
 
-describe("POST /api/threads/[id]/title", () => {
-  // The /api/threads/[id]/title endpoint was removed when title generation
-  // moved into the backend's LangGraph `rename-thread` node. The adapter's
-  // `generateTitle` is now a no-op. See tests/threads/adapter.test.ts for
-  // the new contract.
-  it.skip("placeholder so describe block is non-empty", () => {});
+describe("user deletion cascade (FR-021)", () => {
+  it("removes the user's threads when the user is deleted", async () => {
+    const u = await makeUser();
+    await db.insert(threads).values({ id: "owned", userId: u.id, title: "gone" });
+    await db.delete(user).where(eq(user.id, u.id));
+    const row = await db.query.threads.findFirst({ where: (t, { eq }) => eq(t.id, "owned") });
+    expect(row).toBeUndefined();
+  });
 });

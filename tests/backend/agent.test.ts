@@ -1,9 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
 
-// Mock the chat model singletons so the e2e graph test doesn't hit OpenAI.
-// `chatModel` powers the agent node (invoke + stream); `chatModelWithoutThink`
-// powers the rename-thread node (invoke only — see the node comment for why
-// streaming would leak the title into the chat as messages).
 const mockStream = vi.fn();
 const mockInvoke = vi.fn();
 vi.mock("@/backend/model", () => ({
@@ -18,9 +14,16 @@ import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { graph } from "@/backend/agent";
 import { db } from "@/db/client";
 import { threads } from "@/lib/threads/schema";
+import { ensureTestUser, TEST_USER } from "@/tests/helpers/auth";
 
 const testUrl = process.env.DATABASE_URL_TEST;
 if (!testUrl) throw new Error("DATABASE_URL_TEST required");
+
+const owner = TEST_USER.id;
+
+beforeAll(async () => {
+  await ensureTestUser();
+});
 
 beforeEach(async () => {
   await db.delete(threads);
@@ -31,7 +34,7 @@ beforeEach(async () => {
 describe("graph end-to-end", () => {
   it("first run fans out agent + renameThread; DB row gets a generated title", async () => {
     const threadId = "e2e-first-" + Math.random().toString(36).slice(2, 8);
-    await db.insert(threads).values({ id: threadId, title: "New Chat" });
+    await db.insert(threads).values({ id: threadId, userId: owner, title: "New Chat" });
     const aiReply = new AIMessage("Sure, here's how to parse JSON.");
     const titleReply = new AIMessage("How to parse JSON");
     mockInvoke.mockResolvedValueOnce(aiReply);
@@ -42,9 +45,6 @@ describe("graph end-to-end", () => {
       { configurable: { thread_id: threadId } },
     );
 
-    // Both nodes ran: assistant reply is appended, title is persisted to DB.
-    // The title is intentionally NOT in graph state — the runtime reads it
-    // from the DB via generateTitle.
     expect(result.messages).toHaveLength(2);
     expect(result.messages[1]).toBe(aiReply);
 
@@ -54,10 +54,9 @@ describe("graph end-to-end", () => {
     expect(row?.title).toBe("How to parse JSON");
   });
 
-  it("second run on the same thread re-runs renameThread (state.title stays null); DB title gets refreshed", async () => {
+  it("second run on the same thread re-runs renameThread; DB title gets refreshed", async () => {
     const threadId = "e2e-second-" + Math.random().toString(36).slice(2, 8);
-    await db.insert(threads).values({ id: threadId, title: "New Chat" });
-    // First run: both invokes.
+    await db.insert(threads).values({ id: threadId, userId: owner, title: "New Chat" });
     mockInvoke.mockResolvedValueOnce(new AIMessage("First reply"));
     mockInvoke.mockResolvedValueOnce(new AIMessage("Initial title"));
     await graph.invoke(
@@ -65,10 +64,6 @@ describe("graph end-to-end", () => {
       { configurable: { thread_id: threadId } },
     );
 
-    // Second run: since state.title is never set, the conditional always
-    // routes to renameThread — the LLM regenerates the title and the DB
-    // gets updated. The runtime's generateTitle then pulls the fresh
-    // value from the DB.
     mockInvoke.mockClear();
     mockInvoke.mockResolvedValueOnce(new AIMessage("Second reply"));
     mockInvoke.mockResolvedValueOnce(new AIMessage("Refreshed title"));
@@ -78,7 +73,6 @@ describe("graph end-to-end", () => {
       { configurable: { thread_id: threadId } },
     );
 
-    // Both agent and renameThread ran.
     expect(mockInvoke).toHaveBeenCalledTimes(2);
 
     const row = await db.query.threads.findFirst({
