@@ -136,7 +136,9 @@ describe("updateCustom", () => {
 describe("touchLastMessageAt", () => {
   it("updates lastMessageAt without changing other fields", async () => {
     const original = new Date("2024-01-01");
-    await db.insert(threads).values({ id: "lm", title: "keep", updatedAt: original, lastMessageAt: original });
+    await db
+      .insert(threads)
+      .values({ id: "lm", title: "keep", updatedAt: original, lastMessageAt: original });
     await new Promise((r) => setTimeout(r, 10));
     await touchLastMessageAt("lm");
     const row = await getThread("lm");

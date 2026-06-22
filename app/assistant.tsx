@@ -1,12 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FC, type RefObject } from "react";
-import {
-  AssistantRuntimeProvider,
-  useAui,
-  useAuiState,
-  useThreadRuntime,
-} from "@assistant-ui/react";
+import { AssistantRuntimeProvider, useAui, useAuiState } from "@assistant-ui/react";
 import { unstable_createLangGraphStream, useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
@@ -181,7 +176,7 @@ export function Assistant() {
 
   const eventHandlers = useMemo(
     () => ({
-      onCustomEvent: (_eventType: string, data: unknown) => {},
+      onCustomEvent: (_eventType: string, _data: unknown) => {},
     }),
     [],
   );
@@ -246,7 +241,6 @@ const ThreadPersistence: FC = () => {
     (s) => s.threads.threadItems.find((t) => t.id === s.threads.mainThreadId)?.externalId,
   );
   const hasHydratedRef = useRef(false);
-  const threadRuntime = useThreadRuntime();
 
   // Runs before the write effect on first commit so hasHydratedRef
   // suppresses the placeholder write below.
