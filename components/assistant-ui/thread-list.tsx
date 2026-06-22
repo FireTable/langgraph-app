@@ -109,6 +109,15 @@ const ThreadListNew: FC = () => {
 const ThreadListSkeleton: FC = () => {
   return (
     <div className="flex flex-col gap-1">
+
+      <div
+        role="status"
+        aria-label="Loading threads"
+        className="aui-thread-list-skeleton-wrapper flex h-8 items-end"
+      >
+        <Skeleton className="aui-thread-list-skeleton h-8 w-1/4" />
+      </div>
+
       {Array.from({ length: 5 }, (_, i) => (
         <div
           key={i}
