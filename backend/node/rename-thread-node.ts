@@ -2,25 +2,11 @@ import { BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messag
 import { renameThread } from "@/lib/threads/queries";
 import { chatModelWithoutThink } from "@/backend/model";
 
-// Generates a short chat title from the first user message and writes it
-// to the threads row. Does NOT mutate graph state — the runtime's
-// generateTitle reads the title from the DB. Runs on every turn (no
-// short-circuit): the LLM call is cheap relative to the agent run, and
-// keeping state.title out of the graph avoids a reducer that would
-// otherwise need to write through on every parallel fan-out.
-//
-// The graph fans out to this node in parallel with `agent` (see agent.ts).
-//
-// `chatModelWithoutThink.invoke()` is used (not `.stream()`) and tagged
-// `nostream` so the langgraph runtime does not broadcast partial tokens
-// as `messages/partial` events (useLangGraphMessages would render them as
-// chat messages).
 export async function renameThreadNode(
   state: { messages: BaseMessage[] },
   config: { writer?: (chunk: unknown) => void; configurable?: { thread_id?: string } },
 ): Promise<null | undefined> {
   const firstUserMessage = state.messages.find((m): m is HumanMessage => m instanceof HumanMessage);
-  // undefined signals "didn't run" so LangGraph treats it as no-op
   if (!firstUserMessage) return undefined;
 
   const response = await chatModelWithoutThink.invoke(
@@ -36,16 +22,12 @@ export async function renameThreadNode(
       ),
       firstUserMessage,
     ],
-    {
-      // !important: this tag will not add stream to message
-      tags: ["nostream"],
-    },
+    { tags: ["nostream"] },
   );
   const trimmed = (typeof response.content === "string" ? response.content : "").trim();
 
   const threadId = config.configurable?.thread_id;
-  if (threadId) await renameThread(threadId, trimmed);
+  if (threadId && trimmed) await renameThread(threadId, trimmed);
 
-  // null signals "ran but no state mutation" — DB is the source of truth
   return null;
 }
