@@ -200,3 +200,8 @@ When in doubt, leave it out. A diff that's 80% code and 20% comment is fine; 50/
 - The proxy hardcodes `runtime = "edge"`; any Node-only API in the route would break the build.
 - `modelKwargs.reasoning_split` is provider-specific. If you switch back to stock OpenAI, remove it (or guard it) — OpenAI ignores unknown kwargs but it'll be a lie in the source.
 - `components.json` declares a `@assistant-ui` registry at `https://r.assistant-ui.com/{name}.json` for `shadcn`-style component adds.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
