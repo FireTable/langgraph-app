@@ -25,6 +25,7 @@ async function patchThread(id: string, body: unknown): Promise<void> {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    credentials: "include",
   });
 }
 
@@ -43,7 +44,7 @@ function toRemote(t: ApiThreadMetadata) {
 
 export const threadListAdapter: RemoteThreadListAdapter = {
   async list() {
-    const res = await fetch(joinURL(BASE));
+    const res = await fetch(joinURL(BASE), { credentials: "include" });
     const data = (await res.json()) as { threads: ApiThreadMetadata[] };
     return { threads: data.threads.map(toRemote) };
   },
@@ -53,6 +54,7 @@ export const threadListAdapter: RemoteThreadListAdapter = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
+      credentials: "include",
     });
     const data = (await res.json()) as ApiThreadMetadata;
     return { remoteId: data.id, externalId: data.id };
@@ -75,11 +77,11 @@ export const threadListAdapter: RemoteThreadListAdapter = {
   },
 
   async delete(remoteId) {
-    await fetch(joinURL(BASE, remoteId), { method: "DELETE" });
+    await fetch(joinURL(BASE, remoteId), { method: "DELETE", credentials: "include" });
   },
 
   async fetch(remoteId) {
-    const res = await fetch(joinURL(BASE, remoteId));
+    const res = await fetch(joinURL(BASE, remoteId), { credentials: "include" });
     const data = (await res.json()) as ApiThreadMetadata;
     return toRemote(data);
   },
