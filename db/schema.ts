@@ -3,3 +3,4 @@
 // drizzle-kit sees a single file.
 
 export * from "@/lib/threads/schema";
+export * from "@/lib/auth/schema";
