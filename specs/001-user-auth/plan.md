@@ -13,6 +13,7 @@
 **Language/Version**: TypeScript 6（已有）；Node.js 22（langgraphjs CLI 要求）
 
 **Primary Dependencies**（新增）：
+
 - `better-auth` — 自托管 auth 框架，Better Auth 团队官方维护
 - `better-auth/adapters/drizzle` — Drizzle ORM 原生 adapter
 - `resend` — Resend 官方 Node SDK
@@ -28,11 +29,13 @@
 **Project Type**: Web app（Next.js 16 App Router + assistant-ui 前端 + LangGraph 后端，无独立 service）
 
 **Performance Goals**:
+
 - 注册到首条消息端到端 ≤ 2 分钟（SC-001，不计邮件投递延迟）
 - OAuth 全流程 ≤ 10 秒（SC-004）
 - 受保护请求在未登录时 ≤ 50ms 返回 401（baseline 假设）
 
 **Constraints**:
+
 - Resend 免费版每日 100 封（FR-025）
 - Better Auth 在 Next.js 中可跑在 edge runtime（与现有 `/api/[..._path]/route.ts` 保持一致）
 - 数据库单实例，无 Redis；session store 必须用 Postgres
@@ -41,7 +44,7 @@
 
 ## Constitution Check
 
-*GATE: 必须通过方可进入 Phase 0 research；Phase 1 设计后再次复审。*
+_GATE: 必须通过方可进入 Phase 0 research；Phase 1 设计后再次复审。_
 
 ### 原则一：规格 / 代码 / 文档同步 ✅
 
@@ -164,5 +167,5 @@ docs/APIS.md                     # 修改
 无 violation 需要 justification。
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| （无） | — | — |
+| --------- | ---------- | ------------------------------------ |
+| （无）    | —          | —                                    |

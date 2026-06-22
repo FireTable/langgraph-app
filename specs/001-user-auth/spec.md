@@ -21,7 +21,7 @@
 - Q: 认证服务选型？ → A: Better Auth（自托管、Drizzle 原生 adapter、内置 OAuth + 邮箱密码 + 邮箱验证）；前后端沿用现有 Next.js 16 App Router + Drizzle ORM + assistant-ui
 - Q: 邮件服务商与计费层？ → A: Resend 免费版；本期需妥善处理每日配额上限（100 封/日），超出时拒绝注册并提示用户稍后重试
 
-## User Scenarios & Testing *(mandatory)*
+## User Scenarios & Testing _(mandatory)_
 
 ### User Story 1 - 邮箱密码注册并使用（优先级 P1）
 
@@ -103,7 +103,7 @@
 - **删除账号时的并发**：用户在删除自己账号时正在另一个标签页发消息——正在进行的会话必须立即失效；新消息被拒绝。
 - **验证邮件重新发送**：未验证账号登录被拒时，可点"重新发送验证邮件"；每次发送都使旧的链接失效。
 
-## Requirements *(mandatory)*
+## Requirements _(mandatory)_
 
 ### Functional Requirements
 
@@ -147,7 +147,7 @@
 - **FR-024**：OAuth 提供方不可达时，登录页必须提示用户，不静默失败。
 - **FR-025**：当邮件服务商返回每日配额超限（HTTP 429 / provider 配额错误）时，系统必须拒绝当前的注册请求（不创建账号），并向用户明确提示"邮件暂时无法发送，请稍后重试"。
 
-### Key Entities *(include if feature involves data)*
+### Key Entities _(include if feature involves data)_
 
 - **用户（User）**：系统的核心身份实体；属性包括唯一标识符、邮箱（唯一）、邮箱是否已验证、显示名、头像、创建时间；至少一种登录方式（密码或第三方）。
 - **第三方账号（OAuth Account）**：表示用户与第三方身份提供方（GitHub / Google）的绑定关系；包含第三方用户标识、绑定的本地用户标识、提供方类型。
@@ -155,7 +155,7 @@
 - **验证令牌（Verification Token）**：表示一次邮箱验证的待办；包含目标邮箱、唯一令牌、过期时间；使用或重新发送时失效。
 - **聊天会话（Thread）**：已有的实体；本期新增"归属用户"的强制属性，不再允许无主。
 
-## Success Criteria *(mandatory)*
+## Success Criteria _(mandatory)_
 
 ### Measurable Outcomes
 

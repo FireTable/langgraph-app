@@ -40,6 +40,7 @@ pnpm install
 ```
 
 新增：
+
 - `better-auth`
 - `resend`
 - `@react-email/components`
@@ -177,6 +178,7 @@ pnpm test
 ```
 
 应覆盖：
+
 - `tests/auth/config.test.ts`：Better Auth 实例配置正确（providers / secret / trustedOrigins）
 - `tests/auth/handler.test.ts`：每个端点 happy path + error code
 - `tests/auth/queries.test.ts`：getCurrentUser 等 server-side helpers
@@ -184,6 +186,7 @@ pnpm test
 - `tests/threads/queries.test.ts`：所有函数签名变化后的契约
 
 覆盖率硬指标：
+
 - `lib/auth/*` ≥ 90%
 - `app/api/auth/[...all]/route.ts` 每个分支覆盖
 - `app/api/threads/*/route.ts` 每个分支覆盖（含 401/404）
@@ -196,11 +199,11 @@ pnpm test
 
 ## 排错
 
-| 现象 | 原因 | 解决 |
-|---|---|---|
-| 登录页空白 | `BETTER_AUTH_SECRET` 未设 | 生成 32 字节 hex |
-| 注册成功但收不到邮件 | `RESEND_API_KEY` 错或 `RESEND_FROM_EMAIL` 未验证 | Resend dashboard 检查域名 |
-| OAuth 回调 404 | callback URL 不匹配 | 检查 `.env` 中 provider 配置 vs GitHub/Google 控制台 |
-| OAuth 后用户看到 401 | session cookie 未设置 | 检查 `BETTER_AUTH_URL` 与浏览器 host 一致 |
-| 主页死循环重定向 | server component 拿不到 session | 检查 `auth.api.getSession({ headers })` 调用 |
-| 测试 DB 报 relation does not exist | 没跑 migration | `pnpm db:migrate`（test env 用 `DATABASE_URL_TEST`） |
+| 现象                               | 原因                                             | 解决                                                 |
+| ---------------------------------- | ------------------------------------------------ | ---------------------------------------------------- |
+| 登录页空白                         | `BETTER_AUTH_SECRET` 未设                        | 生成 32 字节 hex                                     |
+| 注册成功但收不到邮件               | `RESEND_API_KEY` 错或 `RESEND_FROM_EMAIL` 未验证 | Resend dashboard 检查域名                            |
+| OAuth 回调 404                     | callback URL 不匹配                              | 检查 `.env` 中 provider 配置 vs GitHub/Google 控制台 |
+| OAuth 后用户看到 401               | session cookie 未设置                            | 检查 `BETTER_AUTH_URL` 与浏览器 host 一致            |
+| 主页死循环重定向                   | server component 拿不到 session                  | 检查 `auth.api.getSession({ headers })` 调用         |
+| 测试 DB 报 relation does not exist | 没跑 migration                                   | `pnpm db:migrate`（test env 用 `DATABASE_URL_TEST`） |

@@ -10,6 +10,7 @@ A self-hostable chat app that streams tokens from a [LangGraph](https://langchai
 - **Self-hosted**: runs on a single VPS with Docker Compose, no SaaS lock-in.
 - **Type-safe DB layer**: Drizzle ORM + Zod validators, derived from the same schema source.
 - **TDD-tested**: Vitest with a separate test database.
+- **User accounts**: email + password (with email verification), GitHub and Google sign-in, 7-day persistent sessions, and per-user thread isolation. See [docs/AUTH.md](docs/AUTH.md) for the operator guide.
 
 ## Tech stack
 
@@ -203,6 +204,12 @@ Test database stays isolated from dev — never put production-like data in `lan
 | `NEXT_PUBLIC_LANGGRAPH_API_URL`      | browser runtime           | optional (uses proxy if unset)             |
 | `DATABASE_URL`                       | drizzle-kit + backend     | yes                                        |
 | `DATABASE_URL_TEST`                  | vitest                    | yes                                        |
+| `BETTER_AUTH_SECRET`                 | session cookie signing    | yes (see [docs/AUTH.md](docs/AUTH.md))     |
+| `BETTER_AUTH_URL`                    | OAuth callback base       | yes (default `http://localhost:3000`)      |
+| `RESEND_API_KEY`                     | verification emails       | yes                                        |
+| `RESEND_FROM_EMAIL`                  | verification email sender | optional (`onboarding@resend.dev` default) |
+| `GITHUB_CLIENT_ID` / `_SECRET`       | GitHub OAuth              | optional                                   |
+| `GOOGLE_CLIENT_ID` / `_SECRET`       | Google OAuth              | optional                                   |
 | `LANGSMITH_*`                        | tracing                   | optional                                   |
 
 ## Patches
@@ -212,6 +219,7 @@ Test database stays isolated from dev — never put production-like data in `lan
 ## Documentation
 
 - [`docs/APIS.md`](docs/APIS.md) — HTTP endpoint reference. Update whenever a route under `app/api/` changes.
+- [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, troubleshooting.
 
 ## Engineering rules
 
