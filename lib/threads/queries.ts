@@ -21,19 +21,13 @@ export async function getThreadForUser(id: string, userId: string): Promise<Thre
   return row;
 }
 
-export async function createThread(args: {
-  userId: string;
-  title?: string;
-}): Promise<Thread> {
+export async function createThread(args: { userId: string; title?: string }): Promise<Thread> {
   const title = args.title ?? DEFAULT_TITLE;
   // UUIDs are required by the LangGraph HTTP API's zod validation on
   // /threads/[id]/state and /threads/[id]/stream paths; using a short
   // nanoid breaks the "click thread to load history" path with a 400.
   const id = randomUUID();
-  const [row] = await db
-    .insert(threads)
-    .values({ id, userId: args.userId, title })
-    .returning();
+  const [row] = await db.insert(threads).values({ id, userId: args.userId, title }).returning();
   return row!;
 }
 
