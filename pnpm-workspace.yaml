@@ -1,3 +1,2 @@
 patchedDependencies:
   "@assistant-ui/core@0.2.18": patches/@assistant-ui__core@0.2.18.patch
-  "@assistant-ui/react-langgraph@0.14.9": patches/@assistant-ui__react-langgraph@0.14.9.patch

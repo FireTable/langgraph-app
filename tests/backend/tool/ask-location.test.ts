@@ -1,14 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { mockInterrupt } = vi.hoisted(() => ({
-  mockInterrupt: vi.fn(),
-}));
-
 vi.mock("@langchain/langgraph", async () => {
   const actual = await vi.importActual<typeof import("@langchain/langgraph")>("@langchain/langgraph");
   return {
     ...actual,
-    interrupt: (...args: unknown[]) => mockInterrupt(...args),
+    interrupt: vi.fn(),
   };
 });
 
@@ -19,7 +15,6 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   fetchMock.mockReset();
-  mockInterrupt.mockReset();
 });
 
 afterEach(() => {
@@ -27,51 +22,15 @@ afterEach(() => {
 });
 
 describe("askLocationTool", () => {
-  it("first call: surfaces the awaiting marker via interrupt() and makes no HTTP calls", async () => {
-    const interruptError = new Error("GraphInterrupt: paused");
-    mockInterrupt.mockImplementationOnce(() => {
-      throw interruptError;
-    });
+  it("returns the awaiting-location sentinel synchronously", async () => {
+    const result = await askLocationTool.invoke({});
+    // ToolNode wraps every result as a string, so the tool body
+    // returns the sentinel pre-serialized to keep that contract stable.
+    expect(result).toBe(JSON.stringify({ awaiting: "location" }));
+  });
 
-    await expect(askLocationTool.invoke({})).rejects.toBe(interruptError);
-    expect(mockInterrupt).toHaveBeenCalledWith({ awaiting: "location" });
+  it("makes no HTTP calls", async () => {
+    await askLocationTool.invoke({});
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("resumed call with valid coords payload: returns the parsed coords", async () => {
-    mockInterrupt.mockReturnValueOnce(
-      JSON.stringify({ lat: 39.9042, lon: 116.4074, label: "Beijing" }),
-    );
-
-    const result = await askLocationTool.invoke({});
-    expect(result).toEqual({ lat: 39.9042, lon: 116.4074, label: "Beijing" });
-  });
-
-  it("resumed call with error payload: returns the error string", async () => {
-    mockInterrupt.mockReturnValueOnce(JSON.stringify({ error: "Location permission denied" }));
-
-    const result = await askLocationTool.invoke({});
-    expect(result).toEqual({ error: "Location permission denied" });
-  });
-
-  it("resumed call with a non-string resume value: parses the raw value", async () => {
-    mockInterrupt.mockReturnValueOnce({ lat: 1, lon: 2, label: "x" });
-
-    const result = await askLocationTool.invoke({});
-    expect(result).toEqual({ lat: 1, lon: 2, label: "x" });
-  });
-
-  it("resumed call with malformed JSON: surfaces an error to the model", async () => {
-    mockInterrupt.mockReturnValueOnce("not-json{{");
-
-    const result = await askLocationTool.invoke({});
-    expect(result).toEqual({ error: "Invalid location payload" });
-  });
-
-  it("resumed call with a payload missing required fields: surfaces an error to the model", async () => {
-    mockInterrupt.mockReturnValueOnce(JSON.stringify({ lat: 1 }));
-
-    const result = await askLocationTool.invoke({});
-    expect(result).toEqual({ error: "Invalid location payload" });
   });
 });

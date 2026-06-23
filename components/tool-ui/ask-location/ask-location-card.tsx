@@ -3,15 +3,17 @@
 import { useState, type FC, type ReactNode } from "react";
 import { AlertCircleIcon, CheckCircle2Icon, Loader2Icon, MapPinIcon, SearchIcon } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
-import { useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { geocodeLocation, reverseGeocode } from "@/lib/open-meteo";
 import { unwrapToolResult } from "@/components/tool-ui/tool-result";
 
-// Tool result once the user picks a location. Shape mirrors the
-// backend's ResumeSchema (backend/tool/ask-location.ts):
+// Tool result once the user picks a location. The tool itself returns
+// `{ awaiting: "location" }` to make the card render the picker (see
+// backend/tool/ask-location.ts). The user's pick overwrites that
+// result via `addResult`, so the LLM sees the resolved payload on
+// its next turn.
 //   { lat, lon, label } — user picked coords
 //   { error }           — geolocation denied or geocode failed
 export type AskLocationResult =
@@ -41,21 +43,18 @@ function parseResult(result: unknown): AskLocationResult | null {
   return unwrapToolResult<AskLocationResult>(result);
 }
 
-export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>> = ({ result }) => {
+export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>> = ({
+  result,
+  addResult,
+}) => {
   const [mode, setMode] = useState<Mode>({ kind: "idle" });
   const [cityQuery, setCityQuery] = useState("");
-  const sendCommand = useLangGraphSendCommand();
 
-  const parsed = parseResult(result);
+  const parsed: any = parseResult(result);
+  const shareLocation = !parsed || parsed?.awaiting === "location";
 
-  // ponytail: the tool's execute lives on the backend and pauses on
-  // `interrupt()`. `sendCommand({ resume })` re-invokes the run with
-  // a Command payload, which `ToolNode` will surface as a single
-  // ToolMessage — no duplicate messages, no separate "result" stream.
-  // `LangGraphCommand.resume` is typed `string`, so we serialize the
-  // payload; the backend's tool parses it back.
   const resume = (payload: AskLocationResult) => {
-    void sendCommand({ resume: JSON.stringify(payload) });
+    void addResult(payload);
   };
 
   const handleUseDeviceLocation = async () => {
@@ -76,7 +75,6 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
       resume({ error: message });
     }
   };
-
 
   return (
     <div
@@ -124,7 +122,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
         )}
 
         {/* Interactive: only when user hasn't decided yet. */}
-        {!parsed && (
+        {shareLocation && (
           <div className="flex flex-col gap-3">
             {mode.kind === "requesting_permission" && (
               <StatusRow icon={<Loader2Icon className="text-muted-foreground size-4 animate-spin" />}>

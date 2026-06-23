@@ -1,51 +1,18 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { interrupt } from "@langchain/langgraph";
 
-// ask_location pauses the graph for human input. The tool's first call
-// throws an interrupt; the frontend's AskLocationCard collects a pick
-// and re-invokes the run with `Command({ resume: <json-string> })`.
-// On the resumed call, `interrupt()` returns that string and we parse
-// it as the tool's result — the ToolNode then writes a single
-// ToolMessage so the next model turn has the coords to react to.
-//
-// Payload shape mirrors AskLocationResult on the frontend:
-//   { lat, lon, label } — user picked coords
-//   { error }           — geolocation denied or geocode failed
-const ResumeSchema = z.union([
-  z.object({ lat: z.number(), lon: z.number(), label: z.string() }),
-  z.object({ error: z.string() }),
-]);
-
+// ask_location is a pure trigger. The ToolNode writes a ToolMessage
+// with `{ awaiting: "location" }` and the frontend card keys on
+// that sentinel to render the picker. The user's pick comes back
+// via `addResult` — assistant-ui emits a new ToolMessage with the
+// same tool_call_id carrying the resolved payload, and the LLM
+// picks it up on its next pass.
 export const askLocationTool = tool(
-  // ponytail: the function body runs once per tool invocation. The
-  // first time it throws GraphInterrupt; on resume LangGraph replays
-  // the call and `interrupt()` returns the resume value instead.
-  async () => {
-    const raw = interrupt({ awaiting: "location" });
-    // useLangGraphSendCommand types `resume` as `string`; let test
-    // callers pass a structured value directly to skip the round-trip.
-    const candidate = typeof raw === "string" ? parseOrFail(raw) : raw;
-    const parsed = ResumeSchema.safeParse(candidate);
-    if (!parsed.success) {
-      return { error: "Invalid location payload" };
-    }
-    return parsed.data;
-  },
+  async () => (JSON.stringify({ awaiting: "location" })),
   {
     name: "ask_location",
     description:
-      "Render a location picker card for the user. Use this whenever the user asks about weather without specifying a place. Do NOT call geocode_location in the same turn.",
+      `Render a location picker card for the user. Use this whenever the user asks about weather without specifying a place. When calling this tool, your text reply must be exactly: "Please pick a location so I can fetch the weather." Do NOT call geocode_location in the same turn. After calling this tool, stop — wait for the user's reply before doing anything else.`,
     schema: z.object({}),
   },
 );
-
-// `null` makes zod's safeParse fail and the tool returns
-// `{ error: "Invalid location payload" }` to the model.
-function parseOrFail(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}

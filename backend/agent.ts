@@ -69,6 +69,8 @@ export const graph = new StateGraph(GraphState)
   .addNode("renameThreadAgent", renameThreadAgentNode)
   .addNode("weatherAgent", weatherSubgraph)
   // Sequential: START → routerAgent → (weatherAgent | chatAgent) → afterAgent → END.
+  // ask_location's picker card is owned by the weather subgraph
+  // (see backend/node/weather-agent-node.ts + components/tool-ui/ask-location).
   // renameThreadAgent is wired off START so its DB side-effect runs in
   // parallel without touching the messages channel.
   .addEdge(START, "routerAgent")
