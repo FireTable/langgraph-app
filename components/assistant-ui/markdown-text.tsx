@@ -1,5 +1,9 @@
 "use client";
 
+// ponytail: dot.css is inlined into app/globals.css (with --aui-content
+// bumped to "\258d" for a typewriter caret). The package import is left
+// commented so it's easy to re-enable if we ever want the upstream default
+// back without re-deriving the keyframes.
 // import "@assistant-ui/react-markdown/styles/dot.css";
 
 import {
@@ -65,7 +69,7 @@ const useCopyToClipboard = ({
         setIsCopied(true);
         setTimeout(() => setIsCopied(false), copiedDuration);
       },
-      () => {},
+      () => { },
     );
   };
 
@@ -223,7 +227,7 @@ const defaultComponents = memoizeMarkdownComponents({
       <code
         className={cn(
           !isCodeBlock &&
-            "aui-md-inline-code bg-muted rounded-md px-1.5 py-0.5 font-mono text-[0.85em]",
+          "aui-md-inline-code bg-muted rounded-md px-1.5 py-0.5 font-mono text-[0.85em]",
           className,
         )}
         {...props}
