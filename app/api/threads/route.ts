@@ -1,29 +1,26 @@
 import { NextResponse } from "next/server";
+
 import { listThreadsForUser, createThread } from "@/lib/threads/queries";
 import { CreateThreadBody } from "@/lib/threads/validators";
 import { langGraphClient } from "@/lib/langgraph/client";
-import { requireSession } from "@/lib/auth/route-helpers";
+import { withAuth } from "@/lib/auth/with-auth";
 import type { Thread } from "@/lib/threads/schema";
 
-export async function GET() {
-  const session = await requireSession();
-  if (session instanceof NextResponse) return session;
-  const rows = await listThreadsForUser(session.user.id);
+export const GET = withAuth(async (_req, { userId }) => {
+  const rows = await listThreadsForUser(userId);
   return NextResponse.json({ threads: rows.map(toThreadMetadata) });
-}
+});
 
-export async function POST(req: Request) {
-  const session = await requireSession();
-  if (session instanceof NextResponse) return session;
+export const POST = withAuth(async (req, { userId }) => {
   const json = await req.json().catch(() => ({}));
   const parsed = CreateThreadBody.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json({ code: "BAD_REQUEST", error: parsed.error.issues }, { status: 400 });
   }
-  const row = await createThread(session.user.id, parsed.data.title);
+  const row = await createThread(userId, parsed.data.title);
   await langGraphClient.threads.create({ threadId: row.id, ifExists: "do_nothing" });
   return NextResponse.json(toThreadMetadata(row), { status: 201 });
-}
+});
 
 function toThreadMetadata(row: Thread) {
   return {
