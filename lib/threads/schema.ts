@@ -2,6 +2,7 @@ import { pgTable, text, timestamp, jsonb, index } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import { user } from "@/lib/auth/schema";
+import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
 
 // Threads metadata for assistant-ui RemoteThreadListAdapter.
 // The LangGraph checkpoint_* tables are created by PostgresSaver.setup()
@@ -13,7 +14,7 @@ export const threads = pgTable(
   "threads",
   {
     id: text("id").primaryKey(),
-    title: text("title").notNull().default("New Chat"),
+    title: text("title").notNull().default(DEFAULT_THREAD_TITLE),
     status: text("status", { enum: ["regular", "archived"] })
       .notNull()
       .default("regular"),

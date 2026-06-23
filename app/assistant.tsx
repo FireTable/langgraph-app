@@ -15,7 +15,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
 import { cn } from "@/lib/utils";
-import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID } from "@/lib/constants";
+import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID, APP_NAME } from "@/lib/constants";
 
 // Provider-scoped values (api, mainThreadId) bridged into a ref so the
 // runtime's eventHandlers can read them — they run before the provider
@@ -29,7 +29,7 @@ const Logo: FC = () => {
   return (
     <div className="flex items-center gap-2 px-2 text-sm font-medium">
       <MessageSquareTextIcon className="text-foreground/90 size-5" />
-      <span className="text-foreground/90">assistant-ui</span>
+      <span className="text-foreground/90">{APP_NAME}</span>
     </div>
   );
 };
@@ -55,7 +55,7 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
             collapsed && "opacity-0",
           )}
         >
-          assistant-ui
+          {APP_NAME}
         </span>
       </div>
       {collapsed ? (
@@ -187,7 +187,7 @@ export function Assistant() {
 
   const eventHandlers = useMemo(
     () => ({
-      onCustomEvent: (_eventType: string, _data: unknown) => {},
+      onCustomEvent: (_eventType: string, _data: unknown) => { },
     }),
     [],
   );

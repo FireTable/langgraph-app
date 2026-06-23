@@ -2,8 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/db/client";
 import { threads, type Thread, type ThreadCustom } from "./schema";
-
-const DEFAULT_TITLE = "New Chat";
+import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
 
 export async function listThreadsForUser(userId: string): Promise<Thread[]> {
   return db
@@ -22,7 +21,7 @@ export async function getThreadForUser(id: string, userId: string): Promise<Thre
 }
 
 export async function createThread(args: { userId: string; title?: string }): Promise<Thread> {
-  const title = args.title ?? DEFAULT_TITLE;
+  const title = args.title ?? DEFAULT_THREAD_TITLE;
   // UUIDs are required by the LangGraph HTTP API's zod validation on
   // /threads/[id]/state and /threads/[id]/stream paths; using a short
   // nanoid breaks the "click thread to load history" path with a 400.

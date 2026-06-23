@@ -22,6 +22,7 @@ import { threads } from "@/lib/threads/schema";
 import { user } from "@/lib/auth/schema";
 import { setCurrentUser } from "@/tests/helpers/session";
 import { makeUser, cleanupUsers, ensureTestUser, TEST_USER } from "@/tests/helpers/auth";
+import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
 
 const owner = TEST_USER.id;
 
@@ -98,7 +99,7 @@ describe("POST /api/threads", () => {
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-    expect(body.title).toBe("New Chat");
+    expect(body.title).toBe(DEFAULT_THREAD_TITLE);
     const row = await db.query.threads.findFirst({ where: (t, { eq }) => eq(t.id, body.id) });
     expect(row?.userId).toBe(owner);
   });

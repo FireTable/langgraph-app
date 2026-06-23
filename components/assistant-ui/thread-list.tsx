@@ -9,6 +9,7 @@ import {
 } from "@assistant-ui/react";
 import { ArchiveIcon, MoreHorizontalIcon, PlusIcon, TrashIcon } from "lucide-react";
 import { Fragment, useMemo, type FC } from "react";
+import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
 
 export const ThreadList: FC = () => {
   return (
@@ -136,7 +137,7 @@ const ThreadListItem: FC = () => {
     <ThreadListItemPrimitive.Root className="aui-thread-list-item group hover:bg-muted focus-visible:bg-muted data-active:bg-muted relative flex h-8 items-center rounded-md transition-colors focus-visible:outline-none">
       <ThreadListItemPrimitive.Trigger className="aui-thread-list-item-trigger flex h-full min-w-0 flex-1 items-center px-2.5 text-start text-sm group-hover:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9">
         <span className="aui-thread-list-item-title min-w-0 flex-1 truncate">
-          <ThreadListItemPrimitive.Title fallback="New Chat" />
+          <ThreadListItemPrimitive.Title fallback={DEFAULT_THREAD_TITLE} />
         </span>
       </ThreadListItemPrimitive.Trigger>
       <ThreadListItemMore />

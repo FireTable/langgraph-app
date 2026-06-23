@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { threadListAdapter } from "@/lib/threads/adapter";
+import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
 
 function mockFetch(
   responses: Array<{ url: RegExp; init?: RequestInit; body: unknown; status?: number }>,
@@ -53,7 +54,7 @@ describe("threadListAdapter.initialize", () => {
     const { fn } = mockFetch([
       {
         url: /\/api\/threads$/,
-        body: { status: "regular", id: "new-id", title: "New Chat" },
+        body: { status: "regular", id: "new-id", title: DEFAULT_THREAD_TITLE },
       },
     ]);
     const original = globalThis.fetch;
