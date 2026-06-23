@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FC, type RefObject } from "react";
-import { AssistantRuntimeProvider, useAui, useAuiState, Suggestions } from "@assistant-ui/react";
+import {
+  AssistantRuntimeProvider,
+  Suggestions,
+  Tools,
+  useAui,
+  useAuiState,
+} from "@assistant-ui/react";
 import { unstable_createLangGraphStream, useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
@@ -11,6 +17,7 @@ import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { UserButton } from "@/components/auth/user/user-button";
+import weatherToolkit from "@/components/tool-ui/toolkit";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
@@ -187,7 +194,7 @@ export function Assistant() {
 
   const eventHandlers = useMemo(
     () => ({
-      onCustomEvent: (_eventType: string, _data: unknown) => {},
+      onCustomEvent: (_eventType: string, _data: unknown) => { },
     }),
     [],
   );
@@ -209,11 +216,17 @@ export function Assistant() {
   });
 
   const aui = useAui({
+    tools: Tools({ toolkit: weatherToolkit }),
     suggestions: Suggestions([
       {
-        title: "What is the website firetable.tech about?",
+        title: "Please analyze the website https://firetable.tech",
         label: "",
         prompt: "Please analyze the website https://firetable.tech",
+      },
+      {
+        title: "What’s the weather like at today?",
+        label: "",
+        prompt: "What’s the weather like at today?",
       },
     ]),
   });

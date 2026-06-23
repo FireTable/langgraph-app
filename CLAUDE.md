@@ -194,7 +194,18 @@ Delete a comment that:
 
 When in doubt, leave it out. A diff that's 80% code and 20% comment is fine; 50/50 is a code smell.
 
-### 6. Never kill or restart a dev server that's already running
+### 6. Tool-call UI components stay flush with their container
+
+Components rendered inside a tool-call part (`components/tool-ui/**`) live inside `ToolFallbackContent`, which already provides `ps-6 pt-1 pb-2` padding and no horizontal margin. Inner cards must not add their own horizontal margin or drop shadow — they would compete with the tool-call chrome and produce a double-bordered look.
+
+Rules for tool-call children:
+
+- No `mx-*` (the container's `ps-6` is the only left margin; do not add a right margin either).
+- No `shadow-*` (the container has no shadow; neither should the child).
+- Vertical `my-*` is fine when the tool call stacks next to other parts.
+- Border + rounded corners are still allowed for visual grouping inside the tool call.
+
+### 7. Never kill or restart a dev server that's already running
 
 Before running `pnpm dev` (or starting any dev server), check whether the relevant port is already bound (`lsof -i :3000` for Next.js, `:2024` for LangGraph). If it is, that is the developer's active dev environment — **do not kill it, do not restart it**. Reuse it via Chrome DevTools MCP for any visual verification.
 

@@ -351,7 +351,7 @@ const AssistantMessage: FC = () => {
                   return <ToolGroup group={part}>{children}</ToolGroup>;
                 }
                 return (
-                  <ToolGroupRoot variant="ghost">
+                  <ToolGroupRoot variant="ghost" defaultOpen>
                     <ToolGroupTrigger
                       count={part.indices.length}
                       active={part.status.type === "running"}
