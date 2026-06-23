@@ -55,3 +55,29 @@ Tracked as PR #1 review-comment follow-ups; none are blocking merge.
 - **Extract rename-thread prompt** (backend/node/rename-thread-node.ts):
   inline `SystemMessage` content belongs in a dedicated eval / config
   file alongside other model prompts.
+
+## 2026-06-23 — Observability (in-app spans)
+
+**Decided scope**:
+
+1. Frontend entry — add an Aperture icon button to the right of the Share
+   button in `app/assistant.tsx` Header. Click opens
+   `<ObservabilityPanel>` (already scaffolded at
+   `components/assistant-ui/observability-panel.tsx`). Icon pulses red
+   while `s.thread.isRunning`. Panel is `dynamic({ ssr: false })`
+   because react-o11y reads browser state.
+2. Span backend — self-contained, no LangSmith / no third-party tracer.
+   - Wrap the LangGraph nodes (`call-model-node`, `rename-thread-node`)
+     with start/end timing.
+   - Emit spans via `config.writer()` so they reach the frontend as
+     custom events (LangGraph routes these to
+     `useLangGraphRuntime`'s `onCustomEvent`).
+   - Persist spans per thread in Postgres: new `spans` table + drizzle
+     schema, so a page refresh restores history.
+   - `app/api/observability/[threadId]/route.ts` fetches stored spans
+     for the panel.
+   - Sync `docs/APIS.md` when the route lands (CLAUDE.md rule 1).
+
+**Dependency**: `@assistant-ui/react-o11y@0.0.24` already installed
+(uncommitted). Pin a patch in `patches/` once the public API stops
+moving (it's `0.0.x`, experimental).
