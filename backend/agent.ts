@@ -1,29 +1,41 @@
-import { MessagesAnnotation, START, END, StateGraph, Send } from "@langchain/langgraph";
+import { MessagesAnnotation, START, END, StateGraph, Annotation } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
-import type { BaseMessage } from "@langchain/core/messages";
+import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
 
 import { chatModel } from "@/backend/model";
-import { TOOLS } from "@/backend/tool";
-import { renameThreadNode } from "@/backend/node/rename-thread-node";
+import { ALL_TOOLS } from "@/backend/tool";
+import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 import { afterAgentNode } from "@/backend/node/after-agent-node";
+import { weatherSubgraph } from "@/backend/node/weather-agent-node";
+import { routerAgentNode } from "@/backend/node/router-agent-node";
+import { CHAT_AGENT_PROMPT } from "@/backend/prompt/system";
 import { checkpointer } from "@/backend/checkpointer";
 
-const GraphState = MessagesAnnotation;
+// routerDecision is set by routerAgentNode (zod-validated) and read by
+// routeToSubAgent to pick the next sub-agent. No reducer — each
+// turn rewrites it. No downstream node reads it, so it's not exposed
+// outside the router/edge pair.
+const GraphState = Annotation.Root({
+  ...MessagesAnnotation.spec,
+  routerDecision: Annotation<{ next: "weatherAgent" | "chatAgent" } | undefined>(),
+});
 
-// Bind tools onto the chat model once at module load. The bound runnable
-// shares the underlying HTTP pool of the base chat model.
-const chatModelWithTools = chatModel.bindTools(TOOLS);
+// chatAgent gets every tool — the router already decided whether this
+// turn is weather, so chatAgent never sees a weather question. Weather
+// tools stay available so chatAgent can answer follow-up turns that
+// landed on it for some reason (e.g. the router hiccupped).
+const chatModelWithTools = chatModel.bindTools(ALL_TOOLS);
+const toolNode = new ToolNode(ALL_TOOLS);
 
-const toolNode = new ToolNode(TOOLS);
-
-async function agentNode({ messages }: { messages: BaseMessage[] }) {
-  const response = await chatModelWithTools.invoke(messages);
+async function chatAgentNode({ messages }: { messages: BaseMessage[] }) {
+  // Strip any stale system messages — bindTools runnables share
+  // invocation context, so a previous prompt would leak through.
+  const history = messages.filter((m) => !(m instanceof SystemMessage));
+  const response = await chatModelWithTools.invoke([new SystemMessage(CHAT_AGENT_PROMPT), ...history]);
   return { messages: [response] };
 }
 
-// ponytail: toolsCondition returns END for "no tool calls", but we want
-// afterAgent to run on that branch, so route it ourselves.
-export function routeAfterAgent({ messages }: { messages: BaseMessage[] }): "tools" | "afterAgent" {
+export function shouldCallTool({ messages }: { messages: BaseMessage[] }): "tools" | "afterAgent" {
   const last = messages[messages.length - 1];
   const hasToolCalls =
     last != null &&
@@ -33,26 +45,38 @@ export function routeAfterAgent({ messages }: { messages: BaseMessage[] }): "too
   return hasToolCalls ? "tools" : "afterAgent";
 }
 
-// Fan out to `agent` and `renameThread` in parallel from START.
-// `afterAgent` runs after `agent` produces its reply and handles
-// post-agent side-effects (e.g. bumping `last_message_at`).
-const fanOut = (state: typeof GraphState.State) => [
-  new Send("agent", state),
-  new Send("renameThread", state),
-];
+// After the router speaks, decide which sub-agent gets the turn.
+// Falls back to chatAgent if the router hasn't run yet or its
+// decision didn't make it into state.
+function routeToSubAgent({
+  routerDecision,
+}: {
+  routerDecision?: { next: "weatherAgent" | "chatAgent" };
+}): "weatherAgent" | "chatAgent" {
+  return routerDecision?.next ?? "chatAgent";
+}
+
 
 // ponytail: no blanket tool gating. Read tools (searchWeb, fetchUrl) run
 // unconditionally. Write tools added later should hang their own node
-// off the agent → toolNode loop and pass `interruptBefore: ["<that-node>"]`
+// off chatAgent → toolNode loop and pass `interruptBefore: ["<that-node>"]`
 // to `compile()` so only the write path pauses for approval.
 export const graph = new StateGraph(GraphState)
-  .addNode("agent", agentNode)
+  .addNode("routerAgent", routerAgentNode)
+  .addNode("chatAgent", chatAgentNode)
   .addNode("tools", toolNode)
   .addNode("afterAgent", afterAgentNode)
-  .addNode("renameThread", renameThreadNode)
-  .addConditionalEdges(START, fanOut, ["agent", "renameThread"])
-  .addConditionalEdges("agent", routeAfterAgent, ["tools", "afterAgent"])
-  .addEdge("tools", "agent")
+  .addNode("renameThreadAgent", renameThreadAgentNode)
+  .addNode("weatherAgent", weatherSubgraph)
+  // Sequential: START → routerAgent → (weatherAgent | chatAgent) → afterAgent → END.
+  // renameThreadAgent is wired off START so its DB side-effect runs in
+  // parallel without touching the messages channel.
+  .addEdge(START, "routerAgent")
+  .addConditionalEdges("routerAgent", routeToSubAgent, ["weatherAgent", "chatAgent"])
+  .addConditionalEdges("chatAgent", shouldCallTool, ["tools", "afterAgent"])
+  .addEdge("tools", "chatAgent")
+  .addEdge("weatherAgent", "afterAgent")
   .addEdge("afterAgent", END)
-  .addEdge("renameThread", END)
+  .addEdge(START, "renameThreadAgent")
+  .addEdge("renameThreadAgent", END)
   .compile({ checkpointer });
