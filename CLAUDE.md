@@ -194,6 +194,12 @@ Delete a comment that:
 
 When in doubt, leave it out. A diff that's 80% code and 20% comment is fine; 50/50 is a code smell.
 
+### 6. Never kill or restart a dev server that's already running
+
+Before running `pnpm dev` (or starting any dev server), check whether the relevant port is already bound (`lsof -i :3000` for Next.js, `:2024` for LangGraph). If it is, that is the developer's active dev environment — **do not kill it, do not restart it**. Reuse it via Chrome DevTools MCP for any visual verification.
+
+Killing a running dev server loses unsaved browser state, breaks open browser tabs, and erases hot-reload history. If the dev server appears stale or stuck, surface the observation and ask the developer how they want to proceed; do not act unilaterally.
+
 ## Things to know before editing
 
 - The graph id `agent` is referenced in three places: `langgraph.json` (`graphs.agent`), `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` in `.env.example`, and the `unstable_createLangGraphStream({ assistantId })` call. Keep them aligned.
