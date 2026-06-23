@@ -2,6 +2,8 @@ import type { RemoteThreadListAdapter } from "@assistant-ui/react";
 import { joinURL } from "ufo";
 import { createAssistantStream } from "assistant-stream";
 
+import { jsonFetch } from "@/lib/fetch";
+
 // Bridges our `/api/threads/*` contract to assistant-ui's
 // RemoteThreadListAdapter. Each method is a thin fetch wrapper; no state
 // is held here. URLs are built with `ufo`'s joinURL so trailing slashes
@@ -21,12 +23,7 @@ type ApiThreadMetadata = {
 };
 
 async function patchThread(id: string, body: unknown): Promise<void> {
-  await fetch(joinURL(BASE, id), {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    credentials: "include",
-  });
+  await jsonFetch(joinURL(BASE, id), { method: "PATCH", body });
 }
 
 // assistant-ui expects `remoteId` (callback into the adapter) AND
@@ -44,18 +41,13 @@ function toRemote(t: ApiThreadMetadata) {
 
 export const threadListAdapter: RemoteThreadListAdapter = {
   async list() {
-    const res = await fetch(joinURL(BASE), { credentials: "include" });
+    const res = await jsonFetch(joinURL(BASE));
     const data = (await res.json()) as { threads: ApiThreadMetadata[] };
     return { threads: data.threads.map(toRemote) };
   },
 
   async initialize(_localId: string) {
-    const res = await fetch(joinURL(BASE), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-      credentials: "include",
-    });
+    const res = await jsonFetch(joinURL(BASE), { method: "POST", body: {} });
     const data = (await res.json()) as ApiThreadMetadata;
     return { remoteId: data.id, externalId: data.id };
   },
@@ -77,11 +69,11 @@ export const threadListAdapter: RemoteThreadListAdapter = {
   },
 
   async delete(remoteId) {
-    await fetch(joinURL(BASE, remoteId), { method: "DELETE", credentials: "include" });
+    await jsonFetch(joinURL(BASE, remoteId), { method: "DELETE" });
   },
 
   async fetch(remoteId) {
-    const res = await fetch(joinURL(BASE, remoteId), { credentials: "include" });
+    const res = await jsonFetch(joinURL(BASE, remoteId));
     const data = (await res.json()) as ApiThreadMetadata;
     return toRemote(data);
   },
