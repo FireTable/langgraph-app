@@ -76,4 +76,32 @@ describe("WEATHER_AGENT_PROMPT", () => {
   it("instructs the sub-agent to keep the final reply short", () => {
     expect(WEATHER_AGENT_PROMPT).toMatch(/ONE short sentence/);
   });
+
+  it("forbids batching more than one tool call per turn", () => {
+    expect(WEATHER_AGENT_PROMPT).toMatch(/one tool per turn/i);
+  });
+
+  it("specifies the strict order: ask_location then geocode then weather", () => {
+    const order = [
+      /ask_location/,
+      /geocode_location/,
+      /get_weather/,
+    ];
+    let lastSeen = -1;
+    for (const pat of order) {
+      const idx = WEATHER_AGENT_PROMPT.search(pat);
+      expect(idx, `expected ${pat} to appear`).toBeGreaterThan(-1);
+      expect(idx, `expected ${pat} to appear after the previous step`).toBeGreaterThan(lastSeen);
+      lastSeen = idx;
+    }
+  });
+
+  it("routes the no-place case to ask_location first", () => {
+    expect(WEATHER_AGENT_PROMPT).toMatch(/no place|not.*named|did not name/i);
+    const askIdx = WEATHER_AGENT_PROMPT.search(/ask_location/);
+    const geocodeIdx = WEATHER_AGENT_PROMPT.search(/geocode_location/);
+    expect(askIdx).toBeGreaterThan(-1);
+    expect(geocodeIdx).toBeGreaterThan(-1);
+    expect(askIdx).toBeLessThan(geocodeIdx);
+  });
 });
