@@ -75,8 +75,12 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
           <ThreadList />
         </div>
       )}
-      <div className={cn("shrink-0 border-t p-3", collapsed ? "flex justify-center" : "")}>
-        {collapsed ? <UserButton size="icon" /> : <UserButton className="w-full" hideSettings />}
+      <div className={cn("shrink-0 p-2", collapsed ? "flex justify-center" : "")}>
+        {collapsed ? (
+          <UserButton size="icon" className="border-border bg-card border" />
+        ) : (
+          <UserButton className="border-border bg-card w-full border" hideSettings />
+        )}
       </div>
     </aside>
   );
@@ -98,8 +102,8 @@ const MobileSidebar: FC = () => {
         <div className="relative flex-1 overflow-y-auto p-3">
           <ThreadList />
         </div>
-        <div className="shrink-0 border-t p-3">
-          <UserButton className="w-full" />
+        <div className="shrink-0 p-2">
+          <UserButton className="border-border bg-card w-full border" hideSettings />
         </div>
       </SheetContent>
     </Sheet>
@@ -183,7 +187,7 @@ export function Assistant() {
 
   const eventHandlers = useMemo(
     () => ({
-      onCustomEvent: (_eventType: string, _data: unknown) => { },
+      onCustomEvent: (_eventType: string, _data: unknown) => {},
     }),
     [],
   );
