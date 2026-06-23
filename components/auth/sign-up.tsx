@@ -300,6 +300,7 @@ export function SignUp({ className, socialLayout, socialPosition = "bottom" }: S
 
                     <InputGroupAddon align="inline-end">
                       <InputGroupButton
+                        tabIndex={-1}
                         aria-label={
                           isPasswordVisible
                             ? localization.auth.hidePassword
@@ -367,6 +368,7 @@ export function SignUp({ className, socialLayout, socialPosition = "bottom" }: S
 
                       <InputGroupAddon align="inline-end">
                         <InputGroupButton
+                          tabIndex={-1}
                           aria-label={
                             isConfirmPasswordVisible
                               ? localization.auth.hidePassword

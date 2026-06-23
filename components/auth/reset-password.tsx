@@ -137,6 +137,7 @@ export function ResetPassword({ className }: ResetPasswordProps) {
 
                 <InputGroupAddon align="inline-end">
                   <InputGroupButton
+                    tabIndex={-1}
                     aria-label={
                       isPasswordVisible
                         ? localization.auth.hidePassword
@@ -201,6 +202,7 @@ export function ResetPassword({ className }: ResetPasswordProps) {
 
                   <InputGroupAddon align="inline-end">
                     <InputGroupButton
+                      tabIndex={-1}
                       aria-label={
                         isConfirmPasswordVisible
                           ? localization.auth.hidePassword
