@@ -208,10 +208,41 @@ export function Assistant() {
       return { externalId: externalId! };
     },
     // Empty messages on a fresh thread — state.values has no `messages` key yet.
+    // Return `interrupts` from the active task so a paused run (e.g. ask_location
+    // waiting for the user's location pick) survives a page refresh — the runtime
+    // restores `useLangGraphInterruptState()` from this field. Also return
+    // `uiMessages` so any persisted typedUi state is restored on reload.
     load: async (externalId) => {
       const state = await client.threads.getState(externalId);
-      const values = state.values as { messages?: unknown };
-      return { messages: (values.messages ?? []) as never };
+      const values = state.values as { messages?: unknown; ui?: unknown };
+      const interrupts = state.tasks?.[0]?.interrupts;
+
+      return {
+        messages: (values.messages ?? []) as never,
+        uiMessages: (values.ui ?? []) as never,
+        ...(interrupts?.length ? { interrupts } : {}),
+      };
+    },
+    getCheckpointId: async (threadId, parentMessages) => {
+      const history = await client.threads.getHistory(threadId);
+
+      for (const state of history) {
+        const stateMessages = (state.values as { messages?: unknown[] }).messages;
+        if (!stateMessages || stateMessages.length !== parentMessages.length) {
+          continue;
+        }
+        const hasStableIds =
+          parentMessages.every((m) => typeof m.id === "string") &&
+          stateMessages.every((m: unknown) => typeof (m as { id?: unknown }).id === "string");
+        if (!hasStableIds) continue;
+        const isMatch = parentMessages.every(
+          (m, i) => m.id === (stateMessages[i] as { id?: string } | undefined)?.id,
+        );
+        if (isMatch) {
+          return state.checkpoint.checkpoint_id ?? null;
+        }
+      }
+      return null;
     },
   });
 
