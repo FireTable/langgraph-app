@@ -12,10 +12,12 @@ vi.mock("@/lib/auth/config", () => ({
 
 import { withAuth } from "@/lib/auth/with-auth";
 
-function call(handler: Parameters<typeof withAuth>[0], url = "http://localhost", params?: unknown) {
-  // ponytail: route ctx matches Next.js App Router — params is a Promise.
+function call<T>(handler: ReturnType<typeof withAuth<T>>, url = "http://localhost", params?: T) {
+  // ponytail: invoke withAuth's outer wrapper with a route ctx matching
+  // Next.js App Router — params is a Promise the wrapper awaits. We don't
+  // pass a user here; the wrapper pulls it from the mocked auth.api.getSession.
   return handler(new Request(url), {
-    params: Promise.resolve(params as never),
+    params: Promise.resolve(params as T),
   });
 }
 
@@ -51,9 +53,9 @@ describe("withAuth", () => {
       user: { id: "u1", email: "u1@example.com" },
       session: { id: "s", userId: "u1" },
     });
-    let seen: unknown = "unset";
+    let seen: { id: string } | "unset" = "unset";
     const handler = withAuth<{ id: string }>(async (_req, { params }) => {
-      seen = await params;
+      seen = params;
       return new Response("ok");
     });
     await call(handler, "http://localhost/x", { id: "42" });

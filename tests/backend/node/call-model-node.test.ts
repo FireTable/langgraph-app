@@ -16,7 +16,7 @@ describe("callModelNode", () => {
     mockInvoke.mockResolvedValueOnce(aiReply);
 
     const messages = [new HumanMessage("How do I parse JSON?")];
-    const result = await callModelNode({ messages }, {} as never);
+    const result = await callModelNode({ messages });
 
     expect(mockInvoke).toHaveBeenCalledTimes(1);
     expect(mockInvoke).toHaveBeenCalledWith(messages);
@@ -27,7 +27,7 @@ describe("callModelNode", () => {
     const aiReply = new AIMessage("Hello!");
     mockInvoke.mockResolvedValueOnce(aiReply);
 
-    const result = await callModelNode({ messages: [] }, {} as never);
+    const result = await callModelNode({ messages: [] });
 
     expect(mockInvoke).toHaveBeenCalledWith([]);
     expect(result.messages).toHaveLength(1);

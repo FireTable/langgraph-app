@@ -51,7 +51,9 @@ afterAll(async () => {
 describe("GET /api/threads — auth + isolation", () => {
   it("returns 401 when unauthenticated", async () => {
     setCurrentUser(null);
-    const res = await GETList();
+    const res = await GETList(new Request("http://localhost"), {
+      params: Promise.resolve(undefined as never),
+    });
     expect(res.status).toBe(401);
   });
 
@@ -61,7 +63,9 @@ describe("GET /api/threads — auth + isolation", () => {
       { id: "mine", userId: owner, title: "mine" },
       { id: "theirs", userId: other.id, title: "theirs" },
     ]);
-    const res = await GETList();
+    const res = await GETList(new Request("http://localhost"), {
+      params: Promise.resolve(undefined as never),
+    });
     const body = await res.json();
     expect(body.threads.map((t: { id: string }) => t.id)).toEqual(["mine"]);
   });
@@ -71,7 +75,9 @@ describe("GET /api/threads — auth + isolation", () => {
       { id: "a", userId: owner, title: "active" },
       { id: "b", userId: owner, title: "archived", status: "archived" },
     ]);
-    const res = await GETList();
+    const res = await GETList(new Request("http://localhost"), {
+      params: Promise.resolve(undefined as never),
+    });
     const body = await res.json();
     expect(body.threads).toHaveLength(1);
     expect(body.threads[0].id).toBe("a");
@@ -79,14 +85,16 @@ describe("GET /api/threads — auth + isolation", () => {
 });
 
 describe("POST /api/threads", () => {
+  const routeCtx = { params: Promise.resolve(undefined as never) };
+
   it("returns 401 when unauthenticated", async () => {
     setCurrentUser(null);
-    const res = await POSTList(jsonRequest({}));
+    const res = await POSTList(jsonRequest({}), routeCtx);
     expect(res.status).toBe(401);
   });
 
   it("creates thread with default title and binds userId", async () => {
-    const res = await POSTList(jsonRequest({}));
+    const res = await POSTList(jsonRequest({}), routeCtx);
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
@@ -96,13 +104,13 @@ describe("POST /api/threads", () => {
   });
 
   it("creates thread with provided title", async () => {
-    const res = await POSTList(jsonRequest({ title: "My chat" }));
+    const res = await POSTList(jsonRequest({ title: "My chat" }), routeCtx);
     const body = await res.json();
     expect(body.title).toBe("My chat");
   });
 
   it("registers the new thread with langgraphjs dev", async () => {
-    const res = await POSTList(jsonRequest({}));
+    const res = await POSTList(jsonRequest({}), routeCtx);
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(mockCreate).toHaveBeenCalledTimes(1);
@@ -112,12 +120,12 @@ describe("POST /api/threads", () => {
   });
 
   it("rejects empty title", async () => {
-    const res = await POSTList(jsonRequest({ title: "" }));
+    const res = await POSTList(jsonRequest({ title: "" }), routeCtx);
     expect(res.status).toBe(400);
   });
 
   it("rejects title > 200 chars", async () => {
-    const res = await POSTList(jsonRequest({ title: "a".repeat(201) }));
+    const res = await POSTList(jsonRequest({ title: "a".repeat(201) }), routeCtx);
     expect(res.status).toBe(400);
   });
 });
