@@ -220,6 +220,7 @@ Test database stays isolated from dev — never put production-like data in `lan
 
 - [`docs/APIS.md`](docs/APIS.md) — HTTP endpoint reference. Update whenever a route under `app/api/` changes.
 - [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, troubleshooting.
+- [`docs/DB.md`](docs/DB.md) — database schema (Better Auth + `threads`), ownership model, indexes. Source of truth: `db/migrations/0000_*.sql`.
 
 ## Engineering rules
 

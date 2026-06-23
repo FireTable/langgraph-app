@@ -35,3 +35,23 @@ model is settled. R2 access keys are not yet in `.env.example`.
 **Open**: `#75` prevent multiple dev servers from running simultaneously.
 Pattern: write a PID file under `.next/` or a tempdir, refuse to start if
 it's stale-and-alive. Not urgent — manual `pkill -f next dev` works for now.
+
+## 2026-06-23 — Stage 1 auth follow-ups
+
+Tracked as PR #1 review-comment follow-ups; none are blocking merge.
+
+- **Replace `public/email/collage-image-1.png`** — placeholder used in the
+  verification-email template; needs a real branded image before sending
+  to real recipients.
+- **Defer redirectTo param** (auth-shell.tsx): thread a `?redirectTo=`
+  through the unauthenticated redirect so users return to the page they
+  were on after sign-in. Affects `app/auth-shell.tsx` + the RSC redirect
+  in `app/chat/page.tsx`. Stage 2 scope.
+- **Defer ownership query split** (lib/threads/queries.ts): the
+  `*ForUser` queries own the API path; LangGraph backend reuse would need
+  a separate admin query layer. Not a current requirement.
+- **Land `app/page.tsx` landing**: the `/` route just redirects — should
+  render a marketing surface for unauthenticated visitors.
+- **Extract rename-thread prompt** (backend/node/rename-thread-node.ts):
+  inline `SystemMessage` content belongs in a dedicated eval / config
+  file alongside other model prompts.
