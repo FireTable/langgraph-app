@@ -86,34 +86,34 @@ describe("getThreadForUser", () => {
 
 describe("createThread", () => {
   it("generates a UUID id (required by LangGraph's /threads/[id] routes)", async () => {
-    const t = await createThread(owner);
+    const t = await createThread({ userId: owner });
     expect(t.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
   it("binds the new row to the userId", async () => {
-    const t = await createThread(owner);
+    const t = await createThread({ userId: owner });
     expect(t.userId).toBe(owner);
   });
 
   it("uses default title when omitted", async () => {
-    const t = await createThread(owner);
+    const t = await createThread({ userId: owner });
     expect(t.title).toBe("New Chat");
   });
 
   it("uses provided title", async () => {
-    const t = await createThread(owner, "hi");
+    const t = await createThread({ userId: owner, title: "hi" });
     expect(t.title).toBe("hi");
   });
 
   it("sets status regular and empty custom", async () => {
-    const t = await createThread(owner);
+    const t = await createThread({ userId: owner });
     expect(t.status).toBe("regular");
     expect(t.custom).toEqual({});
   });
 
   it("sets lastMessageAt to ~now on insert", async () => {
     const before = Date.now();
-    const t = await createThread(owner);
+    const t = await createThread({ userId: owner });
     const after = Date.now();
     expect(t.lastMessageAt).toBeInstanceOf(Date);
     expect(t.lastMessageAt.getTime()).toBeGreaterThanOrEqual(before);

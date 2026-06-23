@@ -17,7 +17,7 @@ export const POST = withAuth(async (req, { user }) => {
   if (!parsed.success) {
     return NextResponse.json({ code: "BAD_REQUEST", error: parsed.error.issues }, { status: 400 });
   }
-  const row = await createThread(user.id, parsed.data.title);
+  const row = await createThread({ userId: user.id, title: parsed.data.title });
   await langGraphClient.threads.create({ threadId: row.id, ifExists: "do_nothing" });
   return NextResponse.json(toThreadMetadata(row), { status: 201 });
 });
