@@ -187,7 +187,7 @@ export function Assistant() {
 
   const eventHandlers = useMemo(
     () => ({
-      onCustomEvent: (_eventType: string, _data: unknown) => { },
+      onCustomEvent: (_eventType: string, _data: unknown) => {},
     }),
     [],
   );
@@ -214,12 +214,12 @@ export function Assistant() {
         title: "What is the website firetable.tech about?",
         label: "",
         prompt: "Please analyze the website https://firetable.tech",
-      }
+      },
     ]),
   });
 
   return (
-    <AssistantRuntimeProvider aui={aui} runtime={runtime} >
+    <AssistantRuntimeProvider aui={aui} runtime={runtime}>
       <AuiRefCapture bridgeRef={bridgeRef} />
       <ThreadPersistence />
       <div className="bg-muted/30 flex h-dvh w-full">
