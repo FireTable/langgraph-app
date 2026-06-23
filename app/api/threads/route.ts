@@ -1,35 +1,27 @@
-import "server-only";
 import { NextResponse } from "next/server";
-import { listThreads, createThread } from "@/lib/threads/queries";
+
+import { listThreadsForUser, createThread } from "@/lib/threads/queries";
 import { CreateThreadBody } from "@/lib/threads/validators";
 import { langGraphClient } from "@/lib/langgraph/client";
+import { withAuth } from "@/lib/auth/with-auth";
 import type { Thread } from "@/lib/threads/schema";
 
-// GET /api/threads — list regular threads for the sidebar.
-export async function GET() {
-  const rows = await listThreads();
-  const list = rows.map(toThreadMetadata);
-  return NextResponse.json({ threads: list });
-}
+export const GET = withAuth(async (_req, { user }) => {
+  const rows = await listThreadsForUser(user.id);
+  return NextResponse.json({ threads: rows.map(toThreadMetadata) });
+});
 
-// POST /api/threads — create a new thread.
-export async function POST(req: Request) {
+export const POST = withAuth(async (req, { user }) => {
   const json = await req.json().catch(() => ({}));
   const parsed = CreateThreadBody.safeParse(json);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
+    return NextResponse.json({ code: "BAD_REQUEST", error: parsed.error.issues }, { status: 400 });
   }
-  const row = await createThread(parsed.data.title);
-  // Register the same id with langgraphjs dev's STORE so the runtime's
-  // client.threads.getState / client.runs.stream calls find it. The two
-  // systems hold thread_ids independently — see git history.
+  const row = await createThread({ userId: user.id, title: parsed.data.title });
   await langGraphClient.threads.create({ threadId: row.id, ifExists: "do_nothing" });
   return NextResponse.json(toThreadMetadata(row), { status: 201 });
-}
+});
 
-// Our own ThreadMetadata shape. The frontend `lib/threads/adapter.ts`
-// translates this to assistant-ui's RemoteThreadMetadata (with remoteId +
-// externalId), so this route never speaks assistant-ui's vocabulary.
 function toThreadMetadata(row: Thread) {
   return {
     id: row.id,

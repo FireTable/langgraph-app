@@ -4,4 +4,7 @@
 // the server, otherwise the next page load would try to switchToThread a
 // ghost and hit 404.
 export const LOCAL_THREAD_PREFIX = "__LOCALID_";
+
+// localStorage key for the active thread id. Must match the string the
+// runtime reads on hydration.
 export const ACTIVE_THREAD_ID = "ACTIVE_THREAD_ID";

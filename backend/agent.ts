@@ -1,37 +1,28 @@
-import { ChatOpenAI } from "@langchain/openai";
-import { MessagesAnnotation, StateGraph } from "@langchain/langgraph";
-import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import { MessagesAnnotation, START, END, StateGraph, Send } from "@langchain/langgraph";
+import { callModelNode } from "@/backend/node/call-model-node";
+import { renameThreadNode } from "@/backend/node/rename-thread-node";
+import { afterAgentNode } from "@/backend/node/after-agent-node";
+import { checkpointer } from "@/backend/checkpointer";
 
-const model = new ChatOpenAI({
-  model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-  apiKey: process.env.OPENAI_API_KEY,
-  // Override the upstream base URL when targeting an OpenAI-compatible
-  // endpoint (e.g. a local proxy, Azure, or a third-party gateway).
-  ...(process.env.OPENAI_BASE_URL
-    ? { configuration: { baseURL: process.env.OPENAI_BASE_URL } }
-    : {}),
-  streaming: true,
-  modelKwargs: {
-    // only minimax will use this params
-    reasoning_split: true,
-  },
-});
+// State is just MessagesAnnotation. `title` used to live here, but the
+// renameThread node no longer mutates graph state — the title lives in
+// the threads DB row and the runtime's generateTitle pulls it from there.
+const GraphState = MessagesAnnotation;
 
-const callModel = async (state: typeof MessagesAnnotation.State) => {
-  const response = await model.invoke(state.messages);
-  return { messages: [response] };
-};
+// Fan out to `agent` and `renameThread` in parallel from START.
+// `afterAgent` runs after `agent` produces its reply and handles
+// post-agent side-effects (e.g. bumping `last_message_at`).
+const fanOut = (state: typeof GraphState.State) => [
+  new Send("agent", state),
+  new Send("renameThread", state),
+];
 
-// Postgres checkpointer for thread persistence. `setup()` is idempotent —
-// first call creates the checkpoints / checkpoint_blobs / checkpoint_writes
-// tables; subsequent calls are no-ops. Pass `configurable.thread_id` when
-// invoking the graph to persist and resume conversations.
-const databaseUrl = process.env.DATABASE_URL;
-const checkpointer = databaseUrl ? PostgresSaver.fromConnString(databaseUrl) : undefined;
-if (checkpointer) await checkpointer.setup();
-
-export const graph = new StateGraph(MessagesAnnotation)
-  .addNode("agent", callModel)
-  .addEdge("__start__", "agent")
-  .addEdge("agent", "__end__")
+export const graph = new StateGraph(GraphState)
+  .addNode("agent", callModelNode)
+  .addNode("afterAgent", afterAgentNode)
+  .addNode("renameThread", renameThreadNode)
+  .addConditionalEdges(START, fanOut, ["agent", "renameThread"])
+  .addEdge("agent", "afterAgent")
+  .addEdge("afterAgent", END)
+  .addEdge("renameThread", END)
   .compile({ checkpointer });

@@ -57,7 +57,13 @@ LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`)
 ## Architecture
 
 ```
-backend/agent.ts          LangGraph graph (StateGraph + single "agent" node)
+backend/
+  agent.ts                LangGraph graph (StateGraph, parallel fan-out)
+  model.ts                ChatOpenAI singletons (chatModel + chatModelWithoutThink)
+  checkpointer.ts         PostgresSaver (LangGraph Postgres checkpoint tables)
+  node/
+    call-model-node.ts    "agent" node — calls the model, appends AI reply
+    rename-thread-node.ts "renameThread" node — generates + persists the title
 langgraph.json            CLI config: graph id, node version, env file
 app/                      Next.js App Router
   layout.tsx              Root layout, fonts, TooltipProvider
@@ -69,11 +75,32 @@ components/
   assistant-ui/           Chat primitives (thread, attachment, markdown, reasoning, tool-fallback, tool-group, tooltip-icon-button)
   ui/                     shadcn/ui primitives (avatar, button, collapsible, dialog, tooltip) — new-york style, lucide icons
 lib/utils.ts              cn() = twMerge(clsx(...))
+lib/threads/              Threads module (schema, queries, adapter, validators)
 ```
 
 ### Backend graph (`backend/agent.ts`)
 
-A `StateGraph(MessagesAnnotation)` with a single `agent` node that calls `ChatOpenAI` and returns the response message. The model is constructed with `modelKwargs: { reasoning_split: true }` — comment in the file says "only minimax will use this params", so this is wired for the `minimax` provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the `backend/agent.ts:graph` export registered in `langgraph.json`.
+A `StateGraph(MessagesAnnotation)` whose two nodes are fanned out in parallel from `START`:
+
+- `agent` — calls `ChatOpenAI` (via `chatModel.stream`) and returns the response so the `messages` reducer appends it.
+- `renameThread` — on the first turn only, generates a short title from the first user message via `chatModelWithoutThink.invoke(...)` (tagged `nostream` so partial tokens don't leak into the chat), persists it to the `threads` row, and returns `{ title }` so the reducer writes `state.title`. On every later turn the node's own `if (state.title) return` guard short-circuits — no LLM call.
+
+The chat models in `backend/model.ts` carry `modelKwargs: { reasoning_split: true }` (and `think: false` on the rename variant) — the inline comment says these are minimax-provider-specific, so the graph is wired for that provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set on `chatModel`. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the `backend/agent.ts:graph` export registered in `langgraph.json`.
+
+### State persistence (dev vs prod)
+
+The checkpointer active for a run is chosen by the runner, not by us:
+
+- `langgraphjs dev` (port 2024) replaces the compiled `PostgresSaver` with its own `InMemorySaver`, flushed to `.langgraph_api/.langgraphjs_api.checkpointer.json` on every write. The Postgres `checkpoints` table stays empty in dev.
+- `langgraphjs start` / LangSmith Deployment uses the compiled `PostgresSaver` from `backend/checkpointer.ts` and writes to the `checkpoints` / `checkpoint_blobs` / `checkpoint_writes` tables.
+
+This split is upstream design — see langchain-ai/langgraph#5790, #5360, #5661. There is no `langgraph.json` field that pins the dev server to Postgres (Python's `checkpointer.path` has not been ported to JS as of `@langchain/langgraph-cli@1.3.1`).
+
+Consequences worth knowing:
+
+- `POST /api/threads` calls `langGraphClient.threads.create(...)` to register the new id with the dev server's in-process STORE; in prod the call hits a LangGraph Deployment that knows the id from the compiled `PostgresSaver` directly, so it's effectively a no-op there. Don't remove it without checking dev.
+- `last_message_at` is `now()` written by `afterAgentNode`, not a derived value from any checkpoint table.
+- `DELETE /api/threads/[id]` removes only the metadata row; the dev JSON file or prod checkpoint tables are cleaned up by the runner's own ops layer (not by us).
 
 ### Frontend runtime
 
@@ -173,3 +200,12 @@ When in doubt, leave it out. A diff that's 80% code and 20% comment is fine; 50/
 - The proxy hardcodes `runtime = "edge"`; any Node-only API in the route would break the build.
 - `modelKwargs.reasoning_split` is provider-specific. If you switch back to stock OpenAI, remove it (or guard it) — OpenAI ignores unknown kwargs but it'll be a lie in the source.
 - `components.json` declares a `@assistant-ui` registry at `https://r.assistant-ui.com/{name}.json` for `shadcn`-style component adds.
+
+<!-- SPECKIT START -->
+
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+at `specs/001-user-auth/plan.md` (and `spec.md`, `research.md`,
+`data-model.md`, `quickstart.md`, `contracts/`).
+
+<!-- SPECKIT END -->

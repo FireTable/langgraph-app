@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FC } from "react";
+import { useEffect, useMemo, useRef, useState, type FC, type RefObject } from "react";
 import { AssistantRuntimeProvider, useAui, useAuiState } from "@assistant-ui/react";
 import { unstable_createLangGraphStream, useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
@@ -10,11 +10,20 @@ import { MenuIcon, MessageSquareTextIcon, PanelLeftIcon, PlusIcon, ShareIcon } f
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { UserButton } from "@/components/auth/user/user-button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
 import { cn } from "@/lib/utils";
 import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID } from "@/lib/constants";
+
+// Provider-scoped values (api, mainThreadId) bridged into a ref so the
+// runtime's eventHandlers can read them — they run before the provider
+// mounts in the render tree.
+type RuntimeBridge = {
+  api: ReturnType<typeof useAui> | null;
+  mainThreadId: string | null;
+};
 
 const Logo: FC = () => {
   return (
@@ -66,6 +75,13 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
           <ThreadList />
         </div>
       )}
+      <div className={cn("shrink-0 p-2", collapsed ? "flex justify-center" : "")}>
+        {collapsed ? (
+          <UserButton size="icon" className="border-border bg-card border" />
+        ) : (
+          <UserButton className="border-border bg-card w-full border" hideSettings />
+        )}
+      </div>
     </aside>
   );
 };
@@ -85,6 +101,9 @@ const MobileSidebar: FC = () => {
         </div>
         <div className="relative flex-1 overflow-y-auto p-3">
           <ThreadList />
+        </div>
+        <div className="shrink-0 p-2">
+          <UserButton className="border-border bg-card w-full border" hideSettings />
         </div>
       </SheetContent>
     </Sheet>
@@ -145,13 +164,38 @@ export function Assistant() {
   const client = useMemo(() => new Client({ apiUrl: apiUrl! }), [apiUrl]);
 
   const stream = useMemo(
-    () => unstable_createLangGraphStream({ client, assistantId }),
+    () =>
+      unstable_createLangGraphStream({
+        client,
+        assistantId,
+        streamMode: ["messages", "updates", "custom"],
+      }),
     [client, assistantId],
+  );
+
+  // eventHandlers runs INSIDE the runtime, before the provider mounts —
+  // it can't call useAui directly. A child component mounted inside the
+  // provider writes the api + mainThreadId to bridgeRef; the handler
+  // reads them at call time.
+  //
+  // The backend's rename-thread node writes a single { customEventType,
+  // title } chunk via config.writer() once the title LLM call resolves.
+  // langgraph routes that to useLangGraphRuntime's onCustomEvent with the
+  // SSE event name "custom"; we discriminate by the payload's
+  // `customEventType` field, not the SSE event name.
+  const bridgeRef = useRef<RuntimeBridge>({ api: null, mainThreadId: null });
+
+  const eventHandlers = useMemo(
+    () => ({
+      onCustomEvent: (_eventType: string, _data: unknown) => {},
+    }),
+    [],
   );
 
   const runtime = useLangGraphRuntime({
     unstable_threadListAdapter: threadListAdapter,
     stream,
+    eventHandlers,
     create: async () => {
       const { externalId } = await threadListAdapter.initialize!("local");
       return { externalId: externalId! };
@@ -166,6 +210,7 @@ export function Assistant() {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <AuiRefCapture bridgeRef={bridgeRef} />
       <ThreadPersistence />
       <div className="bg-muted/30 flex h-dvh w-full">
         <Sidebar collapsed={sidebarCollapsed} />
@@ -185,7 +230,14 @@ export function Assistant() {
   );
 }
 
-
+// Sets bridgeRef during render; useAui / useAuiState return stable
+// references, so the value is identical on every render.
+const AuiRefCapture: FC<{ bridgeRef: RefObject<RuntimeBridge> }> = ({ bridgeRef }) => {
+  const api = useAui();
+  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
+  bridgeRef.current = { api, mainThreadId };
+  return null;
+};
 
 // Persists the active thread id to localStorage so the chat reopens on the
 // same thread after a refresh. We write the runtime's externalId (our
@@ -196,8 +248,8 @@ export function Assistant() {
 const ThreadPersistence: FC = () => {
   const api = useAui();
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
-  const activeExternalId = useAuiState((s) =>
-    s.threads.threadItems.find((t) => t.id === s.threads.mainThreadId)?.externalId,
+  const activeExternalId = useAuiState(
+    (s) => s.threads.threadItems.find((t) => t.id === s.threads.mainThreadId)?.externalId,
   );
   const hasHydratedRef = useRef(false);
 
