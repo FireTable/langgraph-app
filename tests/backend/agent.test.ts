@@ -6,6 +6,10 @@ vi.mock("@/backend/model", () => ({
   chatModel: {
     stream: (...args: unknown[]) => mockStream(...args),
     invoke: (...args: unknown[]) => mockInvoke(...args),
+    bindTools: () => ({
+      stream: (...args: unknown[]) => mockStream(...args),
+      invoke: (...args: unknown[]) => mockInvoke(...args),
+    }),
   },
   chatModelWithoutThink: { invoke: (...args: unknown[]) => mockInvoke(...args) },
 }));

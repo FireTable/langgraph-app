@@ -139,7 +139,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
           >
             <ThreadScrollToBottom />
             <Composer />
-            <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
+            <AuiIf condition={(s) => isNewChatView(s)}>
               <ThreadSuggestions />
             </AuiIf>
           </ThreadPrimitive.ViewportFooter>

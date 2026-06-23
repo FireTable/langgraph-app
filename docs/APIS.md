@@ -64,3 +64,35 @@ Response shape (single row, same for list / fetch / create / update):
 | Endpoint             | Purpose                                                                                                                                                                   |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ANY /api/[...path]` | Edge catch-all that forwards to `LANGGRAPH_API_URL` (the LangGraph dev server / production endpoint). Strips hop-by-hop headers, adds CORS, optionally sends `x-api-key`. |
+
+## Graph tools
+
+The LangGraph `agent` graph exposes the following tools to the chat model. Both are read-only and run unconditionally — there is no per-call human approval prompt. Write tools added later should hang off their own node and pass `interruptBefore: ["<that-node>"]` to `compile()` so only the write path pauses for approval.
+
+Implementation: `backend/tool/{web-fetch,web-search}.ts`. Shared key pool: `lib/jina.ts`.
+
+### `searchWeb(query)`
+
+Keyword / natural-language web search via Jina Search (`s.jina.ai`).
+
+|               |                                                                                                                                   |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Input         | `{ query: string }` — non-empty                                                                                                   |
+| Output        | `{ query, results: Array<{ title, url, description }> }` (JSON string)                                                            |
+| Auth          | Uses one key from `JINA_API_KEYS` (comma-separated in `.env.example`)                                                             |
+| Failure modes | `500` from upstream → tool throws and the model reports the error; all keys exhausted → tool throws `"All N Jina keys exhausted"` |
+
+### `fetchUrl(url)`
+
+Read a public web page and return it as markdown via Jina Reader (`r.jina.ai`).
+
+|               |                                                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Input         | `{ url: string }` — must be a valid absolute URL with scheme                                                       |
+| Output        | `{ title, content, url }` (JSON string; `content` is markdown)                                                     |
+| Auth          | Same `JINA_API_KEYS` pool as `searchWeb`                                                                           |
+| Failure modes | Non-2xx from upstream → tool throws with status code; URL validation failure → schema rejection before the request |
+
+### Key pool semantics
+
+`JINA_API_KEYS` is parsed once at module load into an in-memory pool. Each request picks a key at random. On `401` or `403`, the key is removed from the pool and the request retries with another random key. Up to N retries are attempted where N is the pool size at call start; once every key has rejected the same request, the tool throws. The pool is process-local and resets on LangGraph dev-server restart.

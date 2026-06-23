@@ -13,6 +13,7 @@ import {
   touchLastMessageAt,
 } from "@/lib/threads/queries";
 import { makeUser, cleanupUsers, ensureTestUser, TEST_USER } from "@/tests/helpers/auth";
+import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
 
 const testUrl = process.env.DATABASE_URL_TEST;
 if (!testUrl) throw new Error("DATABASE_URL_TEST required");
@@ -97,7 +98,7 @@ describe("createThread", () => {
 
   it("uses default title when omitted", async () => {
     const t = await createThread({ userId: owner });
-    expect(t.title).toBe("New Chat");
+    expect(t.title).toBe(DEFAULT_THREAD_TITLE);
   });
 
   it("uses provided title", async () => {
