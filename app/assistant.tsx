@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FC, type RefObject } from "react";
-import { AssistantRuntimeProvider, useAui, useAuiState } from "@assistant-ui/react";
+import { AssistantRuntimeProvider, useAui, useAuiState, Suggestions } from "@assistant-ui/react";
 import { unstable_createLangGraphStream, useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
@@ -208,8 +208,18 @@ export function Assistant() {
     },
   });
 
+  const aui = useAui({
+    suggestions: Suggestions([
+      {
+        title: "What is the website firetable.tech about?",
+        label: "",
+        prompt: "Please analyze the website https://firetable.tech",
+      }
+    ]),
+  });
+
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
+    <AssistantRuntimeProvider aui={aui} runtime={runtime} >
       <AuiRefCapture bridgeRef={bridgeRef} />
       <ThreadPersistence />
       <div className="bg-muted/30 flex h-dvh w-full">
