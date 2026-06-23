@@ -29,20 +29,21 @@ describe("withAuth", () => {
     expect(body.code).toBe("UNAUTHORIZED");
   });
 
-  it("invokes the handler with userId when authenticated", async () => {
+  it("invokes the handler with the authenticated user when present", async () => {
+    const sessionUser = { id: "u1", email: "u1@example.com", name: "Test" };
     getSession.mockResolvedValueOnce({
-      user: { id: "u1", email: "u1@example.com" },
+      user: sessionUser,
       session: { id: "s", userId: "u1" },
     });
-    const seen: { userId: string | null } = { userId: null };
+    let seen: { id: string; email: string } | null = null;
     const handler = withAuth(async (_req, ctx) => {
-      seen.userId = ctx.userId;
+      seen = ctx.user;
       return new Response("ok");
     });
     const res = await call(handler);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("ok");
-    expect(seen.userId).toBe("u1");
+    expect(seen).toEqual(sessionUser);
   });
 
   it("passes the awaited route params through to the handler", async () => {

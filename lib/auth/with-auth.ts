@@ -3,11 +3,11 @@ import { headers } from "next/headers";
 
 import { auth } from "./config";
 
-// ponytail: ctx.userId is the only field handlers need today. If we later need
-// the full session (e.g. impersonation, org id), widen this shape rather than
-// adding a second wrapper.
+// ponytail: ctx.user exposes the full Better Auth user (id, email, name...).
+// Handlers that only need the id do `user.id`. If we later need impersonation
+// or org context, widen this shape rather than adding a second wrapper.
 export type AuthContext<TParams> = {
-  userId: string;
+  user: NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>["user"];
   params: TParams;
 };
 
@@ -22,7 +22,7 @@ export function withAuth<TParams = unknown>(handler: AuthedHandler<TParams>) {
     if (!session) return NextResponse.json({ code: "UNAUTHORIZED" }, { status: 401 });
 
     return handler(req, {
-      userId: session.user.id,
+      user: session.user,
       params: await routeCtx.params,
     });
   };

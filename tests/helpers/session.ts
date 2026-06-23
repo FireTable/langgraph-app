@@ -18,7 +18,7 @@ vi.mock("@/lib/auth/with-auth", () => ({
     <TParams>(
       handler: (
         req: Request,
-        ctx: { userId: string; params: TParams },
+        ctx: { user: { id: string; email: string }; params: TParams },
       ) => Response | Promise<Response>,
     ) =>
     async (req: Request, routeCtx?: { params: Promise<TParams> }) => {
@@ -27,7 +27,7 @@ vi.mock("@/lib/auth/with-auth", () => ({
         return NextResponse.json({ code: "UNAUTHORIZED" }, { status: 401 });
       }
       return handler(req, {
-        userId: current.id,
+        user: current,
         // ponytail: routes without dynamic segments (e.g. /api/threads) call
         // withAuth() with no routeCtx; cast through unknown keeps the mock
         // permissive without lying about the production type.

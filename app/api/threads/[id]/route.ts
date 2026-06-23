@@ -17,38 +17,38 @@ type IdParams = { id: string };
 
 const PatchBody = z.union([RenameThreadBody, UpdateStatusBody, UpdateCustomBody]);
 
-export const GET = withAuth<IdParams>(async (_req, { userId, params }) => {
-  const row = await getThreadForUser(params.id, userId);
+export const GET = withAuth<IdParams>(async (_req, { user, params }) => {
+  const row = await getThreadForUser(params.id, user.id);
   if (!row) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   return NextResponse.json(toThreadMetadata(row));
 });
 
-export const PATCH = withAuth<IdParams>(async (req, { userId, params }) => {
+export const PATCH = withAuth<IdParams>(async (req, { user, params }) => {
   const json = await req.json().catch(() => ({}));
   const parsed = PatchBody.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json({ code: "BAD_REQUEST", error: parsed.error.issues }, { status: 400 });
   }
   const body = parsed.data;
-  const existing = await getThreadForUser(params.id, userId);
+  const existing = await getThreadForUser(params.id, user.id);
   if (!existing) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   if ("title" in body) {
     await renameThread(params.id, body.title);
   } else if ("status" in body) {
-    if (body.status === "archived") await archiveThread(params.id, userId);
-    else await unarchiveThread(params.id, userId);
+    if (body.status === "archived") await archiveThread(params.id, user.id);
+    else await unarchiveThread(params.id, user.id);
   } else if ("custom" in body) {
-    await updateCustom(params.id, userId, body.custom);
+    await updateCustom(params.id, user.id, body.custom);
   }
-  const row = await getThreadForUser(params.id, userId);
+  const row = await getThreadForUser(params.id, user.id);
   if (!row) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   return NextResponse.json(toThreadMetadata(row));
 });
 
-export const DELETE = withAuth<IdParams>(async (_req, { userId, params }) => {
-  const existing = await getThreadForUser(params.id, userId);
+export const DELETE = withAuth<IdParams>(async (_req, { user, params }) => {
+  const existing = await getThreadForUser(params.id, user.id);
   if (!existing) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
-  await deleteThread(params.id, userId);
+  await deleteThread(params.id, user.id);
   return new NextResponse(null, { status: 204 });
 });
 
