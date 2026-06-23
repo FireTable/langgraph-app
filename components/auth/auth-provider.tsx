@@ -40,6 +40,7 @@ declare module "@better-auth-ui/core" {
     className?: string;
     view?: "signIn" | "signUp";
   };
+  type PluginUserMenuItemProps = Record<string, unknown>;
   interface AuthPluginBase {
     views?: {
       auth?: Record<string, ComponentType<PluginViewComponentProps>>;
@@ -49,6 +50,7 @@ declare module "@better-auth-ui/core" {
     };
     captchaComponent?: ComponentType<{ localization: unknown }>;
     authButtons?: ComponentType<PluginAuthButtonComponentProps>[];
+    userMenuItems?: ComponentType<PluginUserMenuItemProps>[];
   }
 }
 

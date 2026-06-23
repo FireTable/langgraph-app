@@ -10,6 +10,7 @@ import { MenuIcon, MessageSquareTextIcon, PanelLeftIcon, PlusIcon, ShareIcon } f
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { UserButton } from "@/components/auth/user/user-button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
@@ -74,6 +75,9 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
           <ThreadList />
         </div>
       )}
+      <div className={cn("shrink-0 border-t p-3", collapsed ? "flex justify-center" : "")}>
+        {collapsed ? <UserButton size="icon" /> : <UserButton className="w-full" hideSettings />}
+      </div>
     </aside>
   );
 };
@@ -93,6 +97,9 @@ const MobileSidebar: FC = () => {
         </div>
         <div className="relative flex-1 overflow-y-auto p-3">
           <ThreadList />
+        </div>
+        <div className="shrink-0 border-t p-3">
+          <UserButton className="w-full" />
         </div>
       </SheetContent>
     </Sheet>
@@ -176,7 +183,7 @@ export function Assistant() {
 
   const eventHandlers = useMemo(
     () => ({
-      onCustomEvent: (_eventType: string, _data: unknown) => {},
+      onCustomEvent: (_eventType: string, _data: unknown) => { },
     }),
     [],
   );
