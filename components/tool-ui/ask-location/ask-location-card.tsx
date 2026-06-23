@@ -3,18 +3,18 @@
 import { useState, type FC, type ReactNode } from "react";
 import { AlertCircleIcon, CheckCircle2Icon, Loader2Icon, MapPinIcon, SearchIcon } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
+import { useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { geocodeLocation, reverseGeocode } from "@/lib/open-meteo";
 import { unwrapToolResult } from "@/components/tool-ui/tool-result";
 
-// Result the LLM will see once the user picks a location. Three shapes:
-//   { status }   — server-side placeholder, user hasn't acted yet
+// Tool result once the user picks a location. Shape mirrors the
+// backend's ResumeSchema (backend/tool/ask-location.ts):
 //   { lat, lon, label } — user picked coords
-//   { error }    — user denied / geocode failed, model should ask for city name
+//   { error }           — geolocation denied or geocode failed
 export type AskLocationResult =
-  | { status: "awaiting_user_location" }
   | { lat: number; lon: number; label: string }
   | { error: string };
 
@@ -41,14 +41,22 @@ function parseResult(result: unknown): AskLocationResult | null {
   return unwrapToolResult<AskLocationResult>(result);
 }
 
-export const AskLocationCard: ToolCallMessagePartComponent<
-  Record<string, never>,
-  AskLocationResult
-> = ({ result, addResult }) => {
+export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>> = ({ result }) => {
   const [mode, setMode] = useState<Mode>({ kind: "idle" });
   const [cityQuery, setCityQuery] = useState("");
+  const sendCommand = useLangGraphSendCommand();
 
   const parsed = parseResult(result);
+
+  // ponytail: the tool's execute lives on the backend and pauses on
+  // `interrupt()`. `sendCommand({ resume })` re-invokes the run with
+  // a Command payload, which `ToolNode` will surface as a single
+  // ToolMessage — no duplicate messages, no separate "result" stream.
+  // `LangGraphCommand.resume` is typed `string`, so we serialize the
+  // payload; the backend's tool parses it back.
+  const resume = (payload: AskLocationResult) => {
+    void sendCommand({ resume: JSON.stringify(payload) });
+  };
 
   const handleUseDeviceLocation = async () => {
     setMode({ kind: "requesting_permission" });
@@ -56,11 +64,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<
       const pos = await requestGeolocation();
       const label =
         (await reverseGeocode(pos.coords.latitude, pos.coords.longitude)) ?? "Current location";
-      addResult?.({
-        lat: pos.coords.latitude,
-        lon: pos.coords.longitude,
-        label,
-      });
+      resume({ lat: pos.coords.latitude, lon: pos.coords.longitude, label });
     } catch (err) {
       const message =
         err instanceof GeolocationPositionError && err.code === err.PERMISSION_DENIED
@@ -69,7 +73,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<
             ? err.message
             : "Geolocation failed";
       setMode({ kind: "denied" });
-      addResult?.({ error: message });
+      resume({ error: message });
     }
   };
 
@@ -120,7 +124,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<
         )}
 
         {/* Interactive: only when user hasn't decided yet. */}
-        {(!parsed || "status" in parsed) && (
+        {!parsed && (
           <div className="flex flex-col gap-3">
             {mode.kind === "requesting_permission" && (
               <StatusRow icon={<Loader2Icon className="text-muted-foreground size-4 animate-spin" />}>
@@ -163,7 +167,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<
                     void (async () => {
                       const geo = await geocodeLocation(q);
                       if (geo.success) {
-                        addResult?.({
+                        resume({
                           lat: geo.result.latitude,
                           lon: geo.result.longitude,
                           label: geo.result.name,
