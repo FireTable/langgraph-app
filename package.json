@@ -24,6 +24,7 @@
     "@assistant-ui/react": "^0.14.23",
     "@assistant-ui/react-langgraph": "^0.14.9",
     "@assistant-ui/react-markdown": "^0.14.4",
+    "@assistant-ui/react-o11y": "^0.0.24",
     "@base-ui/react": "^1.6.0",
     "@better-auth-ui/core": "^1.6.27",
     "@better-auth-ui/react": "^1.6.27",
