@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
 import { AuthShell } from "@/app/auth-shell";
 import "./globals.css";
 
@@ -30,6 +31,7 @@ export default function RootLayout({
         <AuthShell>
           <TooltipProvider>{children}</TooltipProvider>
         </AuthShell>
+        <Toaster />
       </body>
     </html>
   );
