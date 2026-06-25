@@ -44,21 +44,23 @@ describe("geocodeLocation", () => {
   });
 
   it("returns failure when results array is empty", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse(200, { results: [] }));
+    // geocodeLocation runs a 3-step fallback chain; all 3 fetches
+    // get a fresh Response (a body can only be read once).
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(200, { results: [] })));
     const result = await geocodeLocation("Xyzabc");
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error).toMatch(/No results/);
   });
 
   it("returns failure when the API returns non-2xx", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse(500, {}));
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(500, {})));
     const result = await geocodeLocation("Anything");
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error).toMatch(/500/);
   });
 
   it("returns failure when the fetch itself throws", async () => {
-    fetchMock.mockRejectedValueOnce(new Error("network down"));
+    fetchMock.mockRejectedValue(new Error("network down"));
     const result = await geocodeLocation("Anything");
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error).toBe("network down");

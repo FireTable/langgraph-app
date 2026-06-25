@@ -31,7 +31,9 @@ export async function routerAgentNode({
 }): Promise<{ routerDecision: RouterDecision }> {
   const system = new SystemMessage(ROUTER_AGENT_PROMPT);
   const history = messages.filter((m) => !(m instanceof SystemMessage));
-  const decision = (await routerLlm.invoke([system, ...history], { tags: ["nostream"] })) as RouterDecision;
+  const decision = (await routerLlm.invoke([system, ...history], {
+    tags: ["nostream"],
+  })) as RouterDecision;
 
   return { routerDecision: decision };
 }

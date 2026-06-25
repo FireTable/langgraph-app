@@ -27,14 +27,20 @@ type Result = WeatherToolSuccess | WeatherToolFailure;
 
 type ParsedResult =
   | { kind: "loading" }
-  | { kind: "ok"; widget: import("@/components/tool-ui/weather-widget/runtime").WeatherWidgetPayload }
+  | {
+      kind: "ok";
+      widget: import("@/components/tool-ui/weather-widget/runtime").WeatherWidgetPayload;
+    }
   | { kind: "error"; message: string };
 
 function parseWeatherResult(raw: unknown): ParsedResult {
   const obj = unwrapToolResult<Record<string, unknown>>(raw);
   if (!obj) return { kind: "loading" };
   if (obj.success === true && obj.widget && typeof obj.widget === "object") {
-    return { kind: "ok", widget: obj.widget as ParsedResult extends { kind: "ok"; widget: infer W } ? W : never };
+    return {
+      kind: "ok",
+      widget: obj.widget as ParsedResult extends { kind: "ok"; widget: infer W } ? W : never,
+    };
   }
   if (obj.success === false && typeof obj.error === "string") {
     return { kind: "error", message: obj.error };

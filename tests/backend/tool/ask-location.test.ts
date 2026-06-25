@@ -1,20 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { interrupt } from "@langchain/langgraph";
+import { askLocationTool } from "@/backend/tool/ask-location";
 
 vi.mock("@langchain/langgraph", async () => {
-  const actual = await vi.importActual<typeof import("@langchain/langgraph")>("@langchain/langgraph");
+  const actual =
+    await vi.importActual<typeof import("@langchain/langgraph")>("@langchain/langgraph");
   return {
     ...actual,
     interrupt: vi.fn(),
   };
 });
 
-import { askLocationTool } from "@/backend/tool/ask-location";
-
 const fetchMock = vi.fn();
+const interruptMock = interrupt as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   fetchMock.mockReset();
+  interruptMock.mockReset();
 });
 
 afterEach(() => {
@@ -22,15 +25,32 @@ afterEach(() => {
 });
 
 describe("askLocationTool", () => {
-  it("returns the awaiting-location sentinel synchronously", async () => {
-    const result = await askLocationTool.invoke({});
-    // ToolNode wraps every result as a string, so the tool body
-    // returns the sentinel pre-serialized to keep that contract stable.
-    expect(result).toBe(JSON.stringify({ awaiting: "location" }));
+  it("pauses with ui: ask_location and returns the resumed pick", async () => {
+    const pick = { lat: 39.9042, lon: 116.4074, label: "Beijing" };
+    interruptMock.mockReturnValue(pick);
+
+    const result = await askLocationTool.invoke({ message: "Where are you?" });
+
+    expect(interruptMock).toHaveBeenCalledWith({
+      ui: "ask_location",
+      data: {},
+      message: "Where are you?",
+    });
+    expect(result).toEqual(pick);
+  });
+
+  it("forwards an error pick as the tool result", async () => {
+    const errorPick = { error: "Location permission denied" };
+    interruptMock.mockReturnValue(errorPick);
+
+    const result = await askLocationTool.invoke({ message: "Where are you?" });
+
+    expect(result).toEqual(errorPick);
   });
 
   it("makes no HTTP calls", async () => {
-    await askLocationTool.invoke({});
+    interruptMock.mockReturnValue({ lat: 0, lon: 0, label: "" });
+    await askLocationTool.invoke({ message: "Where are you?" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

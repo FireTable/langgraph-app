@@ -34,7 +34,9 @@ describe("geocodeLocationTool", () => {
   });
 
   it("serializes a failure result with the error message", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse(200, { results: [] }));
+    // geocodeLocation runs a 3-step fallback chain; mock each fetch
+    // with a fresh Response (a body can only be read once).
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(200, { results: [] })));
     const out = await geocodeLocationTool.invoke({ query: "Xyzabc" });
     const parsed = JSON.parse(out as string);
     expect(parsed.success).toBe(false);

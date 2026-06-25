@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, type FC, type ReactNode } from "react";
-import { AlertCircleIcon, CheckCircle2Icon, Loader2Icon, MapPinIcon, SearchIcon } from "lucide-react";
+import {
+  AlertCircleIcon,
+  CheckCircle2Icon,
+  Loader2Icon,
+  MapPinIcon,
+  SearchIcon,
+} from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
 import { Button } from "@/components/ui/button";
@@ -9,16 +15,13 @@ import { cn } from "@/lib/utils";
 import { geocodeLocation, reverseGeocode } from "@/lib/open-meteo";
 import { unwrapToolResult } from "@/components/tool-ui/tool-result";
 
-// Tool result once the user picks a location. The tool itself returns
-// `{ awaiting: "location" }` to make the card render the picker (see
-// backend/tool/ask-location.ts). The user's pick overwrites that
-// result via `addResult`, so the LLM sees the resolved payload on
-// its next turn.
+// Tool result the user picks from the card. The backend tool pauses via
+// interrupt({ ui: 'ask_location' }); this card renders in the InterruptUI
+// slot and resumes through `addResult`, which LangGraph forwards as the
+// ToolMessage content for the LLM's next pass.
 //   { lat, lon, label } — user picked coords
 //   { error }           — geolocation denied or geocode failed
-export type AskLocationResult =
-  | { lat: number; lon: number; label: string }
-  | { error: string };
+export type AskLocationResult = { lat: number; lon: number; label: string } | { error: string };
 
 type Mode =
   | { kind: "idle" }
@@ -50,12 +53,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
   const [mode, setMode] = useState<Mode>({ kind: "idle" });
   const [cityQuery, setCityQuery] = useState("");
 
-  const parsed: any = parseResult(result);
-  const shareLocation = !parsed || parsed?.awaiting === "location";
-
-  const resume = (payload: AskLocationResult) => {
-    void addResult(payload);
-  };
+  const parsed = parseResult(result);
 
   const handleUseDeviceLocation = async () => {
     setMode({ kind: "requesting_permission" });
@@ -63,7 +61,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
       const pos = await requestGeolocation();
       const label =
         (await reverseGeocode(pos.coords.latitude, pos.coords.longitude)) ?? "Current location";
-      resume({ lat: pos.coords.latitude, lon: pos.coords.longitude, label });
+      addResult({ lat: pos.coords.latitude, lon: pos.coords.longitude, label });
     } catch (err) {
       const message =
         err instanceof GeolocationPositionError && err.code === err.PERMISSION_DENIED
@@ -72,7 +70,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
             ? err.message
             : "Geolocation failed";
       setMode({ kind: "denied" });
-      resume({ error: message });
+      addResult({ error: message });
     }
   };
 
@@ -122,16 +120,20 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
         )}
 
         {/* Interactive: only when user hasn't decided yet. */}
-        {shareLocation && (
+        {!parsed && (
           <div className="flex flex-col gap-3">
             {mode.kind === "requesting_permission" && (
-              <StatusRow icon={<Loader2Icon className="text-muted-foreground size-4 animate-spin" />}>
+              <StatusRow
+                icon={<Loader2Icon className="text-muted-foreground size-4 animate-spin" />}
+              >
                 Awaiting browser permission…
               </StatusRow>
             )}
 
             {mode.kind === "locating" && (
-              <StatusRow icon={<Loader2Icon className="text-muted-foreground size-4 animate-spin" />}>
+              <StatusRow
+                icon={<Loader2Icon className="text-muted-foreground size-4 animate-spin" />}
+              >
                 Getting your location…
               </StatusRow>
             )}
@@ -165,7 +167,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
                     void (async () => {
                       const geo = await geocodeLocation(q);
                       if (geo.success) {
-                        resume({
+                        addResult({
                           lat: geo.result.latitude,
                           lon: geo.result.longitude,
                           label: geo.result.name,
@@ -208,7 +210,9 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
             )}
 
             {mode.kind === "searching" && (
-              <StatusRow icon={<Loader2Icon className="text-muted-foreground size-4 animate-spin" />}>
+              <StatusRow
+                icon={<Loader2Icon className="text-muted-foreground size-4 animate-spin" />}
+              >
                 Looking up “{cityQuery}”…
               </StatusRow>
             )}
@@ -228,10 +232,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
   );
 };
 
-const StatusRow: FC<{ icon: ReactNode; children: ReactNode }> = ({
-  icon,
-  children,
-}) => (
+const StatusRow: FC<{ icon: ReactNode; children: ReactNode }> = ({ icon, children }) => (
   <div className="text-muted-foreground flex items-center gap-2 text-sm">
     {icon}
     <span>{children}</span>

@@ -9,6 +9,12 @@ import { getWeatherTool } from "@/backend/tool/fetch-weather";
 
 export const WEATHER_TOOLS = [askLocationTool, geocodeLocationTool, getWeatherTool];
 
-export const ALL_TOOLS = [fetchUrl, searchWeb, askLocationTool, geocodeLocationTool, getWeatherTool];
+export const ALL_TOOLS = [
+  fetchUrl,
+  searchWeb,
+  askLocationTool,
+  geocodeLocationTool,
+  getWeatherTool,
+];
 
 export { fetchUrl, searchWeb, askLocationTool, geocodeLocationTool, getWeatherTool };

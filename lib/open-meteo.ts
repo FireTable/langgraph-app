@@ -262,10 +262,7 @@ export async function fetchWeatherWidget({
 // but rate-limited (1 req/sec) and requires a User-Agent header on the
 // browser side. We only call this once per "Use my location" click, so the
 // rate limit doesn't bite.
-export async function reverseGeocode(
-  latitude: number,
-  longitude: number,
-): Promise<string | null> {
+export async function reverseGeocode(latitude: number, longitude: number): Promise<string | null> {
   try {
     const response = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=jsonv2&accept-language=en&zoom=10`,
@@ -274,7 +271,14 @@ export async function reverseGeocode(
     if (!response.ok) return null;
     const data = (await response.json()) as {
       name?: string;
-      address?: { city?: string; town?: string; village?: string; county?: string; state?: string; country?: string };
+      address?: {
+        city?: string;
+        town?: string;
+        village?: string;
+        county?: string;
+        state?: string;
+        country?: string;
+      };
       display_name?: string;
     };
     const a = data.address;

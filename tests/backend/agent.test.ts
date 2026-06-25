@@ -1,11 +1,6 @@
 import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
 
-const {
-  mockStream,
-  mockInvoke,
-  mockBindTools,
-  mockInvokeStructured,
-} = vi.hoisted(() => ({
+const { mockStream, mockInvoke, mockBindTools, mockInvokeStructured } = vi.hoisted(() => ({
   mockStream: vi.fn(),
   mockInvoke: vi.fn(),
   mockBindTools: vi.fn(),
@@ -56,16 +51,18 @@ beforeEach(async () => {
 });
 
 // Dispatch mocked chat-model invocations by the system prompt that
-// leads the message list. The router agent, chatAgent, and
-// renameThreadAgent all invoke chatModel; renameThreadAgent uses
+// leads the message list. The router agent, chatAgent, weatherAgent,
+// and renameThreadAgent all invoke chatModel; renameThreadAgent uses
 // chatModelWithoutThink but in this mock they share the queue.
 function mockByCallShape({
   routerDecision,
   agentReply,
+  weatherReply,
   titleReply,
 }: {
   routerDecision: { next: "weatherAgent" | "chatAgent" };
   agentReply: AIMessage;
+  weatherReply: AIMessage;
   titleReply: AIMessage;
 }) {
   mockInvokeStructured.mockResolvedValue(routerDecision);
@@ -73,6 +70,7 @@ function mockByCallShape({
     if (Array.isArray(msgs) && msgs[0] instanceof SystemMessage) {
       const content = (msgs[0] as SystemMessage).content as string;
       if (content.includes("title generator")) return Promise.resolve(titleReply);
+      if (content.includes("weather questions")) return Promise.resolve(weatherReply);
     }
     return Promise.resolve(agentReply);
   });
@@ -83,10 +81,12 @@ describe("graph end-to-end", () => {
     const threadId = "e2e-first-" + Math.random().toString(36).slice(2, 8);
     await db.insert(threads).values({ id: threadId, userId: owner, title: "New Chat" });
     const agentReply = new AIMessage("Sure, here's how to parse JSON.");
+    const weatherReply = new AIMessage("(weather path never runs)");
     const titleReply = new AIMessage("How to parse JSON");
     mockByCallShape({
       routerDecision: { next: "chatAgent" },
       agentReply,
+      weatherReply,
       titleReply,
     });
 
@@ -114,9 +114,11 @@ describe("graph end-to-end", () => {
     // asserts that string never makes it into state.messages — which
     // is only possible if the weather turn never visited chatAgent.
     const poisonedReply = new AIMessage("SHOULD NOT APPEAR");
+    const weatherReply = new AIMessage("Sunny in Beijing.");
     mockByCallShape({
       routerDecision: { next: "weatherAgent" },
       agentReply: poisonedReply,
+      weatherReply,
       titleReply,
     });
 

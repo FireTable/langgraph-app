@@ -1,2 +1,1 @@
 patchedDependencies:
-  "@assistant-ui/core@0.2.18": patches/@assistant-ui__core@0.2.18.patch

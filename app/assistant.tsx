@@ -194,7 +194,7 @@ export function Assistant() {
 
   const eventHandlers = useMemo(
     () => ({
-      onCustomEvent: (_eventType: string, _data: unknown) => { },
+      onCustomEvent: (_eventType: string, _data: unknown) => {},
     }),
     [],
   );

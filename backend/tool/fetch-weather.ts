@@ -34,7 +34,9 @@ export const getWeatherTool = tool(
       unit: z
         .enum(["celsius", "fahrenheit"])
         .optional()
-        .describe("Temperature unit. Pick celsius for zh-* locales, fahrenheit for en-*. Defaults to celsius."),
+        .describe(
+          "Temperature unit. Pick celsius for zh-* locales, fahrenheit for en-*. Defaults to celsius.",
+        ),
     }),
   },
 );

@@ -1,3 +1,4 @@
+import toolkit from "@/components/tool-ui/toolkit";
 import {
   ComposerAddAttachment,
   ComposerAttachments,
@@ -57,6 +58,7 @@ import {
   type FC,
   type PropsWithChildren,
 } from "react";
+import { useLangGraphInterruptState, useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -95,6 +97,38 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
     <ThreadComponentsContext.Provider value={components}>
       <ThreadRoot isEmpty={isEmpty} />
     </ThreadComponentsContext.Provider>
+  );
+};
+
+const InterruptUI = () => {
+  const interrupt = useLangGraphInterruptState();
+  const sendCommand = useLangGraphSendCommand();
+  if (!interrupt) return null;
+
+  // Dispatch by `ui` to the matching toolkit renderer; one registry feeds
+  // both tool-call parts and interrupt UIs.
+  const ui = interrupt.value?.ui as string | undefined;
+  const data = interrupt.value?.data || ({} as any);
+  const message = (interrupt.value as { message?: string } | undefined)?.message;
+  const Render = ui
+    ? (toolkit as Record<string, { render?: ComponentType<any> }>)[ui]?.render
+    : undefined;
+  if (!Render) return null;
+
+  // Resolved state never renders here — resume clears the interrupt.
+  // `resume` is typed string; runtime forwards the value as-is into
+  // Command(resume=...), so we don't stringify.
+  return (
+    <>
+      <WorkingIndicator text={message} />
+      <Render
+        args={{ ...data }}
+        result={undefined}
+        addResult={(payload: unknown) => {
+          void sendCommand({ resume: payload as any });
+        }}
+      />
+    </>
   );
 };
 
@@ -318,6 +352,15 @@ const AssistantMessage: FC = () => {
     ReasoningGroup,
   } = useContext(ThreadComponentsContext);
 
+  // Interrupt is global (one per thread), not per-message — gate to last
+  // assistant message so the card doesn't render N times down the thread.
+  const isLast = useAuiState((s) => {
+    const list = s.thread.messages;
+    return list.length > 0 && list[list.length - 1]?.id === s.message.id;
+  });
+
+  const interrupt = useLangGraphInterruptState();
+
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)
   // for pt-[n] use -mb-[n + 6] & min-h-[n + 6] to preserve compensation
@@ -382,12 +425,15 @@ const AssistantMessage: FC = () => {
               case "data":
                 return part.dataRendererUI;
               case "indicator":
-                return <WorkingIndicator />;
+                return !interrupt && <WorkingIndicator text={"Connecting"} />;
               default:
                 return null;
             }
           }}
         </MessagePrimitive.GroupedParts>
+
+        {isLast && <InterruptUI />}
+
         <MessageError />
       </div>
 

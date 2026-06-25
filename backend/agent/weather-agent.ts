@@ -1,15 +1,10 @@
-import {
-  END,
-  MessagesAnnotation,
-  START,
-  StateGraph,
-} from "@langchain/langgraph";
-import { ToolNode } from "@langchain/langgraph/prebuilt";
-import { AIMessage, AIMessageChunk, SystemMessage, type BaseMessage } from "@langchain/core/messages";
-
+import { END, START, StateGraph } from "@langchain/langgraph";
+import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
+import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import { chatModel } from "@/backend/model";
 import { WEATHER_TOOLS } from "@/backend/tool";
 import { WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
+import { GraphState } from "@/backend/state";
 
 // Weather agent: a focused sub-agent that owns the RAG-style weather
 // flow (resolve place → fetch forecast → answer). The whole flow
@@ -24,45 +19,21 @@ import { WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
 async function weatherModelNode({ messages }: { messages: BaseMessage[] }) {
   const system = new SystemMessage(WEATHER_AGENT_PROMPT);
 
+  const messagesWithoutSystem = messages.filter((m) => !(m instanceof SystemMessage));
+
   const response = await chatModel
     .bindTools(WEATHER_TOOLS)
-    .invoke([system, ...messages.filter((m) => !(m instanceof SystemMessage))]);
-
-
-  console.warn(1111111, messages);
-
+    .invoke([system, ...messagesWithoutSystem]);
 
   return { messages: [response] };
 }
 
-function routeAfterModel({ messages }: { messages: BaseMessage[] }): "tools" | typeof END {
-  const last = messages[messages.length - 1];
-
-  const hasToolCalls =
-    last != null &&
-    (last instanceof AIMessage || last instanceof AIMessageChunk) &&
-    Array.isArray(last.tool_calls) &&
-    last.tool_calls.length > 0;
-
-  console.warn(2222, last);
-
-
-  return hasToolCalls ? "tools" : END;
-}
-
 const weatherToolNode = new ToolNode(WEATHER_TOOLS);
 
-export const weatherSubgraph = new StateGraph(MessagesAnnotation)
+export const weatherSubgraph = new StateGraph(GraphState)
   .addNode("model", weatherModelNode)
   .addNode("tools", weatherToolNode)
   .addEdge(START, "model")
-  .addConditionalEdges("model", routeAfterModel, ["tools", END])
+  .addConditionalEdges("model", toolsCondition, ["tools", END])
   .addEdge("tools", "model")
   .compile();
-
-// ponytail: kept for the existing tests. Production callers use the
-// compiled subgraph via backend/agent.ts.
-export async function runWeatherAgent(messages: BaseMessage[]) {
-  const result = await weatherSubgraph.invoke({ messages });
-  return result.messages;
-}
