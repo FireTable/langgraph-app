@@ -30,7 +30,7 @@ async function weatherModelNode({ messages }: { messages: BaseMessage[] }) {
 
 const weatherToolNode = new ToolNode(WEATHER_TOOLS);
 
-export const weatherSubgraph = new StateGraph(GraphState)
+export const weatherAgent = new StateGraph(GraphState)
   .addNode("model", weatherModelNode)
   .addNode("tools", weatherToolNode)
   .addEdge(START, "model")

@@ -2,8 +2,8 @@ import { START, END, StateGraph } from "@langchain/langgraph";
 
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 import { afterAgentNode } from "@/backend/node/after-agent-node";
-import { weatherSubgraph } from "@/backend/agent/weather-agent";
-import { chatSubgraph } from "@/backend/agent/chat-agent";
+import { weatherAgent } from "@/backend/agent/weather-agent";
+import { chatAgent } from "@/backend/agent/chat-agent";
 import { routerAgentNode } from "@/backend/node/router-agent-node";
 import { checkpointer } from "@/backend/checkpointer";
 import { GraphState } from "@/backend/state";
@@ -21,10 +21,10 @@ function routeToSubAgent({
 
 export const graph = new StateGraph(GraphState)
   .addNode("routerAgent", routerAgentNode)
-  .addNode("chatAgent", chatSubgraph)
+  .addNode("chatAgent", chatAgent)
   .addNode("afterAgent", afterAgentNode)
   .addNode("renameThreadAgent", renameThreadAgentNode)
-  .addNode("weatherAgent", weatherSubgraph)
+  .addNode("weatherAgent", weatherAgent)
   // Sequential: START → routerAgent → (weatherAgent | chatAgent) → afterAgent → END.
   // ask_location's picker card is owned by the weather subgraph
   // (see backend/agent/weather-agent.ts + components/tool-ui/ask-location).

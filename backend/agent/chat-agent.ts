@@ -29,7 +29,7 @@ function chatModelRoute(state: { messages: BaseMessage[] }) {
 
 const chatToolNode = new ToolNode(ALL_TOOLS);
 
-export const chatSubgraph = new StateGraph(GraphState)
+export const chatAgent = new StateGraph(GraphState)
   .addNode("model", chatModelNode)
   .addNode("tools", chatToolNode)
   .addEdge(START, "model")
