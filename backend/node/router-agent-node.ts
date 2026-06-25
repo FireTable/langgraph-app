@@ -17,12 +17,8 @@ import { ROUTER_AGENT_PROMPT } from "@/backend/prompt/system";
 const RouteDecisionSchema = z.object({
   next: z.enum(["weatherAgent", "chatAgent"]),
 });
-export type RouterDecision = z.infer<typeof RouteDecisionSchema>;
 
-const routerLlm = chatModel.withStructuredOutput(RouteDecisionSchema, {
-  name: "route_decision",
-  method: "functionCalling",
-});
+export type RouterDecision = z.infer<typeof RouteDecisionSchema>;
 
 export async function routerAgentNode({
   messages,
@@ -31,7 +27,11 @@ export async function routerAgentNode({
 }): Promise<{ routerDecision: RouterDecision }> {
   const system = new SystemMessage(ROUTER_AGENT_PROMPT);
   const history = messages.filter((m) => !(m instanceof SystemMessage));
-  const decision = (await routerLlm.invoke([system, ...history], {
+
+  const decision = (await chatModel.withStructuredOutput(RouteDecisionSchema, {
+    name: "route_decision",
+    method: "jsonSchema",
+  }).invoke([system, ...history], {
     tags: ["nostream"],
   })) as RouterDecision;
 
