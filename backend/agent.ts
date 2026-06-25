@@ -1,6 +1,4 @@
 import { START, END, StateGraph } from "@langchain/langgraph";
-import type { BaseMessage } from "@langchain/core/messages";
-
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 import { afterAgentNode } from "@/backend/node/after-agent-node";
 import { weatherAgent } from "@/backend/agent/weather-agent";
