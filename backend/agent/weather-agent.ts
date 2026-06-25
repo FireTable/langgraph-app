@@ -4,7 +4,7 @@ import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import { chatModel } from "@/backend/model";
 import { WEATHER_TOOLS } from "@/backend/tool";
 import { WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
-import { GraphState } from "@/backend/state";
+import { CommonAgentState } from "@/backend/state";
 
 // Weather agent: a focused sub-agent that owns the RAG-style weather
 // flow (resolve place → fetch forecast → answer). The whole flow
@@ -30,7 +30,7 @@ async function weatherModelNode({ messages }: { messages: BaseMessage[] }) {
 
 const weatherToolNode = new ToolNode(WEATHER_TOOLS);
 
-export const weatherAgent = new StateGraph(GraphState)
+export const weatherAgent = new StateGraph(CommonAgentState)
   .addNode("model", weatherModelNode)
   .addNode("tools", weatherToolNode)
   .addEdge(START, "model")

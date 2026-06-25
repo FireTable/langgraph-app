@@ -4,7 +4,7 @@ import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import { chatModel } from "@/backend/model";
 import { ALL_TOOLS } from "@/backend/tool";
 import { CHAT_AGENT_PROMPT } from "@/backend/prompt/system";
-import { GraphState } from "@/backend/state";
+import { CommonAgentState } from "@/backend/state";
 
 // Chat agent gets every tool — the router already decided whether this
 // turn is weather, so chatAgent never sees a weather question. Weather
@@ -29,7 +29,7 @@ function chatModelRoute(state: { messages: BaseMessage[] }) {
 
 const chatToolNode = new ToolNode(ALL_TOOLS);
 
-export const chatAgent = new StateGraph(GraphState)
+export const chatAgent = new StateGraph(CommonAgentState)
   .addNode("model", chatModelNode)
   .addNode("tools", chatToolNode)
   .addEdge(START, "model")

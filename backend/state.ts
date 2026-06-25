@@ -1,6 +1,18 @@
-import { Annotation, MessagesAnnotation } from "@langchain/langgraph";
+import { z } from "zod";
+import { StateSchema, MessagesValue } from "@langchain/langgraph";
 
-export const GraphState = Annotation.Root({
-  ...MessagesAnnotation.spec,
-  routerDecision: Annotation<{ next: "weatherAgent" | "chatAgent" } | undefined>(),
+// Router-agent graph state: messages (shared with sub-agents) plus
+// the router's per-turn decision, which lives only on the parent.
+// Sub-agents don't read or write `routerDecision`, so it stays out
+// of their state schema (Pattern A from the LangGraph subgraph docs:
+// different schemas → wrapper node transforms messages in/out).
+export const RouterAgentState = new StateSchema({
+  messages: MessagesValue,
+  routerDecision: z.object({ next: z.enum(["weatherAgent", "chatAgent"]) }),
+});
+
+// Shared by chat-agent and weather-agent. Only `messages` flows
+// across the parent ↔ subgraph boundary.
+export const CommonAgentState = new StateSchema({
+  messages: MessagesValue,
 });
