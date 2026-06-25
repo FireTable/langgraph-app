@@ -28,12 +28,14 @@ export async function routerAgentNode({
   const system = new SystemMessage(ROUTER_AGENT_PROMPT);
   const history = messages.filter((m) => !(m instanceof SystemMessage));
 
-  const decision = (await chatModel.withStructuredOutput(RouteDecisionSchema, {
-    name: "route_decision",
-    method: "jsonSchema",
-  }).invoke([system, ...history], {
-    tags: ["nostream"],
-  })) as RouterDecision;
+  const decision = (await chatModel
+    .withStructuredOutput(RouteDecisionSchema, {
+      name: "route_decision",
+      method: "jsonSchema",
+    })
+    .invoke([system, ...history], {
+      tags: ["nostream"],
+    })) as RouterDecision;
 
   return { routerDecision: decision };
 }

@@ -18,6 +18,7 @@ function routeToSubAgent({
   return routerDecision?.next ?? "chatAgent";
 }
 
+
 const builder = new StateGraph(RouterAgentState)
   .addNode("routerAgent", routerAgentNode)
   .addNode("chatAgent", chatAgent)
@@ -35,6 +36,10 @@ const builder = new StateGraph(RouterAgentState)
   .addEdge("weatherAgent", "afterAgent")
   .addEdge("afterAgent", END)
   .addEdge(START, "renameThreadAgent")
+
   .addEdge("renameThreadAgent", END)
 
+
+
 export const graph = builder.compile({ checkpointer });
+

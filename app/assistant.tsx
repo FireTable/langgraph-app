@@ -186,10 +186,7 @@ export function Assistant() {
   // reads them at call time.
   const bridgeRef = useRef<RuntimeBridge>({ api: null, mainThreadId: null });
 
-  const eventHandlers = useMemo(
-    () => ({}),
-    [],
-  );
+  const eventHandlers = useMemo(() => ({}), []);
 
   const runtime = useLangGraphRuntime({
     unstable_threadListAdapter: threadListAdapter,
