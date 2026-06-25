@@ -184,18 +184,10 @@ export function Assistant() {
   // it can't call useAui directly. A child component mounted inside the
   // provider writes the api + mainThreadId to bridgeRef; the handler
   // reads them at call time.
-  //
-  // The backend's rename-thread node writes a single { customEventType,
-  // title } chunk via config.writer() once the title LLM call resolves.
-  // langgraph routes that to useLangGraphRuntime's onCustomEvent with the
-  // SSE event name "custom"; we discriminate by the payload's
-  // `customEventType` field, not the SSE event name.
   const bridgeRef = useRef<RuntimeBridge>({ api: null, mainThreadId: null });
 
   const eventHandlers = useMemo(
-    () => ({
-      onCustomEvent: (_eventType: string, _data: unknown) => {},
-    }),
+    () => ({}),
     [],
   );
 
