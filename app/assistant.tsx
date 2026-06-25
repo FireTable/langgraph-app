@@ -248,6 +248,11 @@ export function Assistant() {
         label: "",
         prompt: "What’s the weather like at today?",
       },
+      {
+        title: "Buy $100 of Bitcoin",
+        label: "",
+        prompt: "I want to buy $100 of Bitcoin.",
+      },
     ]),
   });
 
