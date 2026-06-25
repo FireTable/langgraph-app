@@ -34,6 +34,6 @@ const builder = new StateGraph(CommonAgentState)
   .addNode("tools", chatToolNode)
   .addEdge(START, "model")
   .addConditionalEdges("model", chatModelRoute, ["tools", END])
-  .addEdge("tools", "model")
+  .addEdge("tools", "model");
 
 export const chatAgent = builder.compile();

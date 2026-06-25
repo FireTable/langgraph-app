@@ -9,14 +9,14 @@ export const ASK_LOCATION_TOOL_NAME = "ask_location";
 // which becomes the ToolMessage content the LLM reads next pass.
 // Shape mirrors AskLocationResult in ask-location-card.tsx.
 export const askLocationTool = tool(
-  async ({ message = "Please pick a location so I can fetch the weather." }) => {
+  async ({ message = "Please share your location." }) => {
     return interrupt({ ui: ASK_LOCATION_TOOL_NAME, data: {}, message });
   },
   {
     name: ASK_LOCATION_TOOL_NAME,
-    description: `Render a location picker card for the user. Use this whenever the user asks about weather without specifying a place. When calling this tool, your text reply must be exactly: "Please pick a location so I can fetch the weather." Do NOT call geocode_location in the same turn. After calling this tool, stop — wait for the user's reply before doing anything else.`,
+    description: `Render a location picker card so the user can share a place. Use this whenever the agent needs a geographic location to proceed — typically because the request implies a place (weather, nearby search, directions, distance, "around here", etc.) but no place was named. Do NOT batch other tool calls in the same turn; the picker pauses the turn until the user replies. Call this at most once per turn.`,
     schema: z.object({
-      message: z.string().describe("The message asking user to provide location"),
+      message: z.string().describe("Short prompt shown above the picker; one sentence."),
     }),
   },
 );

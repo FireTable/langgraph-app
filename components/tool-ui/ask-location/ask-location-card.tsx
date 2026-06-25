@@ -49,16 +49,16 @@ function parseResult(result: unknown): AskLocationResult | null {
 
 export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>> = ({
   result,
-
 }) => {
   const [mode, setMode] = useState<Mode>({ kind: "idle" });
   const [cityQuery, setCityQuery] = useState("");
   const sendCommand = useLangGraphSendCommand();
+
   const parsed = parseResult(result);
 
   const addResult = async (payload: AskLocationResult) => {
     sendCommand({ resume: JSON.stringify(payload) });
-  }
+  };
   const handleUseDeviceLocation = async () => {
     setMode({ kind: "requesting_permission" });
     try {
@@ -91,7 +91,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
             <MapPinIcon className="size-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">Share your location for weather</p>
+            <p className="text-sm font-medium">Share your location to me</p>
             <p className="text-muted-foreground mt-0.5 text-xs">
               {parsed && "lat" in parsed
                 ? "Sent to the assistant."

@@ -100,34 +100,50 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
   );
 };
 
-const InterruptUI = () => {
+// Exported for tests/frontend/interrupt-ui.test.tsx. Not part of the
+// public surface — render via <Thread /> instead in app code.
+export const InterruptUI = () => {
   const interrupt = useLangGraphInterruptState();
+  const sendCommand = useLangGraphSendCommand();
 
-  // use node will trigger tool call
-  const USE_SUBGRAPH = process.env.USE_SUBGRAPH === "true" || process.env.USE_SUBGRAPH === "1";
+  const USE_SUBGRAPH =
+    process.env.NEXT_PUBLIC_USE_SUBGRAPH === "true" || process.env.NEXT_PUBLIC_USE_SUBGRAPH === "1";
 
   if (!interrupt) return null;
 
   // Dispatch by `ui` to the matching toolkit renderer; one registry feeds
-  // both tool-call parts and interrupt UIs.
-  const ui = interrupt.value?.ui as string | undefined;
-  const data = interrupt.value?.data || ({} as any);
-  const message = (interrupt.value as { message?: string } | undefined)?.message;
+  // both tool-call parts and interrupt UIs. Toolkit renderers have
+  // heterogeneous prop shapes (each tool's card accepts its own typed
+  // args), so the JSX spread below uses `any` at the boundary — the
+  // narrowing happens inside each renderer.
+  const value = interrupt.value as
+    | { ui?: string; data?: Record<string, unknown>; message?: string }
+    | undefined;
+  const ui = value?.ui;
+  const data = value?.data ?? {};
+  const message = value?.message;
   const Render = ui
     ? (toolkit as Record<string, { render?: ComponentType<any> }>)[ui]?.render
     : undefined;
   if (!Render) return null;
 
   // Resolved state never renders here — resume clears the interrupt.
-  // `resume` is typed string; runtime forwards the value as-is into
-  // Command(resume=...), so we don't stringify.
+  // `resume` is typed string; we forward the structured pick as-is into
+  // Command(resume=...) — LangGraph parses it on resume. The `as never`
+  // is the SDK's gap: LangGraphCommand.resume is `string` but we know
+  // the runtime accepts a JSON payload.
   return (
     <>
       <WorkingIndicator text={message} />
-      {USE_SUBGRAPH && <Render
-        args={{ ...data }}
-        result={undefined}
-      />}
+      {USE_SUBGRAPH && (
+        <Render
+          args={{ ...data }}
+          result={undefined}
+          addResult={(payload: unknown) => {
+            void sendCommand({ resume: payload as never });
+          }}
+        />
+      )}
     </>
   );
 };

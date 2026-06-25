@@ -10,10 +10,7 @@ import { checkpointer } from "@/backend/checkpointer";
 import { RouterAgentState } from "@/backend/state";
 import { chatModel } from "@/backend/model";
 import { ALL_TOOLS, WEATHER_TOOLS } from "@/backend/tool";
-import {
-  CHAT_AGENT_PROMPT,
-  WEATHER_AGENT_PROMPT,
-} from "@/backend/prompt/system";
+import { CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
 
 // USE_SUBGRAPH=true switches the compiled graph between two topologies.
 // Default (false / unset): inlined — flatten weather/chat model+tool loops
@@ -24,8 +21,7 @@ import {
 // Set USE_SUBGRAPH=true to use the compiled weatherAgent / chatAgent
 // subgraphs instead. Both topologies are kept in this file in sync —
 // if you change a model, prompt, or tool set, update both builders.
-const USE_SUBGRAPH =
-  process.env.USE_SUBGRAPH === "true" || process.env.USE_SUBGRAPH === "1";
+const USE_SUBGRAPH = process.env.USE_SUBGRAPH === "true" || process.env.USE_SUBGRAPH === "1";
 
 // After the router speaks, decide which sub-agent gets the turn.
 // Falls back to chatAgent if the router hasn't run yet or its
@@ -56,10 +52,7 @@ function buildSubgraph() {
       // renameThreadAgent is wired off START so its DB side-effect runs in
       // parallel without touching the messages channel.
       .addEdge(START, "routerAgent")
-      .addConditionalEdges("routerAgent", routeToSubAgent, [
-        "weatherAgent",
-        "chatAgent",
-      ])
+      .addConditionalEdges("routerAgent", routeToSubAgent, ["weatherAgent", "chatAgent"])
       .addEdge("chatAgent", "afterAgent")
       .addEdge("weatherAgent", "afterAgent")
       .addEdge("afterAgent", END)
@@ -120,10 +113,7 @@ function buildInlined() {
         weatherAgent: "weatherModel",
         chatAgent: "chatModel",
       })
-      .addConditionalEdges("weatherModel", weatherRoute, [
-        "weatherTools",
-        "afterAgent",
-      ])
+      .addConditionalEdges("weatherModel", weatherRoute, ["weatherTools", "afterAgent"])
       .addEdge("weatherTools", "weatherModel")
       .addConditionalEdges("chatModel", chatRoute, ["chatTools", "afterAgent"])
       .addEdge("chatTools", "chatModel")
@@ -134,5 +124,9 @@ function buildInlined() {
 }
 
 const builder = USE_SUBGRAPH ? buildSubgraph() : buildInlined();
+
+// Exported for the topology smoke test (tests/backend/agent-topologies.test.ts).
+// Don't use these directly in app code — go through `graph`.
+export { buildSubgraph, buildInlined };
 
 export const graph = builder.compile({ checkpointer });

@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 
-const { mockInvokeStructured, mockInvoke } = vi.hoisted(() => ({
+const { mockInvokeStructured, mockInvoke, mockWithStructuredArgs } = vi.hoisted(() => ({
   mockInvokeStructured: vi.fn(),
   mockInvoke: vi.fn(),
+  mockWithStructuredArgs: vi.fn(),
 }));
 
 // The router binds `chatModel.withStructuredOutput(...)` at module load
@@ -11,7 +12,10 @@ const { mockInvokeStructured, mockInvoke } = vi.hoisted(() => ({
 vi.mock("@/backend/model", () => ({
   chatModel: {
     invoke: (...args: unknown[]) => mockInvoke(...args),
-    withStructuredOutput: () => ({ invoke: (...args: unknown[]) => mockInvokeStructured(...args) }),
+    withStructuredOutput: (...args: unknown[]) => {
+      mockWithStructuredArgs(...args);
+      return { invoke: (...args: unknown[]) => mockInvokeStructured(...args) };
+    },
   },
 }));
 
@@ -52,5 +56,30 @@ describe("routerAgentNode", () => {
     }>;
     expect(callArgs?.map((m) => m.type)).toEqual(["system", "human"]);
     expect(callArgs?.[0]?.content).toMatch(/router/i);
+  });
+
+  it("registers the route_decision schema with jsonSchema method", async () => {
+    mockWithStructuredArgs.mockClear();
+    mockInvokeStructured.mockResolvedValueOnce({ next: "chatAgent" });
+
+    await routerAgentNode({
+      messages: [new HumanMessage("anything")],
+    });
+
+    // withStructuredOutput is called once at module load + once per
+    // routerAgentNode invocation. The router invocation must pass the
+    // route_decision schema and the jsonSchema method — a regression
+    // to functionCalling breaks compatibility with strict json-mode
+    // providers.
+    const schemaArg = mockWithStructuredArgs.mock.calls.at(-1)?.[0] as {
+      safeParse: (v: unknown) => { success: boolean };
+    };
+    const optionsArg = mockWithStructuredArgs.mock.calls.at(-1)?.[1] as {
+      name: string;
+      method: string;
+    };
+    expect(schemaArg?.safeParse({ next: "weatherAgent" }).success).toBe(true);
+    expect(schemaArg?.safeParse({ next: "bogus" }).success).toBe(false);
+    expect(optionsArg).toEqual({ name: "route_decision", method: "jsonSchema" });
   });
 });

@@ -264,8 +264,9 @@ export async function fetchWeatherWidget({
 // rate limit doesn't bite.
 export async function reverseGeocode(latitude: number, longitude: number): Promise<string | null> {
   try {
+    const lang = typeof navigator !== "undefined" ? navigator.language : "en";
     const response = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=jsonv2&accept-language=en&zoom=10`,
+      `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=jsonv2&accept-language=${lang}&zoom=10`,
       { headers: { Accept: "application/json" } },
     );
     if (!response.ok) return null;

@@ -15,7 +15,7 @@ const weatherToolkit = defineToolkit({
   ask_location: {
     description: "Render a location picker card. No-op on the server.",
     parameters: z.object({}),
-    render: AskLocationCard
+    render: AskLocationCard,
   },
   geocode_location: {
     description: "Geocode a place name. Server returns coords or an error.",
