@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { geocodeLocation, reverseGeocode } from "@/lib/open-meteo";
 import { unwrapToolResult } from "@/components/tool-ui/tool-result";
+import { useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
 
 // Tool result the user picks from the card. The backend tool pauses via
 // interrupt({ ui: 'ask_location' }); this card renders in the InterruptUI
@@ -48,13 +49,16 @@ function parseResult(result: unknown): AskLocationResult | null {
 
 export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>> = ({
   result,
-  addResult,
+
 }) => {
   const [mode, setMode] = useState<Mode>({ kind: "idle" });
   const [cityQuery, setCityQuery] = useState("");
-
+  const sendCommand = useLangGraphSendCommand();
   const parsed = parseResult(result);
 
+  const addResult = async (payload: AskLocationResult) => {
+    sendCommand({ resume: JSON.stringify(payload) });
+  }
   const handleUseDeviceLocation = async () => {
     setMode({ kind: "requesting_permission" });
     try {

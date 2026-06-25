@@ -102,7 +102,10 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
 
 const InterruptUI = () => {
   const interrupt = useLangGraphInterruptState();
-  const sendCommand = useLangGraphSendCommand();
+
+  // use node will trigger tool call
+  const USE_SUBGRAPH = process.env.USE_SUBGRAPH === "true" || process.env.USE_SUBGRAPH === "1";
+
   if (!interrupt) return null;
 
   // Dispatch by `ui` to the matching toolkit renderer; one registry feeds
@@ -121,13 +124,10 @@ const InterruptUI = () => {
   return (
     <>
       <WorkingIndicator text={message} />
-      <Render
+      {USE_SUBGRAPH && <Render
         args={{ ...data }}
         result={undefined}
-        addResult={(payload: unknown) => {
-          void sendCommand({ resume: payload as any });
-        }}
-      />
+      />}
     </>
   );
 };
