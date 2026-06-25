@@ -51,6 +51,8 @@ Copy `.env.example` to `.env.local` and fill in:
 - `LANGCHAIN_API_KEY` — sent as `x-api-key` by the proxy; leave blank for local dev.
 - `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` — graph id, must match a key in `langgraph.json` (`agent`).
 - `NEXT_PUBLIC_LANGGRAPH_API_URL` — optional. If set, the browser skips the `/api` proxy and talks to LangGraph directly. Leave unset to use the in-app proxy.
+- `USE_SUBGRAPH` — backend graph topology toggle. `true` uses compiled `weatherAgent` / `chatAgent` subgraphs; unset (default) uses the inlined version that flattens them into the parent graph. The inlined default is a workaround for the `@langchain/core@1.2.1` `EventStreamCallbackHandler` "Run ID not found in run map" bug that LangGraph JS subgraphs trigger — see `memory/langgraph-subgraph-run-map-bug.md`.
+- `NEXT_PUBLIC_USE_SUBGRAPH` — frontend mirror of `USE_SUBGRAPH`. Required because Next.js only inlines `NEXT_PUBLIC_*` vars into the browser bundle; the frontend reads this to decide whether to render the interrupt-UI card (`InterruptUI`) or the inline tool-call card.
 
 LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`) and pins Node 22.
 
@@ -58,12 +60,20 @@ LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`)
 
 ```
 backend/
-  agent.ts                LangGraph graph (StateGraph, parallel fan-out)
+  agent.ts                LangGraph graph — two topologies gated by USE_SUBGRAPH
+  state.ts                RouterAgentState (parent) + CommonAgentState (subgraphs)
   model.ts                ChatOpenAI singletons (chatModel + chatModelWithoutThink)
   checkpointer.ts         PostgresSaver (LangGraph Postgres checkpoint tables)
+  agent/
+    chat-agent.ts         chatAgent compiled subgraph (USE_SUBGRAPH=true path)
+    weather-agent.ts      weatherAgent compiled subgraph (USE_SUBGRAPH=true path)
   node/
     call-model-node.ts    "agent" node — calls the model, appends AI reply
-    rename-thread-node.ts "renameThread" node — generates + persists the title
+    rename-thread-agent-node.ts "renameThreadAgent" node — generates + persists the title
+    router-agent-node.ts  "routerAgent" — picks weatherAgent vs chatAgent per turn
+    after-agent-node.ts   "afterAgent" — touches threads.last_message_at
+  prompt/system.ts        CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, ROUTER_AGENT_PROMPT, RENAME_THREAD_PROMPT
+  tool/                   ask_location, geocode_location, get_weather, searchWeb, fetchUrl
 langgraph.json            CLI config: graph id, node version, env file
 app/                      Next.js App Router
   layout.tsx              Root layout, fonts, TooltipProvider
@@ -74,18 +84,33 @@ app/                      Next.js App Router
 components/
   assistant-ui/           Chat primitives (thread, attachment, markdown, reasoning, tool-fallback, tool-group, tooltip-icon-button)
   ui/                     shadcn/ui primitives (avatar, button, collapsible, dialog, tooltip) — new-york style, lucide icons
+  tool-ui/ask-location/   Interrupt-driven or addResult-driven location picker card
+  tool-ui/weather/        Forecast widget renderer
 lib/utils.ts              cn() = twMerge(clsx(...))
 lib/threads/              Threads module (schema, queries, adapter, validators)
 ```
 
 ### Backend graph (`backend/agent.ts`)
 
-A `StateGraph(MessagesAnnotation)` whose two nodes are fanned out in parallel from `START`:
+The parent graph dispatches a router decision into one of two sub-flows, both ending in `afterAgent`:
 
-- `agent` — calls `ChatOpenAI` (via `chatModel.stream`) and returns the response so the `messages` reducer appends it.
-- `renameThread` — on the first turn only, generates a short title from the first user message via `chatModelWithoutThink.invoke(...)` (tagged `nostream` so partial tokens don't leak into the chat), persists it to the `threads` row, and returns `{ title }` so the reducer writes `state.title`. On every later turn the node's own `if (state.title) return` guard short-circuits — no LLM call.
+- `routerAgent` — calls `chatModel.withStructuredOutput(RouteDecisionSchema, { method: "jsonSchema" })` (tagged `nostream` so partial tokens don't leak into the chat) and returns `{ routerDecision: { next: "weatherAgent" | "chatAgent" } }` for the conditional edge to read.
+- `weatherAgent` / `chatAgent` — a model → tools loop driven by `toolsCondition`. Exits to `afterAgent` when the model emits no `tool_calls`.
+- `afterAgent` — touches `threads.last_message_at` for the current thread; no message-channel writes.
+- `renameThreadAgent` — fans out from `START` (parallel to `routerAgent`), generates the thread title on the first turn only, persists it to the `threads` row.
 
-The chat models in `backend/model.ts` carry `modelKwargs: { reasoning_split: true }` (and `think: false` on the rename variant) — the inline comment says these are minimax-provider-specific, so the graph is wired for that provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set on `chatModel`. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the `backend/agent.ts:graph` export registered in `langgraph.json`.
+Two topologies share the same router + rename + after nodes and are gated by `USE_SUBGRAPH` (env var, see Environment):
+
+- **Inlined (default).** `weatherModel` / `weatherTools` / `chatModel` / `chatTools` are inlined as plain nodes in the parent graph. The model/tool logic is duplicated from `backend/agent/weather-agent.ts` and `backend/agent/chat-agent.ts` — keep them in sync. The router's pathMap remaps `"weatherAgent"`/`"chatAgent"` (the router's string enum) to `"weatherModel"`/`"chatModel"` (the inlined node names).
+- **Subgraph (`USE_SUBGRAPH=true`).** The compiled `weatherAgent` and `chatAgent` from `backend/agent/*-agent.ts` are wired as opaque nodes via `addNode("weatherAgent", weatherAgent)`. PathMap is an array of allowed destinations, since the returned string already matches the node name.
+
+Both builders live in `backend/agent.ts` (`buildSubgraph()` and `buildInlined()`). When `USE_SUBGRAPH` flips, no other file needs to change — but if you add a node, prompt, or tool, update both builders.
+
+The chat models in `backend/model.ts` carry `modelKwargs: { reasoning_split: true }` (and `think: false` on the rename variant) — these are minimax-provider-specific, so the graph is wired for that provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set on `chatModel`. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the `backend/agent.ts:graph` export registered in `langgraph.json`.
+
+### `WEATHER_AGENT_PROMPT` enforces one-tool-per-turn
+
+The weather prompt (in `backend/prompt/system.ts`) lists four steps in order — `ask_location` → `geocode_location` → `get_weather` → one-sentence reply — and explicitly forbids batching tools in a single turn. The frontend card (`components/tool-ui/ask-location`) keys off the `ask_location` `ToolMessage`, so any tool run alongside it would race the human input. See `docs/INTERRUPT.md` for the two runtime paths the card can take.
 
 ### State persistence (dev vs prod)
 
@@ -108,13 +133,16 @@ Consequences worth knowing:
 
 `app/api/[..._path]/route.ts` is an edge-runtime catch-all that proxies every method (`GET/POST/PUT/PATCH/DELETE/OPTIONS`) to `${LANGGRAPH_API_URL}/${path}` with `x-api-key: LANGCHAIN_API_KEY`, strips hop-by-hop / content-encoding headers, and adds permissive CORS. The body of mutating requests is forwarded as text.
 
+`components/assistant-ui/thread.tsx` mounts `InterruptUI` (uses `useLangGraphInterruptState` + `useLangGraphSendCommand`) inside the last assistant message. The interrupt-driven render only fires when `NEXT_PUBLIC_USE_SUBGRAPH=true`; in default (inlined) mode, the ask_location card renders in the tool-call slot instead. See `docs/INTERRUPT.md` for the full two-mode flow.
+
 ### Patches
 
-`patches/` is non-empty and applied via `pnpm-workspace.yaml`:
+`patches/` is currently empty. `pnpm-workspace.yaml` retains the `patchedDependencies:` header as a placeholder — when you need to patch a package, add the entry there and drop the `.patch` file under `patches/`. Re-check on every package bump; drop the entry + file when upstream ships the fix.
+
+Previously patched (no longer needed — upstream caught up):
 
 - `@assistant-ui/core@0.2.18` — guards `part.text?.trim()` to tolerate missing text on `text`/`reasoning` parts.
-
-When bumping those packages, re-check whether the patches still apply; if not, drop the patch entry from `pnpm-workspace.yaml` and delete the file.
+- `@assistant-ui/react-langgraph@0.14.9` — surfaces `__interrupt__` and message updates from subgraph events so the toolkit can render the matching tool-call card.
 
 ### Styling
 
@@ -194,7 +222,18 @@ Delete a comment that:
 
 When in doubt, leave it out. A diff that's 80% code and 20% comment is fine; 50/50 is a code smell.
 
-### 6. Never kill or restart a dev server that's already running
+### 6. Tool-call UI components stay flush with their container
+
+Components rendered inside a tool-call part (`components/tool-ui/**`) live inside `ToolFallbackContent`, which already provides `ps-6 pt-1 pb-2` padding and no horizontal margin. Inner cards must not add their own horizontal margin or drop shadow — they would compete with the tool-call chrome and produce a double-bordered look.
+
+Rules for tool-call children:
+
+- No `mx-*` (the container's `ps-6` is the only left margin; do not add a right margin either).
+- No `shadow-*` (the container has no shadow; neither should the child).
+- Vertical `my-*` is fine when the tool call stacks next to other parts.
+- Border + rounded corners are still allowed for visual grouping inside the tool call.
+
+### 7. Never kill or restart a dev server that's already running
 
 Before running `pnpm dev` (or starting any dev server), check whether the relevant port is already bound (`lsof -i :3000` for Next.js, `:2024` for LangGraph). If it is, that is the developer's active dev environment — **do not kill it, do not restart it**. Reuse it via Chrome DevTools MCP for any visual verification.
 

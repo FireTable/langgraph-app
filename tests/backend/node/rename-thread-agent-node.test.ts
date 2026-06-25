@@ -11,19 +11,19 @@ vi.mock("@/backend/model", () => ({
 }));
 
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
-import { renameThreadNode } from "@/backend/node/rename-thread-node";
+import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 
 beforeEach(() => {
   mockRenameThread.mockReset();
   mockInvoke.mockReset();
 });
 
-describe("renameThreadNode", () => {
+describe("renameThreadAgentNode", () => {
   it("calls renameThread with the trimmed generated title and thread_id, returns null", async () => {
     mockInvoke.mockResolvedValueOnce(new AIMessage("How to parse JSON"));
     mockRenameThread.mockResolvedValueOnce(undefined);
 
-    const result = await renameThreadNode(
+    const result = await renameThreadAgentNode(
       { messages: [new HumanMessage("How do I parse JSON?")] },
       { configurable: { thread_id: "thread-1" } },
     );
@@ -37,7 +37,7 @@ describe("renameThreadNode", () => {
     mockInvoke.mockResolvedValueOnce(new AIMessage("  Short title  "));
     mockRenameThread.mockResolvedValueOnce(undefined);
 
-    await renameThreadNode(
+    await renameThreadAgentNode(
       { messages: [new HumanMessage("anything")] },
       { configurable: { thread_id: "thread-2" } },
     );
@@ -46,7 +46,7 @@ describe("renameThreadNode", () => {
   });
 
   it("skips the model and renameThread when no human message is provided", async () => {
-    const result = await renameThreadNode(
+    const result = await renameThreadAgentNode(
       { messages: [] },
       { configurable: { thread_id: "thread-3" } },
     );
@@ -60,7 +60,7 @@ describe("renameThreadNode", () => {
     mockInvoke.mockResolvedValueOnce(new AIMessage("First wins"));
     mockRenameThread.mockResolvedValueOnce(undefined);
 
-    await renameThreadNode(
+    await renameThreadAgentNode(
       { messages: [new HumanMessage("first question")] },
       { configurable: { thread_id: "thread-4" } },
     );
@@ -74,7 +74,7 @@ describe("renameThreadNode", () => {
   it("skips renameThread when LLM returns an empty title after trim", async () => {
     mockInvoke.mockResolvedValueOnce(new AIMessage("   "));
 
-    await renameThreadNode(
+    await renameThreadAgentNode(
       { messages: [new HumanMessage("anything")] },
       { configurable: { thread_id: "thread-5" } },
     );
@@ -85,7 +85,7 @@ describe("renameThreadNode", () => {
   it("is a no-op when no thread_id is in config", async () => {
     mockInvoke.mockResolvedValueOnce(new AIMessage("Title"));
 
-    await renameThreadNode({ messages: [new HumanMessage("anything")] }, {});
+    await renameThreadAgentNode({ messages: [new HumanMessage("anything")] }, {});
 
     expect(mockRenameThread).not.toHaveBeenCalled();
   });

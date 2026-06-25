@@ -1,20 +1,33 @@
 import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
 
-const mockStream = vi.fn();
-const mockInvoke = vi.fn();
-vi.mock("@/backend/model", () => ({
-  chatModel: {
-    stream: (...args: unknown[]) => mockStream(...args),
-    invoke: (...args: unknown[]) => mockInvoke(...args),
-    bindTools: () => ({
-      stream: (...args: unknown[]) => mockStream(...args),
-      invoke: (...args: unknown[]) => mockInvoke(...args),
-    }),
-  },
-  chatModelWithoutThink: { invoke: (...args: unknown[]) => mockInvoke(...args) },
+const { mockStream, mockInvoke, mockBindTools, mockInvokeStructured } = vi.hoisted(() => ({
+  mockStream: vi.fn(),
+  mockInvoke: vi.fn(),
+  mockBindTools: vi.fn(),
+  mockInvokeStructured: vi.fn(),
 }));
+vi.mock("@/backend/model", () => {
+  const boundInvoke = (...args: unknown[]) => mockInvoke(...args);
+  const boundBind = (...args: unknown[]) => {
+    mockBindTools(...args);
+    return { invoke: boundInvoke };
+  };
+  return {
+    chatModel: {
+      stream: (...args: unknown[]) => mockStream(...args),
+      invoke: boundInvoke,
+      bindTools: boundBind,
+      // The router node binds this at module load; tests dispatch by
+      // routing decision via mockInvokeStructured.
+      withStructuredOutput: () => ({
+        invoke: (...args: unknown[]) => mockInvokeStructured(...args),
+      }),
+    },
+    chatModelWithoutThink: { invoke: boundInvoke },
+  };
+});
 
-import { HumanMessage, AIMessage } from "@langchain/core/messages";
+import { HumanMessage, SystemMessage, AIMessage } from "@langchain/core/messages";
 import { graph } from "@/backend/agent";
 import { db } from "@/db/client";
 import { threads } from "@/lib/threads/schema";
@@ -33,24 +46,58 @@ beforeEach(async () => {
   await db.delete(threads);
   mockStream.mockReset();
   mockInvoke.mockReset();
+  mockBindTools.mockReset();
+  mockInvokeStructured.mockReset();
 });
 
+// Dispatch mocked chat-model invocations by the system prompt that
+// leads the message list. The router agent, chatAgent, weatherAgent,
+// and renameThreadAgent all invoke chatModel; renameThreadAgent uses
+// chatModelWithoutThink but in this mock they share the queue.
+function mockByCallShape({
+  routerDecision,
+  agentReply,
+  weatherReply,
+  titleReply,
+}: {
+  routerDecision: { next: "weatherAgent" | "chatAgent" };
+  agentReply: AIMessage;
+  weatherReply: AIMessage;
+  titleReply: AIMessage;
+}) {
+  mockInvokeStructured.mockResolvedValue(routerDecision);
+  mockInvoke.mockImplementation((msgs: unknown) => {
+    if (Array.isArray(msgs) && msgs[0] instanceof SystemMessage) {
+      const content = (msgs[0] as SystemMessage).content as string;
+      if (content.includes("title generator")) return Promise.resolve(titleReply);
+      if (content.includes("weather questions")) return Promise.resolve(weatherReply);
+    }
+    return Promise.resolve(agentReply);
+  });
+}
+
 describe("graph end-to-end", () => {
-  it("first run fans out agent + renameThread; DB row gets a generated title", async () => {
+  it("non-weather turn: router dispatches to chatAgent, renameThreadAgent side-effects", async () => {
     const threadId = "e2e-first-" + Math.random().toString(36).slice(2, 8);
     await db.insert(threads).values({ id: threadId, userId: owner, title: "New Chat" });
-    const aiReply = new AIMessage("Sure, here's how to parse JSON.");
+    const agentReply = new AIMessage("Sure, here's how to parse JSON.");
+    const weatherReply = new AIMessage("(weather path never runs)");
     const titleReply = new AIMessage("How to parse JSON");
-    mockInvoke.mockResolvedValueOnce(aiReply);
-    mockInvoke.mockResolvedValueOnce(titleReply);
+    mockByCallShape({
+      routerDecision: { next: "chatAgent" },
+      agentReply,
+      weatherReply,
+      titleReply,
+    });
 
     const result = await graph.invoke(
       { messages: [new HumanMessage("How do I parse JSON?")] },
       { configurable: { thread_id: threadId } },
     );
 
-    expect(result.messages).toHaveLength(2);
-    expect(result.messages[1]).toBe(aiReply);
+    // routerDecision lives in state, not in messages.
+    expect(result.routerDecision).toEqual({ next: "chatAgent" });
+    expect(result.messages).toContain(agentReply);
 
     const row = await db.query.threads.findFirst({
       where: (t, { eq }) => eq(t.id, threadId),
@@ -58,30 +105,37 @@ describe("graph end-to-end", () => {
     expect(row?.title).toBe("How to parse JSON");
   });
 
-  it("second run on the same thread re-runs renameThread; DB title gets refreshed", async () => {
-    const threadId = "e2e-second-" + Math.random().toString(36).slice(2, 8);
+  it("weather turn: router dispatches to weatherAgent, chatAgent's 'SHOULD NOT APPEAR' reply never reaches state", async () => {
+    const threadId = "e2e-weather-" + Math.random().toString(36).slice(2, 8);
     await db.insert(threads).values({ id: threadId, userId: owner, title: "New Chat" });
-    mockInvoke.mockResolvedValueOnce(new AIMessage("First reply"));
-    mockInvoke.mockResolvedValueOnce(new AIMessage("Initial title"));
-    await graph.invoke(
-      { messages: [new HumanMessage("first question")] },
+    const titleReply = new AIMessage("Beijing weather");
+    // chatAgent's reply is poisoned: any time the chatAgent branch asks
+    // for an LLM response, we'd return "SHOULD NOT APPEAR". The test
+    // asserts that string never makes it into state.messages — which
+    // is only possible if the weather turn never visited chatAgent.
+    const poisonedReply = new AIMessage("SHOULD NOT APPEAR");
+    const weatherReply = new AIMessage("Sunny in Beijing.");
+    mockByCallShape({
+      routerDecision: { next: "weatherAgent" },
+      agentReply: poisonedReply,
+      weatherReply,
+      titleReply,
+    });
+
+    const result = await graph.invoke(
+      { messages: [new HumanMessage("北京天气怎么样?")] },
       { configurable: { thread_id: threadId } },
     );
 
-    mockInvoke.mockClear();
-    mockInvoke.mockResolvedValueOnce(new AIMessage("Second reply"));
-    mockInvoke.mockResolvedValueOnce(new AIMessage("Refreshed title"));
-
-    await graph.invoke(
-      { messages: [new HumanMessage("follow up question")] },
-      { configurable: { thread_id: threadId } },
+    expect(result.routerDecision).toEqual({ next: "weatherAgent" });
+    const containsPoisoned = result.messages.some(
+      (m) => m instanceof AIMessage && m.content === "SHOULD NOT APPEAR",
     );
-
-    expect(mockInvoke).toHaveBeenCalledTimes(2);
+    expect(containsPoisoned).toBe(false);
 
     const row = await db.query.threads.findFirst({
       where: (t, { eq }) => eq(t.id, threadId),
     });
-    expect(row?.title).toBe("Refreshed title");
+    expect(row?.title).toBe("Beijing weather");
   });
 });

@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FC, type RefObject } from "react";
-import { AssistantRuntimeProvider, useAui, useAuiState, Suggestions } from "@assistant-ui/react";
+import {
+  AssistantRuntimeProvider,
+  Suggestions,
+  Tools,
+  useAui,
+  useAuiState,
+} from "@assistant-ui/react";
 import { unstable_createLangGraphStream, useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
@@ -11,6 +17,7 @@ import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { UserButton } from "@/components/auth/user/user-button";
+import weatherToolkit from "@/components/tool-ui/toolkit";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
@@ -177,20 +184,9 @@ export function Assistant() {
   // it can't call useAui directly. A child component mounted inside the
   // provider writes the api + mainThreadId to bridgeRef; the handler
   // reads them at call time.
-  //
-  // The backend's rename-thread node writes a single { customEventType,
-  // title } chunk via config.writer() once the title LLM call resolves.
-  // langgraph routes that to useLangGraphRuntime's onCustomEvent with the
-  // SSE event name "custom"; we discriminate by the payload's
-  // `customEventType` field, not the SSE event name.
   const bridgeRef = useRef<RuntimeBridge>({ api: null, mainThreadId: null });
 
-  const eventHandlers = useMemo(
-    () => ({
-      onCustomEvent: (_eventType: string, _data: unknown) => {},
-    }),
-    [],
-  );
+  const eventHandlers = useMemo(() => ({}), []);
 
   const runtime = useLangGraphRuntime({
     unstable_threadListAdapter: threadListAdapter,
@@ -201,19 +197,56 @@ export function Assistant() {
       return { externalId: externalId! };
     },
     // Empty messages on a fresh thread — state.values has no `messages` key yet.
+    // Return `interrupts` from the active task so a paused run (e.g. ask_location
+    // waiting for the user's location pick) survives a page refresh — the runtime
+    // restores `useLangGraphInterruptState()` from this field. Also return
+    // `uiMessages` so any persisted typedUi state is restored on reload.
     load: async (externalId) => {
       const state = await client.threads.getState(externalId);
-      const values = state.values as { messages?: unknown };
-      return { messages: (values.messages ?? []) as never };
+      const values = state.values as { messages?: unknown; ui?: unknown };
+      const interrupts = state.tasks?.[0]?.interrupts;
+
+      return {
+        messages: (values.messages ?? []) as never,
+        uiMessages: (values.ui ?? []) as never,
+        ...(interrupts?.length ? { interrupts } : {}),
+      };
+    },
+    getCheckpointId: async (threadId, parentMessages) => {
+      const history = await client.threads.getHistory(threadId);
+
+      for (const state of history) {
+        const stateMessages = (state.values as { messages?: unknown[] }).messages;
+        if (!stateMessages || stateMessages.length !== parentMessages.length) {
+          continue;
+        }
+        const hasStableIds =
+          parentMessages.every((m) => typeof m.id === "string") &&
+          stateMessages.every((m: unknown) => typeof (m as { id?: unknown }).id === "string");
+        if (!hasStableIds) continue;
+        const isMatch = parentMessages.every(
+          (m, i) => m.id === (stateMessages[i] as { id?: string } | undefined)?.id,
+        );
+        if (isMatch) {
+          return state.checkpoint.checkpoint_id ?? null;
+        }
+      }
+      return null;
     },
   });
 
   const aui = useAui({
+    tools: Tools({ toolkit: weatherToolkit }),
     suggestions: Suggestions([
       {
-        title: "What is the website firetable.tech about?",
+        title: "Please analyze the website https://firetable.tech",
         label: "",
         prompt: "Please analyze the website https://firetable.tech",
+      },
+      {
+        title: "What’s the weather like at today?",
+        label: "",
+        prompt: "What’s the weather like at today?",
       },
     ]),
   });

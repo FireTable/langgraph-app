@@ -1,5 +1,9 @@
 "use client";
 
+// ponytail: dot.css is inlined into app/globals.css (with --aui-content
+// bumped to "\258d" for a typewriter caret). The package import is left
+// commented so it's easy to re-enable if we ever want the upstream default
+// back without re-deriving the keyframes.
 // import "@assistant-ui/react-markdown/styles/dot.css";
 
 import {

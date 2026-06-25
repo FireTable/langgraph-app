@@ -157,3 +157,45 @@
     background-color: var(--muted-foreground);
   }
 }
+
+/* Inlined from @assistant-ui/react-markdown/styles/dot.css. The package
+   import is commented out in components/assistant-ui/markdown-text.tsx;
+   the keyframes + selector list are vendored here so we can swap
+   --aui-content (a typewriter caret, color muted-foreground) without
+   fighting the cascade against the package's plain-CSS rule. "\25cf"
+   (the package default) reads as a "thinking" dot — wrong for streaming
+   text. */
+@keyframes aui-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+:where(.aui-md[data-status="running"]):empty::after,
+:where(.aui-md[data-status="running"]) > :where(:not(ol):not(ul):not(pre)):last-child::after,
+:where(.aui-md[data-status="running"]) > pre:last-child code::after,
+:where(.aui-md[data-status="running"])
+  > :where(:is(ol, ul):last-child)
+  > :where(li:last-child:not(:has(* > li)))::after,
+:where(.aui-md[data-status="running"])
+  > :where(:is(ol, ul):last-child)
+  > :where(li:last-child)
+  > :where(:is(ol, ul):last-child)
+  > :where(li:last-child:not(:has(* > li)))::after,
+:where(.aui-md[data-status="running"])
+  > :where(:is(ol, ul):last-child)
+  > :where(li:last-child)
+  > :where(:is(ol, ul):last-child)
+  > :where(li:last-child)
+  > :where(:is(ol, ul):last-child)
+  > :where(li:last-child)::after {
+  animation: aui-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  font-family:
+    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+    "Noto Color Emoji";
+  --aui-content: "\258d";
+  color: var(--muted-foreground);
+  content: var(--aui-content);
+  margin-left: 0.25rem;
+  margin-right: 0.25rem;
+}

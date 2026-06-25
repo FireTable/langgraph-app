@@ -36,7 +36,9 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({ open, onOpenCh
         </SheetHeader>
         <AuiProvider value={aui}>
           {spans.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No spans yet. Send a message to record activity.</p>
+            <p className="text-muted-foreground text-sm">
+              No spans yet. Send a message to record activity.
+            </p>
           ) : (
             <SpanPrimitive.Root>
               <SpanPrimitive.Children components={{ Span: SpanRow }} />
