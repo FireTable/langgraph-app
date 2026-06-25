@@ -29,10 +29,11 @@ function chatModelRoute(state: { messages: BaseMessage[] }) {
 
 const chatToolNode = new ToolNode(ALL_TOOLS);
 
-export const chatAgent = new StateGraph(CommonAgentState)
+const builder = new StateGraph(CommonAgentState)
   .addNode("model", chatModelNode)
   .addNode("tools", chatToolNode)
   .addEdge(START, "model")
   .addConditionalEdges("model", chatModelRoute, ["tools", END])
   .addEdge("tools", "model")
-  .compile();
+
+export const chatAgent = builder.compile();

@@ -30,10 +30,11 @@ async function weatherModelNode({ messages }: { messages: BaseMessage[] }) {
 
 const weatherToolNode = new ToolNode(WEATHER_TOOLS);
 
-export const weatherAgent = new StateGraph(CommonAgentState)
-  .addNode("model", weatherModelNode)
-  .addNode("tools", weatherToolNode)
-  .addEdge(START, "model")
-  .addConditionalEdges("model", toolsCondition, ["tools", END])
-  .addEdge("tools", "model")
-  .compile();
+const builder = new StateGraph(CommonAgentState)
+    .addNode("model", weatherModelNode)
+    .addNode("tools", weatherToolNode)
+    .addEdge(START, "model")
+    .addConditionalEdges("model", toolsCondition, ["tools", END])
+    .addEdge("tools", "model")
+
+export const weatherAgent = builder.compile();

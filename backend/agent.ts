@@ -20,25 +20,12 @@ function routeToSubAgent({
   return routerDecision?.next ?? "chatAgent";
 }
 
-// Wrapper nodes: RouterAgentState has `messages` + `routerDecision`, but
-// the sub-agents only know `messages`. Pattern A from the LangGraph
-// subgraph docs — different schemas, explicit transform at the seam.
-async function runChatAgent({ messages }: { messages: BaseMessage[] }) {
-  const output = await chatAgent.invoke({ messages });
-  return { messages: output.messages };
-}
-
-async function runWeatherAgent({ messages }: { messages: BaseMessage[] }) {
-  const output = await weatherAgent.invoke({ messages });
-  return { messages: output.messages };
-}
-
-export const graph = new StateGraph(RouterAgentState)
+const builder = new StateGraph(RouterAgentState)
   .addNode("routerAgent", routerAgentNode)
-  .addNode("chatAgent", runChatAgent)
+  .addNode("chatAgent", chatAgent)
   .addNode("afterAgent", afterAgentNode)
   .addNode("renameThreadAgent", renameThreadAgentNode)
-  .addNode("weatherAgent", runWeatherAgent)
+  .addNode("weatherAgent", weatherAgent)
   // Sequential: START → routerAgent → (weatherAgent | chatAgent) → afterAgent → END.
   // ask_location's picker card is owned by the weather subgraph
   // (see backend/agent/weather-agent.ts + components/tool-ui/ask-location).
@@ -51,4 +38,5 @@ export const graph = new StateGraph(RouterAgentState)
   .addEdge("afterAgent", END)
   .addEdge(START, "renameThreadAgent")
   .addEdge("renameThreadAgent", END)
-  .compile({ checkpointer });
+
+export const graph = builder.compile({ checkpointer });
