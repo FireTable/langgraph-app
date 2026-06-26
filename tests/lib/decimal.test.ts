@@ -83,4 +83,42 @@ describe("safeDivide", () => {
   it("returns null when denominator is negative", () => {
     expect(safeDivide("100", "-5")).toBeNull();
   });
+
+  it("returns null when either argument is null/undefined", () => {
+    expect(safeDivide(null, 5)).toBeNull();
+    expect(safeDivide(5, undefined)).toBeNull();
+    expect(safeDivide(undefined, undefined)).toBeNull();
+  });
+
+  it("returns null when either argument is NaN/Infinity", () => {
+    expect(safeDivide(NaN, 5)).toBeNull();
+    expect(safeDivide(5, Infinity)).toBeNull();
+  });
+});
+
+describe("undefined/null tolerance", () => {
+  it("formatAmount returns the placeholder for null/undefined", () => {
+    expect(formatAmount(undefined)).toBe("—");
+    expect(formatAmount(null)).toBe("—");
+  });
+
+  it("formatAmount returns the placeholder for NaN/Infinity", () => {
+    expect(formatAmount(NaN)).toBe("—");
+    expect(formatAmount(Infinity)).toBe("—");
+  });
+
+  it("formatAmount still works for valid values", () => {
+    expect(formatAmount(100)).toBe("100.00");
+    expect(formatAmount("100.5")).toBe("100.50");
+  });
+
+  it("formatQty returns the placeholder for null/undefined", () => {
+    expect(formatQty(undefined)).toBe("—");
+    expect(formatQty(null)).toBe("—");
+  });
+
+  it("formatQty still works for valid values", () => {
+    expect(formatQty("0.000123")).toBe("0.000123");
+    expect(formatQty("1.234")).toBe("1.2340");
+  });
 });

@@ -30,26 +30,46 @@ export function parseAmount(input: string): Decimal | null {
   return d;
 }
 
-export function formatAmount(value: Decimal | number | string, dp = 2): string {
-  const d = value instanceof Decimal ? value : new Decimal(value);
+// Placeholder for missing values. Returning a visible em-dash beats
+// "NaN" or an empty cell — the receipt / card still renders and the
+// user sees that the field is blank instead of the page going blank.
+const PLACEHOLDER = "—";
+
+function toDecimal(value: unknown): Decimal | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Decimal) return value;
+  // number guard: NaN/Infinity sneak in from upstream JSON parsing
+  // of malformed values; treat them as missing rather than rendering
+  // "NaN" in the UI.
+  if (typeof value === "number" && !Number.isFinite(value)) return null;
+  try {
+    return new Decimal(value as Decimal | number | string);
+  } catch {
+    return null;
+  }
+}
+
+export function formatAmount(value: unknown, dp = 2): string {
+  const d = toDecimal(value);
+  if (d === null) return PLACEHOLDER;
   return d.toFixed(dp);
 }
 
 // qty formatting: small numbers need more precision (satoshi-level
 // trades) than large ones. Anything ≥ 1 → 4dp, anything < 1 → 6dp.
-export function formatQty(value: Decimal | number | string): string {
-  const d = value instanceof Decimal ? value : new Decimal(value);
+export function formatQty(value: unknown): string {
+  const d = toDecimal(value);
+  if (d === null) return PLACEHOLDER;
   return d.toFixed(d.lt(1) ? 6 : 4);
 }
 
 // Safe division. Returns null if divisor is zero/non-finite so the
 // caller can return a structured error instead of NaN/Infinity.
-export function safeDivide(
-  numerator: Decimal | number | string,
-  denominator: Decimal | number | string,
-): Decimal | null {
-  const n = numerator instanceof Decimal ? numerator : new Decimal(numerator);
-  const d = denominator instanceof Decimal ? denominator : new Decimal(denominator);
+// Accepts null/undefined on either side — they short-circuit to null.
+export function safeDivide(numerator: unknown, denominator: unknown): Decimal | null {
+  const n = toDecimal(numerator);
+  const d = toDecimal(denominator);
+  if (n === null || d === null) return null;
   if (!d.isFinite() || d.lte(0)) return null;
   return n.div(d);
 }

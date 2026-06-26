@@ -39,7 +39,8 @@ function parse(raw: unknown) {
   return { kind: "loading" as const };
 }
 
-function formatUsd(n: number) {
+function formatUsd(n: number | null | undefined) {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
   // Decimal-backed so the receipt doesn't render something like
   // $100.30000000000001 if the backend's qty division drifted.
   return new Intl.NumberFormat("en-US", {
