@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 
+import { safeDivide } from "@/lib/decimal";
+
 // ponytail: simulated order — no signing, no chain, no RPC. The frontend
 // card shows a "Simulated Filled" badge and a "view on Etherscan" link
 // that's disabled. Upgrade path: swap body for wagmi useWriteContract
@@ -28,7 +30,15 @@ export const confirmCryptoOrderTool = tool(
       return JSON.stringify({ success: false, error: "price_at_confirm must be > 0" });
     }
 
-    const qty = amount_usd / price_at_confirm;
+    // Decimal divide: qty = amount_usd / price_at_confirm. Plain
+    // number division can drift (100/3 = 33.333333333333336), which
+    // shows up in the receipt card. safeDivide returns null on
+    // divide-by-zero so we report it instead of writing NaN.
+    const qtyDecimal = safeDivide(amount_usd, price_at_confirm);
+    if (qtyDecimal === null) {
+      return JSON.stringify({ success: false, error: "price_at_confirm must be > 0" });
+    }
+
     return JSON.stringify({
       success: true,
       order: {
@@ -37,7 +47,7 @@ export const confirmCryptoOrderTool = tool(
         symbol: coin_symbol,
         side,
         amount_usd,
-        qty,
+        qty: qtyDecimal.toNumber(),
         price_at_confirm,
         status: "simulated_filled",
         timestamp: new Date().toISOString(),

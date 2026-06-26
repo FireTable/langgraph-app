@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { unwrapToolResult } from "@/components/tool-ui/tool-result";
 import { ConnectWalletDialog } from "@/components/tool-ui/crypto/connect-wallet-dialog";
 import { cn } from "@/lib/utils";
+import { formatAmount, parseAmount } from "@/lib/decimal";
 
 // Tool result the user picks from the card. Mirrors the backend tool's
 // resume payload (backend/tool/crypto/ask-crypto-intent.ts).
@@ -80,8 +81,10 @@ export const AskCryptoIntentCard: ToolCallMessagePartComponent<AskCryptoIntentAr
   const [pendingResume, setPendingResume] = useState<AskCryptoIntentResult | null>(null);
 
   const coin = COIN_OPTIONS.find((c) => c.coin_id === coinId) ?? COIN_OPTIONS[0];
-  const numericAmount = Number.parseFloat(amount);
-  const isValid = Number.isFinite(numericAmount) && numericAmount > 0;
+  // Decimal-validated amount. null = invalid (empty, negative, scientific,
+  // non-numeric, or over the safety cap). See lib/decimal for the rules.
+  const amountDecimal = parseAmount(amount);
+  const isValid = amountDecimal !== null;
 
   const resume = (payload: AskCryptoIntentResult) => {
     sendCommand({ resume: JSON.stringify(payload) });
@@ -90,7 +93,9 @@ export const AskCryptoIntentCard: ToolCallMessagePartComponent<AskCryptoIntentAr
   const buildResume = (): AskCryptoIntentResult => ({
     coin_id: coin.coin_id,
     coin_symbol: coin.symbol,
-    amount: numericAmount,
+    // .toNumber() is safe here — parseAmount already enforced the safety
+    // cap (≤ 1e15), well under Number.MAX_SAFE_INTEGER (~9e15).
+    amount: amountDecimal!.toNumber(),
     currency,
     side,
   });
@@ -149,7 +154,7 @@ export const AskCryptoIntentCard: ToolCallMessagePartComponent<AskCryptoIntentAr
                 {parsed.side === "buy" ? "Buy" : "Sell"} {parsed.coin_symbol}
               </p>
               <p className="text-muted-foreground mt-0.5 font-mono text-[11px]">
-                {parsed.amount.toFixed(2)} {parsed.currency} notional
+                {formatAmount(parsed.amount)} {parsed.currency} notional
               </p>
             </div>
           </div>
@@ -205,13 +210,16 @@ export const AskCryptoIntentCard: ToolCallMessagePartComponent<AskCryptoIntentAr
                 Amount ({currency})
               </span>
               <input
-                type="number"
+                type="text"
                 inputMode="decimal"
-                min="0"
-                step="any"
+                autoComplete="off"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value.replace(/-/g, ""))}
-                className="border-input bg-background placeholder:text-muted-foreground focus-visible:ring-ring flex h-9 w-full rounded-md border px-3 py-1 text-sm focus-visible:outline-none focus-visible:ring-1"
+                onChange={(e) => setAmount(e.target.value)}
+                aria-invalid={amount.length > 0 && !isValid}
+                className={cn(
+                  "border-input bg-background placeholder:text-muted-foreground focus-visible:ring-ring flex h-9 w-full rounded-md border px-3 py-1 text-sm focus-visible:outline-none focus-visible:ring-1",
+                  amount.length > 0 && !isValid && "border-destructive",
+                )}
                 placeholder="100"
               />
             </label>

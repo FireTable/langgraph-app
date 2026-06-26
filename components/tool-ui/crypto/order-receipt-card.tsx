@@ -5,6 +5,7 @@ import { CheckCircle2Icon, InfoIcon, WalletIcon } from "lucide-react";
 
 import { ToolCardSkeleton } from "@/components/tool-ui/tool-card-skeleton";
 import { unwrapToolResult } from "@/components/tool-ui/tool-result";
+import { formatAmount, formatQty } from "@/lib/decimal";
 import { cn } from "@/lib/utils";
 
 type Order = {
@@ -39,15 +40,13 @@ function parse(raw: unknown) {
 }
 
 function formatUsd(n: number) {
+  // Decimal-backed so the receipt doesn't render something like
+  // $100.30000000000001 if the backend's qty division drifted.
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 2,
-  }).format(n);
-}
-
-function formatQty(n: number) {
-  return n.toFixed(n < 1 ? 6 : 4);
+  }).format(Number(formatAmount(n)));
 }
 
 function formatTime(iso: string) {

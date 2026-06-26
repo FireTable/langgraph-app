@@ -62,18 +62,28 @@ afterEach(() => {
 });
 
 describe("AskCryptoIntentCard amount input", () => {
-  it("strips a leading minus sign so the value is never negative", () => {
+  it("marks negative input invalid and disables the order button", () => {
     renderCard();
     const input = screen.getByPlaceholderText("100") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "-100" } });
-    expect(input.value).toBe("100");
+    // The input keeps the literal text so the user can see what they
+    // typed; Decimal rejects the value at validation time and the
+    // button goes disabled instead of silently shipping a negative.
+    expect(input.value).toBe("-100");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.className).toContain("border-destructive");
+    const btn = screen.getByRole("button", { name: /connect.*buy/i });
+    expect(btn).toBeDisabled();
   });
 
-  it("keeps positive values unchanged", () => {
+  it("keeps positive values unchanged and valid", () => {
     renderCard();
     const input = screen.getByPlaceholderText("100") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "250.5" } });
     expect(input.value).toBe("250.5");
+    expect(input.getAttribute("aria-invalid")).toBe("false");
+    const btn = screen.getByRole("button", { name: /connect.*buy/i });
+    expect(btn).not.toBeDisabled();
   });
 
   it("allows empty input", () => {
@@ -81,6 +91,33 @@ describe("AskCryptoIntentCard amount input", () => {
     const input = screen.getByPlaceholderText("100") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "" } });
     expect(input.value).toBe("");
+    // Empty is not invalid — it's just not yet filled in.
+    expect(input.getAttribute("aria-invalid")).toBe("false");
+  });
+
+  it("rejects scientific notation (1e2) without breaking the input", () => {
+    renderCard();
+    const input = screen.getByPlaceholderText("100") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "1e2" } });
+    expect(input.value).toBe("1e2");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    const btn = screen.getByRole("button", { name: /connect.*buy/i });
+    expect(btn).toBeDisabled();
+  });
+
+  it("rejects non-numeric junk", () => {
+    renderCard();
+    const input = screen.getByPlaceholderText("100") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "abc" } });
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByRole("button", { name: /connect.*buy/i })).toBeDisabled();
+  });
+
+  it("rejects multiple decimal points", () => {
+    renderCard();
+    const input = screen.getByPlaceholderText("100") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "1.2.3" } });
+    expect(input.getAttribute("aria-invalid")).toBe("true");
   });
 });
 

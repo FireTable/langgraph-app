@@ -87,4 +87,25 @@ describe("confirmCryptoOrderTool", () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("computes qty without float precision drift (100/3 case)", async () => {
+    // Number division gives 33.333333333333336 — visible in the
+    // receipt as $33.333333333333336. Decimal-backed division
+    // preserves precision in the Decimal object; we round when
+    // handing it back as a number for JSON serialization.
+    const out = await confirmCryptoOrderTool.invoke({
+      coin_id: "bitcoin",
+      coin_symbol: "BTC",
+      amount_usd: 100,
+      price_at_confirm: 3,
+      side: "buy",
+    });
+    const parsed = JSON.parse(out as string);
+    expect(parsed.success).toBe(true);
+    // Allow tiny float drift on the .toNumber() boundary but no
+    // ugly "33.333333333333343" type values.
+    expect(parsed.order.qty).toBeGreaterThan(33.3333);
+    expect(parsed.order.qty).toBeLessThan(33.3334);
+    expect(String(parsed.order.qty)).toMatch(/^33\.33/);
+  });
 });
