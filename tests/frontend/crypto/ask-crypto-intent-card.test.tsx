@@ -13,6 +13,7 @@ vi.mock("wagmi/connectors", () => ({
 }));
 
 const mockUseAccount = vi.fn();
+const mockOpenConnectModal = vi.fn();
 
 vi.mock("wagmi", async () => {
   const actual = await vi.importActual<typeof import("wagmi")>("wagmi");
@@ -21,6 +22,15 @@ vi.mock("wagmi", async () => {
     useAccount: () => mockUseAccount(),
     useConnect: () => ({ connect: vi.fn(), connectors: [], isPending: false }),
     useBalance: () => ({ data: undefined }),
+  };
+});
+
+vi.mock("@rainbow-me/rainbowkit", async () => {
+  const actual =
+    await vi.importActual<typeof import("@rainbow-me/rainbowkit")>("@rainbow-me/rainbowkit");
+  return {
+    ...actual,
+    useConnectModal: () => ({ openConnectModal: mockOpenConnectModal }),
   };
 });
 
@@ -168,5 +178,24 @@ describe("AskCryptoIntentCard wallet flow", () => {
     renderCard();
     expect(screen.getByText(/0x1234…5678/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /connect.*buy/i })).toBeNull();
+  });
+
+  it("opens the RainbowKit connect modal when Confirm is pressed with no wallet", () => {
+    mockUseAccount.mockReturnValue({ address: undefined, isConnected: false });
+    renderCard();
+    const btn = screen.getByRole("button", { name: /connect.*buy/i });
+    fireEvent.click(btn);
+    expect(mockOpenConnectModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not open the connect modal when already connected", () => {
+    mockUseAccount.mockReturnValue({
+      address: "0x1234567890abcdef1234567890abcdef12345678",
+      isConnected: true,
+    });
+    renderCard();
+    const btn = screen.getByRole("button", { name: /confirm.*buy/i });
+    fireEvent.click(btn);
+    expect(mockOpenConnectModal).not.toHaveBeenCalled();
   });
 });

@@ -1,19 +1,20 @@
 "use client";
 
-import { createConfig, http } from "wagmi";
+import { http } from "wagmi";
 import { mainnet } from "wagmi/chains";
-import { injected } from "wagmi/connectors";
+import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 
-// ponytail: display-only wagmi config. No writeContract, no sendTransaction —
-// the crypto agent's "orders" are simulated (see backend/tool/crypto/confirm-crypto-order.ts).
-// We use wagmi purely to surface the user's address + balance in the buy-intent card.
-// Upgrade path: add useWriteContract for a real DEX swap (needs RPC + Router address in env).
+import "@rainbow-me/rainbowkit/styles.css";
 
-export const wagmiConfig = createConfig({
+// ponytail: `projectId` here is a placeholder. WalletConnect won't work
+// with it (any click on a WC wallet fails to init), but injected wallets
+// (MetaMask, Rabby, Phantom) and the Coinbase connector don't touch it
+// and work normally. Swap for a real id from cloud.walletconnect.com
+// when WalletConnect support is actually needed.
+export const wagmiConfig = getDefaultConfig({
+  appName: "LangGraph App",
+  projectId: "placeholder-replace-me",
   chains: [mainnet],
-  connectors: [injected({ shimDisconnect: true })],
-  transports: {
-    [mainnet.id]: http(),
-  },
+  transports: { [mainnet.id]: http() },
   ssr: true,
 });

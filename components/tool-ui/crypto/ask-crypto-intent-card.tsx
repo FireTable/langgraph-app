@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertCircleIcon,
   CheckCircle2Icon,
@@ -10,12 +10,12 @@ import {
 } from "lucide-react";
 import { formatUnits } from "viem";
 import { useAccount, useBalance } from "wagmi";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
 import { Button } from "@/components/ui/button";
 import { unwrapToolResult } from "@/components/tool-ui/tool-result";
-import { ConnectWalletDialog } from "@/components/tool-ui/crypto/connect-wallet-dialog";
 import { cn } from "@/lib/utils";
 import { formatAmount, parseAmount } from "@/lib/decimal";
 
@@ -66,6 +66,7 @@ export const AskCryptoIntentCard: ToolCallMessagePartComponent<AskCryptoIntentAr
   const sendCommand = useLangGraphSendCommand();
   const { address, isConnected } = useAccount();
   const { data: balance } = useBalance({ address });
+  const { openConnectModal } = useConnectModal();
 
   // LLM detected currency from the message; default to USD if missing.
   const currency = (args?.currency ?? "USD").toUpperCase();
@@ -74,10 +75,11 @@ export const AskCryptoIntentCard: ToolCallMessagePartComponent<AskCryptoIntentAr
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [mode, setMode] = useState<Mode>("idle");
   // Wallet connection is part of the order flow. If the user clicks
-  // Confirm without a connected wallet, we open the connector dialog
-  // and queue the resume until they connect. `pendingResume` captures
-  // the current form so we can re-emit it once isConnected flips.
-  const [showConnect, setShowConnect] = useState(false);
+  // Confirm without a connected wallet, we open RainbowKit's modal and
+  // queue the resume until they connect. `pendingResume` captures the
+  // current form so the effect below can re-emit it once isConnected
+  // flips (RainbowKit's modal calls wagmi's connect() under the hood
+  // and closes itself on success).
   const [pendingResume, setPendingResume] = useState<AskCryptoIntentResult | null>(null);
 
   const coin = COIN_OPTIONS.find((c) => c.coin_id === coinId) ?? COIN_OPTIONS[0];
@@ -103,22 +105,29 @@ export const AskCryptoIntentCard: ToolCallMessagePartComponent<AskCryptoIntentAr
   const handleConfirm = () => {
     if (!isValid) return;
     if (!isConnected) {
-      // Queue the resume; the dialog's onConnected will flush it.
+      // Queue the resume; the effect below flushes it once isConnected
+      // flips. openConnectModal is undefined when RainbowKitProvider
+      // isn't mounted (e.g. unit tests) — fall back to a no-op rather
+      // than throwing.
       setPendingResume(buildResume());
-      setShowConnect(true);
+      openConnectModal?.();
       return;
     }
     setMode("submitting");
     resume(buildResume());
   };
 
-  const handleConnected = () => {
-    if (pendingResume) {
+  // Flush queued resume once the wallet connects. Depends only on
+  // isConnected + pendingResume (sendCommand is intentionally omitted
+  // — it comes from a hook and is stable enough for our purposes).
+  useEffect(() => {
+    if (isConnected && pendingResume) {
       setMode("submitting");
       resume(pendingResume);
       setPendingResume(null);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, pendingResume]);
 
   const handleCancel = () => {
     setMode("submitting");
@@ -273,11 +282,6 @@ export const AskCryptoIntentCard: ToolCallMessagePartComponent<AskCryptoIntentAr
           </div>
         )}
       </div>
-      <ConnectWalletDialog
-        open={showConnect}
-        onOpenChange={setShowConnect}
-        onConnected={handleConnected}
-      />
     </div>
   );
 };
