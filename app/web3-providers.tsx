@@ -1,32 +1,43 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { WagmiProvider } from "wagmi";
+import { Component, type ErrorInfo, type ReactNode } from "react";
+import { WagmiProvider, type Config } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RainbowKitProvider, lightTheme, darkTheme } from "@rainbow-me/rainbowkit";
+import { RainbowKitProvider, lightTheme } from "@rainbow-me/rainbowkit";
 
 import { wagmiConfig } from "@/lib/wagmi";
 
-// ponytail: wagmi is display-only here — no writeContract, no signing.
-// The crypto agent's orders are simulated; wagmi only surfaces the
-// connected address + balance, and RainbowKit provides the wallet
-// picker modal the order button opens. Lazy-init the QueryClient
-// and the RainbowKit theme so React strict-mode double-invoke doesn't
-// share state across requests.
+// WalletConnect v2 modal emits HTML with `border="0"` on <img>, which
+// React 19's stricter DOM validation rejects with "invalid border=0".
+// The other 6 wallets (MetaMask / Coinbase / Rainbow / Safe / Binance
+// / Bitget) work without WalletConnect, so the boundary falls back to
+// wagmi-only — the user keeps the page, loses the picker modal. When
+// RainbowKit or @walletconnect/ethereum-provider ships a React 19 fix,
+// drop the boundary.
+class WalletConnectBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    // eslint-disable-next-line no-console
+    console.error("[web3-providers] RainbowKit crashed:", error, info);
+  }
+  render() {
+    if (this.state.failed) return this.props.children;
+    return (
+      <RainbowKitProvider coolMode theme={lightTheme()} modalSize="wide">
+        {this.props.children}
+      </RainbowKitProvider>
+    );
+  }
+}
+
 export function Web3Providers({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient());
   return (
-    <WagmiProvider config={wagmiConfig}>
-      <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider
-          theme={{
-            lightMode: lightTheme(),
-            darkMode: darkTheme(),
-          }}
-          modalSize="compact"
-        >
-          {children}
-        </RainbowKitProvider>
+    <WagmiProvider config={wagmiConfig as unknown as Config}>
+      <QueryClientProvider client={new QueryClient()}>
+        <WalletConnectBoundary>{children}</WalletConnectBoundary>
       </QueryClientProvider>
     </WagmiProvider>
   );

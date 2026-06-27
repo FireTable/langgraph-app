@@ -36,11 +36,34 @@ function parse(raw: unknown, vsCurrency: string): Parsed {
   return { kind: "loading" };
 }
 
-function formatPrice(value: number, currency: string): string {
+// Currency formatting for the price card. Exported for direct unit tests
+// — the integration path (render → textContent) is exercised by the
+// manual verification in the chat thread. JPY/KRW/CLP/etc. have no
+// sub-unit, so they get 0 fraction digits; everything else follows the
+// "small price → 6dp, big price → 2dp" rule so sub-$1 stablecoin prices
+// (e.g. PEPE in USD) stay readable. CNY uses the bare ¥ — same glyph as
+// JPY, no CN/元 prefix — because that's what the user reads as "RMB ¥".
+const NO_FRACTION = new Set(["JPY", "KRW", "CLP", "VND", "XOF", "XAF", "XPF"]);
+const CNY_SYMBOL = "¥";
+
+export function formatPrice(value: number, currency: string): string {
+  const iso = currency.toUpperCase();
+  const fractionDigits = NO_FRACTION.has(iso) ? 0 : value < 1 ? 6 : 2;
+  if (iso === "CNY") {
+    return (
+      CNY_SYMBOL +
+      new Intl.NumberFormat("en-US", {
+        style: "decimal",
+        minimumFractionDigits: fractionDigits,
+        maximumFractionDigits: fractionDigits,
+      }).format(value)
+    );
+  }
   return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: currency.toUpperCase(),
-    maximumFractionDigits: value < 1 ? 6 : 2,
+    currency: iso,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   }).format(value);
 }
 
@@ -104,22 +127,27 @@ export const CryptoPriceCard: ToolCallMessagePartComponent<Args, Result> = ({ re
         {parsed.coins.map((c) => {
           const positive = c.price_change_percentage_24h >= 0;
           return (
-            <li key={c.id} className="flex items-center gap-3 px-3 py-2.5">
+            <li
+              key={c.id}
+              className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 px-3 py-2.5"
+            >
               {c.image ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={c.image} alt="" className="size-7 shrink-0 rounded-full" loading="lazy" />
               ) : null}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2">
+              <div className="min-w-0">
+                <div className="flex h-5 items-baseline gap-2">
                   <span className="text-sm font-medium">{c.symbol}</span>
-                  <span className="text-muted-foreground truncate text-xs">{c.name}</span>
+                  <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
+                    {c.name}
+                  </span>
                 </div>
                 <div className="text-muted-foreground mt-0.5 font-mono text-[10px]">
-                  rank #{c.market_cap_rank}
+                  Rank #{c.market_cap_rank}
                 </div>
               </div>
               <Sparkline values={c.sparkline} positive={positive} />
-              <div className="text-right">
+              <div className="flex min-w-[6.5rem] flex-col items-end">
                 <div className="text-sm font-semibold tabular-nums">
                   {formatPrice(c.current_price, parsed.vs_currency)}
                 </div>
@@ -143,6 +171,18 @@ export const CryptoPriceCard: ToolCallMessagePartComponent<Args, Result> = ({ re
           );
         })}
       </ul>
+      <footer className="text-muted-foreground border-border/40 border-t px-3 py-1.5 text-[10px]">
+        Prices powered by{" "}
+        <a
+          href="https://www.coingecko.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary hover:underline"
+        >
+          CoinGecko
+        </a>
+        .
+      </footer>
     </div>
   );
 };

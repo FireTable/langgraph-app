@@ -5,11 +5,7 @@ import { z } from "zod";
 
 import { AskLocationCard } from "@/components/tool-ui/ask-location/ask-location-card";
 import { WeatherCard } from "@/components/tool-ui/weather/weather-card";
-import {
-  AskCryptoIntentCard,
-  CryptoOrderReceiptCard,
-  CryptoPriceCard,
-} from "@/components/tool-ui/crypto";
+import { CryptoConfirmCard, CryptoPriceCard } from "@/components/tool-ui/crypto";
 
 // Frontend-side tool registrations. `execute` lives on the LangGraph
 // backend (backend/tool/) and is dispatched via useLangGraphRuntime —
@@ -42,12 +38,6 @@ const weatherToolkit = defineToolkit({
 });
 
 const cryptoToolkit = defineToolkit({
-  ask_crypto_intent: {
-    description:
-      "Render a buy/sell form card. Pauses the turn; the form's submit resumes with the pick.",
-    parameters: z.object({}),
-    render: AskCryptoIntentCard,
-  },
   get_crypto_price: {
     description: "Fetch and render a price card for one or more coins.",
     parameters: z.object({
@@ -57,15 +47,19 @@ const cryptoToolkit = defineToolkit({
     render: CryptoPriceCard,
   },
   confirm_crypto_order: {
-    description: "Render a simulated order receipt.",
+    // The tool emits a wallet-aware swap card. LLM passes intent
+    // (side + optional source/amount/target); the card wakes the
+    // wallet, lists balances, fetches a CoW quote, and exposes one
+    // Sign button.
+    description:
+      "Render a wallet-aware swap card. Pauses the turn; the user clicks Sign to submit an EIP-712 order to CoW.",
     parameters: z.object({
-      coin_id: z.string(),
-      coin_symbol: z.string(),
-      amount_usd: z.number(),
-      price_at_confirm: z.number(),
       side: z.enum(["buy", "sell"]),
+      source_coin_id: z.string().optional(),
+      amount: z.number().optional(),
+      target_coin_id: z.string().optional(),
     }),
-    render: CryptoOrderReceiptCard,
+    render: CryptoConfirmCard,
   },
 });
 
