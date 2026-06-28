@@ -334,16 +334,16 @@ function CollectionGroup({
             <ImagesIcon className="text-muted-foreground size-4" />
           </div>
         )}
-        <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-xs font-medium" title={group.collectionName}>
             {group.collectionName}
           </span>
 
-          <span className="flex flex-wrap items-center gap-1.5" data-slot="nft-gallery-contracts">
+          <span className="flex flex-wrap items-center gap-1" data-slot="nft-gallery-contracts">
             {group.contracts.map((c) => (
               <span
                 key={c.contractAddress}
-                className=" inline-flex items-center gap-1.5 rounded-full text-[10px]"
+                className=" inline-flex items-center gap-1 rounded-full text-[10px]"
               >
                 <AddressOrHash value={c.contractAddress} head={4} tail={3} className="!text-[10px]" showCopyButton={false} asCode={false} />
                 <span className="text-muted-foreground tabular-nums">×{c.items.length}</span>
@@ -410,14 +410,14 @@ function NftLightbox({ nft, onClose }: { nft: Nft; onClose: () => void }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-card text-card-foreground grid w-full max-w-4xl grid-cols-1 overflow-hidden rounded-2xl shadow-2xl md:grid-cols-[1fr_1fr]"
+        className="bg-card text-card-foreground grid w-full max-w-4xl grid-cols-1 overflow-hidden rounded-2xl shadow-2xl md:grid-cols-[1.5fr_1fr]"
       >
         <NftImage
           src={nft.cachedUrl || nft.thumbnailUrl}
           alt={displayName}
           contentType={nft.contentType}
           className="aspect-square w-full"
-          fit="cover"
+          fit="contain"
           controls
         />
 
