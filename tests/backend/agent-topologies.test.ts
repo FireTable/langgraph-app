@@ -13,6 +13,7 @@ describe("buildSubgraph", () => {
     expect(Object.keys(builder.nodes).sort()).toEqual([
       "afterAgent",
       "chatAgent",
+      "codeAgent",
       "cryptoAgent",
       "renameThreadAgent",
       "routerAgent",
@@ -33,6 +34,8 @@ describe("buildInlined", () => {
       "afterAgent",
       "chatModel",
       "chatTools",
+      "codeModel",
+      "codeTools",
       "cryptoModel",
       "cryptoTools",
       "renameThreadAgent",
