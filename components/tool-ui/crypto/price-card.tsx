@@ -142,7 +142,7 @@ export const CryptoPriceCard: ToolCallMessagePartComponent<Args, Result> = ({ re
                     {c.name}
                   </span>
                 </div>
-                <div className="text-muted-foreground mt-0.5 font-mono text-[10px]">
+                <div className="text-muted-foreground font-mono text-[10px]">
                   Rank #{c.market_cap_rank}
                 </div>
               </div>
