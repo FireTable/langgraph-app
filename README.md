@@ -12,6 +12,7 @@ A self-hostable chat app (this repo: `langgraph-app`) that streams tokens from a
 - **TDD-tested**: Vitest with a separate test database.
 - **User accounts**: email + password (with email verification), GitHub and Google sign-in, 7-day persistent sessions, and per-user thread isolation. See [docs/AUTH.md](docs/AUTH.md) for the operator guide.
 - **Tool-using agent**: the `agent` node is bound to `search_web` (Jina Search) and `fetch_url` (Jina Reader) — the model can research topics and read pages mid-conversation. Tools run unconditionally; write-side tools added later will hang their own `interruptBefore` hook. See [docs/APIS.md](docs/APIS.md) for the contract.
+- **Crypto sub-agent**: price, NFT holdings (5-chain gallery via Alchemy Portfolio), and a simulated swap flow against an auto-funded Mock Coin balance — see [docs/TOOLS.md](docs/TOOLS.md) and [docs/INTERRUPT.md](docs/INTERRUPT.md) for the per-card contract.
 
 ## Tech stack
 
@@ -210,6 +211,7 @@ Test database stays isolated from dev — never put production-like data in `lan
 | `OPENAI_MODEL`                       | backend agent             | optional (default `gpt-4o-mini`)            |
 | `OPENAI_BASE_URL`                    | backend agent             | optional (OpenAI-compatible gateway)        |
 | `JINA_API_KEYS`                      | web-search + web-fetch    | yes (comma-separated; one per Jina account) |
+| `ALCHEMY_API_KEY`                    | NFT gallery + portfolio   | yes (server-only; powers `get_NFT_holdings`) |
 | `LANGGRAPH_API_URL`                  | Next.js proxy             | optional (default `http://localhost:2024`)  |
 | `LANGCHAIN_API_KEY`                  | Next.js proxy → LangGraph | optional (leave blank locally)              |
 | `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` | browser runtime           | optional (default `agent`)                  |
@@ -231,6 +233,8 @@ Test database stays isolated from dev — never put production-like data in `lan
 ## Documentation
 
 - [`docs/APIS.md`](docs/APIS.md) — HTTP endpoint reference. Update whenever a route under `app/api/` changes.
+- [`docs/TOOLS.md`](docs/TOOLS.md) — LangGraph tool inventory and frontend card wiring. Update whenever a tool or card is added/removed/rerouted.
+- [`docs/INTERRUPT.md`](docs/INTERRUPT.md) — interrupt-driven tool flows (ask_location, connect_wallet, place_crypto_order, get_order_status) — the two runtime paths the cards can take.
 - [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, troubleshooting.
 - [`docs/DB.md`](docs/DB.md) — database schema (Better Auth + `threads`), ownership model, indexes. Source of truth: `db/migrations/0000_*.sql`.
 

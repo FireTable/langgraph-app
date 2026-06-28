@@ -79,7 +79,7 @@ backend/
     after-agent-node.ts   "afterAgent" — touches threads.last_message_at
   prompt/system.ts        CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, CRYPTO_AGENT_PROMPT, ROUTER_AGENT_PROMPT, RENAME_THREAD_PROMPT
   tool/                   ask_location, geocode_location, get_weather, search_web, fetch_url
-  tool/crypto/            get_crypto_price, get_fx_rate, get_token_balances, connect_wallet, place_crypto_order, get_order_status
+  tool/crypto/            get_crypto_price, get_fx_rate, get_token_balances, get_NFT_holdings, connect_wallet, place_crypto_order, get_order_status
 langgraph.json            CLI config: graph id, node version, env file
 app/                      Next.js App Router
   layout.tsx              Root layout, fonts, TooltipProvider
@@ -96,7 +96,7 @@ components/
   ui/address-or-hash.tsx  Truncated address/hash with copy-to-clipboard
   tool-ui/ask-location/   Interrupt-driven or addResult-driven location picker card
   tool-ui/weather/        Forecast widget renderer (vendored runtime + container + overlay)
-  tool-ui/crypto/         Price, connect-wallet, place-order, order-status cards
+  tool-ui/crypto/         Price, connect-wallet, place-order, order-status, nft-gallery cards
 lib/utils.ts              cn() = twMerge(clsx(...))
 lib/threads/              Threads module (schema, queries, adapter, validators)
 lib/wagmi.ts              wagmi/RainbowKit config (chains, connectors, WalletConnect projectId)

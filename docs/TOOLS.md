@@ -38,7 +38,7 @@ ask-location card isn't raced by a parallel tool call. See
 | `place_crypto_order`| `crypto/place-crypto-order.ts`  | `crypto/place-crypto-order-card.tsx`| Interrupt-driven. Simulated swap; resumes with `SimulatedOrder` or `cancelled`. |
 | `get_order_status`  | `crypto/get-order-status.ts`    | `crypto/order-status-card.tsx` | Interrupt-driven. Synthesizes a status (simulated-swap demo); resumes with status payload. |
 | `get_token_balances`| `crypto/get-token-balances.ts`  | —                              | Defined but not wired into `ALL_TOOLS` yet — dormant.                        |
-| `get_NFT_holdings`   | `crypto/get-nft-holdings.ts`    | `crypto/nft-gallery-card.tsx` | Read-only. Lists NFTs across 5 chains; filters spam by name regex. Renders a gallery grid. |
+| `get_NFT_holdings`  | `crypto/get-nft-holdings.ts`    | `crypto/nft-gallery-card.tsx`  | Read-only. Lists NFTs across 5 chains; filters spam by name regex. Renders a gallery grid. |
 
 Trade flow is split into three atomic interrupt tools (connect → place → check)
 so each is its own user decision point and `ToolMessage` the LLM can reason
