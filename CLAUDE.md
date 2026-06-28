@@ -51,7 +51,7 @@ Copy `.env.example` to `.env.local` and fill in:
 - `LANGCHAIN_API_KEY` — sent as `x-api-key` by the proxy; leave blank for local dev.
 - `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` — graph id, must match a key in `langgraph.json` (`agent`).
 - `NEXT_PUBLIC_LANGGRAPH_API_URL` — optional. If set, the browser skips the `/api` proxy and talks to LangGraph directly. Leave unset to use the in-app proxy.
-- `ALCHEMY_API_KEY` — server-only, used by `app/api/alchemy/[...path]` to proxy JSON-RPC. Required for the price-card USD valuation (CoinGecko USD prices are converted through Alchemy `eth/usd`).
+- `ALCHEMY_API_KEY` — server-only, used by `app/api/alchemy/[...path]` to proxy JSON-RPC. Required for the wallet's portfolio view (per-chain token balances via Alchemy Portfolio API).
 - `ALCHEMY_DISABLED_NETWORKS` — optional comma-separated Alchemy network slugs the proxy will reject. Default deny-list lives in `lib/alchemy/networks.ts`.
 - `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID` — Reown projectId, required for WalletConnect-based wallets (Binance, Bitget) to expose their mobile-QR fallback; injected wallets (MetaMask, Coinbase) work without it.
 - `NEXT_PUBLIC_CRYPTO_REAL_SWAP` — feature flag for the live Uniswap V3 swap path. Unset/`false` keeps `place_crypto_order` in SIMULATED mode (Mock Coin balance, no signing, no broadcast). Set `true` to enable the real path (currently dormant).

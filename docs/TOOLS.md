@@ -36,7 +36,7 @@ ask-location card isn't raced by a parallel tool call. See
 | `get_fx_rate`       | `crypto/get-fx-rate.ts`         | —                              | Frankfurter, 60s in-memory cache. Plain `ToolMessage`.                       |
 | `connect_wallet`    | `crypto/connect-wallet.ts`      | `crypto/connect-wallet-card.tsx`| Interrupt-driven. Reads wallet from wagmi; resumes with `{ address }`.        |
 | `place_crypto_order`| `crypto/place-crypto-order.ts`  | `crypto/place-crypto-order-card.tsx`| Interrupt-driven. Simulated swap; resumes with `SimulatedOrder` or `cancelled`. |
-| `get_order_status`  | `crypto/get-order-status.ts`    | `crypto/order-status-card.tsx` | Interrupt-driven. Polls CoW `/orders/{uid}`; resumes with status payload.   |
+| `get_order_status`  | `crypto/get-order-status.ts`    | `crypto/order-status-card.tsx` | Interrupt-driven. Synthesizes a status (simulated-swap demo); resumes with status payload. |
 | `get_token_balances`| `crypto/get-token-balances.ts`  | —                              | Defined but not wired into `ALL_TOOLS` yet — dormant.                        |
 
 Trade flow is split into three atomic interrupt tools (connect → place → check)

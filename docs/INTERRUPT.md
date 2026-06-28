@@ -125,8 +125,9 @@ type PlaceCryptoOrderResume =
 
 ### `get_order_status` — crypto trade flow, step 3
 
-Tool (`backend/tool/crypto/get-order-status.ts`) polls the CoW `/orders/{uid}`
-endpoint. Payload:
+Tool (`backend/tool/crypto/get-order-status.ts`) is a pure trigger; the
+synthetic `order_uid` returned by `place_crypto_order` isn't a real
+on-chain order, so the card synthesizes a status on click. Payload:
 
 ```ts
 type GetOrderStatusResume =
