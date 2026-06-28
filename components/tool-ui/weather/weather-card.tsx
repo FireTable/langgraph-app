@@ -28,9 +28,9 @@ type Result = WeatherToolSuccess | WeatherToolFailure;
 type ParsedResult =
   | { kind: "loading" }
   | {
-    kind: "ok";
-    widget: import("@/components/tool-ui/weather/runtime").WeatherWidgetPayload;
-  }
+      kind: "ok";
+      widget: import("@/components/tool-ui/weather/runtime").WeatherWidgetPayload;
+    }
   | { kind: "error"; message: string };
 
 function parseWeatherResult(raw: unknown): ParsedResult {
@@ -62,9 +62,7 @@ export const WeatherCard: ToolCallMessagePartComponent<Args, Result> = ({ result
   }
   if (parsed.kind === "error") {
     return (
-      <div className="text-destructive mx-2 text-xs">
-        Couldn’t fetch weather: {parsed.message}
-      </div>
+      <div className="text-destructive mx-2 text-xs">Couldn’t fetch weather: {parsed.message}</div>
     );
   }
   return <WeatherCardWithRevivedEffects widget={parsed.widget} />;

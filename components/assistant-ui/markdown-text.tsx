@@ -17,12 +17,17 @@ import { type FC, memo, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { InlineCode, SyntaxHighlighter } from "@/components/assistant-ui/syntax-highlighter";
 import { cn } from "@/lib/utils";
+
+export { CodeBlock } from "@/components/assistant-ui/code-block";
+
+const defaultRemarkPlugins = [remarkGfm];
 
 const MarkdownTextImpl = () => {
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={defaultRemarkPlugins}
       className="aui-md"
       components={defaultComponents}
       defer
@@ -32,7 +37,11 @@ const MarkdownTextImpl = () => {
 
 export const MarkdownText = memo(MarkdownTextImpl);
 
-const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
+const CodeHeader: FC<CodeHeaderProps & { className?: string }> = ({
+  language,
+  code,
+  className,
+}) => {
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const onCopy = () => {
     if (!code || isCopied) return;
@@ -40,13 +49,24 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   };
 
   return (
-    <div className="aui-code-header-root border-border/50 bg-muted/50 mt-3 flex items-center justify-between rounded-t-xl border border-b-0 px-3.5 py-1.5 text-xs">
-      <span className="aui-code-header-language text-muted-foreground font-medium lowercase">
+    <div
+      className={cn(
+        "aui-code-header-root border-border/50 bg-muted/50 mt-3 flex items-center justify-between rounded-t-xl border border-b-0 px-3 py-2 text-sm",
+        className,
+      )}
+    >
+      <span className="aui-code-header-language text-muted-foreground font-medium capitalize">
         {language}
       </span>
-      <TooltipIconButton tooltip="Copy" onClick={onCopy}>
-        {!isCopied && <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />}
-        {isCopied && <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />}
+      <TooltipIconButton
+        tooltip="Copy"
+        onClick={onCopy}
+        className="aui-code-header-copy size-5 p-0"
+      >
+        {!isCopied && <CopyIcon className="size-3.5 animate-in zoom-in-75 fade-in duration-150" />}
+        {isCopied && (
+          <CheckIcon className="size-3.5 animate-in zoom-in-50 fade-in duration-200 ease-out" />
+        )}
       </TooltipIconButton>
     </div>
   );
@@ -221,18 +241,42 @@ const defaultComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
-  code: function Code({ className, ...props }) {
+  code: function Code({ className, children, ...props }) {
     const isCodeBlock = useIsMarkdownCodeBlock();
-    return (
-      <code
-        className={cn(
-          !isCodeBlock &&
+    // Inline code with a language hint (e.g. `` `foo`{lang=ts} ``) gets
+    // prism-colored tokens; without one we fall back to the muted pill
+    // since tokenizing without a grammar adds noise without color.
+    if (!isCodeBlock) {
+      const langMatch = /language-(\w+)/.exec(className ?? "");
+      if (langMatch) {
+        return (
+          <InlineCode code={String(children ?? "")} language={langMatch[1]} className={className} />
+        );
+      }
+      return (
+        <code
+          className={cn(
             "aui-md-inline-code bg-muted rounded-md px-1.5 py-0.5 font-mono text-[0.85em]",
-          className,
-        )}
-        {...props}
-      />
+            className,
+          )}
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    }
+    return (
+      <code className={className} {...props}>
+        {children}
+      </code>
     );
   },
   CodeHeader,
+  SyntaxHighlighter,
 });
+
+// ponytail: tool-ui code cards reuse the markdown code-block chrome
+// (border, rounded, language label, copy button) without going through
+// the markdown parser — they already have the raw source. Same look
+// as chat-side fenced code, just no parser step.
+export { CodeHeader };

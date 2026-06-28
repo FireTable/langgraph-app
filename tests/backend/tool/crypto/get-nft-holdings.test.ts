@@ -13,9 +13,16 @@ afterEach(() => {
   delete process.env.ALCHEMY_API_KEY;
 });
 
-async function loadTool() {
+// ponytail: getNftHoldingsTool is `StructuredTool | null` (lazy
+// registration on ALCHEMY_API_KEY). The describe block only runs the
+// "with key" path; the null path is covered by its own `it` below.
+async function loadToolWithKey() {
+  process.env.ALCHEMY_API_KEY = "test-key";
   const mod = await import("@/backend/tool/crypto/get-nft-holdings");
-  return mod.getNftHoldingsTool;
+  const tool = mod.getNftHoldingsTool;
+  if (!tool)
+    throw new Error("expected getNftHoldingsTool to be non-null when ALCHEMY_API_KEY is set");
+  return tool;
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -61,7 +68,7 @@ function makeNft(overrides: Record<string, unknown> = {}) {
 describe("getNftHoldingsTool", () => {
   it("rejects an address that is not 0x + 40 hex chars", async () => {
     process.env.ALCHEMY_API_KEY = "test-key";
-    const getNftHoldingsTool = await loadTool();
+    const getNftHoldingsTool = await loadToolWithKey();
     const out = await getNftHoldingsTool.invoke({ address: "not-an-address" });
     const parsed = JSON.parse(out as string);
     expect(parsed.success).toBe(false);
@@ -69,20 +76,15 @@ describe("getNftHoldingsTool", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("returns an error envelope when ALCHEMY_API_KEY is not set", async () => {
+  it("is null when ALCHEMY_API_KEY is not set (tool is lazy-registered)", async () => {
     delete process.env.ALCHEMY_API_KEY;
-    const getNftHoldingsTool = await loadTool();
-    const out = await getNftHoldingsTool.invoke({
-      address: "0xc9c31b1Ad61713B10b30C38Fd88Ab0968B61EC33",
-    });
-    const parsed = JSON.parse(out as string);
-    expect(parsed.success).toBe(false);
-    expect(parsed.error).toMatch(/ALCHEMY_API_KEY/);
+    const mod = await import("@/backend/tool/crypto/get-nft-holdings");
+    expect(mod.getNftHoldingsTool).toBeNull();
   });
 
   it("hits the Alchemy Portfolio nfts/by-address endpoint with the right shape", async () => {
     process.env.ALCHEMY_API_KEY = "test-key";
-    const getNftHoldingsTool = await loadTool();
+    const getNftHoldingsTool = await loadToolWithKey();
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { data: { ownedNfts: [], totalCount: 0 } }));
     await getNftHoldingsTool.invoke({
       address: "0xc9c31b1Ad61713B10b30C38Fd88Ab0968B61EC33",
@@ -94,7 +96,13 @@ describe("getNftHoldingsTool", () => {
     expect(body.addresses).toEqual([
       {
         address: "0xc9c31b1Ad61713B10b30C38Fd88Ab0968B61EC33",
-        networks: expect.arrayContaining(["eth-mainnet", "arb-mainnet", "opt-mainnet", "base-mainnet", "polygon-mainnet"]),
+        networks: expect.arrayContaining([
+          "eth-mainnet",
+          "arb-mainnet",
+          "opt-mainnet",
+          "base-mainnet",
+          "polygon-mainnet",
+        ]),
       },
     ]);
     expect(body.withMetadata).toBe(true);
@@ -104,7 +112,7 @@ describe("getNftHoldingsTool", () => {
 
   it("returns a normalized list of NFTs from a single page", async () => {
     process.env.ALCHEMY_API_KEY = "test-key";
-    const getNftHoldingsTool = await loadTool();
+    const getNftHoldingsTool = await loadToolWithKey();
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, {
         data: {
@@ -138,7 +146,7 @@ describe("getNftHoldingsTool", () => {
 
   it("paginates with pageKey until the upstream returns null", async () => {
     process.env.ALCHEMY_API_KEY = "test-key";
-    const getNftHoldingsTool = await loadTool();
+    const getNftHoldingsTool = await loadToolWithKey();
     fetchMock
       .mockResolvedValueOnce(
         jsonResponse(200, {
@@ -170,7 +178,7 @@ describe("getNftHoldingsTool", () => {
 
   it("filters out airdrop-bait NFTs that slipped past excludeSpam", async () => {
     process.env.ALCHEMY_API_KEY = "test-key";
-    const getNftHoldingsTool = await loadTool();
+    const getNftHoldingsTool = await loadToolWithKey();
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, {
         data: {
@@ -214,7 +222,7 @@ describe("getNftHoldingsTool", () => {
 
   it("returns an empty list (not an error) when the wallet holds nothing", async () => {
     process.env.ALCHEMY_API_KEY = "test-key";
-    const getNftHoldingsTool = await loadTool();
+    const getNftHoldingsTool = await loadToolWithKey();
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { data: { ownedNfts: [], totalCount: 0, pageKey: null } }),
     );
@@ -229,7 +237,7 @@ describe("getNftHoldingsTool", () => {
 
   it("propagates API failures as a serialized error result", async () => {
     process.env.ALCHEMY_API_KEY = "test-key";
-    const getNftHoldingsTool = await loadTool();
+    const getNftHoldingsTool = await loadToolWithKey();
     fetchMock.mockResolvedValueOnce(jsonResponse(401, { error: "unauthorized" }));
     const out = await getNftHoldingsTool.invoke({
       address: "0xc9c31b1Ad61713B10b30C38Fd88Ab0968B61EC33",
@@ -241,7 +249,7 @@ describe("getNftHoldingsTool", () => {
 
   it("normalizes NFTs that lack image data to null URLs (no crash)", async () => {
     process.env.ALCHEMY_API_KEY = "test-key";
-    const getNftHoldingsTool = await loadTool();
+    const getNftHoldingsTool = await loadToolWithKey();
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, {
         data: {

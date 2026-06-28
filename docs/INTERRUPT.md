@@ -107,8 +107,8 @@ as the resume value:
 
 ```ts
 type ConnectWalletResume =
-  | { address: `0x${string}`; chainId: number }     // user picked a wallet
-  | { cancelled: true; message?: string };          // user dismissed the modal
+  | { address: `0x${string}`; chainId: number } // user picked a wallet
+  | { cancelled: true; message?: string }; // user dismissed the modal
 ```
 
 ### `place_crypto_order` — crypto trade flow, step 2
@@ -119,7 +119,7 @@ Payload:
 
 ```ts
 type PlaceCryptoOrderResume =
-  | SimulatedOrder        // status: "simulated_filled", has order_uid + amounts
+  | SimulatedOrder // status: "simulated_filled", has order_uid + amounts
   | { status: "cancelled"; message?: string };
 ```
 
@@ -131,8 +131,24 @@ on-chain order, so the card synthesizes a status on click. Payload:
 
 ```ts
 type GetOrderStatusResume =
-  | { status: "open" | "filled" | "cancelled" | "expired" | "partially_filled"; /* … */ }
+  | { status: "open" | "filled" | "cancelled" | "expired" | "partially_filled" /* … */ }
   | { status: "error"; message: string };
+```
+
+### `write_code` — code agent, step 1
+
+Tool (`backend/tool/code/index.ts`) shows the user a code editor with
+a Run button. The user can edit, then click Run. The tool returns the
+resume payload to the LLM, which then calls `execute_code` with the
+code from the run payload. `execute_code` is only registered when
+`DENO_DEPLOY_TOKEN` + `DENO_DEPLOY_SANDBOX_URL` are both set — when
+they aren't, the model surfaces a graceful fallback (inline compute
+or "I can't execute right now") after a Run. Payload:
+
+```ts
+type WriteCodeResume =
+  | { action: "run"; code: string } // user clicked Run, possibly after editing
+  | { action: "cancel" }; // user dismissed the editor
 ```
 
 ## Adding a new interrupt-driven tool

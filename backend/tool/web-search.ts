@@ -1,10 +1,11 @@
-import { tool } from "@langchain/core/tools";
+import { tool, type StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 
-import { jinaFetch } from "@/lib/jina";
+import { hasKeys, jinaFetch } from "@/lib/jina";
 
-// ponytail: s.jina.ai/{query} is a search endpoint — same auth surface as
-// the reader, so the key pool is shared via jinaFetch.
+// ponytail: s.jina.ai/{query} requires a key. The tool is only
+// registered when JINA_API_KEYS is non-empty, so the model never sees
+// a search tool that would 401 on every call.
 
 const schema = z.object({
   query: z
@@ -31,9 +32,11 @@ async function impl({ query }: { query: string }): Promise<string> {
   return JSON.stringify({ query, results });
 }
 
-export const searchWeb = tool(impl, {
-  name: "search_web",
-  description:
-    "Search the web for a keyword or natural-language query and return the top results with title, URL, and snippet. Use this when the user asks a question that needs current or external information.",
-  schema,
-});
+export const searchWeb: StructuredTool | null = hasKeys()
+  ? tool(impl, {
+      name: "search_web",
+      description:
+        "Search the web for a keyword or natural-language query and return the top results with title, URL, and snippet. Use this when the user asks a question that needs current or external information.",
+      schema,
+    })
+  : null;

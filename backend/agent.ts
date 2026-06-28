@@ -6,11 +6,12 @@ import { afterAgentNode } from "@/backend/node/after-agent-node";
 import { weatherAgent } from "@/backend/agent/weather-agent";
 import { chatAgent } from "@/backend/agent/chat-agent";
 import { cryptoAgent } from "@/backend/agent/crypto-agent";
+import { codeAgent } from "@/backend/agent/code-agent";
 import { routerAgentNode } from "@/backend/node/router-agent-node";
 import { checkpointer } from "@/backend/checkpointer";
 import { RouterAgentState } from "@/backend/state";
 import { chatModel } from "@/backend/model";
-import { ALL_TOOLS, WEATHER_TOOLS, CRYPTO_TOOLS } from "@/backend/tool";
+import { ALL_TOOLS, WEATHER_TOOLS, CRYPTO_TOOLS, CODE_TOOLS } from "@/backend/tool";
 import { CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
 
 // USE_SUBGRAPH=true switches the compiled graph between two topologies.
@@ -30,8 +31,8 @@ const USE_SUBGRAPH = process.env.USE_SUBGRAPH === "true" || process.env.USE_SUBG
 function routeToSubAgent({
   routerDecision,
 }: {
-  routerDecision?: { next: "weatherAgent" | "chatAgent" | "cryptoAgent" };
-}): "weatherAgent" | "chatAgent" | "cryptoAgent" {
+  routerDecision?: { next: "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" };
+}): "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" {
   return routerDecision?.next ?? "chatAgent";
 }
 
@@ -48,11 +49,14 @@ function buildSubgraph() {
       .addNode("renameThreadAgent", renameThreadAgentNode)
       .addNode("weatherAgent", weatherAgent)
       .addNode("cryptoAgent", cryptoAgent)
-      // Sequential: START → routerAgent → (weatherAgent | chatAgent | cryptoAgent) → afterAgent → END.
+      .addNode("codeAgent", codeAgent)
+      // Sequential: START → routerAgent → (weatherAgent | chatAgent | cryptoAgent | codeAgent) → afterAgent → END.
       // ask_location's picker card is owned by the weather subgraph
       // (see backend/agent/weather-agent.ts + components/tool-ui/ask-location).
       // ask_crypto_intent's picker card is owned by the crypto subgraph
       // (see backend/agent/crypto-agent.ts + components/tool-ui/crypto).
+      // write_code's editor card is owned by the code subgraph
+      // (see backend/agent/code-agent.ts + components/tool-ui/code).
       // renameThreadAgent is wired off START so its DB side-effect runs in
       // parallel without touching the messages channel.
       .addEdge(START, "routerAgent")
@@ -60,10 +64,12 @@ function buildSubgraph() {
         "weatherAgent",
         "chatAgent",
         "cryptoAgent",
+        "codeAgent",
       ])
       .addEdge("chatAgent", "afterAgent")
       .addEdge("weatherAgent", "afterAgent")
       .addEdge("cryptoAgent", "afterAgent")
+      .addEdge("codeAgent", "afterAgent")
       .addEdge("afterAgent", END)
       .addEdge(START, "renameThreadAgent")
       .addEdge("renameThreadAgent", END)
@@ -100,9 +106,19 @@ async function cryptoModelNode({ messages }: { messages: BaseMessage[] }) {
   return { messages: [response] };
 }
 
+async function codeModelNode({ messages }: { messages: BaseMessage[] }) {
+  const { CODE_AGENT_PROMPT } = await import("@/backend/prompt/system");
+  const history = messages.filter((m) => !(m instanceof SystemMessage));
+  const response = await chatModel
+    .bindTools(CODE_TOOLS)
+    .invoke([new SystemMessage(CODE_AGENT_PROMPT), ...history]);
+  return { messages: [response] };
+}
+
 const weatherToolNode = new ToolNode(WEATHER_TOOLS);
 const chatToolNode = new ToolNode(ALL_TOOLS);
 const cryptoToolNode = new ToolNode(CRYPTO_TOOLS);
+const codeToolNode = new ToolNode(CODE_TOOLS);
 
 // toolsCondition only inspects the last AI message, so its return value is
 // independent of what the tool node is named — we just remap "tools" → our
@@ -116,6 +132,9 @@ function chatRoute(state: { messages: BaseMessage[] }) {
 function cryptoRoute(state: { messages: BaseMessage[] }) {
   return toolsCondition(state) === END ? "afterAgent" : "cryptoTools";
 }
+function codeRoute(state: { messages: BaseMessage[] }) {
+  return toolsCondition(state) === END ? "afterAgent" : "codeTools";
+}
 
 function buildInlined() {
   return (
@@ -127,18 +146,22 @@ function buildInlined() {
       .addNode("chatTools", chatToolNode)
       .addNode("cryptoModel", cryptoModelNode)
       .addNode("cryptoTools", cryptoToolNode)
+      .addNode("codeModel", codeModelNode)
+      .addNode("codeTools", codeToolNode)
       .addNode("afterAgent", afterAgentNode)
       .addNode("renameThreadAgent", renameThreadAgentNode)
-      // Sequential: START → routerAgent → (weatherModel | chatModel | cryptoModel) →
-      //   (weatherTools | chatTools | cryptoTools)* → afterAgent → END.
+      // Sequential: START → routerAgent → (weatherModel | chatModel | cryptoModel | codeModel) →
+      //   (weatherTools | chatTools | cryptoTools | codeTools)* → afterAgent → END.
       // ask_location's picker card is owned by the weather model/tool loop
       // (see components/tool-ui/ask-location). ask_crypto_intent's picker
       // card is owned by the crypto loop (see components/tool-ui/crypto).
+      // write_code's editor card is owned by the code loop (see components/tool-ui/code).
       .addEdge(START, "routerAgent")
       .addConditionalEdges("routerAgent", routeToSubAgent, {
         weatherAgent: "weatherModel",
         chatAgent: "chatModel",
         cryptoAgent: "cryptoModel",
+        codeAgent: "codeModel",
       })
       .addConditionalEdges("weatherModel", weatherRoute, ["weatherTools", "afterAgent"])
       .addEdge("weatherTools", "weatherModel")
@@ -146,6 +169,8 @@ function buildInlined() {
       .addEdge("chatTools", "chatModel")
       .addConditionalEdges("cryptoModel", cryptoRoute, ["cryptoTools", "afterAgent"])
       .addEdge("cryptoTools", "cryptoModel")
+      .addConditionalEdges("codeModel", codeRoute, ["codeTools", "afterAgent"])
+      .addEdge("codeTools", "codeModel")
       .addEdge("afterAgent", END)
       .addEdge(START, "renameThreadAgent")
       .addEdge("renameThreadAgent", END)

@@ -106,10 +106,7 @@ function readCollapsedSet(): Set<string> {
 function writeCollapsedSet(set: Set<string>): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(
-      NFT_GALLERY_COLLAPSED_STORAGE_KEY,
-      JSON.stringify(Array.from(set)),
-    );
+    window.localStorage.setItem(NFT_GALLERY_COLLAPSED_STORAGE_KEY, JSON.stringify(Array.from(set)));
   } catch {
     // Quota exceeded or storage disabled — silently ignore. The in-memory
     // state still updates; only the persistence is lost.
@@ -178,16 +175,9 @@ function NftImage({
   if (!src || failed) {
     return (
       <div
-        className={cn(
-          "bg-muted text-muted-foreground flex items-center justify-center",
-          className,
-        )}
+        className={cn("bg-muted text-muted-foreground flex items-center justify-center", className)}
       >
-        {isVideo ? (
-          <PlayCircleIcon className="size-12" />
-        ) : (
-          <ImageOffIcon className="size-12" />
-        )}
+        {isVideo ? <PlayCircleIcon className="size-12" /> : <ImageOffIcon className="size-12" />}
       </div>
     );
   }
@@ -345,26 +335,27 @@ function CollectionGroup({
                 key={c.contractAddress}
                 className=" inline-flex items-center gap-1 rounded-full text-[10px]"
               >
-                <AddressOrHash value={c.contractAddress} head={4} tail={3} className="!text-[10px]" showCopyButton={false} asCode={false} />
+                <AddressOrHash
+                  value={c.contractAddress}
+                  head={4}
+                  tail={3}
+                  className="!text-[10px]"
+                  showCopyButton={false}
+                  asCode={false}
+                />
                 <span className="text-muted-foreground tabular-nums">×{c.items.length}</span>
               </span>
             ))}
           </span>
         </span>
-        <span className="text-muted-foreground shrink-0 text-[10px] tabular-nums">
-          {total}
-        </span>
+        <span className="text-muted-foreground shrink-0 text-[10px] tabular-nums">{total}</span>
       </button>
 
       {!collapsed ? (
         <>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" data-testid="nft-grid">
             {allItems.slice(0, visible).map((nft) => (
-              <NftTile
-                key={`${nft.contractAddress}-${nft.tokenId}`}
-                nft={nft}
-                onOpen={onOpen}
-              />
+              <NftTile key={`${nft.contractAddress}-${nft.tokenId}`} nft={nft} onOpen={onOpen} />
             ))}
           </div>
           {hidden > 0 ? (

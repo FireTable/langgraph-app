@@ -510,8 +510,7 @@ function PreviewWorkspace({
               className="absolute right-0 bottom-0 h-0.75 w-full origin-right transition-transform duration-1000 ease-linear"
               style={{
                 transform: `scaleX(${refreshProgress})`,
-                background:
-                  "linear-gradient(to left, var(--glow-warm), var(--glow-bright))",
+                background: "linear-gradient(to left, var(--glow-warm), var(--glow-bright))",
               }}
             />
           )}

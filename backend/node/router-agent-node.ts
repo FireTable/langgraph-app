@@ -15,7 +15,7 @@ import { ROUTER_AGENT_PROMPT } from "@/backend/prompt/system";
 // `routerDecision` to the state. `tags: ["nostream"]` keeps the run's
 // token stream free of the router's internal reasoning.
 const RouteDecisionSchema = z.object({
-  next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent"]),
+  next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent"]),
 });
 
 export type RouterDecision = z.infer<typeof RouteDecisionSchema>;

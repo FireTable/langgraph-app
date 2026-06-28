@@ -257,7 +257,12 @@ export function Assistant() {
         title: "Show me my NFTs",
         label: "",
         prompt: "Show me my NFTs",
-      }
+      },
+      {
+        title: "Write a Typescript function to solve `Two Sum` leetcode problem",
+        label: "",
+        prompt: "Write a Typescript function to solve `Two Sum` leetcode problem",
+      },
     ]),
   });
 

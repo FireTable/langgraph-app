@@ -57,6 +57,7 @@ Copy `.env.example` to `.env.local` and fill in:
 - `NEXT_PUBLIC_CRYPTO_REAL_SWAP` — feature flag for the live Uniswap V3 swap path. Unset/`false` keeps `place_crypto_order` in SIMULATED mode (Mock Coin balance, no signing, no broadcast). Set `true` to enable the real path (currently dormant).
 - `USE_SUBGRAPH` — backend graph topology toggle. `true` uses compiled `weatherAgent` / `chatAgent` / `cryptoAgent` subgraphs; unset (default) uses the inlined version that flattens them into the parent graph. The inlined default is a workaround for the `@langchain/core@1.2.1` `EventStreamCallbackHandler` "Run ID not found in run map" bug that LangGraph JS subgraphs trigger — see `memory/langgraph-subgraph-run-map-bug.md`.
 - `NEXT_PUBLIC_USE_SUBGRAPH` — frontend mirror of `USE_SUBGRAPH`. Required because Next.js only inlines `NEXT_PUBLIC_*` vars into the browser bundle; the frontend reads this to decide whether to render the interrupt-UI card (`InterruptUI`) or the inline tool-call card.
+- `DENO_DEPLOY_TOKEN` + optional `DENO_DEPLOY_ORG` — server-only. Used by the code agent's `execute_code` tool via the `@deno/sandbox` SDK to run TypeScript / JavaScript / Python in a Deno Deploy Sandbox (Firecracker microVM). TS/JS go through `deno eval`; Python goes through `python3 -c` (sandbox image ships CPython 3.13, stdlib only). An organization token (prefix `ddo_`) only needs `DENO_DEPLOY_TOKEN`; a personal token (prefix `ddp_`) also needs `DENO_DEPLOY_ORG` (the org slug from the console URL). When unset, `execute_code` is not registered — `write_code` still works, and on Run the model surfaces a graceful fallback. Create a token at https://console.deno.com/ → Sandbox tab.
 
 LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`) and pins Node 22.
 
@@ -303,13 +304,76 @@ vi.mock("@/lib/auth/config", () => ({ auth: { api: { getSession } } }));
 
 beforeEach(() => {
   getSession.mockReset();
-  getSession.mockResolvedValue({ user: { id: "u1", email: "u1@example.com" }, session: { id: "s1", userId: "u1" } });
+  getSession.mockResolvedValue({
+    user: { id: "u1", email: "u1@example.com" },
+    session: { id: "s1", userId: "u1" },
+  });
 });
 ```
 
 If a new route handler reads `process.env` at call time, also set / restore the env in `beforeEach` / `afterEach` — see `tests/api/alchemy/status.test.ts` for the pattern.
 
 Rationale: the tool-ui cards are short-lived surfaces with one or two clear actions. Icons + text compete for attention and bloat the layout without adding signal. Text-only buttons stay scannable and match the rest of the assistant-ui primitives.
+
+### 11. Use `components/tool-ui/primitives/` for card chrome — don't inline it
+
+**Rule.** Every tool-ui card shares the same chrome: a rounded border
+shell, an icon-circle header, and (sometimes) a destructive or muted
+banner. Re-typing these in a new card is a bug factory — the same
+overflow / spacing / icon-size fix has to be applied in N places.
+
+The four primitives under `components/tool-ui/primitives/`:
+
+- `CardShell` — outer wrapper + inner flex container
+- `CardHeader` — icon circle + title + subtitle (+ optional trailing)
+- `ErrorBanner` — destructive surface for tool failures (supports a
+  `monospace` flag for stack-trace content)
+- `SuccessBanner` — neutral muted surface for resolved states
+
+When you add a tool-ui card, start from `<CardShell>` and `<CardHeader>`.
+If you need a one-off error or success surface, reach for `ErrorBanner` /
+`SuccessBanner` first — only inline a new variant when none of them fit.
+
+Two non-obvious details baked into the primitives (so they don't get
+re-broken by a "quick inline" later):
+
+- The error `<span>` is `min-w-0 flex-1` plus `break-all` in monospace
+  mode. Without those, long stack-trace lines (no spaces, e.g.
+  `file:///home/app/$deno$eval.mts:1:7`) overflow the card — the
+  card's `overflow-hidden` clips, but the visual is still wrong.
+- The icon inside the circle is a flat lucide icon at `size-4`, not a
+  `CheckCircle2Icon` / `AlertCircleIcon` (the circle is already
+  drawn by the wrapper; a circle inside a circle looks small).
+
+If you add a new primitive, drop it next to the existing four and
+add a row to the "Shared UI primitives" section in `docs/TOOLS.md`.
+
+### 10. Tools that need a third-party key MUST be lazy-registered
+
+**Rule.** A tool that calls a third-party API which requires a server-side key (e.g. `search_web` → `JINA_API_KEYS`, `get_NFT_holdings` → `ALCHEMY_API_KEY`, `execute_code` → `DENO_DEPLOY_TOKEN`) must:
+
+1. Be defined as `StructuredTool | null`, gated on `process.env.<KEY>` at module load.
+2. Be spread into `ALL_TOOLS` (and any group array it belongs to) with a `...(tool ? [tool] : [])` so a missing key drops it from the agent's tool list — the model never sees a tool that would 401 on every call.
+3. Be documented in `docs/TOOLS.md` under "Tool ↔ API key".
+
+```ts
+// in the tool file
+export const getNftHoldingsTool: StructuredTool | null = process.env.ALCHEMY_API_KEY
+  ? tool(impl, { name: "get_NFT_holdings", ... })
+  : null;
+
+// in backend/tool/index.ts
+export const CRYPTO_TOOLS = [
+  ...,
+  ...(getNftHoldingsTool ? [getNftHoldingsTool] : []),
+];
+```
+
+`fetch_url` is the one exception — r.jina.ai accepts unauthenticated requests on the free tier, so it's always registered. `lib/jina.ts` falls through to a no-Auth `fetch` when the pool is empty.
+
+Why: if a tool is registered without a key, the model invokes it, the upstream returns 401, and the user sees a runtime error mid-conversation. Conditional registration is one line of code and converts that failure mode into a graceful degradation — the model just doesn't know the tool exists and falls back to prose.
+
+When you add a key-needing tool, also update `.env.example` (with the sign-up URL) and the "Tool ↔ API key" table in `docs/TOOLS.md`.
 
 ## Things to know before editing
 

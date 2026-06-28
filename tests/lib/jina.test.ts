@@ -137,9 +137,18 @@ describe("jinaFetch", () => {
     expect(poolSize()).toBe(0);
   });
 
-  it("throws immediately when pool starts empty", async () => {
+  it("falls through to a no-Auth fetch when pool starts empty (r.jina.ai supports unauth)", async () => {
     _resetForTests(undefined);
-    await expect(jinaFetch("https://r.jina.ai/u")).rejects.toThrow(/empty/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { data: { content: "free" } }));
+
+    const res = await jinaFetch("https://r.jina.ai/u", { headers: { Accept: "application/json" } });
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // No Authorization header when the pool is empty.
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.headers).toBeDefined();
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
+    // Caller's headers are still passed through.
+    expect((init.headers as Record<string, string>).Accept).toBe("application/json");
   });
 });
