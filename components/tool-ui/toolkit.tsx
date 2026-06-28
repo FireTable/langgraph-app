@@ -12,6 +12,7 @@ import {
   OrderStatusCard,
   PlaceCryptoOrderCard,
 } from "@/components/tool-ui/crypto";
+import { WriteCodeCard, ExecuteCodeResult } from "@/components/tool-ui/code";
 
 // Frontend-side tool registrations. `execute` lives on the LangGraph
 // backend (backend/tool/) and is dispatched via useLangGraphRuntime —
@@ -88,7 +89,30 @@ const cryptoToolkit = defineToolkit({
   },
 });
 
+const codeToolkit = defineToolkit({
+  write_code: {
+    description:
+      "Render a code editor card. Pauses for the user to review and click Run. The card sends a resume payload to the model; the model then calls execute_code with the returned code. Reused by InterruptUI in subgraph mode.",
+    parameters: z.object({
+      code: z.string(),
+      language: z.string().optional(),
+    }),
+    render: WriteCodeCard,
+  },
+  execute_code: {
+    description:
+      "Run TypeScript in a Deno Deploy Sandbox. Read-only result card. Tool is only registered when DENO_DEPLOY_TOKEN is set; the server-side filter handles the missing-token case.",
+    parameters: z.object({
+      code: z.string(),
+      input: z.unknown().optional(),
+      timeoutMs: z.number().optional(),
+    }),
+    render: ExecuteCodeResult,
+  },
+});
+
 export default defineToolkit({
   ...weatherToolkit,
   ...cryptoToolkit,
+  ...codeToolkit,
 });
