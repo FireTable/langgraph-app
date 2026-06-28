@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+type WritableStream<T> = globalThis.WritableStream<T>;
+
 vi.mock("@langchain/langgraph", async () => {
   const actual =
     await vi.importActual<typeof import("@langchain/langgraph")>("@langchain/langgraph");
@@ -26,12 +28,29 @@ vi.mock("@deno/sandbox", () => {
 
 const { interrupt: interruptMock } = await import("@langchain/langgraph");
 
-function makeChildMock() {
+function makeChildMock(stdinStream: WritableStream<Uint8Array<ArrayBuffer>> | null = null) {
+  // ponytail: the SDK's ChildProcess type narrows `stdin` to null when
+  // `stdin: "null"` was passed at spawn, so the default is null. Tests
+  // that exercise the `stdin: "piped"` branch override this with a
+  // recording stream (see the `it("pipes input to …")` block).
   return {
     output: sandboxChildOutput,
     kill: sandboxChildKill,
     status: Promise.resolve(sandboxChildStatus),
+    stdin: stdinStream,
   };
+}
+
+function makeRecordingStdin() {
+  const chunks: Uint8Array[] = [];
+  const writer = {
+    write: vi.fn(async (chunk: Uint8Array) => {
+      chunks.push(chunk);
+    }),
+    close: vi.fn().mockResolvedValue(undefined),
+    releaseLock: vi.fn(),
+  };
+  return { stream: { getWriter: () => writer } as unknown as WritableStream<Uint8Array<ArrayBuffer>>, chunks, writer };
 }
 
 beforeEach(() => {
@@ -84,6 +103,7 @@ describe("denoRun", () => {
     expect(createOpts.org).toBeUndefined();
     expect(sandboxSpawn).toHaveBeenCalledWith("deno", {
       args: ["eval", "1 + 1"],
+      stdin: "null",
       stdout: "piped",
       stderr: "piped",
     });
@@ -140,6 +160,62 @@ describe("denoRun", () => {
       expect(result.error).toMatch(/Timeout/);
     }
     expect(sandboxChildKill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("pipes string input verbatim to the child stdin and closes it", async () => {
+    process.env.DENO_DEPLOY_TOKEN = "test-token";
+    const stdin = makeRecordingStdin();
+    sandboxSpawn.mockResolvedValueOnce(makeChildMock(stdin.stream));
+    sandboxChildOutput.mockResolvedValueOnce({
+      status: { success: true, code: 0 },
+      stdoutText: "ok",
+      stderrText: "",
+    });
+
+    const { denoRun } = await import("@/backend/tool/code");
+    const result = await denoRun("console.log('x')", { input: "hello" });
+
+    expect(sandboxSpawn).toHaveBeenCalledWith(
+      "deno",
+      expect.objectContaining({ stdin: "piped" }),
+    );
+    expect(stdin.writer.write).toHaveBeenCalledTimes(1);
+    const written = stdin.writer.write.mock.calls[0][0] as Uint8Array;
+    expect(new TextDecoder().decode(written)).toBe("hello");
+    expect(stdin.writer.close).toHaveBeenCalledTimes(1);
+    expect(stdin.writer.releaseLock).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+  });
+
+  it("JSON-serializes non-string input before writing to stdin", async () => {
+    process.env.DENO_DEPLOY_TOKEN = "test-token";
+    const stdin = makeRecordingStdin();
+    sandboxSpawn.mockResolvedValueOnce(makeChildMock(stdin.stream));
+    sandboxChildOutput.mockResolvedValueOnce({
+      status: { success: true, code: 0 },
+      stdoutText: "ok",
+      stderrText: "",
+    });
+
+    const { denoRun } = await import("@/backend/tool/code");
+    await denoRun("console.log(input)", { input: { count: 3, ids: [1, 2] } });
+
+    const written = stdin.writer.write.mock.calls[0][0] as Uint8Array;
+    expect(JSON.parse(new TextDecoder().decode(written))).toEqual({ count: 3, ids: [1, 2] });
+  });
+
+  it("uses stdin: \"null\" (does not write) when no input is provided", async () => {
+    process.env.DENO_DEPLOY_TOKEN = "test-token";
+    sandboxChildOutput.mockResolvedValueOnce({
+      status: { success: true, code: 0 },
+      stdoutText: "ok",
+      stderrText: "",
+    });
+
+    const { denoRun } = await import("@/backend/tool/code");
+    await denoRun("1 + 1");
+
+    expect(sandboxSpawn).toHaveBeenCalledWith("deno", expect.objectContaining({ stdin: "null" }));
   });
 });
 

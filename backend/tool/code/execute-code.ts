@@ -42,7 +42,9 @@ export const executeCodeTool: StructuredTool | null = process.env.DENO_DEPLOY_TO
           input: z
             .unknown()
             .optional()
-            .describe("Optional value available as `input` in the code."),
+            .describe(
+              "Optional stdin payload. Strings are written verbatim; other values are JSON-serialized. The child reads it via `Deno.stdin.readable` (TS/JS) or `sys.stdin.read()` (Python). When omitted, stdin is closed before the child starts.",
+            ),
           language: z
             .enum(["typescript", "javascript", "python"])
             .optional()

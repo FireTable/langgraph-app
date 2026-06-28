@@ -39,6 +39,9 @@ export type DenoRunResult =
 
 export type DenoRunOptions = {
   timeoutMs?: number;
+  /** Forwarded to the child process's stdin. Strings are written verbatim;
+   *  other values are JSON-serialized. When undefined, stdin is closed
+   *  before the child starts. */
   input?: unknown;
   language?: "typescript" | "javascript" | "python";
 };
@@ -68,13 +71,18 @@ export async function denoRun(code: string, opts: DenoRunOptions = {}): Promise<
     });
 
     const language = opts.language ?? "typescript";
+    const hasInput = opts.input !== undefined;
     const spawnSpec =
       language === "python"
         ? { cmd: "python3", args: ["-c", code] as string[] }
         : { cmd: "deno", args: ["eval", code] as string[] };
 
+    // ponytail: stdin is "null" when there's no input so the child sees
+    // an immediately-closed read end (and any read() returns 0). When
+    // input is provided, leave stdin "piped" and write + close it below.
     const child = await sandbox.spawn(spawnSpec.cmd, {
       args: spawnSpec.args,
+      stdin: hasInput ? "piped" : "null",
       stdout: "piped",
       stderr: "piped",
     });
@@ -90,6 +98,24 @@ export async function denoRun(code: string, opts: DenoRunOptions = {}): Promise<
 
     let output: Awaited<ReturnType<typeof child.output>>;
     try {
+      if (hasInput) {
+        // ponytail: string → verbatim, anything else → JSON. The user picks
+        // a payload shape and the child decides how to read it
+        // (e.g. `await new Response(Deno.stdin.readable).text()`,
+        // `sys.stdin.read()`). Stream must be closed manually per SDK docs.
+        const payload = typeof opts.input === "string" ? opts.input : JSON.stringify(opts.input);
+        // ! — the `stdin: hasInput ? "piped" : "null"` branch above guarantees
+        // child.stdin is non-null when hasInput is true. The SDK type widens
+        // to `WritableStream | null` because the getter reflects whatever
+        // option was passed at spawn time.
+        const writer = child.stdin!.getWriter();
+        try {
+          await Promise.race([writer.write(new TextEncoder().encode(payload)), timeoutPromise]);
+          await Promise.race([writer.close(), timeoutPromise]);
+        } finally {
+          writer.releaseLock();
+        }
+      }
       output = await Promise.race([child.output(), timeoutPromise]);
     } catch (e) {
       if (e instanceof Error && e.message === "Timeout") {
