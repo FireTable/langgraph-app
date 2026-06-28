@@ -442,8 +442,24 @@ const AssistantMessage: FC = () => {
                 return <MarkdownText />;
               case "reasoning":
                 return <Reasoning {...part} />;
-              case "tool-call":
-                return <ToolFallbackComponent {...part} />
+              case "tool-call": {
+                // className is forwarded through ToolFallbackRoot at
+                // runtime, but the public ToolCallMessagePartComponent
+                // type doesn't include it. Cast locally for the glow hook.
+                const TF = ToolFallbackComponent as unknown as React.ComponentType<
+                  { className?: string } & Record<string, unknown>
+                >;
+                return (
+                  <TF
+                    {...part}
+                    className={
+                      part.status?.type === "requires-action"
+                        ? "tool-call-glow-host"
+                        : undefined
+                    }
+                  />
+                );
+              }
               case "data":
                 return part.dataRendererUI;
               case "indicator":

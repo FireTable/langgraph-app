@@ -461,8 +461,18 @@ function ToolFallbackApproval({
 }
 
 const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
-  const { toolName, argsText, result, status, addResult, resume, interrupt, approval, respondToApproval } =
-    props;
+  const {
+    toolName,
+    argsText,
+    result,
+    status,
+    addResult,
+    resume,
+    interrupt,
+    approval,
+    respondToApproval,
+    className,
+  } = props as typeof props & { className?: string };
   // `toolUI` is the toolkit renderer's pre-rendered card. Not part of
   // ToolCallMessagePartProps — passed by thread.tsx as an extra prop.
   const toolUI = (props as unknown as { toolUI?: React.ReactNode }).toolUI;
@@ -480,7 +490,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
   }
 
   return (
-    <ToolFallbackRoot open={open} onOpenChange={setOpen}>
+    <ToolFallbackRoot open={open} onOpenChange={setOpen} className={className}>
       <ToolFallbackTrigger toolName={toolName} status={status} />
       <ToolFallbackContent>
         {toolUI != null ? (

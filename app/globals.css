@@ -77,6 +77,9 @@
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.705 0.015 286.067);
+  --glow-warm: oklch(0.78 0.2 25 / 0.7);
+  --glow-bright: oklch(0.96 0.08 70 / 0.8);
+  --glow-length: 90deg;
 }
 
 .dark {
@@ -171,8 +174,72 @@
   }
 }
 
+/* Tool-call interrupt glow. Thread.tsx adds `.tool-call-glow-host` to
+   ToolFallbackRoot when status.type === "requires-action"; CSS targets
+   the actual card inside via [data-slot$="-card"] and renders a single
+   traveling ring on its border via mask+conic (same technique as the
+   weather widget's Edge shine). The mask punches a hole in the
+   middle so only the 1.5px padding ring is visible. */
+@property --glow-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.tool-call-glow-host [data-slot$="-card"],
+.tool-call-glow-host [data-slot="weather-widget"] {
+  position: relative;
+  isolation: isolate;
+}
+
+.tool-call-glow-host [data-slot$="-card"]::before,
+.tool-call-glow-host [data-slot="weather-widget"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--glow-angle),
+    transparent calc(275deg - var(--glow-length) / 2),
+    var(--glow-warm) calc(275deg - var(--glow-length) / 4),
+    var(--glow-bright) calc(275deg + var(--glow-length) / 4),
+    transparent calc(275deg + var(--glow-length) / 2)
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation:
+    tool-call-marquee 4s linear infinite,
+    tool-call-breathe 2.5s ease-in-out infinite;
+}
+
+@keyframes tool-call-marquee {
+  to {
+    --glow-angle: 360deg;
+  }
+}
+@keyframes tool-call-breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-call-glow-host [data-slot$="-card"]::before,
+  .tool-call-glow-host [data-slot="weather-widget"]::before {
+    animation: none;
+  }
+}
+
 :where(.aui-md[data-status="running"]):empty::after,
-:where(.aui-md[data-status="running"]) > :where(:not(ol):not(ul):not(pre)):last-child::after,
+:where(.aui-md[data-status="running"])
+  > :where(:not(ol):not(ul):not(pre)):last-child::after,
 :where(.aui-md[data-status="running"]) > pre:last-child code::after,
 :where(.aui-md[data-status="running"])
   > :where(:is(ol, ul):last-child)
@@ -191,8 +258,8 @@
   > :where(li:last-child)::after {
   animation: aui-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   font-family:
-    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
-    "Noto Color Emoji";
+    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
   --aui-content: "\258d";
   color: var(--muted-foreground);
   content: var(--aui-content);
