@@ -3,6 +3,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
+const { getSession } = vi.hoisted(() => ({ getSession: vi.fn() }));
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers(),
+}));
+vi.mock("@/lib/auth/config", () => ({
+  auth: { api: { getSession } },
+}));
+
 function makeRequest(path: string[], body?: string, method = "POST"): Request {
   const url = `http://localhost/api/alchemy/${path.join("/")}`;
   return new Request(url, {
@@ -17,6 +25,11 @@ let originalKey: string | undefined;
 beforeEach(() => {
   originalKey = process.env.ALCHEMY_API_KEY;
   fetchMock.mockReset();
+  getSession.mockReset();
+  getSession.mockResolvedValue({
+    user: { id: "u1", email: "u1@example.com" },
+    session: { id: "s1", userId: "u1" },
+  });
 });
 
 afterEach(() => {

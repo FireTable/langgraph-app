@@ -3,6 +3,17 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
+// Auth: the route reads session via auth.api.getSession({ headers }).
+// Default = logged in so the existing proxy behaviour tests still cover
+// the upstream logic; auth.test.ts covers the 401 path.
+const { getSession } = vi.hoisted(() => ({ getSession: vi.fn() }));
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers(),
+}));
+vi.mock("@/lib/auth/config", () => ({
+  auth: { api: { getSession } },
+}));
+
 function makeRequest(path: string[], body?: string, method = "POST"): Request {
   const url = `http://localhost/api/alchemy/${path.join("/")}`;
   return new Request(url, {
@@ -26,6 +37,11 @@ beforeEach(() => {
   originalDisabled = process.env.ALCHEMY_DISABLED_NETWORKS;
   originalKey = process.env.ALCHEMY_API_KEY;
   fetchMock.mockReset();
+  getSession.mockReset();
+  getSession.mockResolvedValue({
+    user: { id: "u1", email: "u1@example.com" },
+    session: { id: "s1", userId: "u1" },
+  });
 });
 
 afterEach(() => {
@@ -147,7 +163,7 @@ describe("POST /api/alchemy/[...path] — proxy behavior", () => {
 describe("GET /api/alchemy/[...path] — healthcheck", () => {
   it("answers OPTIONS preflight with 204 + CORS headers", async () => {
     const { OPTIONS } = await import("@/app/api/alchemy/[...path]/route");
-    const res = await OPTIONS();
+    const res = OPTIONS();
     expect(res.status).toBe(204);
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
   });

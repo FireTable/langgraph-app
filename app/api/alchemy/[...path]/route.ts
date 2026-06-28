@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 
-export const runtime = "edge";
+// Runtime: nodejs (not edge). Alchemy proxy itself only forwards HTTP
+// and could run on edge, but withAuth reads the session row from
+// Postgres through drizzle/postgres-js, which needs the `net` module
+// from Node — edge throws `Failed to get session` if it tries.
 
 import { parseNetworkList, resolveAllowlist } from "@/lib/alchemy/networks";
+import { withAuth } from "@/lib/auth/with-auth";
 
 function getCorsHeaders() {
   return {
@@ -27,12 +31,12 @@ function getCorsHeaders() {
 // list of networks in its body, so the allowlist wouldn't even apply.
 async function handle(
   req: Request,
-  method: "GET" | "POST",
-  ctx: { params: Promise<{ path: string[] }> },
+  ctx: { params: { path: string[] } },
 ) {
   try {
-    const { path } = await ctx.params;
+    const { path } = ctx.params;
     const first = path?.[0];
+    const method = req.method === "POST" ? "POST" : "GET";
 
     const apiKey = process.env.ALCHEMY_API_KEY;
     if (!apiKey) {
@@ -85,8 +89,6 @@ async function handle(
   }
 }
 
-export const POST = (req: Request, ctx: { params: Promise<{ path: string[] }> }) =>
-  handle(req, "POST", ctx);
-export const GET = (req: Request, ctx: { params: Promise<{ path: string[] }> }) =>
-  handle(req, "GET", ctx);
+export const POST = withAuth<{ path: string[] }>(handle);
+export const GET = withAuth<{ path: string[] }>(handle);
 export const OPTIONS = () => new NextResponse(null, { status: 204, headers: getCorsHeaders() });

@@ -1,7 +1,22 @@
 import { type NextRequest, NextResponse } from "next/server";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
+import { withAuth } from "@/lib/auth/with-auth";
+
+// ponytail: edge catch-all proxy to LANGGRAPH_API_URL. The browser
+// sends `ANY /api/<rest>`; we forward to `${LANGGRAPH_API_URL}/<rest>`
+// with `x-api-key: LANGCHAIN_API_KEY`. We also forward the user's
+// cookie + Authorization so LangGraph can identify the calling thread.
+//
+// Auth: gated behind a Better Auth session via withAuth. The previous
+// build accepted anonymous traffic — any website's JS could create /
+// list / delete threads through this proxy. withAuth uses next/headers
+// which works on edge as of Next 14.
+//
+// SSE: most calls are streaming runs (text/event-stream). The response
+// body MUST stay a ReadableStream — buffering it to a string would
+// break the stream. We do not touch res.body before returning.
 function getCorsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
@@ -10,57 +25,63 @@ function getCorsHeaders() {
   };
 }
 
-async function handleRequest(req: NextRequest, method: string) {
-  try {
-    const path = req.nextUrl.pathname.replace(/^\/?api\//, "");
-    const url = new URL(req.url);
-    const searchParams = new URLSearchParams(url.search);
-    searchParams.delete("_path");
-    searchParams.delete("nxtP_path");
-    const queryString = searchParams.toString() ? `?${searchParams.toString()}` : "";
+async function proxyRequest(req: NextRequest | Request): Promise<Response> {
+  // Next.js always passes a NextRequest here, but withAuth's generic
+  // typing widens it to Request — narrow at the call site so we keep
+  // nextUrl access in this function.
+  const nextReq = req as NextRequest;
+  const path = nextReq.nextUrl.pathname.replace(/^\/?api\//, "");
+  const url = new URL(nextReq.url);
+  const searchParams = new URLSearchParams(url.search);
+  searchParams.delete("_path");
+  searchParams.delete("nxtP_path");
+  const queryString = searchParams.toString() ? `?${searchParams.toString()}` : "";
 
-    const options: RequestInit = {
-      method,
-      headers: {
-        "x-api-key": process.env.LANGCHAIN_API_KEY || "",
-      },
-      signal: req.signal,
-    };
+  const upstreamHeaders: Record<string, string> = {
+    "x-api-key": process.env.LANGCHAIN_API_KEY || "",
+  };
+  // Forward the user's session cookie / Authorization so LangGraph can
+  // identify the calling thread. We deliberately do NOT forward every
+  // header — only the two LangGraph consults.
+  const cookie = nextReq.headers.get("cookie");
+  if (cookie) upstreamHeaders.cookie = cookie;
+  const authorization = nextReq.headers.get("authorization");
+  if (authorization) upstreamHeaders.authorization = authorization;
 
-    if (["POST", "PUT", "PATCH"].includes(method)) {
-      options.body = await req.text();
-    }
+  const options: RequestInit = {
+    method: nextReq.method,
+    headers: upstreamHeaders,
+    signal: nextReq.signal,
+  };
 
-    const res = await fetch(`${process.env.LANGGRAPH_API_URL}/${path}${queryString}`, options);
-
-    const headers = new Headers(res.headers);
-    headers.delete("content-encoding");
-    headers.delete("content-length");
-    headers.delete("transfer-encoding");
-    const corsHeaders = getCorsHeaders();
-    for (const [key, value] of Object.entries(corsHeaders)) {
-      headers.set(key, value);
-    }
-
-    return new NextResponse(res.body, {
-      status: res.status,
-      statusText: res.statusText,
-      headers,
-    });
-  } catch (e: unknown) {
-    if (e instanceof Error) {
-      const typedError = e as Error & { status?: number };
-      return NextResponse.json({ error: typedError.message }, { status: typedError.status ?? 500 });
-    }
-    return NextResponse.json({ error: "Unknown error" }, { status: 500 });
+  if (["POST", "PUT", "PATCH"].includes(nextReq.method)) {
+    options.body = await nextReq.text();
   }
+
+  const res = await fetch(`${process.env.LANGGRAPH_API_URL}/${path}${queryString}`, options);
+
+  const headers = new Headers(res.headers);
+  headers.delete("content-encoding");
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+  for (const [key, value] of Object.entries(getCorsHeaders())) {
+    headers.set(key, value);
+  }
+
+  return new NextResponse(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
 }
 
-export const GET = (req: NextRequest) => handleRequest(req, "GET");
-export const POST = (req: NextRequest) => handleRequest(req, "POST");
-export const PUT = (req: NextRequest) => handleRequest(req, "PUT");
-export const PATCH = (req: NextRequest) => handleRequest(req, "PATCH");
-export const DELETE = (req: NextRequest) => handleRequest(req, "DELETE");
+const authedProxy = withAuth<{ path: string[] }>(async (req) => proxyRequest(req));
+
+export const GET = authedProxy;
+export const POST = authedProxy;
+export const PUT = authedProxy;
+export const PATCH = authedProxy;
+export const DELETE = authedProxy;
 export const OPTIONS = () =>
   new NextResponse(null, {
     status: 204,
