@@ -77,9 +77,9 @@
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.705 0.015 286.067);
-  --glow-warm: oklch(0.78 0.2 25 / 0.7);
-  --glow-bright: oklch(0.96 0.08 70 / 0.8);
-  --glow-length: 90deg;
+  --glow-warm: oklch(0.78 0.2 25 / 1);
+  --glow-bright: oklch(0.96 0.08 70 / 1);
+  --glow-length: 75deg;
 }
 
 .dark {

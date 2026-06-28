@@ -502,12 +502,17 @@ function PreviewWorkspace({
               edge; transform-origin: right keeps the right edge fixed
               while scaleX shrinks the bar from the left. Uses transform
               (not width) so the per-second tick only triggers a
-              compositor repaint — no layout / no reflow. */}
+              compositor repaint — no layout / no reflow. Color matches
+              the project-wide tool-call glow (warm → bright). */}
           {quote && !submitting && (
             <span
               aria-hidden
-              className="bg-primary-foreground/50 absolute right-0 bottom-0 h-1 w-full origin-right transition-transform duration-1000 ease-linear"
-              style={{ transform: `scaleX(${refreshProgress})` }}
+              className="absolute right-0 bottom-0 h-0.75 w-full origin-right transition-transform duration-1000 ease-linear"
+              style={{
+                transform: `scaleX(${refreshProgress})`,
+                background:
+                  "linear-gradient(to left, var(--glow-warm), var(--glow-bright))",
+              }}
             />
           )}
         </Button>
