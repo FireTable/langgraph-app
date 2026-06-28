@@ -32,7 +32,10 @@ afterEach(() => {
   vi.resetModules();
 });
 
-function makeRequest(path: string, init: ConstructorParameters<typeof NextRequest>[1] = {}): NextRequest {
+function makeRequest(
+  path: string,
+  init: ConstructorParameters<typeof NextRequest>[1] = {},
+): NextRequest {
   return new NextRequest(`http://localhost/${path}`, init);
 }
 
@@ -54,9 +57,7 @@ describe("withAuth gate on /api/[...path] (LangGraph proxy)", () => {
       user: { id: "u1", email: "u1@example.com" },
       session: { id: "s1", userId: "u1" },
     });
-    fetchMock.mockResolvedValueOnce(
-      new Response('{"thread_id":"abc"}', { status: 200 }),
-    );
+    fetchMock.mockResolvedValueOnce(new Response('{"thread_id":"abc"}', { status: 200 }));
     const { GET } = await import("@/app/api/[..._path]/route");
     const res = await GET(makeRequest("api/threads/abc"), CTX);
     expect(res.status).toBe(200);

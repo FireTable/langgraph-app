@@ -3103,7 +3103,7 @@ function q(e) {
   return a;
 }
 function W(e, t) {
-  if (!(!e && !t)) return { ...(e ?? {}), ...(t ?? {}) };
+  if (!(!e && !t)) return { ...e, ...t };
 }
 function Ne(e, t) {
   return {

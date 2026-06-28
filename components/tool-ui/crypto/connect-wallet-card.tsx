@@ -97,8 +97,7 @@ export const ConnectWalletCard: ToolCallMessagePartComponent<Record<string, neve
   // [Use this wallet ▾]. The chevron half of the segmented control
   // opens a menu with "Use a different wallet".
   if (isConnected && address && chainId) {
-    const resume = () =>
-      sendCommand({ resume: JSON.stringify({ address, chainId }) });
+    const resume = () => sendCommand({ resume: JSON.stringify({ address, chainId }) });
     return (
       <div
         data-slot="connect-wallet-card-connecting"
@@ -195,7 +194,10 @@ function SegmentedConfirm({
     updatePos();
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (!rootRef.current?.contains(target) && !(target as Element).closest?.("[data-slot=connect-wallet-menu]")) {
+      if (
+        !rootRef.current?.contains(target) &&
+        !(target as Element).closest?.("[data-slot=connect-wallet-menu]")
+      ) {
         setOpen(false);
       }
     };

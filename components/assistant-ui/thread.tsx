@@ -453,9 +453,7 @@ const AssistantMessage: FC = () => {
                   <TF
                     {...part}
                     className={
-                      part.status?.type === "requires-action"
-                        ? "tool-call-glow-host"
-                        : undefined
+                      part.status?.type === "requires-action" ? "tool-call-glow-host" : undefined
                     }
                   />
                 );

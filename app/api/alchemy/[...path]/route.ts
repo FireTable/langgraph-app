@@ -29,10 +29,7 @@ function getCorsHeaders() {
 // (`https://api.g.alchemy.com/data/v1/<key>/assets/<endpoint>`).
 // It's not gated by the network allowlist — Portfolio API takes the
 // list of networks in its body, so the allowlist wouldn't even apply.
-async function handle(
-  req: Request,
-  ctx: { params: { path: string[] } },
-) {
+async function handle(req: Request, ctx: { params: { path: string[] } }) {
   try {
     const { path } = ctx.params;
     const first = path?.[0];
