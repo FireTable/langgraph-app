@@ -86,7 +86,7 @@ export const ConnectWalletCard: ToolCallMessagePartComponent<Record<string, neve
     return (
       <div
         data-slot="connect-wallet-card-error"
-        className="text-destructive my-2 inline-flex items-center gap-1.5 text-xs"
+        className="text-destructive inline-flex items-center gap-1.5 text-xs"
       >
         Wallet connection cancelled: {parsed.error}
       </div>

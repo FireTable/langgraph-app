@@ -155,7 +155,7 @@ export const PlaceCryptoOrderCard: ToolCallMessagePartComponent<Args> = ({ resul
     return (
       <div
         data-slot="place-crypto-order-card-error"
-        className="text-destructive my-2 inline-flex items-center gap-1.5 text-xs"
+        className="text-destructive inline-flex items-center gap-1.5 text-xs"
       >
         <AlertCircleIcon className="size-3.5" />
         Quote failed: {parsed.error}

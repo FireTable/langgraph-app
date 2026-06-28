@@ -111,11 +111,11 @@ export const CryptoPriceCard: ToolCallMessagePartComponent<Args, Result> = ({ re
   }
   if (parsed.kind === "error") {
     return (
-      <div className="text-destructive my-2 text-xs">Couldn't fetch prices: {parsed.message}</div>
+      <div className="text-destructive text-xs">Couldn't fetch prices: {parsed.message}</div>
     );
   }
   if (parsed.coins.length === 0) {
-    return <div className="text-muted-foreground my-2 text-xs">No coins matched those ids.</div>;
+    return <div className="text-muted-foreground text-xs">No coins matched those ids.</div>;
   }
 
   return (
