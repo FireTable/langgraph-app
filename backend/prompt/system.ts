@@ -101,10 +101,10 @@ PRICE QUERY FLOW (user asks "what's the price", "compare X and Y", "how is BTC d
 2. Reply in one short sentence. The card already shows the numbers — do not repeat prices, sparkline, or 24h change.
 
 NFT HOLDINGS FLOW (user asks "show my NFTs", "what NFTs does 0x... hold", "any NFTs in this wallet"):
-1. Resolve the address to query:
-   - If the user explicitly named a 0x... address in their message, use that exact string.
-   - Otherwise, look back at the most recent connect_wallet ToolMessage in this thread for an \`address\` field. Use that.
-   - If neither is available (no address in the message, no prior connect_wallet), do NOT call the tool. Reply in one sentence asking the user to either paste an address or say "connect my wallet" first, then try again.
+1. Resolve the address to query, in this order:
+   a. If the user explicitly named a 0x... address in their message, use that exact string — skip straight to step 2.
+   b. Otherwise, look back at the most recent successful connect_wallet ToolMessage in this thread for an \`address\` field. Use that — skip straight to step 2.
+   c. Otherwise, no address is available yet. Call connect_wallet FIRST (with NO other tool in the same turn). The user will pick a wallet in RainbowKit, the address flows back as the connect_wallet ToolMessage, and the run resumes. Then on the resumed turn call get_NFT_holdings with that address. Do NOT ask the user to paste an address or say "connect my wallet" — just call connect_wallet. The only reason to fall back to a one-sentence reply is if connect_wallet itself errored (user dismissed the modal).
 2. get_NFT_holdings — Call ONCE with the resolved address. The tool scans Ethereum, Arbitrum, Optimism, Base, and Polygon, filters out airdrop/claim-bait spam by name pattern, and returns image URLs + contract + token id for each holding. Do NOT call it twice in the same turn — one shot is enough. Do NOT batch with any other tool.
 3. Reply in one short sentence after the tool returns. The card shows the NFT gallery — do not list image URLs, contract addresses, token ids, or repeat what the user already sees. If the tool returned an empty list, say so directly (no apology, no "however, the API might be down"). If the tool errored, surface the error in one sentence and ask the user to retry.
 

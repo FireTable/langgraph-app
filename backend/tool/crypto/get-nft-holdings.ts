@@ -63,7 +63,13 @@ type NormalizedNft = {
   name: string;
   thumbnailUrl: string | null;
   cachedUrl: string | null;
+  /** Raw content-type from Alchemy (e.g. "image/png", "video/mp4"). Drives
+   *  the card's media-kind branching — most NFTs are images but some
+   *  (e.g. "Base is for builders") are short MP4s. */
+  contentType: string | null;
   balance: string;
+  totalSupply: string | null;
+  floorPriceEth: number | null;
 };
 
 function pickStr(...candidates: Array<string | null | undefined>): string | null {
@@ -82,6 +88,15 @@ function normalize(raw: RawNft): NormalizedNft | null {
   const tokenName = raw.name?.trim() ?? "";
   if (SPAM_NAME_RE.test(tokenName)) return null;
 
+  const rawFloor = contract.openSeaMetadata?.floorPrice;
+  let floorPriceEth: number | null = null;
+  if (typeof rawFloor === "number" && Number.isFinite(rawFloor) && rawFloor > 0) {
+    floorPriceEth = rawFloor;
+  } else if (typeof rawFloor === "string" && rawFloor.trim() !== "") {
+    const n = parseFloat(rawFloor);
+    if (Number.isFinite(n) && n > 0) floorPriceEth = n;
+  }
+
   return {
     contractAddress,
     contractName,
@@ -94,7 +109,10 @@ function normalize(raw: RawNft): NormalizedNft | null {
     name: tokenName || contractName,
     thumbnailUrl: pickStr(raw.image?.thumbnailUrl, raw.image?.cachedUrl),
     cachedUrl: pickStr(raw.image?.cachedUrl, raw.image?.originalUrl),
+    contentType: raw.image?.contentType ?? null,
     balance: raw.balance ?? "1",
+    totalSupply: contract.totalSupply ?? null,
+    floorPriceEth,
   };
 }
 
