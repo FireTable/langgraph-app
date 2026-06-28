@@ -3,18 +3,18 @@ import { z } from "zod";
 
 // Alchemy network slugs for the chains we support. Matches the slug
 // pattern used by app/api/alchemy/[...path]/route.ts. We only carry
-// chains CoW is on (Ethereum / Arbitrum / Base); other chains the
+// the mainnet L1/L2s the simulated flow surfaces; other chains the
 // Alchemy proxy accepts (Polygon, Optimism, etc.) are intentionally
-// not here until a swap path is added for them.
+// not here until a real swap path lands.
 const CHAIN_TO_ALCHEMY_SLUG: Record<number, string> = {
   1: "eth-mainnet",
   42161: "arb-mainnet",
   8453: "base-mainnet",
 };
 
-// ponytail: EIP-55 checksum matters for re-routing into CoW. Wagmi gives
-// us mixed-case addresses; we keep them as-is so the same address works
-// in both the Alchemy and CoW calls.
+// ponytail: wagmi gives us mixed-case addresses; we keep them as-is
+// so the same address works for both the Alchemy Portfolio API and
+// any future DEX integration that requires EIP-55 checksumming.
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 type AlchemyBalance = { contractAddress: string; tokenBalance: string };

@@ -58,9 +58,9 @@ const cryptoToolkit = defineToolkit({
   place_crypto_order: {
     // Pauses for one user click. Reads the wallet from wagmi
     // (auto-inferred from the most recent connect_wallet ToolMessage);
-    // picks a randomized source / target / amount, fetches a real-time
-    // CoW /quote for accurate pricing, and on click synthesizes a
-    // simulated order — no real signing, no real CoW /orders POST.
+    // spends from the auto-funded Mock Coin balance, prices the
+    // receive-side token via live CoinGecko USD, and on click
+    // synthesizes a simulated order — no real signing, no broadcast.
     description: "Render a simulated swap card and pause for the user to click Place order.",
     parameters: z.object({
       side: z.enum(["buy", "sell"]),

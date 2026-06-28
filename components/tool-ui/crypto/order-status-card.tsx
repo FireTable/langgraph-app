@@ -19,9 +19,9 @@ import { unwrapToolResult } from "@/components/tool-ui/tool-result";
 
 // OrderStatusCard — atomic status-check card. Reads the order_uid +
 // chain_id passed by the LLM, displays them, and on user click
-// synthesizes a status (this is a simulated-order demo — the real CoW
-// /orders/{uid} endpoint can't find the synthetic uid from
-// place_crypto_order). The synthesized status flows back to the LLM.
+// synthesizes a status (this is a simulated-order demo — the
+// synthetic uid from place_crypto_order isn't a real on-chain order).
+// The synthesized status flows back to the LLM.
 
 type Args = {
   order_uid: string;
@@ -72,7 +72,7 @@ export const OrderStatusCard: ToolCallMessagePartComponent<Args> = ({ result, ar
   const handleCheck = () => {
     setChecking(true);
     // Synthetic status — the order came from place_crypto_order, which
-    // never actually submits to CoW. For demo purposes, deterministically
+    // never actually submits on-chain. For demo purposes, deterministically
     // fill it (matches the "place then check" narrative).
     const payload: ResumePayload = {
       status: "filled",

@@ -1,6 +1,6 @@
 // ponytail: browser-side CoinGecko price fetcher with in-memory cache.
 // Used by the place-crypto-order card to compute receive amounts in real
-// time (no CoW /quote). Free tier, no key needed.
+// time. Free tier, no key needed.
 //
 // Fallback table is consulted when CoinGecko fails (rate-limit, network,
 // etc.) so the demo never goes blank — the card shows a stale or fake
