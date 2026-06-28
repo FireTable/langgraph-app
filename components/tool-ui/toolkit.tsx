@@ -26,9 +26,6 @@ const weatherToolkit = defineToolkit({
   geocode_location: {
     description: "Geocode a place name. Server returns coords or an error.",
     parameters: z.object({ query: z.string() }),
-    // No render — geocode is fast (≤300ms) and is an internal helper,
-    // not user-facing. Showing a card here would be noise.
-    render: () => null,
   },
   get_weather: {
     description: "Fetch and render the weather widget for the given coords.",
