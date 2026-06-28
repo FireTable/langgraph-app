@@ -19,6 +19,12 @@ import { getNftHoldingsTool } from "@/backend/tool/crypto/get-nft-holdings";
 //   3. get_order_status      — order status check (interrupt)
 // Each is its own user decision point and ToolMessage the LLM can reason
 // about independently. Cards live in components/tool-ui/crypto/.
+//
+// Tools that need a third-party key (search_web → JINA_API_KEYS,
+// get_NFT_holdings → ALCHEMY_API_KEY) are gated: they return `null`
+// when the key is missing, and the spreads below skip them. `fetch_url`
+// is unconditional because r.jina.ai accepts unauthenticated requests
+// on the free tier (lower rate limit, no key needed).
 
 export const WEATHER_TOOLS = [askLocationTool, geocodeLocationTool, getWeatherTool];
 
@@ -28,12 +34,12 @@ export const CRYPTO_TOOLS = [
   connectWalletTool,
   placeCryptoOrderTool,
   getOrderStatusTool,
-  getNftHoldingsTool,
+  ...(getNftHoldingsTool ? [getNftHoldingsTool] : []),
 ];
 
 export const ALL_TOOLS = [
   fetchUrl,
-  searchWeb,
+  ...(searchWeb ? [searchWeb] : []),
   askLocationTool,
   geocodeLocationTool,
   getWeatherTool,
@@ -42,7 +48,7 @@ export const ALL_TOOLS = [
   connectWalletTool,
   placeCryptoOrderTool,
   getOrderStatusTool,
-  getNftHoldingsTool,
+  ...(getNftHoldingsTool ? [getNftHoldingsTool] : []),
 ];
 
 export {

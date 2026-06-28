@@ -1,4 +1,4 @@
-import { tool } from "@langchain/core/tools";
+import { tool, type StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 
 const ALCHEMY_PORTFOLIO_BASE = "https://api.g.alchemy.com/data/v1";
@@ -15,13 +15,7 @@ const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 // Chains the portfolio card covers. Matches lib/alchemy/networks.ts's
 // portfolio scope — Ethereum, Arbitrum, Optimism, Base, Polygon. Order
 // is stable so chunked request URLs are deterministic for tests.
-const NETWORKS = [
-  "eth-mainnet",
-  "arb-mainnet",
-  "opt-mainnet",
-  "base-mainnet",
-  "polygon-mainnet",
-];
+const NETWORKS = ["eth-mainnet", "arb-mainnet", "opt-mainnet", "base-mainnet", "polygon-mainnet"];
 
 type RawNft = {
   contract?: {
@@ -151,58 +145,54 @@ async function fetchPage(
   };
 }
 
-export const getNftHoldingsTool = tool(
-  async ({ address }: { address: string }) => {
-    if (!ADDRESS_RE.test(address)) {
-      return JSON.stringify({
-        success: false,
-        error: "address must be a 0x-prefixed 40-hex string",
-      });
-    }
-    const apiKey = process.env.ALCHEMY_API_KEY;
-    if (!apiKey) {
-      return JSON.stringify({
-        success: false,
-        error: "ALCHEMY_API_KEY is not configured on the server",
-      });
-    }
+export const getNftHoldingsTool: StructuredTool | null = process.env.ALCHEMY_API_KEY
+  ? tool(
+      async ({ address }: { address: string }) => {
+        if (!ADDRESS_RE.test(address)) {
+          return JSON.stringify({
+            success: false,
+            error: "address must be a 0x-prefixed 40-hex string",
+          });
+        }
+        const apiKey = process.env.ALCHEMY_API_KEY!;
 
-    try {
-      const all: NormalizedNft[] = [];
-      let totalCount = 0;
-      let pageKey: string | undefined = undefined;
-      // Hard cap to keep a pathological wallet from spinning the loop.
-      // Alchemy caps at 1000 NFTs per wallet anyway (totalCount ceiling
-      // for the free tier), but defending in depth.
-      const MAX_PAGES = 20;
-      for (let i = 0; i < MAX_PAGES; i++) {
-        const page = await fetchPage(apiKey, address, pageKey);
-        all.push(...page.nfts);
-        totalCount = page.totalCount;
-        if (!page.nextPageKey) break;
-        pageKey = page.nextPageKey;
-      }
-      return JSON.stringify({
-        success: true,
-        address,
-        totalCount,
-        nfts: all,
-      });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return JSON.stringify({ success: false, error: msg });
-    }
-  },
-  {
-    name: "get_NFT_holdings",
-    description:
-      "List the NFT holdings of an EVM wallet across Ethereum, Arbitrum, Optimism, Base, and Polygon. Returns image URLs, contract name, collection slug, token id, and network for each NFT. Airdrop/claim-bait NFTs (yield-eth.net, USDC vouchers, etc.) are filtered out by name pattern in addition to Alchemy's own spam filter. The address must be a 0x-prefixed 40-hex string; the LLM should pull it from the user's message or the most recent connect_wallet ToolMessage, not invent one. If the wallet holds no NFTs, returns an empty list. Requires ALCHEMY_API_KEY to be configured on the server.",
-    schema: z.object({
-      address: z
-        .string()
-        .describe(
-          "Wallet address, 0x-prefixed 40-hex chars. Case-insensitive. Pull from the user's message or a previous connect_wallet ToolMessage — never invent.",
-        ),
-    }),
-  },
-);
+        try {
+          const all: NormalizedNft[] = [];
+          let totalCount = 0;
+          let pageKey: string | undefined = undefined;
+          // Hard cap to keep a pathological wallet from spinning the loop.
+          // Alchemy caps at 1000 NFTs per wallet anyway (totalCount ceiling
+          // for the free tier), but defending in depth.
+          const MAX_PAGES = 20;
+          for (let i = 0; i < MAX_PAGES; i++) {
+            const page = await fetchPage(apiKey, address, pageKey);
+            all.push(...page.nfts);
+            totalCount = page.totalCount;
+            if (!page.nextPageKey) break;
+            pageKey = page.nextPageKey;
+          }
+          return JSON.stringify({
+            success: true,
+            address,
+            totalCount,
+            nfts: all,
+          });
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return JSON.stringify({ success: false, error: msg });
+        }
+      },
+      {
+        name: "get_NFT_holdings",
+        description:
+          "List the NFT holdings of an EVM wallet across Ethereum, Arbitrum, Optimism, Base, and Polygon. Returns image URLs, contract name, collection slug, token id, and network for each NFT. Airdrop/claim-bait NFTs (yield-eth.net, USDC vouchers, etc.) are filtered out by name pattern in addition to Alchemy's own spam filter. The address must be a 0x-prefixed 40-hex string; the LLM should pull it from the user's message or the most recent connect_wallet ToolMessage, not invent one. If the wallet holds no NFTs, returns an empty list. Requires ALCHEMY_API_KEY to be configured on the server.",
+        schema: z.object({
+          address: z
+            .string()
+            .describe(
+              "Wallet address, 0x-prefixed 40-hex chars. Case-insensitive. Pull from the user's message or a previous connect_wallet ToolMessage — never invent.",
+            ),
+        }),
+      },
+    )
+  : null;
