@@ -205,26 +205,26 @@ Test database stays isolated from dev — never put production-like data in `lan
 
 ## Environment variables
 
-| Var                                  | Used by                   | Required?                                   |
-| ------------------------------------ | ------------------------- | ------------------------------------------- |
-| `OPENAI_API_KEY`                     | backend agent             | yes                                         |
-| `OPENAI_MODEL`                       | backend agent             | optional (default `gpt-4o-mini`)            |
-| `OPENAI_BASE_URL`                    | backend agent             | optional (OpenAI-compatible gateway)        |
-| `JINA_API_KEYS`                      | web-search + web-fetch    | yes (comma-separated; one per Jina account) |
+| Var                                  | Used by                   | Required?                                    |
+| ------------------------------------ | ------------------------- | -------------------------------------------- |
+| `OPENAI_API_KEY`                     | backend agent             | yes                                          |
+| `OPENAI_MODEL`                       | backend agent             | optional (default `gpt-4o-mini`)             |
+| `OPENAI_BASE_URL`                    | backend agent             | optional (OpenAI-compatible gateway)         |
+| `JINA_API_KEYS`                      | web-search + web-fetch    | yes (comma-separated; one per Jina account)  |
 | `ALCHEMY_API_KEY`                    | NFT gallery + portfolio   | yes (server-only; powers `get_NFT_holdings`) |
-| `LANGGRAPH_API_URL`                  | Next.js proxy             | optional (default `http://localhost:2024`)  |
-| `LANGCHAIN_API_KEY`                  | Next.js proxy → LangGraph | optional (leave blank locally)              |
-| `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` | browser runtime           | optional (default `agent`)                  |
-| `NEXT_PUBLIC_LANGGRAPH_API_URL`      | browser runtime           | optional (uses proxy if unset)              |
-| `DATABASE_URL`                       | drizzle-kit + backend     | yes                                         |
-| `DATABASE_URL_TEST`                  | vitest                    | yes                                         |
-| `BETTER_AUTH_SECRET`                 | session cookie signing    | yes (see [docs/AUTH.md](docs/AUTH.md))      |
-| `BETTER_AUTH_URL`                    | OAuth callback base       | yes (default `http://localhost:3000`)       |
-| `RESEND_API_KEY`                     | verification emails       | yes                                         |
-| `RESEND_FROM_EMAIL`                  | verification email sender | optional (`onboarding@resend.dev` default)  |
-| `GITHUB_CLIENT_ID` / `_SECRET`       | GitHub OAuth              | optional                                    |
-| `GOOGLE_CLIENT_ID` / `_SECRET`       | Google OAuth              | optional                                    |
-| `LANGSMITH_*`                        | tracing                   | optional                                    |
+| `LANGGRAPH_API_URL`                  | Next.js proxy             | optional (default `http://localhost:2024`)   |
+| `LANGCHAIN_API_KEY`                  | Next.js proxy → LangGraph | optional (leave blank locally)               |
+| `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` | browser runtime           | optional (default `agent`)                   |
+| `NEXT_PUBLIC_LANGGRAPH_API_URL`      | browser runtime           | optional (uses proxy if unset)               |
+| `DATABASE_URL`                       | drizzle-kit + backend     | yes                                          |
+| `DATABASE_URL_TEST`                  | vitest                    | yes                                          |
+| `BETTER_AUTH_SECRET`                 | session cookie signing    | yes (see [docs/AUTH.md](docs/AUTH.md))       |
+| `BETTER_AUTH_URL`                    | OAuth callback base       | yes (default `http://localhost:3000`)        |
+| `RESEND_API_KEY`                     | verification emails       | yes                                          |
+| `RESEND_FROM_EMAIL`                  | verification email sender | optional (`onboarding@resend.dev` default)   |
+| `GITHUB_CLIENT_ID` / `_SECRET`       | GitHub OAuth              | optional                                     |
+| `GOOGLE_CLIENT_ID` / `_SECRET`       | Google OAuth              | optional                                     |
+| `LANGSMITH_*`                        | tracing                   | optional                                     |
 
 ## Patches
 

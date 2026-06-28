@@ -85,4 +85,3 @@ moving (it's `0.0.x`, experimental).
 ## 2026-06-28 — RAG follow-up
 
 Reference if/when RAG lands: <https://docs.langchain.com/oss/javascript/langgraph/agentic-rag>
-
