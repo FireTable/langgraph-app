@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, act } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider, createConfig, http } from "wagmi";
 import { mainnet } from "wagmi/chains";
@@ -8,6 +8,7 @@ import { ConnectWalletCard } from "@/components/tool-ui/crypto/connect-wallet-ca
 
 const mockSendCommand = vi.fn();
 const mockOpenConnectModal = vi.fn();
+const mockOpenAccountModal = vi.fn();
 const mockUseAccount = vi.fn();
 
 vi.mock("@assistant-ui/react-langgraph", () => ({
@@ -28,12 +29,14 @@ vi.mock("@rainbow-me/rainbowkit", async () => {
   return {
     ...actual,
     useConnectModal: () => ({ openConnectModal: mockOpenConnectModal }),
+    useAccountModal: () => ({ openAccountModal: mockOpenAccountModal }),
   };
 });
 
 beforeEach(() => {
   mockSendCommand.mockReset();
   mockOpenConnectModal.mockReset();
+  mockOpenAccountModal.mockReset();
   mockUseAccount.mockReset();
   mockUseAccount.mockReturnValue({ address: undefined, isConnected: false, chainId: undefined });
 });
@@ -86,7 +89,7 @@ describe("ConnectWalletCard — not connected", () => {
   });
 });
 
-describe("ConnectWalletCard — connected, auto-resume", () => {
+describe("ConnectWalletCard — connected, awaiting confirmation", () => {
   beforeEach(() => {
     mockUseAccount.mockReturnValue({
       address: "0xAbCdEf0123456789aBcDeF0123456789AbCdEf01",
@@ -95,14 +98,23 @@ describe("ConnectWalletCard — connected, auto-resume", () => {
     });
   });
 
-  it("shows a brief 'Connecting…' indicator with the address", () => {
+  it("renders the connected address in the header", () => {
     wrap(<ConnectWalletCard {...makeProps(undefined)} />);
-    expect(screen.getByText(/connecting/i)).toBeTruthy();
     expect(screen.getByText(/0xAbCd…Ef01/)).toBeTruthy();
   });
 
-  it("auto-resumes with {address, chainId} on first connected render", () => {
+  it("renders Cancel on the left and Use this wallet on the right", () => {
     wrap(<ConnectWalletCard {...makeProps(undefined)} />);
+    const cancel = screen.getByRole("button", { name: /^cancel$/i });
+    const useThis = screen.getByRole("button", { name: /use this wallet/i });
+    expect(cancel).toBeTruthy();
+    expect(useThis).toBeTruthy();
+    expect(cancel.compareDocumentPosition(useThis) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("clicking 'Use this wallet' sends resume with {address, chainId}", () => {
+    wrap(<ConnectWalletCard {...makeProps(undefined)} />);
+    fireEvent.click(screen.getByRole("button", { name: /use this wallet/i }));
     expect(mockSendCommand).toHaveBeenCalledTimes(1);
     const arg = mockSendCommand.mock.calls[0]?.[0] as { resume: string };
     const payload = JSON.parse(arg.resume);
@@ -110,31 +122,26 @@ describe("ConnectWalletCard — connected, auto-resume", () => {
     expect(payload.chainId).toBe(8453);
   });
 
-  it("does not auto-resume a second time (Strict Mode double-invoke safe)", () => {
+  it("clicking Cancel sends resume with {error:'cancelled'}", () => {
     wrap(<ConnectWalletCard {...makeProps(undefined)} />);
-    // Simulate React Strict Mode's double-invoke by re-running the
-    // effect: the ref guard means the second call is a no-op.
-    act(() => {
-      mockUseAccount.mockReturnValue({
-        address: "0xAbCdEf0123456789aBcDeF0123456789AbCdEf01",
-        isConnected: true,
-        chainId: 8453,
-      });
-    });
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
     expect(mockSendCommand).toHaveBeenCalledTimes(1);
+    const arg = mockSendCommand.mock.calls[0]?.[0] as { resume: string };
+    expect(JSON.parse(arg.resume)).toEqual({ error: "cancelled" });
   });
 
-  it("does not re-fire resume after the result is set", () => {
-    const resume = {
-      address: "0xAbCdEf0123456789aBcDeF0123456789AbCdEf01",
-      chainId: 8453,
-    };
-    wrap(<ConnectWalletCard {...makeProps(resume)} />);
-    // Re-render with the same result; the auto-resume effect is gated on
-    // `parsed` being null, so the ref guard is irrelevant here.
-    wrap(<ConnectWalletCard {...makeProps(resume)} />);
-    // The first render auto-resumes; the second render (same result) doesn't.
-    expect(mockSendCommand.mock.calls.length).toBeLessThanOrEqual(1);
+  it("chevron trigger opens a menu with 'Use a different wallet'", () => {
+    wrap(<ConnectWalletCard {...makeProps(undefined)} />);
+    expect(screen.queryByRole("menu")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /more options/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /use a different wallet/i }));
+    expect(mockOpenAccountModal).toHaveBeenCalledTimes(1);
+    expect(mockSendCommand).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-resume on mount", () => {
+    wrap(<ConnectWalletCard {...makeProps(undefined)} />);
+    expect(mockSendCommand).not.toHaveBeenCalled();
   });
 });
 
