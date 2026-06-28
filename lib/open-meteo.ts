@@ -8,7 +8,7 @@ import type {
   TemperatureUnit,
   WeatherConditionCode,
   WeatherWidgetPayload,
-} from "@/components/tool-ui/weather-widget/runtime";
+} from "@/components/tool-ui/weather/runtime";
 
 export interface WeatherSearchArgs {
   query: string;

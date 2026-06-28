@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
 import { ToolCardSkeleton } from "@/components/tool-ui/tool-card-skeleton";
-import { WeatherWidget } from "@/components/tool-ui/weather-widget/runtime";
+import { WeatherWidget } from "@/components/tool-ui/weather/runtime";
 import { unwrapToolResult } from "@/components/tool-ui/tool-result";
 
 type Args = {
@@ -15,7 +15,7 @@ type Args = {
 
 type WeatherToolSuccess = {
   success: true;
-  widget: import("@/components/tool-ui/weather-widget/runtime").WeatherWidgetPayload;
+  widget: import("@/components/tool-ui/weather/runtime").WeatherWidgetPayload;
 };
 
 type WeatherToolFailure = {
@@ -29,7 +29,7 @@ type ParsedResult =
   | { kind: "loading" }
   | {
       kind: "ok";
-      widget: import("@/components/tool-ui/weather-widget/runtime").WeatherWidgetPayload;
+      widget: import("@/components/tool-ui/weather/runtime").WeatherWidgetPayload;
     }
   | { kind: "error"; message: string };
 
@@ -77,7 +77,7 @@ export const WeatherCard: ToolCallMessagePartComponent<Args, Result> = ({ result
 function WeatherCardWithRevivedEffects({
   widget,
 }: {
-  widget: import("@/components/tool-ui/weather-widget/runtime").WeatherWidgetPayload;
+  widget: import("@/components/tool-ui/weather/runtime").WeatherWidgetPayload;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [key, setKey] = useState(0);
