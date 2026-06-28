@@ -51,7 +51,11 @@ Copy `.env.example` to `.env.local` and fill in:
 - `LANGCHAIN_API_KEY` — sent as `x-api-key` by the proxy; leave blank for local dev.
 - `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` — graph id, must match a key in `langgraph.json` (`agent`).
 - `NEXT_PUBLIC_LANGGRAPH_API_URL` — optional. If set, the browser skips the `/api` proxy and talks to LangGraph directly. Leave unset to use the in-app proxy.
-- `USE_SUBGRAPH` — backend graph topology toggle. `true` uses compiled `weatherAgent` / `chatAgent` subgraphs; unset (default) uses the inlined version that flattens them into the parent graph. The inlined default is a workaround for the `@langchain/core@1.2.1` `EventStreamCallbackHandler` "Run ID not found in run map" bug that LangGraph JS subgraphs trigger — see `memory/langgraph-subgraph-run-map-bug.md`.
+- `ALCHEMY_API_KEY` — server-only, used by `app/api/alchemy/[...path]` to proxy JSON-RPC. Required for the price-card USD valuation (CoinGecko USD prices are converted through Alchemy `eth/usd`).
+- `ALCHEMY_DISABLED_NETWORKS` — optional comma-separated Alchemy network slugs the proxy will reject. Default deny-list lives in `lib/alchemy/networks.ts`.
+- `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID` — Reown projectId, required for WalletConnect-based wallets (Binance, Bitget) to expose their mobile-QR fallback; injected wallets (MetaMask, Coinbase) work without it.
+- `NEXT_PUBLIC_CRYPTO_REAL_SWAP` — feature flag for the live Uniswap V3 swap path. Unset/`false` keeps `place_crypto_order` in SIMULATED mode (Mock Coin balance, no signing, no broadcast). Set `true` to enable the real path (currently dormant).
+- `USE_SUBGRAPH` — backend graph topology toggle. `true` uses compiled `weatherAgent` / `chatAgent` / `cryptoAgent` subgraphs; unset (default) uses the inlined version that flattens them into the parent graph. The inlined default is a workaround for the `@langchain/core@1.2.1` `EventStreamCallbackHandler` "Run ID not found in run map" bug that LangGraph JS subgraphs trigger — see `memory/langgraph-subgraph-run-map-bug.md`.
 - `NEXT_PUBLIC_USE_SUBGRAPH` — frontend mirror of `USE_SUBGRAPH`. Required because Next.js only inlines `NEXT_PUBLIC_*` vars into the browser bundle; the frontend reads this to decide whether to render the interrupt-UI card (`InterruptUI`) or the inline tool-call card.
 
 LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`) and pins Node 22.
@@ -67,42 +71,53 @@ backend/
   agent/
     chat-agent.ts         chatAgent compiled subgraph (USE_SUBGRAPH=true path)
     weather-agent.ts      weatherAgent compiled subgraph (USE_SUBGRAPH=true path)
+    crypto-agent.ts       cryptoAgent compiled subgraph (USE_SUBGRAPH=true path)
   node/
     call-model-node.ts    "agent" node — calls the model, appends AI reply
     rename-thread-agent-node.ts "renameThreadAgent" node — generates + persists the title
-    router-agent-node.ts  "routerAgent" — picks weatherAgent vs chatAgent per turn
+    router-agent-node.ts  "routerAgent" — picks weatherAgent / chatAgent / cryptoAgent per turn
     after-agent-node.ts   "afterAgent" — touches threads.last_message_at
-  prompt/system.ts        CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, ROUTER_AGENT_PROMPT, RENAME_THREAD_PROMPT
+  prompt/system.ts        CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, CRYPTO_AGENT_PROMPT, ROUTER_AGENT_PROMPT, RENAME_THREAD_PROMPT
   tool/                   ask_location, geocode_location, get_weather, searchWeb, fetchUrl
+  tool/crypto/            get_crypto_price, get_fx_rate, get_token_balances, connect_wallet, place_crypto_order, get_order_status
 langgraph.json            CLI config: graph id, node version, env file
 app/                      Next.js App Router
   layout.tsx              Root layout, fonts, TooltipProvider
   page.tsx                Renders <Assistant /> in a full-viewport <main>
   assistant.tsx           Builds useLangGraphRuntime; chooses /api vs direct URL
+  web3-providers.tsx      wagmi/RainbowKit QueryClient + WagmiProvider wrappers
   api/[..._path]/route.ts Edge catch-all proxy to LANGGRAPH_API_URL
+  api/alchemy/[...path]/route.ts Server-only JSON-RPC proxy to Alchemy (with key + per-network disabled list)
+  api/alchemy/status/route.ts Returns Alchemy key health + disabled-network list
   globals.css             Tailwind v4 entry
 components/
   assistant-ui/           Chat primitives (thread, attachment, markdown, reasoning, tool-fallback, tool-group, tooltip-icon-button)
   ui/                     shadcn/ui primitives (avatar, button, collapsible, dialog, tooltip) — new-york style, lucide icons
+  ui/address-or-hash.tsx  Truncated address/hash with copy-to-clipboard
   tool-ui/ask-location/   Interrupt-driven or addResult-driven location picker card
-  tool-ui/weather/        Forecast widget renderer
+  tool-ui/weather/        Forecast widget renderer (vendored runtime + container + overlay)
+  tool-ui/crypto/         Price, connect-wallet, place-order, order-status cards
 lib/utils.ts              cn() = twMerge(clsx(...))
 lib/threads/              Threads module (schema, queries, adapter, validators)
+lib/wagmi.ts              wagmi/RainbowKit config (chains, connectors, WalletConnect projectId)
+lib/alchemy/              networks.ts (slug → Alchemy URL + disabled list) + portfolio.ts (RPC helpers)
+lib/prices/coingecko.ts   CoinGecko free-tier price client (60s in-memory cache)
+lib/decimal.ts            Decimal-based amount math for crypto (no native float)
 ```
 
 ### Backend graph (`backend/agent.ts`)
 
-The parent graph dispatches a router decision into one of two sub-flows, both ending in `afterAgent`:
+The parent graph dispatches a router decision into one of three sub-flows, all ending in `afterAgent`:
 
-- `routerAgent` — calls `chatModel.withStructuredOutput(RouteDecisionSchema, { method: "jsonSchema" })` (tagged `nostream` so partial tokens don't leak into the chat) and returns `{ routerDecision: { next: "weatherAgent" | "chatAgent" } }` for the conditional edge to read.
-- `weatherAgent` / `chatAgent` — a model → tools loop driven by `toolsCondition`. Exits to `afterAgent` when the model emits no `tool_calls`.
+- `routerAgent` — calls `chatModel.withStructuredOutput(RouteDecisionSchema, { method: "jsonSchema" })` (tagged `nostream` so partial tokens don't leak into the chat) and returns `{ routerDecision: { next: "weatherAgent" | "chatAgent" | "cryptoAgent" } }` for the conditional edge to read.
+- `weatherAgent` / `chatAgent` / `cryptoAgent` — a model → tools loop driven by `toolsCondition`. Exits to `afterAgent` when the model emits no `tool_calls`.
 - `afterAgent` — touches `threads.last_message_at` for the current thread; no message-channel writes.
 - `renameThreadAgent` — fans out from `START` (parallel to `routerAgent`), generates the thread title on the first turn only, persists it to the `threads` row.
 
 Two topologies share the same router + rename + after nodes and are gated by `USE_SUBGRAPH` (env var, see Environment):
 
-- **Inlined (default).** `weatherModel` / `weatherTools` / `chatModel` / `chatTools` are inlined as plain nodes in the parent graph. The model/tool logic is duplicated from `backend/agent/weather-agent.ts` and `backend/agent/chat-agent.ts` — keep them in sync. The router's pathMap remaps `"weatherAgent"`/`"chatAgent"` (the router's string enum) to `"weatherModel"`/`"chatModel"` (the inlined node names).
-- **Subgraph (`USE_SUBGRAPH=true`).** The compiled `weatherAgent` and `chatAgent` from `backend/agent/*-agent.ts` are wired as opaque nodes via `addNode("weatherAgent", weatherAgent)`. PathMap is an array of allowed destinations, since the returned string already matches the node name.
+- **Inlined (default).** `weatherModel` / `weatherTools` / `chatModel` / `chatTools` / `cryptoModel` / `cryptoTools` are inlined as plain nodes in the parent graph. The model/tool logic is duplicated from `backend/agent/weather-agent.ts`, `chat-agent.ts`, and `crypto-agent.ts` — keep them in sync. The router's pathMap remaps `"weatherAgent"`/`"chatAgent"`/`"cryptoAgent"` (the router's string enum) to `"weatherModel"`/`"chatModel"`/`"cryptoModel"` (the inlined node names).
+- **Subgraph (`USE_SUBGRAPH=true`).** The compiled `weatherAgent`, `chatAgent`, and `cryptoAgent` from `backend/agent/*-agent.ts` are wired as opaque nodes via `addNode("weatherAgent", weatherAgent)`. PathMap is an array of allowed destinations, since the returned string already matches the node name.
 
 Both builders live in `backend/agent.ts` (`buildSubgraph()` and `buildInlined()`). When `USE_SUBGRAPH` flips, no other file needs to change — but if you add a node, prompt, or tool, update both builders.
 
@@ -111,6 +126,10 @@ The chat models in `backend/model.ts` carry `modelKwargs: { reasoning_split: tru
 ### `WEATHER_AGENT_PROMPT` enforces one-tool-per-turn
 
 The weather prompt (in `backend/prompt/system.ts`) lists four steps in order — `ask_location` → `geocode_location` → `get_weather` → one-sentence reply — and explicitly forbids batching tools in a single turn. The frontend card (`components/tool-ui/ask-location`) keys off the `ask_location` `ToolMessage`, so any tool run alongside it would race the human input. See `docs/INTERRUPT.md` for the two runtime paths the card can take.
+
+### `CRYPTO_AGENT_PROMPT` enforces one-tool-per-turn + no-investment-advice
+
+Same one-tool-per-turn discipline as weather, applied to the trade flow: `connect_wallet` → `place_crypto_order` → `get_order_status` are HARD checkpoints, each pauses for one user click. `place_crypto_order` is gated by a "no fiat amounts" rule — when the user names a dollar/yuan/euro amount, the agent declines rather than quoting. The prompt also hard-blocks investment advice: no "buy now", no price-direction predictions, no "good entry", no editorializing on token quality; the agent describes only what the user asked and what the card does. The cards render numbers — the prose never repeats them.
 
 ### State persistence (dev vs prod)
 
@@ -134,6 +153,10 @@ Consequences worth knowing:
 `app/api/[..._path]/route.ts` is an edge-runtime catch-all that proxies every method (`GET/POST/PUT/PATCH/DELETE/OPTIONS`) to `${LANGGRAPH_API_URL}/${path}` with `x-api-key: LANGCHAIN_API_KEY`, strips hop-by-hop / content-encoding headers, and adds permissive CORS. The body of mutating requests is forwarded as text.
 
 `components/assistant-ui/thread.tsx` mounts `InterruptUI` (uses `useLangGraphInterruptState` + `useLangGraphSendCommand`) inside the last assistant message. The interrupt-driven render only fires when `NEXT_PUBLIC_USE_SUBGRAPH=true`; in default (inlined) mode, the ask_location card renders in the tool-call slot instead. See `docs/INTERRUPT.md` for the full two-mode flow.
+
+### Web3 providers
+
+`app/layout.tsx` wraps the assistant tree in `<Web3Providers>` (`app/web3-providers.tsx`), which stacks `@tanstack/react-query` `QueryClientProvider`, `WagmiProvider` (configured by `lib/wagmi.ts`), and RainbowKit's `RainbowKitProvider`. Wallet state is global to the browser; the crypto cards read `address` / `chainId` from wagmi hooks directly — they never receive the wallet through tool args. The trade flow is fully SIMULATED regardless of wallet connectivity: `place_crypto_order` auto-funds Mock Coin on the first trade and synthesizes the order on click. Setting `NEXT_PUBLIC_CRYPTO_REAL_SWAP=true` is required to route through any real DEX path (currently dormant — wagmi hooks live in the React tree, so a server-side router alone can't reach them).
 
 ### Patches
 
@@ -238,6 +261,14 @@ Rules for tool-call children:
 Before running `pnpm dev` (or starting any dev server), check whether the relevant port is already bound (`lsof -i :3000` for Next.js, `:2024` for LangGraph). If it is, that is the developer's active dev environment — **do not kill it, do not restart it**. Reuse it via Chrome DevTools MCP for any visual verification.
 
 Killing a running dev server loses unsaved browser state, breaks open browser tabs, and erases hot-reload history. If the dev server appears stale or stuck, surface the observation and ask the developer how they want to proceed; do not act unilaterally.
+
+### 8. Tool-UI buttons are text-only — no icons
+
+Buttons inside `components/tool-ui/**` (and any new card added under that directory) render the label as the action. Do not put a Lucide icon (or any other icon) as a prefix to the label, even with `gap-2` to space them out. No `<MapPinIcon/>`, `<WalletIcon/>`, etc. inside `<Button>` children.
+
+Icon-only controls (`size="icon"` or equivalent) are fine when there is no label to attach the icon to (e.g. the search-submit magnifier in `ask-location-card`). Decorative icons elsewhere in the card — header avatars, status row glyphs, inline spinners — are not affected by this rule.
+
+Rationale: the tool-ui cards are short-lived surfaces with one or two clear actions. Icons + text compete for attention and bloat the layout without adding signal. Text-only buttons stay scannable and match the rest of the assistant-ui primitives.
 
 ## Things to know before editing
 
