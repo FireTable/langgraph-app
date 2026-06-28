@@ -97,7 +97,7 @@ The LangGraph `agent` graph exposes the following tools to the chat model. Both 
 
 Implementation: `backend/tool/{web-fetch,web-search}.ts`. Shared key pool: `lib/jina.ts`.
 
-### `searchWeb(query)`
+### `search_web(query)`
 
 Keyword / natural-language web search via Jina Search (`s.jina.ai`).
 
@@ -108,7 +108,7 @@ Keyword / natural-language web search via Jina Search (`s.jina.ai`).
 | Auth          | Uses one key from `JINA_API_KEYS` (comma-separated in `.env.example`)                                                             |
 | Failure modes | `500` from upstream → tool throws and the model reports the error; all keys exhausted → tool throws `"All N Jina keys exhausted"` |
 
-### `fetchUrl(url)`
+### `fetch_url(url)`
 
 Read a public web page and return it as markdown via Jina Reader (`r.jina.ai`).
 
@@ -116,7 +116,7 @@ Read a public web page and return it as markdown via Jina Reader (`r.jina.ai`).
 | ------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Input         | `{ url: string }` — must be a valid absolute URL with scheme                                                       |
 | Output        | `{ title, content, url }` (JSON string; `content` is markdown)                                                     |
-| Auth          | Same `JINA_API_KEYS` pool as `searchWeb`                                                                           |
+| Auth          | Same `JINA_API_KEYS` pool as `search_web`                                                                          |
 | Failure modes | Non-2xx from upstream → tool throws with status code; URL validation failure → schema rejection before the request |
 
 ### Key pool semantics

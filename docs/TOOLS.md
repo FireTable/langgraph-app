@@ -47,8 +47,8 @@ about independently.
 
 | Tool        | Backend file         | Frontend card | Notes                                                       |
 | ----------- | -------------------- | ------------- | ----------------------------------------------------------- |
-| `searchWeb` | `web-search.ts`      | —             | Jina `s.jina.ai`, key-pool auth via `lib/jina.ts`.          |
-| `fetchUrl`  | `web-fetch.ts`       | —             | Jina `r.jina.ai`, returns `{ title, content, url }` as MD.  |
+| `search_web` | `web-search.ts`      | —             | Jina `s.jina.ai`, key-pool auth via `lib/jina.ts`.          |
+| `fetch_url`  | `web-fetch.ts`       | —             | Jina `r.jina.ai`, returns `{ title, content, url }` as MD.  |
 
 ## Frontend wiring
 

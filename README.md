@@ -11,7 +11,7 @@ A self-hostable chat app (this repo: `langgraph-app`) that streams tokens from a
 - **Type-safe DB layer**: Drizzle ORM + Zod validators, derived from the same schema source.
 - **TDD-tested**: Vitest with a separate test database.
 - **User accounts**: email + password (with email verification), GitHub and Google sign-in, 7-day persistent sessions, and per-user thread isolation. See [docs/AUTH.md](docs/AUTH.md) for the operator guide.
-- **Tool-using agent**: the `agent` node is bound to `searchWeb` (Jina Search) and `fetchUrl` (Jina Reader) — the model can research topics and read pages mid-conversation. Tools run unconditionally; write-side tools added later will hang their own `interruptBefore` hook. See [docs/APIS.md](docs/APIS.md) for the contract.
+- **Tool-using agent**: the `agent` node is bound to `search_web` (Jina Search) and `fetch_url` (Jina Reader) — the model can research topics and read pages mid-conversation. Tools run unconditionally; write-side tools added later will hang their own `interruptBefore` hook. See [docs/APIS.md](docs/APIS.md) for the contract.
 
 ## Tech stack
 
@@ -115,8 +115,8 @@ backend/
   model.ts                    ChatOpenAI singletons (with / without thinking)
   checkpointer.ts             PostgresSaver (Postgres checkpoint tables)
   tool/                       LangChain tools bound to the agent
-    web-search.ts             searchWeb — Jina Search (s.jina.ai/{query})
-    web-fetch.ts              fetchUrl — Jina Reader (r.jina.ai/{url})
+    web-search.ts             search_web — Jina Search (s.jina.ai/{query})
+    web-fetch.ts              fetch_url — Jina Reader (r.jina.ai/{url})
   node/
     call-model-node.ts        "agent" node — appends AI reply
     rename-thread-node.ts     "renameThread" node — generates + persists title

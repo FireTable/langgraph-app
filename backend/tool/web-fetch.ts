@@ -34,7 +34,7 @@ async function impl({ url }: { url: string }): Promise<string> {
 }
 
 export const fetchUrl = tool(impl, {
-  name: "fetchUrl",
+  name: "fetch_url",
   description:
     "Fetch a public web page and return its content as markdown. Use when the user provides a URL or when a search result warrants reading in full.",
   schema,

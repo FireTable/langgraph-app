@@ -78,7 +78,7 @@ backend/
     router-agent-node.ts  "routerAgent" — picks weatherAgent / chatAgent / cryptoAgent per turn
     after-agent-node.ts   "afterAgent" — touches threads.last_message_at
   prompt/system.ts        CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, CRYPTO_AGENT_PROMPT, ROUTER_AGENT_PROMPT, RENAME_THREAD_PROMPT
-  tool/                   ask_location, geocode_location, get_weather, searchWeb, fetchUrl
+  tool/                   ask_location, geocode_location, get_weather, search_web, fetch_url
   tool/crypto/            get_crypto_price, get_fx_rate, get_token_balances, connect_wallet, place_crypto_order, get_order_status
 langgraph.json            CLI config: graph id, node version, env file
 app/                      Next.js App Router
