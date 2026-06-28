@@ -86,7 +86,7 @@ app/                      Next.js App Router
   page.tsx                Renders <Assistant /> in a full-viewport <main>
   assistant.tsx           Builds useLangGraphRuntime; chooses /api vs direct URL
   web3-providers.tsx      wagmi/RainbowKit QueryClient + WagmiProvider wrappers
-  api/[..._path]/route.ts Edge catch-all proxy to LANGGRAPH_API_URL
+  api/[..._path]/route.ts Node catch-all proxy to LANGGRAPH_API_URL (withAuth-gated)
   api/alchemy/[...path]/route.ts Server-only JSON-RPC proxy to Alchemy (with key + per-network disabled list)
   api/alchemy/status/route.ts Returns Alchemy key health + disabled-network list
   globals.css             Tailwind v4 entry
@@ -150,7 +150,7 @@ Consequences worth knowing:
 
 `app/assistant.tsx` is a client component. It instantiates the runtime with `useLangGraphRuntime({ stream, create, load })` from `@assistant-ui/react-langgraph` (which wraps `@langchain/langgraph-sdk`'s `Client`). `stream` is built from `unstable_createLangGraphStream`; `apiUrl` is `NEXT_PUBLIC_LANGGRAPH_API_URL` if set, otherwise the same-origin `/api` URL.
 
-`app/api/[..._path]/route.ts` is an edge-runtime catch-all that proxies every method (`GET/POST/PUT/PATCH/DELETE/OPTIONS`) to `${LANGGRAPH_API_URL}/${path}` with `x-api-key: LANGCHAIN_API_KEY`, strips hop-by-hop / content-encoding headers, and adds permissive CORS. The body of mutating requests is forwarded as text.
+`app/api/[..._path]/route.ts` is a node-runtime catch-all (see rule #9 — edge throws on `auth.api.getSession`) that proxies every method (`GET/POST/PUT/PATCH/DELETE/OPTIONS`) to `${LANGGRAPH_API_URL}/${path}` with `x-api-key: LANGCHAIN_API_KEY`, strips hop-by-hop / content-encoding headers, and adds permissive CORS. The body of mutating requests is forwarded as text. The handler is wrapped in `withAuth` (cookie + Authorization are forwarded upstream so LangGraph can identify the calling thread).
 
 `components/assistant-ui/thread.tsx` mounts `InterruptUI` (uses `useLangGraphInterruptState` + `useLangGraphSendCommand`) inside the last assistant message. The interrupt-driven render only fires when `NEXT_PUBLIC_USE_SUBGRAPH=true`; in default (inlined) mode, the ask_location card renders in the tool-call slot instead. See `docs/INTERRUPT.md` for the full two-mode flow.
 
@@ -268,12 +268,53 @@ Buttons inside `components/tool-ui/**` (and any new card added under that direct
 
 Icon-only controls (`size="icon"` or equivalent) are fine when there is no label to attach the icon to (e.g. the search-submit magnifier in `ask-location-card`). Decorative icons elsewhere in the card — header avatars, status row glyphs, inline spinners — are not affected by this rule.
 
+### 9. Every `app/api/**/route.ts` handler is wrapped in `withAuth`
+
+**Rule.** Every HTTP route under `app/api/**/route.ts` must wrap its handler in `withAuth` from `lib/auth/with-auth.ts`. No anonymous traffic. The only exceptions are the Better Auth catch-all `app/api/auth/[...all]/route.ts` (it's the login endpoint itself) and the `OPTIONS` preflight in any proxy route (preflight must succeed for the browser to even attempt the authed request).
+
+Why: prior builds left the LangGraph + Alchemy catch-all proxies unauthenticated. Any website's JS could create / list / delete threads or burn the Alchemy compute-unit quota. CORS `*` made it a public RPC.
+
+#### How to wrap
+
+```ts
+import { withAuth } from "@/lib/auth/with-auth";
+
+// Static params, or no params:
+export const GET = withAuth((_req, { user }) => NextResponse.json({ ... }));
+
+// Dynamic params (Next.js auto-unwraps the Promise):
+export const GET = withAuth<{ id: string }>(async (req, { user, params }) => { ... });
+```
+
+#### Runtime: default `nodejs` (don't reach for `edge`)
+
+`withAuth` reads the session row from Postgres through `drizzle/postgres-js`, which needs the Node `net` module. On edge it throws `Failed to get session` and the user sees 500. Leave the route's `runtime` unset (Next.js defaults to `nodejs`) or set it explicitly to `nodejs`.
+
+The Alchemy JSON-RPC and LangGraph catch-all proxies originally opted into `runtime = "edge"` for low cold-start. They both lost that on this audit — they are now `nodejs`. The trade-off is real: every request to those routes now spins up a Node handler instead of a V8 isolate. Don't try to claw edge back by calling `auth.api.getSession` directly or by reading session from a header — those paths skip the HOC, drift from the rest of the repo, and break the "every route goes through withAuth" guarantee.
+
+#### Test mock pattern
+
+Every test file that calls a route handler must mock `next/headers` and `@/lib/auth/config` and default `getSession` to a logged-in user in `beforeEach`; the 401 path is covered by an explicit `getSession.mockResolvedValueOnce(null)` in the dedicated auth tests:
+
+```ts
+const { getSession } = vi.hoisted(() => ({ getSession: vi.fn() }));
+vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
+vi.mock("@/lib/auth/config", () => ({ auth: { api: { getSession } } }));
+
+beforeEach(() => {
+  getSession.mockReset();
+  getSession.mockResolvedValue({ user: { id: "u1", email: "u1@example.com" }, session: { id: "s1", userId: "u1" } });
+});
+```
+
+If a new route handler reads `process.env` at call time, also set / restore the env in `beforeEach` / `afterEach` — see `tests/api/alchemy/status.test.ts` for the pattern.
+
 Rationale: the tool-ui cards are short-lived surfaces with one or two clear actions. Icons + text compete for attention and bloat the layout without adding signal. Text-only buttons stay scannable and match the rest of the assistant-ui primitives.
 
 ## Things to know before editing
 
 - The graph id `agent` is referenced in three places: `langgraph.json` (`graphs.agent`), `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` in `.env.example`, and the `unstable_createLangGraphStream({ assistantId })` call. Keep them aligned.
-- The proxy hardcodes `runtime = "edge"`; any Node-only API in the route would break the build.
+- The proxy used to hardcode `runtime = "edge"`; that was changed to `nodejs` so `withAuth` can hit Postgres. If you need edge back, route the session through a header (set in middleware) — see rule #9 for why.
 - `modelKwargs.reasoning_split` is provider-specific. If you switch back to stock OpenAI, remove it (or guard it) — OpenAI ignores unknown kwargs but it'll be a lie in the source.
 - `components.json` declares a `@assistant-ui` registry at `https://r.assistant-ui.com/{name}.json` for `shadcn`-style component adds.
 
