@@ -8,6 +8,7 @@ import { getFxRateTool } from "@/backend/tool/crypto/get-fx-rate";
 import { connectWalletTool } from "@/backend/tool/crypto/connect-wallet";
 import { placeCryptoOrderTool } from "@/backend/tool/crypto/place-crypto-order";
 import { getOrderStatusTool } from "@/backend/tool/crypto/get-order-status";
+import { getNftHoldingsTool } from "@/backend/tool/crypto/get-nft-holdings";
 
 // ponytail: keep the tool list in one place so the graph binds it from a
 // single source. Adding a tool = drop a file + add one line here.
@@ -27,6 +28,7 @@ export const CRYPTO_TOOLS = [
   connectWalletTool,
   placeCryptoOrderTool,
   getOrderStatusTool,
+  getNftHoldingsTool,
 ];
 
 export const ALL_TOOLS = [
@@ -40,6 +42,7 @@ export const ALL_TOOLS = [
   connectWalletTool,
   placeCryptoOrderTool,
   getOrderStatusTool,
+  getNftHoldingsTool,
 ];
 
 export {
@@ -53,4 +56,5 @@ export {
   connectWalletTool,
   placeCryptoOrderTool,
   getOrderStatusTool,
+  getNftHoldingsTool,
 };

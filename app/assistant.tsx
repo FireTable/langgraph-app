@@ -253,6 +253,11 @@ export function Assistant() {
         label: "",
         prompt: "I want to buy 2 ETH",
       },
+      {
+        title: "Show me my NFTs",
+        label: "",
+        prompt: "Show me my NFTs",
+      }
     ]),
   });
 

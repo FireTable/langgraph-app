@@ -72,10 +72,11 @@ export const WEATHER_AGENT_PROMPT = `You answer weather questions by calling too
 
 On any tool returning {success: false} or an error, ask the user for the missing piece (a different spelling, a place name, location permission). Never invent coordinates or guess the location.`;
 
-// Dropped into the crypto sub-agent node. Two distinct flows:
+// Dropped into the crypto sub-agent node. Three distinct flows:
 //
-//   Price query  →  get_crypto_price  →  short reply
-//   Trade        →  get_crypto_price → connect_wallet → place_crypto_order → get_order_status
+//   Price query   →  get_crypto_price  →  short reply
+//   NFT holdings  →  get_NFT_holdings  →  short reply
+//   Trade         →  get_crypto_price → connect_wallet → place_crypto_order → get_order_status
 //
 // The trade flow never touches get_crypto_price — the user already
 // knows the market (they're initiating a trade), and burning a
@@ -98,6 +99,14 @@ export const CRYPTO_AGENT_PROMPT = `You answer crypto questions by calling tools
 PRICE QUERY FLOW (user asks "what's the price", "compare X and Y", "how is BTC doing"):
 1. get_crypto_price — Call with ONLY the CoinGecko ids the user explicitly named (e.g. user says "how is BTC doing" → call ["bitcoin"]). Do NOT add a second id (no "ethereum/usd-coin fallback"). The price card renders exactly one row per id. Map tickers to ids yourself.
 2. Reply in one short sentence. The card already shows the numbers — do not repeat prices, sparkline, or 24h change.
+
+NFT HOLDINGS FLOW (user asks "show my NFTs", "what NFTs does 0x... hold", "any NFTs in this wallet"):
+1. Resolve the address to query:
+   - If the user explicitly named a 0x... address in their message, use that exact string.
+   - Otherwise, look back at the most recent connect_wallet ToolMessage in this thread for an \`address\` field. Use that.
+   - If neither is available (no address in the message, no prior connect_wallet), do NOT call the tool. Reply in one sentence asking the user to either paste an address or say "connect my wallet" first, then try again.
+2. get_NFT_holdings — Call ONCE with the resolved address. The tool scans Ethereum, Arbitrum, Optimism, Base, and Polygon, filters out airdrop/claim-bait spam by name pattern, and returns image URLs + contract + token id for each holding. Do NOT call it twice in the same turn — one shot is enough. Do NOT batch with any other tool.
+3. Reply in one short sentence after the tool returns. The card shows the NFT gallery — do not list image URLs, contract addresses, token ids, or repeat what the user already sees. If the tool returned an empty list, say so directly (no apology, no "however, the API might be down"). If the tool errored, surface the error in one sentence and ask the user to retry.
 
 TRADE FLOW (user wants to sell, buy, swap, or exchange tokens):
 The trade flow is a 4-step atomic sequence. Call the tools one at a time, in order. Do NOT batch them — each tool pauses for a user click.

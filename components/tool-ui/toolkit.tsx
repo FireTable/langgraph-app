@@ -8,6 +8,7 @@ import { WeatherCard } from "@/components/tool-ui/weather/weather-card";
 import {
   ConnectWalletCard,
   CryptoPriceCard,
+  NftGalleryCard,
   OrderStatusCard,
   PlaceCryptoOrderCard,
 } from "@/components/tool-ui/crypto";
@@ -77,6 +78,13 @@ const cryptoToolkit = defineToolkit({
       chain_id: z.number(),
     }),
     render: OrderStatusCard,
+  },
+  get_NFT_holdings: {
+    description: "Fetch and render an NFT gallery for the given wallet address.",
+    parameters: z.object({
+      address: z.string(),
+    }),
+    render: NftGalleryCard,
   },
 });
 

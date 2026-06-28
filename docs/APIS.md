@@ -152,6 +152,19 @@ Read-only FX lookup via frankfurter.app (ECB-sourced). Has a 60s in-memory cache
 
 **Not currently exposed to the LLM.** Listed here for reference only — the file and tests are kept in `backend/tool/crypto/get-token-balances.ts` for direct programmatic use, but `CRYPTO_TOOLS` does not register it. The wallet's address is not in the LLM's context (it lives in wagmi/RainbowKit on the frontend), so the agent has no way to call this tool without inventing an address. The simulated `place_crypto_order` flow does not consult on-chain balances — every user is auto-funded with Mock Coin. If you want to re-enable this tool, register it in `backend/tool/index.ts` and update `CRYPTO_AGENT_PROMPT` step 2.
 
+### `get_NFT_holdings(address)`
+
+Read-only. Lists the NFT holdings of an EVM wallet across Ethereum, Arbitrum, Optimism, Base, and Polygon. Calls Alchemy's Portfolio API `nfts/by-address` directly from the server (uses `ALCHEMY_API_KEY`).
+
+|               |                                                                                                                                                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input         | `{ address: string }` — 0x-prefixed 40-hex chars. Case-insensitive. The LLM pulls this from the user's message or the most recent `connect_wallet` ToolMessage — never invents.                                                  |
+| Output        | `{ success: true, address, totalCount, nfts: Array<{ contractAddress, contractName, collectionName, collectionSlug, contractImageUrl, network, tokenId, tokenType, name, thumbnailUrl, cachedUrl, balance }> }` (JSON string). |
+| Auth          | None from the LLM's perspective. Server reads `ALCHEMY_API_KEY`.                                                                                                                                                                  |
+| Failure modes | Missing / malformed address → zod-style rejection. Missing `ALCHEMY_API_KEY` → `{ success: false, error }`. Alchemy 4xx/5xx → `{ success: false, error: "alchemy N: ..." }`. Empty list → `{ success: true, nfts: [] }`, not an error. |
+
+The tool always sends `excludeSpam: true` plus an in-house name filter (`claim | airdrop | visit | gift | giveaway | voucher | reward | drop | bonus`) — Alchemy's own spam classifier leaves a lot of airdrop-bait through, and this regex catches the obvious patterns (yield-eth.net, USDC vouchers, etc.). Items whose contract name OR per-token name matches the regex are dropped from the response. Pagination via `pageKey` is handled internally (capped at 20 pages so a pathological wallet can't spin).
+
 ### `connect_wallet(message?)`
 
 Wallet-authorization interrupt. Pauses via `interrupt()`; the frontend card opens RainbowKit, then resumes with `{address, chainId}` from wagmi. That becomes the ToolMessage content the LLM reads. Subsequent tools (`place_crypto_order`, `get_order_status`) auto-infer the address from wagmi state — the LLM does not need to thread an address through the schema.
