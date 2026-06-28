@@ -87,7 +87,7 @@ export const OrderStatusCard: ToolCallMessagePartComponent<Args> = ({ result, ar
   return (
     <div
       data-slot="order-status-card"
-      className="border-border/60 bg-card text-card-foreground my-2 max-w-md overflow-hidden rounded-xl border"
+      className="border-border/60 bg-card text-card-foreground max-w-md overflow-hidden rounded-xl border"
     >
       <div className="flex flex-col gap-3 p-4">
         <header className="flex items-center gap-3">
@@ -142,7 +142,7 @@ function StatusReceipt({ status }: { status: ResumePayload }) {
   return (
     <div
       data-slot="order-status-card-resolved"
-      className="border-border/60 bg-card text-card-foreground my-2 max-w-md overflow-hidden rounded-xl border"
+      className="border-border/60 bg-card text-card-foreground max-w-md overflow-hidden rounded-xl border"
     >
       <div className="flex flex-col gap-3 p-4">
         <header className="flex items-center gap-3">

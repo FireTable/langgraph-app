@@ -145,7 +145,7 @@ export const PlaceCryptoOrderCard: ToolCallMessagePartComponent<Args> = ({ resul
     return (
       <div
         data-slot="place-crypto-order-card-cancelled"
-        className="border-border/60 bg-card text-muted-foreground my-2 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs"
+        className="border-border/60 bg-card text-muted-foreground inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs"
       >
         <XCircleIcon className="size-3.5" /> Swap cancelled.
       </div>
@@ -491,14 +491,10 @@ function PreviewWorkspace({
           {submitting ? (
             <Loader2Icon className="size-4 animate-spin" />
           ) : (
-            <span
-              className="flex w-full items-center justify-center gap-2 transition-opacity duration-1000 ease-linear"
-            >
+            <span className="flex w-full items-center justify-center gap-2 transition-opacity duration-1000 ease-linear">
               <span>Accept Swap</span>
               {quote && (
-                <span className="font-mono text-[10px] tabular-nums">
-                  · {secondsUntilRefresh}s
-                </span>
+                <span className="font-mono text-[10px] tabular-nums">· {secondsUntilRefresh}s</span>
               )}
             </span>
           )}
@@ -526,7 +522,7 @@ function CardShell({ children }: { children: React.ReactNode }) {
   return (
     <div
       data-slot="place-crypto-order-card"
-      className="border-border/60 bg-card text-card-foreground my-2 max-w-md overflow-hidden rounded-xl border"
+      className="border-border/60 bg-card text-card-foreground max-w-md overflow-hidden rounded-xl border"
     >
       <div className="flex flex-col gap-3 p-4">
         <header className="flex items-center gap-3">
@@ -550,7 +546,7 @@ function SimulatedReceipt({ order }: { order: SimulatedOrder }) {
   return (
     <div
       data-slot="place-crypto-order-card-receipt"
-      className="border-border/60 bg-card text-card-foreground my-2 max-w-md overflow-hidden rounded-xl border"
+      className="border-border/60 bg-card text-card-foreground max-w-md overflow-hidden rounded-xl border"
     >
       <div className="flex flex-col gap-3 p-4">
         <header className="flex items-center gap-3">

@@ -99,7 +99,7 @@ function WeatherCardWithRevivedEffects({
   }, []);
 
   return (
-    <div ref={ref} className="my-2 max-w-md">
+    <div ref={ref} className="max-w-md">
       <WeatherWidget key={key} {...widget} />
     </div>
   );

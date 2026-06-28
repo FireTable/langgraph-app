@@ -122,10 +122,11 @@ export const InterruptUI = () => {
   const ui = value?.ui;
   const data = value?.data ?? {};
   const message = value?.message;
-  const Render = ui
-    ? (toolkit as Record<string, { render?: ComponentType<any> }>)[ui]?.render
+  const entry = ui
+    ? (toolkit as Record<string, { render?: ComponentType<any>; label?: string }>)[ui]
     : undefined;
-  if (!Render) return null;
+  const Render = entry?.render;
+  if (!Render || !ui) return null;
 
   // Resolved state never renders here — resume clears the interrupt.
   // `resume` is typed string; we forward the structured pick as-is into
@@ -136,13 +137,18 @@ export const InterruptUI = () => {
     <>
       <WorkingIndicator text={message} />
       {USE_SUBGRAPH && (
-        <Render
-          args={{ ...data }}
-          result={undefined}
-          addResult={(payload: unknown) => {
-            void sendCommand({ resume: payload as never });
-          }}
-        />
+        <ToolFallback.Root open>
+          <ToolFallback.Trigger toolName={ui} />
+          <ToolFallback.Content>
+            <Render
+              args={{ ...data }}
+              result={undefined}
+              addResult={(payload: unknown) => {
+                void sendCommand({ resume: payload as never });
+              }}
+            />
+          </ToolFallback.Content>
+        </ToolFallback.Root>
       )}
     </>
   );
@@ -437,7 +443,7 @@ const AssistantMessage: FC = () => {
               case "reasoning":
                 return <Reasoning {...part} />;
               case "tool-call":
-                return part.toolUI ?? <ToolFallbackComponent {...part} />;
+                return <ToolFallbackComponent {...part} />
               case "data":
                 return part.dataRendererUI;
               case "indicator":

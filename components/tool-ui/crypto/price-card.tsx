@@ -121,7 +121,7 @@ export const CryptoPriceCard: ToolCallMessagePartComponent<Args, Result> = ({ re
   return (
     <div
       data-slot="crypto-price-card"
-      className="border-border/60 bg-card text-card-foreground my-2 max-w-md overflow-hidden rounded-xl border"
+      className="border-border/60 bg-card text-card-foreground max-w-md overflow-hidden rounded-xl border"
     >
       <ul className="divide-border/40 divide-y">
         {parsed.coins.map((c) => {
