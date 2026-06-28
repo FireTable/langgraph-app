@@ -82,7 +82,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
     <div
       data-slot="ask-location-card"
       className={cn(
-        "border-border/60 bg-card text-card-foreground my-2 max-w-md overflow-hidden rounded-xl border",
+        "border-border/60 bg-card text-card-foreground  max-w-md overflow-hidden rounded-xl border",
       )}
     >
       <div className="flex flex-col gap-3 p-4">
@@ -148,10 +148,9 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
                   type="button"
                   variant="default"
                   size="sm"
-                  className="w-full justify-center gap-2"
+                  className="w-full justify-center"
                   onClick={handleUseDeviceLocation}
                 >
-                  <MapPinIcon className="size-4" />
                   {mode.kind === "denied" ? "Try location again" : "Use my location"}
                 </Button>
 
