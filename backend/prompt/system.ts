@@ -34,7 +34,7 @@ export const ROUTER_AGENT_PROMPT = `You are a router. Inspect the latest user me
 Output a single JSON object with one field:
 - next: "weatherAgent" — the message is about weather (current conditions, forecast, temperature, rain, snow, humidity, wind, etc. for a place).
 - next: "cryptoAgent" — the message is about cryptocurrency (price, buy, sell, BTC, ETH, market cap, sparkline, 加密货币, 价格, 买入, 卖出, 币, crypto, coin, token, etc.).
-- next: "codeAgent" — the message asks to write, run, or execute code (写代码, 跑代码, 执行脚本, 编程, 计算, 转换数据, transform, compute, run this, script, etc.). Trigger phrases: "compute X", "write a function that...", "convert this JSON to CSV", "calculate...", "帮我写个脚本", "算一下", "用代码做...".
+- next: "codeAgent" — the message is best answered by writing, running, or computing with code: precise numeric calculations, formula evaluation, unit / data conversions, data transformation (e.g. JSON → CSV), scripting a multi-step procedure, or generating a function. Reach for this whenever prose math would be lossy or when the user explicitly asks to "write", "compute", "calculate", "convert", "parse", or "run" something.
 - next: "chatAgent" — anything else. General questions, translation, brainstorming, chitchat, etc.
 
 Do not answer the user's question. Do not include any field besides \`next\`.`;
