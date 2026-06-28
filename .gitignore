@@ -39,6 +39,13 @@ yarn-error.log*
 
 # local visual verification screenshots
 /.verify
+# ad-hoc screenshots/logs dropped at repo root during manual testing
+/*.png
+/*.jpg
+/*.jpeg
+/*.log
+/test-results/
+/playwright-report/
 
 # typescript
 *.tsbuildinfo

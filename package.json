@@ -18,7 +18,9 @@
     "db:studio": "drizzle-kit studio",
     "db:reset": "drizzle-kit drop",
     "test": "NODE_ENV=test vitest run",
-    "test:watch": "NODE_ENV=test vitest"
+    "test:watch": "NODE_ENV=test vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.14.24",
@@ -76,6 +78,7 @@
     "@langchain/core": "^1.2.1",
     "@langchain/langgraph-cli": "^1.4.1",
     "@next/env": "^16.2.9",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4.3.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -83,6 +86,7 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
     "@vitest/coverage-v8": "^4.1.9",
     "concurrently": "^10.0.3",
     "drizzle-kit": "^0.31.10",
@@ -92,6 +96,7 @@
     "tailwindcss": "^4.3.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
+    "vite": "^8.1.0",
     "vitest": "^4.1.9"
   }
 }
