@@ -20,9 +20,7 @@ export async function mockWalletConnected(page: import("@playwright/test").Page)
   );
 }
 
-export async function mockWalletDisconnected(
-  page: import("@playwright/test").Page,
-): Promise<void> {
+export async function mockWalletDisconnected(page: import("@playwright/test").Page): Promise<void> {
   await page.addInitScript(() => {
     (window as unknown as { __cryptoMockAccount: object }).__cryptoMockAccount = {
       isConnected: false,

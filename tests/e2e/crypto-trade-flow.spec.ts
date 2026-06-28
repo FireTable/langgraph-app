@@ -1,9 +1,5 @@
 import { test, expect } from "@playwright/test";
-import {
-  MOCK_WALLET_ADDRESS,
-  mockWalletConnected,
-  mockWalletDisconnected,
-} from "./wallet-mock";
+import { MOCK_WALLET_ADDRESS, mockWalletConnected, mockWalletDisconnected } from "./wallet-mock";
 
 // E2E for the crypto atomic-tools refactor. The vite harness mounts all
 // 3 cards in vertical sequence. Default state is DISCONNECTED so the
