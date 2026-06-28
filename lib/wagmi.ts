@@ -1,7 +1,7 @@
 "use client";
 
 import { http } from "wagmi";
-import { mainnet, arbitrum, base } from "wagmi/chains";
+import { mainnet, arbitrum, base, sepolia } from "wagmi/chains";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import {
   binanceWallet,
@@ -17,6 +17,7 @@ import {
   rainbowWallet,
   safeWallet,
   walletConnectWallet,
+  gateWallet,
 } from "@rainbow-me/rainbowkit/wallets";
 
 import "@rainbow-me/rainbowkit/styles.css";
@@ -45,13 +46,14 @@ const alchemyTransport = (slug: string) => http(`/api/alchemy/${slug}`, { batch:
 const WALLETCONNECT_PROJECT_ID = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ?? "";
 
 export const wagmiConfig = getDefaultConfig({
-  appName: "LangGraph App",
+  appName: "FireTable",
   projectId: WALLETCONNECT_PROJECT_ID,
-  chains: [mainnet, arbitrum, base],
+  chains: [mainnet, arbitrum, base, sepolia],
   transports: {
     [mainnet.id]: alchemyTransport("eth-mainnet"),
     [arbitrum.id]: alchemyTransport("arb-mainnet"),
     [base.id]: alchemyTransport("base-mainnet"),
+    [sepolia.id]: alchemyTransport("eth-sepolia"),
   },
   ssr: true,
   wallets: [
@@ -61,6 +63,7 @@ export const wagmiConfig = getDefaultConfig({
         binanceWallet,
         bitgetWallet,
         coinbaseWallet,
+        gateWallet,
         metaMaskWallet,
         rainbowWallet,
         safeWallet,

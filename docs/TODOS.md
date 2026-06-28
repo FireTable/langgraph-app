@@ -82,6 +82,10 @@ Tracked as PR #1 review-comment follow-ups; none are blocking merge.
 (uncommitted). Pin a patch in `patches/` once the public API stops
 moving (it's `0.0.x`, experimental).
 
+## 2026-06-28 — RAG follow-up
+
+Reference if/when RAG lands: <https://docs.langchain.com/oss/javascript/langgraph/agentic-rag>
+
 ## 2026-06-26 — Crypto agent v2: currency + wallet UI
 
 Follow-up to the 2026-06-25 crypto agent. Two new requirements:

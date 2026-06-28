@@ -347,3 +347,16 @@ export function getNetworkLogoByChainId(chainId: number | null | undefined): str
   if (chainId == null) return null;
   return CHAIN_ID_TO_LOGO.get(chainId) ?? null;
 }
+
+// Reverse lookup keyed by chainId — the catalog itself is slug → entry
+// (Alchemy's primary key), but the swap card groups by chainId, so the
+// chain-group header needs `isTestnet(cid)` to decide whether to add
+// the testnet marker. Built once at module load.
+const CHAIN_ID_TO_ENTRY: Map<number, AlchemyNetworkEntry> = new Map(
+  Object.values(ALCHEMY_NETWORK_CATALOG).map((e) => [e.chainId, e]),
+);
+
+export function isTestnetChainId(chainId: number | null | undefined): boolean {
+  if (chainId == null) return false;
+  return CHAIN_ID_TO_ENTRY.get(chainId)?.family === "testnet";
+}

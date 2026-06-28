@@ -150,7 +150,7 @@ Read-only FX lookup via frankfurter.app (ECB-sourced). Has a 60s in-memory cache
 
 ### `get_token_balances(chainId, address)`
 
-**Not currently exposed to the LLM.** Listed here for reference only — the file and tests are kept in `backend/tool/crypto/get-token-balances.ts` for direct programmatic use, but `CRYPTO_TOOLS` does not register it. The wallet's address is not in the LLM's context (it lives in wagmi/RainbowKit on the frontend), so the agent has no way to call this tool without inventing an address. The `ask_crypto_intent` card reads balances via `useBalance` directly. If you want to re-enable this tool, register it in `backend/tool/index.ts` and update `CRYPTO_AGENT_PROMPT` step 3.
+**Not currently exposed to the LLM.** Listed here for reference only — the file and tests are kept in `backend/tool/crypto/get-token-balances.ts` for direct programmatic use, but `CRYPTO_TOOLS` does not register it. The wallet's address is not in the LLM's context (it lives in wagmi/RainbowKit on the frontend), so the agent has no way to call this tool without inventing an address. The confirm card reads balances via `/api/alchemy/portfolio/tokens/by-address` directly. If you want to re-enable this tool, register it in `backend/tool/index.ts` and update `CRYPTO_AGENT_PROMPT` step 2.
 
 ### `get_swap_quote(chainId, sellToken, buyToken, amount, kind, slippageBps?)`
 
@@ -163,19 +163,38 @@ Read-only. Returns a CoW Protocol quote for a given token pair. CoW is the canon
 | Auth          | None. Public CoW endpoint.                                                                                                                                                                                                                                                                |
 | Failure modes | Unsupported chainId / zero amount → `{ success: false, error: "..." }` without any fetch. CoW 4xx/5xx → `{ success: false, error: "cow N: <description>" }` (e.g. `NoLiquidity`).                                                                                                         |
 
-### `ask_crypto_intent(message?, currency?, amount?)`
+**Currently called from the place-crypto-order card, not from the LLM.** The card reads source/amount/target from the intent and the user's wallet, hits `/quote` itself (`fetchCowQuote` in `components/tool-ui/crypto/place-crypto-order-card.tsx`), and renders the live preview. The LLM-facing flow is split into 3 atomic tools — `connect_wallet`, `place_crypto_order`, `get_order_status` — that the LLM calls one per turn.
 
-Interrupt-driven. Pauses the turn and renders the buy/sell form. Used as the **user confirmation checkpoint** before any swap is staged — the LLM must call it even when the user already named a coin + amount, so the user can explicitly confirm. Implementation: `backend/tool/crypto/ask-crypto-intent.ts`.
+### `connect_wallet(message?)`
 
-### `confirm_crypto_order(coin_id, coin_symbol, amount_usd, price_at_confirm, side, mode?, chain_id?, slippage_bps?)`
+Wallet-authorization interrupt. Pauses via `interrupt()`; the frontend card opens RainbowKit, then resumes with `{address, chainId}` from wagmi. That becomes the ToolMessage content the LLM reads. Subsequent tools (`place_crypto_order`, `get_order_status`) auto-infer the address from wagmi state — the LLM does not need to thread an address through the schema.
 
-Two-phase pause + commit. First call returns `{ status: "awaiting_user", preview: {...} }` — never fabricates a receipt. The frontend card renders the preview with the Confirm & Sign button. On click, the card signs the EIP-712 order (CoW /orders POST) and overwrites the tool result via `addResult` with `{ status: "simulated_filled" | "signed" | "cancelled" | "error" }`. The LLM then writes the closing sentence.
+|               |                                                                                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Input         | `message?` (string) — short prompt shown above the Connect button. Defaults to `"Connect your wallet to continue."` if omitted.                        |
+| Output        | `{ address: 0x...string, chainId: number }` (success) or `{ error: string }` (user cancelled / wallet not installed). Becomes the ToolMessage content. |
+| Failure modes | User closes RainbowKit modal without connecting → no resume → turn does not progress. The card stays in the "Connect" state until the user reconnects. |
 
-|               |                                                                                                                                                                                                                                                    |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Input         | Standard order fields. `mode="simulated"` (default) is paper-trading. `mode="real"` requires `chain_id` ∈ {1, 42161, 8453} and a connected wallet. `slippage_bps` is hard-capped at 3000 (30%) at the schema layer.                                |
-| Output        | Phase 1: `{ status: "awaiting_user", preview: {...} }`. Phase 2 (after `addResult`): `{ status: "simulated_filled", order: {...} }` / `{ status: "signed", tx_hash, chain_id, order }` / `{ status: "cancelled" }` / `{ status: "error", error }`. |
-| Failure modes | Non-positive amount / price → `{ status: "error" }`. `mode="real"` without `chain_id` → `{ status: "error" }`. Unsupported `chain_id` → `{ status: "error" }`. `slippage_bps` over 3000 → zod rejection (before tool body).                        |
+### `place_crypto_order(side, source_coin_id?, amount?, target_coin_id?)`
+
+Simulated swap interrupt. Pauses via `interrupt()`; the frontend card reads the wallet from wagmi (auto-inferred from the most recent `connect_wallet` ToolMessage — never pass an address), fetches the user's balances from Alchemy, picks a randomized source/target/amount (the LLM's hints override the random pick when provided), fetches a real-time CoW `/quote` for accurate pricing display, and exposes one Place simulated order button. On click, the card synthesizes an order — no real signing, no real CoW `/orders` POST. The closing ToolMessage is what the LLM uses to write the final sentence.
+
+|                |                                                                                                                                                                                                                                                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input          | `side` (required, `"buy"` or `"sell"`) — `"sell my X"` / `"swap X for Y"` → sell; `"buy Y with X"` → buy. `source_coin_id?` (CoinGecko id) when the user named a source. `amount?` (positive number) when the user named a quantity. `target_coin_id?` when the user named what to receive. |
+| Output         | `{ status: "simulated_filled", order: { id, coin, symbol, side, amount_human, qty, status, timestamp, note, slippage_bps } }` (success) or `{ status: "cancelled" }` (Cancel clicked) or `{ status: "error", error: string }` (quote failed / unexpected).                                  |
+| Failure modes  | Malformed CoinGecko id → zod rejection. Id not in `lib/tokens/catalog.ts` → zod rejection. Non-positive or NaN `amount` → zod rejection. CoW `/quote` errors (NoLiquidity, etc.) surface inside the card; the user can still click Cancel.                                                  |
+| Missing source | If the LLM named a `source_coin_id` the user's wallet does not hold, the card picks the highest-balance token as a fallback. The LLM should NOT silently re-call with a different source — it should re-call only after the user explicitly names an alternative.                           |
+
+### `get_order_status(order_uid, chain_id)`
+
+Order-status interrupt. Pauses via `interrupt()`; the frontend card shows the order uid + chain and exposes one Check button. This is a simulated-order demo — the card never hits the real CoW `/orders/{uid}` endpoint (the synthetic uid from `place_crypto_order` would 404). On click, the card synthesizes a status (`filled` for the demo path) and returns it via the resume.
+
+|               |                                                                                                                                                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input         | `order_uid` (required, non-empty string) — the order uid returned by `place_crypto_order`. `chain_id` (required, integer) — EVM chain id where the order was placed: 1, 42161, 8453, or 11155111. |
+| Output        | `{ status: "filled" \| "open" \| "partially_filled" \| "cancelled" \| "expired" \| "not_found", order_uid, chain_id, filled_buy_amount?, executed_at? }`.                                         |
+| Failure modes | Empty `order_uid` or non-numeric `chain_id` → zod rejection.                                                                                                                                      |
 
 ## Swap path
 

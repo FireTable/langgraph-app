@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+import { ALCHEMY_NETWORK_CATALOG } from "@/lib/alchemy/networks";
 import {
   fetchEnrichedBalances,
   networkToChainId,
@@ -8,8 +9,17 @@ import {
 
 const fetchMock = vi.fn();
 
+const emptyPortfolioResponse = () =>
+  new Response(JSON.stringify({ data: { tokens: [] } }), { status: 200 });
+
 beforeEach(() => {
   fetchMock.mockReset();
+  // Default for the 4-5 chunked calls beyond the one the test mocks
+  // explicitly. Each test does `fetchMock.mockResolvedValueOnce(...)`
+  // once for the chunk whose response it actually wants to inspect.
+  // `mockImplementation` (not `mockResolvedValue`) so each call gets a
+  // fresh Response — Response bodies are single-read.
+  fetchMock.mockImplementation(() => Promise.resolve(emptyPortfolioResponse()));
   vi.stubGlobal("fetch", fetchMock);
 });
 
@@ -18,7 +28,7 @@ afterEach(() => {
 });
 
 describe("networkToChainId", () => {
-  it("maps the three CoW chains", () => {
+  it("maps the three supported chains", () => {
     expect(networkToChainId("eth-mainnet")).toBe(1);
     expect(networkToChainId("arb-mainnet")).toBe(42161);
     expect(networkToChainId("base-mainnet")).toBe(8453);
@@ -45,62 +55,28 @@ describe("networkToChainId", () => {
 });
 
 describe("fetchEnrichedBalances — happy path", () => {
-  it("posts to /api/alchemy/portfolio/tokens/by-address with the full catalog (no testnets)", async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ data: { tokens: [] } }), { status: 200 }),
-    );
+  it("chunks every Alchemy catalog network into 5-per-request batches and merges the results", async () => {
+    // 25 catalog entries / 5 per request = 5 parallel fetches. The
+    // beforeEach default returns an empty response, so all 5 resolve
+    // with no tokens — we only assert the request shape.
     await fetchEnrichedBalances("0xabc");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/api/alchemy/portfolio/tokens/by-address");
-    expect(init.method).toBe("POST");
-    const body = JSON.parse(init.body);
-    expect(body.addresses[0].address).toBe("0xabc");
-    const sent = body.addresses[0].networks;
-    // Every L1 + L2 chain in the catalog — no testnets. The catalog
-    // currently lists 20 mainnet EVM chains (8 L1 + 12 L2); pinned at
-    // the Portfolio API's 1-20 per-request limit. If you add or remove
-    // a chain, this test pins the expected request shape.
-    expect(sent.length).toBe(20);
-    expect(sent).toEqual(
-      expect.arrayContaining([
-        // L1
-        "eth-mainnet",
-        "polygon-mainnet",
-        "bnb-mainnet",
-        "avax-mainnet",
-        "gnosis-mainnet",
-        "berachain-mainnet",
-        "monad-mainnet",
-        "ronin-mainnet",
-        // L2
-        "arb-mainnet",
-        "opt-mainnet",
-        "base-mainnet",
-        "linea-mainnet",
-        "scroll-mainnet",
-        "zksync-mainnet",
-        "worldchain-mainnet",
-        "unichain-mainnet",
-        "blast-mainnet",
-        "celo-mainnet",
-        "apechain-mainnet",
-        "soneium-mainnet",
-      ]),
-    );
-    expect(sent).not.toEqual(
-      expect.arrayContaining([
-        "eth-sepolia",
-        "arb-sepolia",
-        "opt-sepolia",
-        "polygon-amoy",
-        "base-sepolia",
-      ]),
-    );
-    expect(body.withMetadata).toBe(true);
-    expect(body.withPrices).toBe(true);
-    expect(body.includeNativeTokens).toBe(true);
-    expect(body.includeErc20Tokens).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    const allSent: string[] = [];
+    for (const [, init] of fetchMock.mock.calls) {
+      const body = JSON.parse(init.body);
+      expect(body.addresses[0].address).toBe("0xabc");
+      expect(body.withMetadata).toBe(true);
+      expect(body.withPrices).toBe(true);
+      expect(body.includeNativeTokens).toBe(true);
+      expect(body.includeErc20Tokens).toBe(true);
+      // The Portfolio API caps at 5 networks per address — every
+      // batch must respect that, no batch ever sends 6+.
+      expect(body.addresses[0].networks.length).toBeLessThanOrEqual(5);
+      allSent.push(...body.addresses[0].networks);
+    }
+    // Every network in the catalog was sent across the batches.
+    const expected = Object.keys(ALCHEMY_NETWORK_CATALOG).sort();
+    expect(allSent.sort()).toEqual(expected);
   });
 
   it("normalizes ERC20 tokens with metadata + USD price", async () => {
@@ -235,6 +211,44 @@ describe("fetchEnrichedBalances — happy path", () => {
       symbol: "MATIC",
       decimals: 18,
       name: "Polygon",
+    });
+  });
+
+  it("returns testnet balances (Sepolia USDC) instead of filtering them out", async () => {
+    // The catalog includes eth-sepolia so the swap card can demo on
+    // testnet. The Portfolio API returns balances for testnet slugs
+    // when asked — we must surface them so the user can pick their
+    // Sepolia USDC and complete a swap.
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: {
+            tokens: [
+              {
+                network: "eth-sepolia",
+                tokenAddress: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+                tokenBalance: "0x5f5e100",
+                tokenMetadata: {
+                  symbol: "USDC",
+                  decimals: 6,
+                  name: "USD Coin",
+                  logo: "",
+                },
+                tokenPrices: [{ currency: "usd", value: "1.0" }],
+              },
+            ],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    const out = await fetchEnrichedBalances("0xabc");
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      chainId: 11155111,
+      network: "eth-sepolia",
+      symbol: "USDC",
+      isNative: false,
     });
   });
 
@@ -392,37 +406,6 @@ describe("fetchEnrichedBalances — defensive", () => {
                 tokenAddress: "0xmatic",
                 tokenBalance: "0x1",
                 tokenMetadata: { symbol: "OP", decimals: 18 },
-                tokenPrices: [],
-              },
-              {
-                network: "eth-mainnet",
-                tokenAddress: "0xusdc",
-                tokenBalance: "0x1",
-                tokenMetadata: { symbol: "USDC", decimals: 6 },
-                tokenPrices: [],
-              },
-            ],
-          },
-        }),
-        { status: 200 },
-      ),
-    );
-    const out = await fetchEnrichedBalances("0xabc");
-    expect(out).toHaveLength(1);
-    expect(out[0].symbol).toBe("USDC");
-  });
-
-  it("drops testnet tokens", async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          data: {
-            tokens: [
-              {
-                network: "eth-sepolia",
-                tokenAddress: "0xfaucet",
-                tokenBalance: "0x1",
-                tokenMetadata: { symbol: "SEP", decimals: 18 },
                 tokenPrices: [],
               },
               {

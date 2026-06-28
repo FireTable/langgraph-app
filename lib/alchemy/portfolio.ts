@@ -17,13 +17,14 @@ import {
 // per ERC20) so a single call returns the entire wallet picture across
 // every supported chain — no N+1 round-trips.
 
-// Full mainnet + L2 catalog (testnets excluded). Source of truth lives
-// in `lib/alchemy/networks.ts`; if a new chain ships, add it there and
-// this list picks it up automatically.
-export const PORTFOLIO_NETWORKS: readonly AlchemyNetworkSlug[] = (
-  Object.keys(ALCHEMY_NETWORK_CATALOG) as AlchemyNetworkSlug[]
-).filter((slug) => ALCHEMY_NETWORK_CATALOG[slug].family !== "testnet");
-export type PortfolioNetwork = (typeof PORTFOLIO_NETWORKS)[number];
+// The Portfolio API caps at 5 networks per address per request. The
+// catalog in `lib/alchemy/networks.ts` is the source of truth for
+// what's queryable; we send every catalog entry, chunked into
+// 5-network batches, in parallel, and merge the results. This is
+// independent of which chains the user can actually swap on — the
+// card filters to swappable tokens at render time.
+const PORTFOLIO_CHUNK_SIZE = 5;
+export type PortfolioNetwork = AlchemyNetworkSlug;
 
 export function networkToChainId(network: string): number | null {
   const entry = ALCHEMY_NETWORK_CATALOG[network as PortfolioNetwork];
@@ -85,28 +86,38 @@ export async function fetchEnrichedBalances(
   address: Address,
   signal?: AbortSignal,
 ): Promise<EnrichedToken[]> {
-  const res = await fetch("/api/alchemy/portfolio/tokens/by-address", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      addresses: [{ address, networks: [...PORTFOLIO_NETWORKS] }],
-      withMetadata: true,
-      withPrices: true,
-      includeNativeTokens: true,
-      includeErc20Tokens: true,
-    }),
-    signal,
-  });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`portfolio ${res.status}${errText ? `: ${errText.slice(0, 200)}` : ""}`);
+  const allNetworks = Object.keys(ALCHEMY_NETWORK_CATALOG) as AlchemyNetworkSlug[];
+  const chunks: AlchemyNetworkSlug[][] = [];
+  for (let i = 0; i < allNetworks.length; i += PORTFOLIO_CHUNK_SIZE) {
+    chunks.push(allNetworks.slice(i, i + PORTFOLIO_CHUNK_SIZE));
   }
-  const json = (await res.json()) as PortfolioResponse;
-  const raw = json.data?.tokens ?? [];
+  const responses = await Promise.all(
+    chunks.map((networks) =>
+      fetch("/api/alchemy/portfolio/tokens/by-address", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          addresses: [{ address, networks: [...networks] }],
+          withMetadata: true,
+          withPrices: true,
+          includeNativeTokens: true,
+          includeErc20Tokens: true,
+        }),
+        signal,
+      }),
+    ),
+  );
   const out: EnrichedToken[] = [];
-  for (const t of raw) {
-    const normalized = normalize(t);
-    if (normalized) out.push(normalized);
+  for (const res of responses) {
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`portfolio ${res.status}${errText ? `: ${errText.slice(0, 200)}` : ""}`);
+    }
+    const json = (await res.json()) as PortfolioResponse;
+    for (const t of json.data?.tokens ?? []) {
+      const normalized = normalize(t);
+      if (normalized) out.push(normalized);
+    }
   }
   return out;
 }
@@ -114,7 +125,7 @@ export async function fetchEnrichedBalances(
 function normalize(token: RawToken): EnrichedToken | null {
   const network = token.network as PortfolioNetwork | undefined;
   const entry = network ? ALCHEMY_NETWORK_CATALOG[network] : null;
-  if (!entry || entry.family === "testnet") return null;
+  if (!entry) return null;
 
   const meta = token.tokenMetadata ?? {};
   // Native entries have `tokenAddress: null`. Portfolio's native token

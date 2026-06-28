@@ -5,7 +5,12 @@ import { z } from "zod";
 
 import { AskLocationCard } from "@/components/tool-ui/ask-location/ask-location-card";
 import { WeatherCard } from "@/components/tool-ui/weather/weather-card";
-import { CryptoConfirmCard, CryptoPriceCard } from "@/components/tool-ui/crypto";
+import {
+  ConnectWalletCard,
+  CryptoPriceCard,
+  OrderStatusCard,
+  PlaceCryptoOrderCard,
+} from "@/components/tool-ui/crypto";
 
 // Frontend-side tool registrations. `execute` lives on the LangGraph
 // backend (backend/tool/) and is dispatched via useLangGraphRuntime —
@@ -46,20 +51,35 @@ const cryptoToolkit = defineToolkit({
     }),
     render: CryptoPriceCard,
   },
-  confirm_crypto_order: {
-    // The tool emits a wallet-aware swap card. LLM passes intent
-    // (side + optional source/amount/target); the card wakes the
-    // wallet, lists balances, fetches a CoW quote, and exposes one
-    // Sign button.
-    description:
-      "Render a wallet-aware swap card. Pauses the turn; the user clicks Sign to submit an EIP-712 order to CoW.",
+  connect_wallet: {
+    description: "Render a wallet-authorization card. No-op on the server.",
+    parameters: z.object({
+      message: z.string().optional(),
+    }),
+    render: ConnectWalletCard,
+  },
+  place_crypto_order: {
+    // Pauses for one user click. Reads the wallet from wagmi
+    // (auto-inferred from the most recent connect_wallet ToolMessage);
+    // picks a randomized source / target / amount, fetches a real-time
+    // CoW /quote for accurate pricing, and on click synthesizes a
+    // simulated order — no real signing, no real CoW /orders POST.
+    description: "Render a simulated swap card and pause for the user to click Place order.",
     parameters: z.object({
       side: z.enum(["buy", "sell"]),
       source_coin_id: z.string().optional(),
       amount: z.number().optional(),
       target_coin_id: z.string().optional(),
     }),
-    render: CryptoConfirmCard,
+    render: PlaceCryptoOrderCard,
+  },
+  get_order_status: {
+    description: "Render an order-status card and pause for the user to click Check.",
+    parameters: z.object({
+      order_uid: z.string(),
+      chain_id: z.number(),
+    }),
+    render: OrderStatusCard,
   },
 });
 

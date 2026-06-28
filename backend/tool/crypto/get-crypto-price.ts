@@ -56,6 +56,8 @@ export const getCryptoPriceTool = tool(
     const cached = cache.get(cacheKey);
     if (cached && cached.exp > Date.now()) return cached.value;
 
+    // Note: CoinGecko uses `vs_currency` (singular) on /coins/markets —
+    // the plural `vs_currencies` is only required by /simple/price.
     const params = new URLSearchParams({
       vs_currency,
       ids: ids.join(","),

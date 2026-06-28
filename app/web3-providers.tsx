@@ -7,13 +7,6 @@ import { RainbowKitProvider, lightTheme } from "@rainbow-me/rainbowkit";
 
 import { wagmiConfig } from "@/lib/wagmi";
 
-// WalletConnect v2 modal emits HTML with `border="0"` on <img>, which
-// React 19's stricter DOM validation rejects with "invalid border=0".
-// The other 6 wallets (MetaMask / Coinbase / Rainbow / Safe / Binance
-// / Bitget) work without WalletConnect, so the boundary falls back to
-// wagmi-only — the user keeps the page, loses the picker modal. When
-// RainbowKit or @walletconnect/ethereum-provider ships a React 19 fix,
-// drop the boundary.
 class WalletConnectBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() {

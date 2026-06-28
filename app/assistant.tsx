@@ -249,9 +249,9 @@ export function Assistant() {
         prompt: "What’s the weather like at today?",
       },
       {
-        title: "Buy $100 of Bitcoin",
+        title: "I want to buy 2 ETH",
         label: "",
-        prompt: "I want to buy $100 of Bitcoin.",
+        prompt: "I want to buy 2 ETH",
       },
     ]),
   });
