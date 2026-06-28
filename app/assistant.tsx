@@ -248,6 +248,16 @@ export function Assistant() {
         label: "",
         prompt: "What’s the weather like at today?",
       },
+      {
+        title: "I want to buy 2 ETH",
+        label: "",
+        prompt: "I want to buy 2 ETH",
+      },
+      {
+        title: "Show me my NFTs",
+        label: "",
+        prompt: "Show me my NFTs",
+      }
     ]),
   });
 

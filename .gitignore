@@ -32,10 +32,21 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.test
 !.env.example
 
 # vercel
 .vercel
+
+# local visual verification screenshots
+/.verify
+# ad-hoc screenshots/logs dropped at repo root during manual testing
+/*.png
+/*.jpg
+/*.jpeg
+/*.log
+/test-results/
+/playwright-report/
 
 # typescript
 *.tsbuildinfo

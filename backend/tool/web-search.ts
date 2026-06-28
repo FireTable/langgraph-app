@@ -32,7 +32,7 @@ async function impl({ query }: { query: string }): Promise<string> {
 }
 
 export const searchWeb = tool(impl, {
-  name: "searchWeb",
+  name: "search_web",
   description:
     "Search the web for a keyword or natural-language query and return the top results with title, URL, and snippet. Use this when the user asks a question that needs current or external information.",
   schema,

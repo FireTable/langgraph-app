@@ -43,6 +43,16 @@ describe("routerAgentNode", () => {
     expect(result).toEqual({ routerDecision: { next: "weatherAgent" } });
   });
 
+  it("routes crypto queries to cryptoAgent", async () => {
+    mockInvokeStructured.mockResolvedValueOnce({ next: "cryptoAgent" });
+
+    const result = await routerAgentNode({
+      messages: [new HumanMessage("我想买 100 美元的 BTC")],
+    });
+
+    expect(result).toEqual({ routerDecision: { next: "cryptoAgent" } });
+  });
+
   it("prepends the router system prompt and strips any prior system messages", async () => {
     mockInvokeStructured.mockResolvedValueOnce({ next: "chatAgent" });
 
@@ -79,6 +89,7 @@ describe("routerAgentNode", () => {
       method: string;
     };
     expect(schemaArg?.safeParse({ next: "weatherAgent" }).success).toBe(true);
+    expect(schemaArg?.safeParse({ next: "cryptoAgent" }).success).toBe(true);
     expect(schemaArg?.safeParse({ next: "bogus" }).success).toBe(false);
     expect(optionsArg).toEqual({ name: "route_decision", method: "jsonSchema" });
   });

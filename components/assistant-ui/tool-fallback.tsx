@@ -71,9 +71,9 @@ function ToolFallbackRoot({
   );
 }
 
-type ToolStatus = ToolCallMessagePartStatus["type"];
+export type ToolStatus = ToolCallMessagePartStatus["type"];
 
-const statusIconMap: Record<ToolStatus, React.ElementType> = {
+const toolStatusIconMap: Record<ToolStatus, React.ElementType> = {
   running: LoaderIcon,
   complete: CheckIcon,
   incomplete: XCircleIcon,
@@ -87,6 +87,19 @@ const formatToolDuration = (ms: number) => {
   if (seconds < 60) return `${Math.floor(seconds)}s`;
   return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
 };
+
+// "connect_wallet" → "Connect Wallet". Single-word pascal stays the
+// same; multiple words split on `_` and title-case each segment.
+// Keeps the trigger readable when the renderer is toolkit-supplied —
+// the LLM-facing tool name stays snake_case, the user-facing label
+// is human.
+function humanizeToolName(name: string): string {
+  return name
+    .split("_")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
 
 function ToolFallbackDuration({ className, ...props }: React.ComponentProps<"span">) {
   const elapsedMs = useToolCallElapsed();
@@ -119,8 +132,9 @@ function ToolFallbackTrigger({
   const isRunning = statusType === "running";
   const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
 
-  const Icon = statusIconMap[statusType];
+  const Icon = toolStatusIconMap[statusType];
   const label = isCancelled ? "Cancelled tool" : "Used tool";
+  const displayName = humanizeToolName(toolName);
 
   return (
     <CollapsibleTrigger
@@ -147,7 +161,7 @@ function ToolFallbackTrigger({
         )}
       >
         <span>
-          {label}: <b>{toolName}</b>
+          {label}: <b>{displayName}</b>
         </span>
         {isRunning && (
           <span
@@ -155,7 +169,7 @@ function ToolFallbackTrigger({
             data-slot="tool-fallback-trigger-shimmer"
             className="aui-tool-fallback-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
           >
-            {label}: <b>{toolName}</b>
+            {label}: <b>{displayName}</b>
           </span>
         )}
       </span>
@@ -446,21 +460,29 @@ function ToolFallbackApproval({
   );
 }
 
-const ToolFallbackImpl: ToolCallMessagePartComponent = ({
-  toolName,
-  argsText,
-  result,
-  status,
-  addResult,
-  resume,
-  interrupt,
-  approval,
-  respondToApproval,
-}) => {
+const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
+  const {
+    toolName,
+    argsText,
+    result,
+    status,
+    addResult,
+    resume,
+    interrupt,
+    approval,
+    respondToApproval,
+    className,
+  } = props as typeof props & { className?: string };
+  // `toolUI` is the toolkit renderer's pre-rendered card. Not part of
+  // ToolCallMessagePartProps — passed by thread.tsx as an extra prop.
+  const toolUI = (props as unknown as { toolUI?: React.ReactNode }).toolUI;
   const isCancelled = status?.type === "incomplete" && status.reason === "cancelled";
   const isRequiresAction = status?.type === "requires-action";
 
-  const [open, setOpen] = useState(isRequiresAction);
+  // Open by default when a custom card body is provided — the card is
+  // the content, not the args/result panels. For host-less tools the
+  // collapsible keeps args/result out of the way until the user opts in.
+  const [open, setOpen] = useState(isRequiresAction || toolUI != null);
   const [prevRequiresAction, setPrevRequiresAction] = useState(isRequiresAction);
   if (isRequiresAction !== prevRequiresAction) {
     setPrevRequiresAction(isRequiresAction);
@@ -468,21 +490,27 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
   }
 
   return (
-    <ToolFallbackRoot open={open} onOpenChange={setOpen}>
+    <ToolFallbackRoot open={open} onOpenChange={setOpen} className={className}>
       <ToolFallbackTrigger toolName={toolName} status={status} />
       <ToolFallbackContent>
-        <ToolFallbackError status={status} />
-        <ToolFallbackArgs argsText={argsText} className={cn(isCancelled && "opacity-60")} />
-        {isRequiresAction && (
-          <ToolFallbackApproval
-            addResult={addResult}
-            resume={resume}
-            interrupt={interrupt}
-            approval={approval}
-            respondToApproval={respondToApproval}
-          />
+        {toolUI != null ? (
+          toolUI
+        ) : (
+          <>
+            <ToolFallbackError status={status} />
+            <ToolFallbackArgs argsText={argsText} className={cn(isCancelled && "opacity-60")} />
+            {isRequiresAction && (
+              <ToolFallbackApproval
+                addResult={addResult}
+                resume={resume}
+                interrupt={interrupt}
+                approval={approval}
+                respondToApproval={respondToApproval}
+              />
+            )}
+            {!isCancelled && <ToolFallbackResult result={result} />}
+          </>
         )}
-        {!isCancelled && <ToolFallbackResult result={result} />}
       </ToolFallbackContent>
     </ToolFallbackRoot>
   );

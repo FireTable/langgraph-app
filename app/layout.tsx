@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthShell } from "@/app/auth-shell";
+import { Web3Providers } from "@/app/web3-providers";
 import { APP_NAME } from "@/lib/constants";
 import "./globals.css";
 
@@ -30,7 +31,9 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <AuthShell>
-          <TooltipProvider>{children}</TooltipProvider>
+          <Web3Providers>
+            <TooltipProvider>{children}</TooltipProvider>
+          </Web3Providers>
         </AuthShell>
         <Toaster />
       </body>

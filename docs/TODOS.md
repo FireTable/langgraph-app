@@ -81,3 +81,8 @@ Tracked as PR #1 review-comment follow-ups; none are blocking merge.
 **Dependency**: `@assistant-ui/react-o11y@0.0.24` already installed
 (uncommitted). Pin a patch in `patches/` once the public API stops
 moving (it's `0.0.x`, experimental).
+
+## 2026-06-28 — RAG follow-up
+
+Reference if/when RAG lands: <https://docs.langchain.com/oss/javascript/langgraph/agentic-rag>
+

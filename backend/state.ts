@@ -8,7 +8,7 @@ import { StateSchema, MessagesValue } from "@langchain/langgraph";
 // different schemas → wrapper node transforms messages in/out).
 export const RouterAgentState = new StateSchema({
   messages: MessagesValue,
-  routerDecision: z.object({ next: z.enum(["weatherAgent", "chatAgent"]) }),
+  routerDecision: z.object({ next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent"]) }),
 });
 
 // Shared by chat-agent and weather-agent. Only `messages` flows

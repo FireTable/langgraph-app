@@ -68,9 +68,15 @@ mounts and how it resumes change. In inlined mode the card uses the
 `useLangGraphSendCommand` (the `addResult` prop never carries a useful
 value).
 
-## Example: `ask_location`
+## Examples
 
-The one interrupt currently in use. Tool (`backend/tool/ask-location.ts`):
+Four interrupts are currently in use: one for the weather flow, three for the
+crypto trade flow. The contract (`{ ui, data, message }`) is the same — only
+the `ui` discriminator and resume payload differ.
+
+### `ask_location` — weather flow
+
+Tool (`backend/tool/ask-location.ts`):
 
 ```ts
 export const ASK_LOCATION_TOOL_NAME = "ask_location";
@@ -91,6 +97,42 @@ geolocation button + city input. Payload:
 type AskLocationResult =
   | { lat: number; lon: number; label: string } // picked coords
   | { error: string }; // permission denied / geocode failed
+```
+
+### `connect_wallet` — crypto trade flow, step 1
+
+Tool (`backend/tool/crypto/connect-wallet.ts`) opens RainbowKit on resume.
+The card reads the address + chain from wagmi state and forwards them back
+as the resume value:
+
+```ts
+type ConnectWalletResume =
+  | { address: `0x${string}`; chainId: number }     // user picked a wallet
+  | { cancelled: true; message?: string };          // user dismissed the modal
+```
+
+### `place_crypto_order` — crypto trade flow, step 2
+
+Tool (`backend/tool/crypto/place-crypto-order.ts`) fetches a live CoinGecko
+USD quote against Mock Coin and synthesizes a `SimulatedOrder` on click.
+Payload:
+
+```ts
+type PlaceCryptoOrderResume =
+  | SimulatedOrder        // status: "simulated_filled", has order_uid + amounts
+  | { status: "cancelled"; message?: string };
+```
+
+### `get_order_status` — crypto trade flow, step 3
+
+Tool (`backend/tool/crypto/get-order-status.ts`) is a pure trigger; the
+synthetic `order_uid` returned by `place_crypto_order` isn't a real
+on-chain order, so the card synthesizes a status on click. Payload:
+
+```ts
+type GetOrderStatusResume =
+  | { status: "open" | "filled" | "cancelled" | "expired" | "partially_filled"; /* … */ }
+  | { status: "error"; message: string };
 ```
 
 ## Adding a new interrupt-driven tool
