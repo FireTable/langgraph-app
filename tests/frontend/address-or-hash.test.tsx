@@ -64,4 +64,19 @@ describe("AddressOrHash", () => {
     const btn = document.querySelector('[data-action="copy-address-or-hash"]') as HTMLButtonElement;
     expect(btn.getAttribute("aria-label")).toBe(`Copy ${value}`);
   });
+
+  it("renders a static <span> when showCopyButton is false (avoids nested <button>)", () => {
+    const value = "0xea2a41c02fa86a4901826615f9796e603c6a4491";
+    const { container } = render(
+      <button type="button">
+        <AddressOrHash value={value} head={4} tail={3} showCopyButton={false} />
+      </button>,
+    );
+    // No copy button, no nested <button> — just the truncated text in a <span>.
+    expect(container.querySelector('[data-action="copy-address-or-hash"]')).toBeNull();
+    expect(container.querySelector("button button")).toBeNull();
+    expect(container.textContent).toContain("0xea");
+    expect(container.textContent).toContain("491");
+    expect(container.textContent).toContain("…");
+  });
 });

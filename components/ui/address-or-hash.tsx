@@ -102,6 +102,11 @@ export function AddressOrHash({
     </span>
   );
 
+  // Static mode: no button wrapper, no tooltip — needed when the chip sits
+  // inside another <button> (e.g. NFT gallery group header) where a nested
+  // button would invalidate the HTML and trip a hydration error.
+  if (!showCopyButton) return valueNode;
+
   const trigger = (
     <button
       type="button"
