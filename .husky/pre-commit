@@ -1,0 +1,7 @@
+# Pre-commit gate. Run lint-staged first (fast: formats staged files + a
+# quick oxlint pass), then the heavier checks against the whole tree so
+# untracked or cross-file regressions can't slip through.
+pnpm lint-staged
+pnpm lint
+pnpm typecheck
+pnpm test

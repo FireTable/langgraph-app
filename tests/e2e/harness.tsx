@@ -6,7 +6,6 @@
 // Wagmi + LangGraph + RainbowKit are aliased to lightweight stubs via
 // vite.config.ts. The cards run unmodified.
 
-import React from "react";
 import { createRoot } from "react-dom/client";
 
 import {
@@ -41,21 +40,29 @@ function App() {
     target_coin_id: params.get("target") ?? "ethereum",
     amount: params.get("amount") ? Number(params.get("amount")) : undefined,
   };
+  // Crypto cards type their props against the real ToolCallMessagePart shape
+  // (`type` / `toolCallId` / `toolName` / `args` / `argsText` / `status`),
+  // which this harness can't satisfy without faking the runtime. We only care
+  // about exercising the per-card click flow, so cast to `any` here — this
+  // file is a test fixture, not production code.
+  // ponytail: ComponentProps<X> is too strict (cards wrap forwardRef and add
+  // optional DOM attrs we don't care about); `as any` is the right escape.
+  const connectProps = { args: {}, result: undefined } as any;
+  const placeProps = { args: placeArgs, result: undefined } as any;
+  const orderProps = {
+    args: { order_uid: "ord_test_abc123", chain_id: 8453 },
+    result: undefined,
+  } as any;
   return (
     <div>
       <section data-card="connect-wallet">
-        <ConnectWalletCard {...({ args: {}, result: undefined } as never)} />
+        <ConnectWalletCard {...connectProps} />
       </section>
       <section data-card="place-crypto-order">
-        <PlaceCryptoOrderCard {...({ args: placeArgs, result: undefined } as never)} />
+        <PlaceCryptoOrderCard {...placeProps} />
       </section>
       <section data-card="order-status">
-        <OrderStatusCard
-          {...({
-            args: { order_uid: "ord_test_abc123", chain_id: 8453 },
-            result: undefined,
-          } as never)}
-        />
+        <OrderStatusCard {...orderProps} />
       </section>
     </div>
   );

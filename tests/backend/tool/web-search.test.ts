@@ -2,6 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { searchWeb } from "@/backend/tool/web-search";
 
+// searchWeb is `StructuredTool | null` — lazy-registered on JINA_API_KEYS.
+// Tests assume the key is set; bind a non-null reference here so the rest of
+// the file doesn't repeat `!` and tsc narrows correctly.
+const webSearch =
+  searchWeb ??
+  (() => {
+    throw new Error("searchWeb is null — set JINA_API_KEYS to run these tests");
+  })();
+
 const fetchMock = vi.fn();
 
 beforeEach(() => {
@@ -31,7 +40,7 @@ describe("searchWeb", () => {
       }),
     );
 
-    const result = await searchWeb.invoke({ query: "openai ceo" });
+    const result = await webSearch.invoke({ query: "openai ceo" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [calledUrl, calledInit] = fetchMock.mock.calls[0];
@@ -48,12 +57,12 @@ describe("searchWeb", () => {
   });
 
   it("rejects empty query", async () => {
-    await expect(searchWeb.invoke({ query: "" })).rejects.toThrow();
+    await expect(webSearch.invoke({ query: "" })).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("throws when upstream returns a non-2xx status", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(500, { error: "down" }));
-    await expect(searchWeb.invoke({ query: "anything" })).rejects.toThrow(/500/);
+    await expect(webSearch.invoke({ query: "anything" })).rejects.toThrow(/500/);
   });
 });

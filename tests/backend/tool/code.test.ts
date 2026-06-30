@@ -50,7 +50,11 @@ function makeRecordingStdin() {
     close: vi.fn().mockResolvedValue(undefined),
     releaseLock: vi.fn(),
   };
-  return { stream: { getWriter: () => writer } as unknown as WritableStream<Uint8Array<ArrayBuffer>>, chunks, writer };
+  return {
+    stream: { getWriter: () => writer } as unknown as WritableStream<Uint8Array<ArrayBuffer>>,
+    chunks,
+    writer,
+  };
 }
 
 beforeEach(() => {
@@ -175,10 +179,7 @@ describe("denoRun", () => {
     const { denoRun } = await import("@/backend/tool/code");
     const result = await denoRun("console.log('x')", { input: "hello" });
 
-    expect(sandboxSpawn).toHaveBeenCalledWith(
-      "deno",
-      expect.objectContaining({ stdin: "piped" }),
-    );
+    expect(sandboxSpawn).toHaveBeenCalledWith("deno", expect.objectContaining({ stdin: "piped" }));
     expect(stdin.writer.write).toHaveBeenCalledTimes(1);
     const written = stdin.writer.write.mock.calls[0][0] as Uint8Array;
     expect(new TextDecoder().decode(written)).toBe("hello");
@@ -204,7 +205,7 @@ describe("denoRun", () => {
     expect(JSON.parse(new TextDecoder().decode(written))).toEqual({ count: 3, ids: [1, 2] });
   });
 
-  it("uses stdin: \"null\" (does not write) when no input is provided", async () => {
+  it('uses stdin: "null" (does not write) when no input is provided', async () => {
     process.env.DENO_DEPLOY_TOKEN = "test-token";
     sandboxChildOutput.mockResolvedValueOnce({
       status: { success: true, code: 0 },

@@ -75,7 +75,11 @@ async function proxyRequest(req: NextRequest | Request): Promise<Response> {
   });
 }
 
-const authedProxy = withAuth<{ path: string[] }>(async (req) => proxyRequest(req));
+// Next.js 16's typed-routes contract names catch-all params after the segment
+// (the folder is `[..._path]`), so the generated validator expects `_path`. The
+// proxy itself never reads the catch-all — it forwards the request URL — so the
+// generic is purely for type alignment with the generated RouteHandlerConfig.
+const authedProxy = withAuth<{ _path: string[] }>(async (req) => proxyRequest(req));
 
 export const GET = authedProxy;
 export const POST = authedProxy;

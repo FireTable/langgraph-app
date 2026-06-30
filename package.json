@@ -9,10 +9,12 @@
     "dev:backend": "langgraphjs dev",
     "build": "next build",
     "start": "next start",
-    "lint": "oxlint && oxfmt --check",
+    "lint": "oxlint --type-aware --type-check && oxfmt --check",
     "format": "oxfmt --check",
     "format:fix": "oxfmt",
-    "lint:fix": "oxlint --fix && oxfmt",
+    "lint:fix": "oxlint --type-aware --type-check --fix && oxfmt",
+    "typecheck": "tsc --noEmit",
+    "prepare": "husky",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
@@ -92,13 +94,20 @@
     "@vitest/coverage-v8": "^4.1.9",
     "concurrently": "^10.0.3",
     "drizzle-kit": "^0.31.10",
+    "husky": "^9.1.7",
     "jsdom": "^29.1.1",
+    "lint-staged": "^15.5.2",
     "oxfmt": "^0.55.0",
     "oxlint": "^1.71.0",
+    "oxlint-tsgolint": "^0.23.0",
     "tailwindcss": "^4.3.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vite": "^8.1.0",
     "vitest": "^4.1.9"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,md,css}": "oxfmt",
+    "*.{ts,tsx}": "oxlint --type-aware --type-check --fix"
   }
 }

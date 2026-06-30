@@ -39,7 +39,7 @@ function makeRequest(
   return new NextRequest(`http://localhost/${path}`, init);
 }
 
-const CTX = { params: Promise.resolve({ path: ["threads", "abc"] }) };
+const CTX = { params: Promise.resolve({ _path: ["threads", "abc"] }) };
 
 describe("withAuth gate on /api/[...path] (LangGraph proxy)", () => {
   it("returns 401 with code:UNAUTHORIZED when the user has no session", async () => {
@@ -106,7 +106,7 @@ describe("withAuth gate on /api/[...path] (LangGraph proxy)", () => {
     const { POST } = await import("@/app/api/[..._path]/route");
     const res = await POST(makeRequest("api/threads/abc/runs/stream"), {
       ...CTX,
-      params: Promise.resolve({ path: ["threads", "abc", "runs", "stream"] }),
+      params: Promise.resolve({ _path: ["threads", "abc", "runs", "stream"] }),
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/event-stream");
