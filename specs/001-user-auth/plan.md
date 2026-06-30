@@ -2,6 +2,8 @@
 
 **Branch**: `001-user-auth` | **Date**: 2026-06-22 | **Spec**: [spec.md](./spec.md)
 
+**Status**: Completed (merged via `cc1afe8` on 2026-06-23) — see tasks.md "Done When" for验收 checklist
+
 **Input**: Feature specification from `/specs/001-user-auth/spec.md`
 
 ## Summary

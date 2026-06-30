@@ -4,7 +4,7 @@
 
 **Created**: 2026-06-22
 
-**Status**: Draft
+**Status**: Completed (merged via `cc1afe8` on 2026-06-23)
 
 **Input**: User description: "根据我们脑暴的结果, 生成 spec, 邮件服务我们选择 Resend；stag 1 就要处理好用户账号密码 和 邮箱验证"
 

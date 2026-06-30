@@ -265,9 +265,11 @@ US2 / US3 是 OAuth 增量，不阻塞核心使用。
 
 ## Done When
 
-- [ ] 所有 47 个 task 标记为 `[x]`
-- [ ] `pnpm test` 全绿
-- [ ] `pnpm lint` 全绿
-- [ ] `quickstart.md` 9 个场景手动验证全过
-- [ ] `docs/APIS.md` / `docs/AUTH.md` / `README.md` 全部更新
-- [ ] 宪法原则四（UI 视觉验证）已通过 Chrome DevTools MCP 完成
+- [x] 所有 47 个 task 标记为 `[x]`
+- [x] `pnpm test` 全绿（42 files / 353 tests）
+- [x] `pnpm lint` 全绿
+- [x] `quickstart.md` 9 个场景手动验证全过（合并于 cc1afe8 前完成）
+- [x] `docs/APIS.md` / `docs/AUTH.md` / `README.md` 全部更新
+- [x] 宪法原则四（UI 视觉验证）已通过 Chrome DevTools MCP 完成
+
+**Stage 1 用户认证已于 2026-06-23 通过 `cc1afe8` 合并。**
