@@ -194,32 +194,6 @@ function deepUnwrapLC(v: unknown): unknown {
   return v;
 }
 
-// ponytail: `llm.kwargs` for ChatOpenAI includes the openai_api_key in
-// plaintext. We strip any field whose name matches an api-key / secret
-// pattern so the key never lands in the spans table.
-// Patterns: *_api_key, *_apikey, api_key, apikey, *_secret, secret,
-// password, *_password. Doesn't match `max_tokens` (no "key/secret/password"
-// substring after stripping the word boundary).
-const REDACT_KWARG_KEY = /(?:api[_-]?key|_password|^password$|_secret$|^secret$)/i;
-
-function redactLLMKwargs(kwargs: Record<string, unknown> | undefined): Record<string, unknown> {
-  if (!kwargs) return {};
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(kwargs)) {
-    out[k] = REDACT_KWARG_KEY.test(k) ? "***" : v;
-  }
-  return out;
-}
-
-// ponytail: Serialized is a union; only SerializedConstructor carries
-// `kwargs`. Narrow before reading.
-function serializedKwargs(s: Serialized): Record<string, unknown> | undefined {
-  if (s.lc === 1 && s.type === "constructor" && s.kwargs && typeof s.kwargs === "object") {
-    return s.kwargs as Record<string, unknown>;
-  }
-  return undefined;
-}
-
 export class CapturingHandler extends BaseCallbackHandler {
   name = "capturing";
   // runId → in-flight record. End hooks look up, mutate, leave behind.
@@ -274,7 +248,6 @@ export class CapturingHandler extends BaseCallbackHandler {
       meta: {
         ...metadata,
         serialized_llm: llm.id,
-        llm_kwargs: redactLLMKwargs(serializedKwargs(llm)),
         ...(tags?.length ? { tags } : {}),
       },
     });
@@ -297,7 +270,6 @@ export class CapturingHandler extends BaseCallbackHandler {
       meta: {
         ...metadata,
         serialized_llm: llm.id,
-        llm_kwargs: redactLLMKwargs(serializedKwargs(llm)),
         ...(tags?.length ? { tags } : {}),
       },
     });
