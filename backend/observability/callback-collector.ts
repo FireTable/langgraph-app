@@ -41,98 +41,152 @@ type StartPayload = Pick<Partial, "kind" | "name" | "input"> & {
   meta?: CapturedSpan["meta"];
 };
 
-// ponytail: helpers live above the class so oxlint (no function-hoist) can
-// resolve them at the call sites in handleChainEnd / handleLLMEnd / etc.
-function isLCMessageEnvelope(v: unknown): v is {
-  lc: number;
-  type: string;
-  id: string[];
-  kwargs: Record<string, unknown>;
-} {
-  if (!v || typeof v !== "object") return false;
-  const o = v as Record<string, unknown>;
-  // V1: {lc:1, type:"constructor", id:[...], kwargs:{...}}
-  if (o.lc === 1 && o.type === "constructor") {
-    if (!Array.isArray(o.id) || o.id.length === 0) return false;
-    const last = o.id[o.id.length - 1];
-    if (typeof last !== "string" || !/^[A-Z][A-Za-z]*$/.test(last)) return false;
-    if (!o.kwargs || typeof o.kwargs !== "object") return false;
-    return true;
-  }
-  // V2: {lc_serializable:true, lc_namespace:[...], lc_kwargs:{...}}
-  if (
-    o.lc_serializable === true &&
-    Array.isArray(o.lc_namespace) &&
-    o.lc_kwargs &&
-    typeof o.lc_kwargs === "object"
-  ) {
-    return true;
-  }
-  return false;
-}
+// ponytail: LC messages reach callbacks in four shapes — each detected
+// by its own predicate, all normalized into the same
+// {role, content, tool_calls, ...} row shape:
+//   1. live instance: HumanMessage / AIMessageChunk / ToolMessage objects
+//      carrying Symbol.for("langchain.message") = true. Doesn't reach the
+//      callback in practice (LC serializes via .toJSON() first), but kept
+//      for completeness so the unwrapper never crashes on a class instance.
+//   2. V1 envelope: {lc:1, type:"constructor", id:[...], kwargs:{...}}
+//      produced by Serializable.toJSON(). Canonical LC wire format.
+//   3. V2 envelope: {lc_serializable:true, lc_namespace:[...], lc_kwargs:{...}}
+//      emitted when an object crosses a layer that JSON.stringify-walks
+//      own properties instead of calling .toJSON() (streaming chunks,
+//      custom serializers). lc_namespace is whatever was on the instance —
+//      NOT guaranteed to be a class-name path; can be chatcmpl UUIDs.
+//   4. flat: {type|role, content, tool_calls, id, ...} already-constructed
+//      message objects the reducer / chat template injected into GraphState.
+//      Coexist with V1/V2 envelopes in the same array.
+//
+// Role authority: lc_kwargs.type (V2) > kwargs.type (V1) > top-level type
+// > top-level role. Class name derived from id / lc_namespace is NEVER used —
+// trusting those arrays produced role:"e" / role:"0" garbage when the array
+// was a chatcmpl or message UUID instead of a class-name path.
+const MESSAGE_SYMBOL = Symbol.for("langchain.message");
 
-function unwrapLCMessage(env: {
-  id?: string[];
-  lc_namespace?: string[];
-  kwargs?: Record<string, unknown>;
-  lc_kwargs?: Record<string, unknown>;
-}): Record<string, unknown> {
-  // V1 uses kwargs, V2 uses lc_kwargs — normalize.
-  const k = (env.kwargs ?? env.lc_kwargs) as Record<string, unknown>;
-  const idArr = env.id ?? env.lc_namespace ?? [];
-  const className = idArr[idArr.length - 1] ?? "Message";
-  const role = ROLE_BY_CLASS[className];
-  // ponytail: LC V2 streaming chunks leak envelopes whose id array is
-  // [<chatcmpl-uuid>] or [<message-uuid>] (single element, not the
-  // standard [..., ..., ClassName]). className falls through ROLE_BY_CLASS
-  // and we'd previously fall back to `className.toLowerCase()` — emitting
-  // garbage like role: "e" / role: "0". Drop role entirely when we can't
-  // classify; the message still has content + tool_calls etc.
-  const result: Record<string, unknown> = role ? { role } : {};
-  if (k.content !== undefined) {
-    // ToolMessage content is often a JSON string — parse it for readable display.
-    const c = k.content;
-    if (typeof c === "string") {
-      try {
-        result.content = JSON.parse(c);
-      } catch {
-        result.content = c;
-      }
-    } else {
-      result.content = c;
-    }
-  }
-  if (k.additional_kwargs && typeof k.additional_kwargs === "object") {
-    const ak = k.additional_kwargs as Record<string, unknown>;
-    if (Object.keys(ak).length > 0) result.additional_kwargs = ak;
-  }
-  if (Array.isArray(k.tool_calls) && k.tool_calls.length > 0) result.tool_calls = k.tool_calls;
-  if (typeof k.tool_call_id === "string") result.tool_call_id = k.tool_call_id;
-  if (typeof k.name === "string") result.name = k.name;
-  if (typeof k.id === "string") result.id = k.id;
-  if (k.response_metadata && typeof k.response_metadata === "object") {
-    const rm = k.response_metadata as Record<string, unknown>;
-    if (Object.keys(rm).length > 0) result.response_metadata = rm;
-  }
-  return result;
-}
-
-const ROLE_BY_CLASS: Record<string, string> = {
-  HumanMessage: "human",
-  AIMessage: "ai",
-  AIMessageChunk: "ai",
-  ToolMessage: "tool",
-  ToolMessageChunk: "tool",
-  SystemMessage: "system",
-  SystemMessageChunk: "system",
-  FunctionMessage: "function",
-  ChatMessage: "chat",
+type MessageFields = {
+  role?: string;
+  content?: unknown;
+  tool_calls?: unknown[];
+  tool_call_id?: string;
+  name?: string;
+  id?: string;
+  additional_kwargs?: Record<string, unknown>;
+  response_metadata?: Record<string, unknown>;
 };
+
+function readMessageField(outer: Record<string, unknown>, field: string): unknown {
+  // ponytail: getWireMessageField pattern from @langchain/langgraph-sdk —
+  // try top-level first, then kwargs, then lc_kwargs. Peels content /
+  // role / tool_calls regardless of envelope shape.
+  if (field in outer && outer[field] !== undefined) return outer[field];
+  const k = outer.kwargs;
+  if (k && typeof k === "object" && field in k) {
+    const v = (k as Record<string, unknown>)[field];
+    if (v !== undefined) return v;
+  }
+  const lk = outer.lc_kwargs;
+  if (lk && typeof lk === "object" && field in lk) {
+    const v = (lk as Record<string, unknown>)[field];
+    if (v !== undefined) return v;
+  }
+  return undefined;
+}
+
+function unwrapMessage(v: unknown): MessageFields | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown> & { [MESSAGE_SYMBOL]?: boolean };
+
+  // Path 1 — live BaseMessage instance. Symbol.for("langchain.message") = true
+  // is set on the BaseMessage class. Own properties carry everything we need.
+  // ponytail: this is actually the dominant path in our graph — LC doesn't
+  // call .toJSON() on messages that survive through the reducer into
+  // GraphState.output, so handleChainEnd sees live instances, not envelopes.
+  if (o[MESSAGE_SYMBOL] === true) {
+    const result: MessageFields = {};
+    if (typeof o.type === "string") result.role = o.type;
+    if (o.content !== undefined) result.content = o.content;
+    if (Array.isArray(o.tool_calls) && o.tool_calls.length > 0) result.tool_calls = o.tool_calls;
+    if (typeof o.tool_call_id === "string") result.tool_call_id = o.tool_call_id;
+    if (typeof o.name === "string") result.name = o.name;
+    if (typeof o.id === "string") result.id = o.id;
+    if (o.additional_kwargs && typeof o.additional_kwargs === "object") {
+      const ak = o.additional_kwargs as Record<string, unknown>;
+      if (Object.keys(ak).length > 0) result.additional_kwargs = ak;
+    }
+    if (o.response_metadata && typeof o.response_metadata === "object") {
+      const rm = o.response_metadata as Record<string, unknown>;
+      if (Object.keys(rm).length > 0) result.response_metadata = rm;
+    }
+    return result;
+  }
+
+  // Path 2 + 3 — V1 / V2 envelope (serialized form). Same field-extraction
+  // path; readMessageField tries top-level → kwargs → lc_kwargs.
+  const isV1 = o.lc === 1 && o.type === "constructor";
+  const isV2 = "lc_serializable" in o && "lc_namespace" in o;
+  if (isV1 || isV2) {
+    const result: MessageFields = {};
+    const typeVal = readMessageField(o, "type");
+    const roleVal = readMessageField(o, "role");
+    const raw =
+      (typeof typeVal === "string" ? typeVal : null) ??
+      (typeof roleVal === "string" ? roleVal : null);
+    if (raw) result.role = raw;
+    const content = readMessageField(o, "content");
+    if (content !== undefined) {
+      if (typeof content === "string") {
+        // ToolMessage content is often a JSON string — parse for readable display.
+        try {
+          result.content = JSON.parse(content);
+        } catch {
+          result.content = content;
+        }
+      } else {
+        result.content = content;
+      }
+    }
+    const ak = readMessageField(o, "additional_kwargs");
+    if (ak && typeof ak === "object" && Object.keys(ak).length > 0) {
+      result.additional_kwargs = ak as Record<string, unknown>;
+    }
+    const tc = readMessageField(o, "tool_calls");
+    if (Array.isArray(tc) && tc.length > 0) result.tool_calls = tc;
+    const tcid = readMessageField(o, "tool_call_id");
+    if (typeof tcid === "string") result.tool_call_id = tcid;
+    const name = readMessageField(o, "name");
+    if (typeof name === "string") result.name = name;
+    const id = readMessageField(o, "id");
+    if (typeof id === "string") result.id = id;
+    const rm = readMessageField(o, "response_metadata");
+    if (rm && typeof rm === "object" && Object.keys(rm).length > 0) {
+      result.response_metadata = rm as Record<string, unknown>;
+    }
+    return result;
+  }
+
+  // Path 4 — flat (no envelope, no live marker). Caller handles outside.
+  return null;
+}
+
+function isLCMessageEnvelope(v: unknown): v is Record<string, unknown> {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown> & { [MESSAGE_SYMBOL]?: boolean };
+  return (
+    (o.lc === 1 && o.type === "constructor") ||
+    ("lc_serializable" in o && "lc_namespace" in o) ||
+    o[MESSAGE_SYMBOL] === true
+  );
+}
 
 function deepUnwrapLC(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(deepUnwrapLC);
   if (v && typeof v === "object") {
-    if (isLCMessageEnvelope(v)) return unwrapLCMessage(v);
+    if (isLCMessageEnvelope(v)) {
+      const unwrapped = unwrapMessage(v);
+      if (unwrapped) return unwrapped;
+    }
     const out: Record<string, unknown> = {};
     for (const [k, val] of Object.entries(v)) out[k] = deepUnwrapLC(val);
     return out;
