@@ -386,7 +386,7 @@ When you add a key-needing tool, also update `.env.example` (with the sign-up UR
 
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/001-user-auth/plan.md` (and `spec.md`, `research.md`,
+at `specs/002-observability-panel/plan.md` (and `spec.md`, `research.md`,
 `data-model.md`, `quickstart.md`, `contracts/`).
 
 <!-- SPECKIT END -->
