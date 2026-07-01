@@ -9,10 +9,10 @@ const commonOptions = {
   streaming: true,
 };
 
-// Shared chat model instance. LangGraph node functions import this so the
-// underlying OpenAI client (and its HTTP connection pool) is reused across
-// invocations. Override the upstream base URL when targeting an
-// OpenAI-compatible endpoint (local proxy, Azure, third-party gateway).
+// ponytail: callbacks are injected by the graph compile step (see
+// backend/agent.ts) so the handler fires on every LangGraph node,
+// including ToolNode — model.withConfig({callbacks}) only attaches
+// to the chatModel.invoke boundary and tool nodes stay blind to it.
 export const chatModel = new ChatOpenAI({
   ...commonOptions,
   modelKwargs: {

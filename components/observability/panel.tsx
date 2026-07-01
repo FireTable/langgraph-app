@@ -1,5 +1,10 @@
 "use client";
 
+// ponytail: pure renderer. The button.tsx controller owns fetch + the
+// Sheet chrome; the panel just needs data and renders the search box
+// + waterfall + details. Hosting its own <Sheet> here would wrap the
+// panel in a second dialog — exactly what we don't want. No Sheet /
+// Dialog imports in this file.
 import { AuiIf, AuiProvider, useAui, useAuiState } from "@assistant-ui/react";
 import {
   SpanPrimitive,
@@ -18,12 +23,9 @@ import {
   type FC,
 } from "react";
 
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
 
 export type ObservabilityPanelProps = {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   spans: SpanData[];
   // ponytail: raw captured payload indexed by span_id, so clicking a row
   // can show input / output / usage / meta. SpanData only
@@ -737,12 +739,7 @@ const SearchInput: FC<{ value: string; onChange: (v: string) => void }> = ({ val
   />
 );
 
-export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
-  open,
-  onOpenChange,
-  spans,
-  rawSpans,
-}) => {
+export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({ spans, rawSpans }) => {
   const [filters, setFilters] = useState<PanelFilters>({
     search: "",
   });
@@ -782,41 +779,37 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
   const selected = selectedId ? (rawById.get(selectedId) ?? null) : null;
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="flex w-[50vw] min-w-[40rem] max-w-[1200px] flex-col gap-4 overflow-hidden p-6"
-      >
-        <SheetHeader>
-          <div className="flex items-center justify-between gap-3">
-            <SheetTitle>Observability</SheetTitle>
-            {root && (
-              <div className="text-muted-foreground flex items-center gap-3 text-xs">
-                <span className="tabular-nums">{formatDuration(root.totalDurationMs)}</span>
-                {root.totalInput + root.totalOutput > 0 && (
-                  <span className="tabular-nums">
-                    {fmt(root.totalInput + root.totalOutput)} tok
-                  </span>
-                )}
-                <span className="tabular-nums">{root.llmSpanCount} LLM</span>
-              </div>
-            )}
-          </div>
-        </SheetHeader>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <SearchInput value={filters.search} onChange={(v) => setFilters({ search: v })} />
+    <>
+      {root && (
+        <div className="text-muted-foreground flex items-center gap-3 text-xs">
+          <span className="tabular-nums">{formatDuration(root.totalDurationMs)}</span>
+          {root.totalInput + root.totalOutput > 0 && (
+            <span className="tabular-nums">{fmt(root.totalInput + root.totalOutput)} tok</span>
+          )}
+          <span className="tabular-nums">{root.llmSpanCount} LLM</span>
         </div>
+      )}
 
-        <div className="-mx-6 min-h-0 flex-1 overflow-auto px-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <SearchInput value={filters.search} onChange={(v) => setFilters({ search: v })} />
+      </div>
+
+      <div className="-mx-6 min-h-0 flex-1 overflow-auto px-6">
+        {rawSpans && rawSpans.length === 0 ? (
+          <div className="text-muted-foreground text-sm">No spans recorded.</div>
+        ) : (
           <AuiProvider value={aui}>
             <SelectionContext.Provider value={{ selectedId, select: setSelectedId, rawById }}>
               <WaterfallTimeline />
               {selected && <SpanDetails span={selected} />}
             </SelectionContext.Provider>
           </AuiProvider>
-        </div>
-      </SheetContent>
-    </Sheet>
+        )}
+      </div>
+    </>
   );
 };
+
+// ponytail: the panel renders inside whatever container the caller
+// supplies — Sheet, Dialog, div, anything. We don't pin it to a
+// particular chrome.

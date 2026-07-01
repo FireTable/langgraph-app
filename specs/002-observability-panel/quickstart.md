@@ -96,7 +96,7 @@ OPENAI_BASE_URL=https://internal-proxy.example.com/v1 pnpm dev
 
 ```bash
 # 手动跑 retention 脚本(若已实现)
-pnpm tsx scripts/retention.ts
+pnpm tsx scripts/cleanup-observability.ts
 
 # 期望: 7 天前的 spans 被物理删除
 ```

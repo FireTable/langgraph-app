@@ -19,6 +19,9 @@ import {
   ToolGroupTrigger,
 } from "@/components/assistant-ui/tool-group";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { ObservabilityButton } from "@/components/observability/button";
+import { ObservabilitySheet } from "@/components/observability/sheet";
+import { ObservabilitySheetProvider } from "@/components/observability/sheet-context";
 import { WorkingIndicator } from "@/components/assistant-ui/working-indicator";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -95,7 +98,10 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
 
   return (
     <ThreadComponentsContext.Provider value={components}>
-      <ThreadRoot isEmpty={isEmpty} />
+      <ObservabilitySheetProvider>
+        <ThreadRoot isEmpty={isEmpty} />
+        <ObservabilitySheet />
+      </ObservabilitySheetProvider>
     </ThreadComponentsContext.Provider>
   );
 };
@@ -506,6 +512,7 @@ const AssistantActionBar: FC = () => {
           <RefreshCwIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Reload>
+      <ObservabilityButton />
       <ActionBarMorePrimitive.Root>
         <ActionBarMorePrimitive.Trigger asChild>
           <TooltipIconButton tooltip="More" className="data-[state=open]:bg-accent">

@@ -1,6 +1,8 @@
 import { START, END, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import { CapturingHandler } from "@/backend/observability/callback-collector";
+import { bulkInsertSpans } from "@/lib/observability/queries";
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 import { afterAgentNode } from "@/backend/node/after-agent-node";
 import { weatherAgent } from "@/backend/agent/weather-agent";
@@ -183,4 +185,23 @@ const builder = USE_SUBGRAPH ? buildSubgraph() : buildInlined();
 // Don't use these directly in app code — go through `graph`.
 export { buildSubgraph, buildInlined };
 
-export const graph = builder.compile({ checkpointer });
+// ponytail: one handler per process (per module), shared across all
+// concurrent runs. Concurrent threads cross-mixing in the in-memory
+// buffer is a known ceiling — single-dev-session acceptable; revisit
+// when we move to prod checkpointing.
+const capturingHandler = new CapturingHandler({
+  bulkInsert: async (spans) => {
+    await bulkInsertSpans(spans);
+  },
+});
+
+// ponytail: withConfig on CompiledStateGraph has two overloads: the
+// first expects LangGraphRunnableConfig + streamTransformers (general
+// LC use), the second expects PregelOptions (LangGraph-flavored —
+// accepts `callbacks` directly). TS can't pick for a bare callbacks
+// object — cast to the Pregel-options overload at the call site.
+const compiled = builder.compile({ checkpointer });
+type WithConfigPregel = (config: Record<string, unknown>) => typeof compiled;
+export const graph = (compiled.withConfig as unknown as WithConfigPregel)({
+  callbacks: [capturingHandler],
+});

@@ -129,7 +129,7 @@ db/
     └── NNNN_observability_spans.sql   # 新生成
 
 scripts/
-└── retention.ts                      # 新 — 按 OBSERVABILITY_RETENTION_DAYS 物理删除 cron 入口(MVP 可延后)
+└── cleanup-observability.ts           # 新 — 按 OBSERVABILITY_RETENTION_DAYS 物理删除 cron 入口(MVP 可延后)
 
 tests/
 ├── backend/observability/
@@ -155,7 +155,7 @@ docs/
 6. **UI**: `components/assistant-ui/observability-button.tsx` + `observability-sheet.tsx`(顶部 banner 显示 retention 信息),thread.tsx 挂按钮
 7. **删除 dev-only**: `app/observability-preview/page.tsx` + `components/assistant-ui/captured-panels.client.tsx`
 8. **Docs**: `docs/OBSERVABILITY.md`(rule #1 — 端点 / 字段 / 安全 / retention 配置)
-9. **Retention 脚本**(MVP 可延后): `scripts/retention.ts` 读 `OBSERVABILITY_RETENTION_DAYS` → DELETE WHERE created_at < now() - N days → 系统 cron
+9. **Retention 脚本**(MVP 可延后): `scripts/cleanup-observability.ts` 读 `OBSERVABILITY_RETENTION_DAYS` → DELETE WHERE created_at < now() - N days → 系统 cron
 
 ## Complexity Tracking
 

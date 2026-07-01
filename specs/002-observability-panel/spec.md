@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-01
 
-**Status**: Draft
+**Status**: Completed (2026-07-01)— user handed off; tasks.md 全勾选,详见该文件尾部 Status 章节。
 
 **Input**: User description: "按照已有的上下文, 总结这个 spec, 包含写文档/代码实现/测试"
 

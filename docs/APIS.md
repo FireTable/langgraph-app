@@ -59,6 +59,42 @@ Response shape (single row, same for list / fetch / create / update):
 | `PATCH /api/threads/[id]`  | Rename, archive, unarchive, or replace `custom` jsonb (owner-only).                           | 200 / 400 / 401 / 404 |
 | `DELETE /api/threads/[id]` | Remove the thread metadata row (owner-only; does not touch LangGraph checkpoints).            | 204 / 401 / 404       |
 
+## Observability
+
+Per-thread captured LLM / Tool / Chain / Node spans — written at every `handleChainEnd` by the callback handler attached to `chatModel` via `.withConfig({ callbacks })` in `backend/model.ts`. Design doc: [`docs/OBSERVABILITY.md`](./OBSERVABILITY.md) (storage, retention, FORBIDDEN regex, trade-offs).
+
+**Auth + isolation contract**: every endpoint below is wrapped in `withAuth` (rule #9). Path id is a LangGraph `thread_id` — ownership is checked against the calling user; cross-user access returns 404 (no existence leak).
+
+DB rows are cleared automatically by `ON DELETE CASCADE` when the parent `threads` row is removed — the observability endpoints don't need to manage thread lifecycle themselves.
+
+### `GET /api/threads/[id]/observability`
+
+Returns the thread's captured spans in `started_at` ascending order. The handler is `app/api/threads/[id]/observability/route.ts`. Side effect: preflight `markRunningAsFailed(id)` flips any still-`running` rows to `failed` so the client doesn't see stale running states when the chain crashed mid-flight.
+
+Response (200):
+
+```ts
+{
+  thread_id: string;
+  retention_days: number; // obs: from OBSERVABILITY_RETENTION_DAYS, default 30
+  spans: CapturedSpan[];   // ordered by started_at ASC
+}
+```
+
+Status codes:
+
+| Status | Trigger                            | Body                       |
+| ------ | ---------------------------------- | -------------------------- |
+| 200    | owner query                        | the payload above          |
+| 401    | no session                         | `{ code: "UNAUTHORIZED" }` |
+| 404    | thread missing or owned by another | `{ code: "NOT_FOUND" }`    |
+
+### `DELETE /api/threads/[id]/observability`
+
+Clears all spans for the thread. Returns `{ cleared: number }` (the row count). Same auth + ownership contract as GET.
+
+Status codes: 200 / 401 / 404 (same triggers as GET).
+
 ## Proxy
 
 | Endpoint             | Purpose                                                                                                                                                                   |

@@ -194,6 +194,8 @@ function deepUnwrapLC(v: unknown): unknown {
   return v;
 }
 
+type BulkInsert = (spans: CapturedSpan[]) => Promise<void>;
+
 export class CapturingHandler extends BaseCallbackHandler {
   name = "capturing";
   // runId → in-flight record. End hooks look up, mutate, leave behind.
@@ -209,8 +211,14 @@ export class CapturingHandler extends BaseCallbackHandler {
   private runIdByNs = new Map<string, string>();
   private actualParent = new Map<string, string | null>();
 
-  constructor() {
+  // ponytail: bulkInsert is injected by the model wiring layer so this
+  // file stays free of DB imports. Default no-op keeps the demo
+  // runner and tests work without a live Postgres.
+  private bulkInsert: BulkInsert;
+
+  constructor(opts: { bulkInsert?: BulkInsert } = {}) {
     super();
+    this.bulkInsert = opts.bulkInsert ?? (async () => {});
   }
 
   // ---- Start hooks: every Start allocates a span, every End mutates it. ----
@@ -325,6 +333,7 @@ export class CapturingHandler extends BaseCallbackHandler {
   // ---- End hooks: mutate the in-flight span. ----
   handleChainEnd(outputs: Record<string, unknown>, runId: string) {
     this.end(runId, { output: deepUnwrapLC(outputs) });
+    this.persistSpan(runId);
   }
 
   handleLLMEnd(output: LLMResult, runId: string) {
@@ -339,30 +348,36 @@ export class CapturingHandler extends BaseCallbackHandler {
     const fallbackUsage = (output.llmOutput as { tokenUsage?: Record<string, unknown> } | undefined)
       ?.tokenUsage;
     this.end(runId, {
-      output: deepUnwrapLC(output),
+      output: trimGenerations(deepUnwrapLC(output)),
       usage: usage ?? fallbackUsage ?? null,
     });
+    this.persistSpan(runId);
   }
 
   handleToolEnd(output: unknown, runId: string) {
-    this.end(runId, { output: deepUnwrapLC(output) });
+    this.end(runId, { output: trimToolOutput(deepUnwrapLC(output)) });
+    this.persistSpan(runId);
   }
 
   handleRetrieverEnd(documents: unknown, runId: string) {
     this.end(runId, { output: deepUnwrapLC(documents) });
+    this.persistSpan(runId);
   }
 
   // ---- Errors close the span as failed. ----
   handleChainError(err: Error, runId: string) {
     this.end(runId, { status: "failed", error: err.message });
+    this.persistSpan(runId);
   }
 
   handleLLMError(err: Error, runId: string) {
     this.end(runId, { status: "failed", error: err.message });
+    this.persistSpan(runId);
   }
 
   handleToolError(err: Error, runId: string) {
     this.end(runId, { status: "failed", error: err.message });
+    this.persistSpan(runId);
   }
 
   // ---- Internal ----
@@ -379,7 +394,11 @@ export class CapturingHandler extends BaseCallbackHandler {
     }
     if (typeof ns === "string") this.runIdByNs.set(ns, runId);
     this.actualParent.set(runId, actual);
-    const meta: CapturedSpan["meta"] = { ...partial.meta };
+    // ponytail (Phase 1b): strip verbose keys from incoming meta before
+    // anything else. Keeps only what the panel actually renders:
+    //   thread id, the run lineage, the route (langgraph_node/_step/_ns),
+    //   tags for nostream/etc., model name for header, and the TTFT.
+    const meta = trimMeta(partial.meta);
     meta.time_to_first_token_ms ??= null;
     this.spans.set(runId, {
       span_id: runId,
@@ -419,6 +438,20 @@ export class CapturingHandler extends BaseCallbackHandler {
     else if (s.status !== "failed") s.status = "completed";
   }
 
+  // ponytail: persist on every End hook that fires. LC's callback
+  // order is unpredictable — under StateGraph, the outer chain end
+  // doesn't reach a handler that's only attached via model
+  // .withConfig({callbacks}). Each *End we receive is independently
+  // persisted; ON CONFLICT DO NOTHING swallows the duplicate that
+  // happens when the outer chain eventually fires too.
+  private persistSpan(runId: string) {
+    const span = this.spans.get(runId);
+    if (!span) return;
+    this.bulkInsert([span]).catch((err: unknown) => {
+      console.error(`[CapturingHandler] bulkInsert failed for ${runId}:`, err);
+    });
+  }
+
   /** Snapshot — finished spans plus any still-running. */
   snapshot(): CapturedSpan[] {
     return Array.from(this.spans.values()).map((s) => ({
@@ -448,6 +481,82 @@ export class CapturingHandler extends BaseCallbackHandler {
 
 import type { BaseMessage } from "@langchain/core/messages";
 
+// ---- Phase 1 payload trims ------------------------------------------------
+// ponytail (Phase 1b): meta whitelist. Anything outside `META_KEEPERS` is
+// either a duplicate (checkpoint_ns == langgraph_checkpoint_ns) or noise
+// (langgraph_api_url, host, version). Drop before persist — the panel only
+// renders node/step/ns/tags/run name/model/thread.
+const META_KEEPERS = new Set([
+  "tags",
+  "run_id",
+  "thread_id",
+  "langgraph_thread_id",
+  "langgraph_node",
+  "langgraph_step",
+  "langgraph_checkpoint_ns",
+  "ls_model_name",
+  "time_to_first_token_ms",
+  "tool_call_id",
+]);
+
+function trimMeta(raw: Record<string, unknown> | undefined): CapturedSpan["meta"] {
+  const out: CapturedSpan["meta"] = {
+    time_to_first_token_ms: null,
+  };
+  if (!raw) return out;
+  for (const k of Object.keys(raw)) {
+    if (META_KEEPERS.has(k)) (out as Record<string, unknown>)[k] = raw[k];
+  }
+  // ponytail: if upstream already populated ttft (handleLLMNewToken fired
+  // before meta was set), keep it. Otherwise default null.
+  if (out.time_to_first_token_ms === undefined) out.time_to_first_token_ms = null;
+  return out;
+}
+
+// ponytail (Phase 1c): strip OpenAI noise from generations[*][*].genInfo.
+// `prompt`, `completion` are per-token streaming counters (always 0 once the
+// stream closes); system_fingerprint is provider metadata that doesn't help
+// debugging. model_name + finish_reason are kept (panel headers).
+function trimGenerations(output: unknown): unknown {
+  if (!output || typeof output !== "object") return output;
+  const o = output as Record<string, unknown>;
+  if (!Array.isArray(o.generations)) return output;
+  o.generations = (o.generations as unknown[]).map((row) => {
+    if (!Array.isArray(row)) return row;
+    return (row as unknown[]).map((msg) => {
+      if (!msg || typeof msg !== "object") return msg;
+      const m = msg as Record<string, unknown>;
+      const gi = m.generationInfo as Record<string, unknown> | undefined;
+      if (gi) {
+        delete gi.prompt;
+        delete gi.completion;
+        delete gi.system_fingerprint;
+      }
+      return m;
+    });
+  });
+  return o;
+}
+
+// ponytail (Phase 1c): cap tool output's content field to 2KB so fetch_url
+// on a long page doesn't bloat the row. Keep the first 1.5KB, a marker,
+// and the last 200B so the operator gets the start and the conclusion.
+const TOOL_HEAD_BYTES = 1500;
+const TOOL_TAIL_BYTES = 200;
+
+function trimToolOutput(output: unknown): unknown {
+  if (!output || typeof output !== "object") return output;
+  const o = output as Record<string, unknown>;
+  const raw = typeof o.content === "string" ? o.content : null;
+  if (!raw) return o;
+  if (raw.length <= TOOL_HEAD_BYTES + TOOL_TAIL_BYTES + 32) return o;
+  o.content =
+    raw.slice(0, TOOL_HEAD_BYTES) +
+    `\n\n…[truncated ${raw.length - TOOL_HEAD_BYTES - TOOL_TAIL_BYTES} chars]…\n\n` +
+    raw.slice(raw.length - TOOL_TAIL_BYTES);
+  return o;
+}
+
 // ponytail: one helper, one place. Prompts are what the provider sees — keep
 // them as the model sees them, don't down-cast to structured messages.
 function stringifyMessages(msgs: BaseMessage[]): string {
@@ -461,61 +570,4 @@ function stringifyMessages(msgs: BaseMessage[]): string {
       return `${role}: ${content}`;
     })
     .join("\n");
-}
-
-// ---------------------------------------------------------------------------
-// ponytail: __demo__ runner lives in this same file. It is the smallest thing
-// that imports the real graph, attaches the handler, and dumps a JSON file
-// under /tmp so we can inspect real callback payloads. Delete when §10 lands.
-// ---------------------------------------------------------------------------
-if (import.meta.url === `file://${process.argv[1]}`) {
-  void (async () => {
-    const { graph } = await import("@/backend/agent");
-    const handler = new CapturingHandler();
-    const threadId = `demo-${Date.now()}`;
-    const prompt = process.argv[2] ?? "What is the weather in Tokyo?";
-    // ponytail: abort after 30s so an interrupt pause (waiting for human
-    // resume) doesn't hang the demo. Generous default for the natural-flow
-    // runs; bump if a real prompt needs more.
-    const ac = new AbortController();
-    const timeout = setTimeout(() => ac.abort(), 30_000);
-    console.log(`[demo] thread=${threadId}  prompt=${JSON.stringify(prompt)}`);
-    try {
-      await graph.invoke(
-        { messages: [{ role: "user", content: prompt }] },
-        { configurable: { thread_id: threadId }, callbacks: [handler], signal: ac.signal },
-      );
-    } catch (e) {
-      const isInterrupt = (e as { name?: string })?.name === "GraphInterrupt";
-      console.error(
-        `[demo] invoke ended (${isInterrupt ? "INTERRUPT" : "ERR"}):`,
-        e instanceof Error ? e.message : e,
-      );
-    } finally {
-      clearTimeout(timeout);
-    }
-    // ponytail: aborted invokes leave Start-only spans with ended_at: null.
-    // Mark them failed so the panel doesn't render them as "running" forever —
-    // SpanResource uses null-ended spans to extend timeRange.max to Date.now().
-    handler.markRunningAsFailed();
-    const spans = handler.snapshot();
-    const { writeFileSync } = await import("node:fs");
-    // ponytail: pick output path by USE_SUBGRAPH so the side-by-side preview
-    // page can load both runs without one overwriting the other. Allow a
-    // 3rd CLI arg to override (useful when benchmarking custom prompts).
-    const subgraphOn = process.env.USE_SUBGRAPH === "true" || process.env.USE_SUBGRAPH === "1";
-    const outPath =
-      process.argv[3] ??
-      (subgraphOn ? "/tmp/captured-spans-subgraph.json" : "/tmp/captured-spans-inlined.json");
-    writeFileSync(outPath, JSON.stringify(spans, null, 2));
-    console.log(`[demo] ${spans.length} spans → ${outPath}`);
-    for (const s of spans) {
-      const dur = s.ended_at ? s.ended_at - s.started_at : "RUN";
-      const usage = s.usage ? `tokens=${JSON.stringify(s.usage)}` : "";
-      const node = s.meta?.langgraph_node ? `  @${s.meta.langgraph_node}` : "";
-      console.log(
-        `  [${s.kind.padEnd(7)}] ${s.status.padEnd(9)} ${dur === "RUN" ? "RUN" : `${dur}ms`} ${s.name}${node} ${usage}`,
-      );
-    }
-  })();
 }

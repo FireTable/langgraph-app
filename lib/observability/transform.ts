@@ -1,6 +1,6 @@
-// ponytail: transforms /tmp/captured-spans.json into the SpanData[] shape
-// that @assistant-ui/react-o11y consumes, plus a list of "wrapper" node
-// names (subgraphs) for the chip label.
+// ponytail: transforms CapturedSpan[] (callback handler output) into the
+// SpanData[] shape that @assistant-ui/react-o11y consumes, plus a list of
+// "wrapper" node names (subgraphs) for the chip label.
 //
 // Parent chain comes from the backend (CapturingHandler in
 // backend/observability/callback-collector.ts), which derives it from
@@ -23,7 +23,7 @@ function stepKey(s: Step): string {
 
 const LANGSMITH_NOISE = new Set(["RunnableSequence", "RunnableLambda", "parser"]);
 
-export function toSpanData(captured: CapturedSpan[]): SpanData[] {
+export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[] {
   const stepMap = new Map<string, Step>();
   for (const s of captured) {
     const node = s.meta?.langgraph_node;
@@ -91,11 +91,22 @@ export function toSpanData(captured: CapturedSpan[]): SpanData[] {
   const wrapperCandidates = collectWrapperCandidates(captured);
 
   const out: SpanData[] = [root];
+  // ponytail: SpanResource walks spans by parent_span_id. If two steps
+  // share a parent_step key OR a step's ns is its own ancestor, the depth
+  // walk recurses forever and blows the stack. Anchor each step's parent
+  // at the nearest strictly-outer step (a shorter ns), or root. We also
+  // bail at MAX_PARENT_DEPTH in case the ns game isn't enough.
+  const parentIdFor = (s: Step): string => {
+    for (const candidate of steps) {
+      if (candidate === s) continue;
+      if (candidate.step >= s.step) continue;
+      if (s.ns === candidate.ns) continue;
+      if (s.ns.startsWith(`${candidate.ns}|`)) return stepIdByStepAndName.get(stepKey(candidate))!;
+    }
+    return "root";
+  };
   for (const step of steps) {
     const id = stepIdByStepAndName.get(stepKey(step))!;
-    // ponytail: pick the representative raw span for parent resolution —
-    // one whose ns matches THIS step's ns (so inner/outer __start__ don't
-    // collide). Earliest start within the ns bucket = the chain wrapper.
     const repRaw = [...captured]
       .filter((s) => {
         const n = s.meta?.langgraph_node;
@@ -108,7 +119,13 @@ export function toSpanData(captured: CapturedSpan[]): SpanData[] {
     let parentId: string = "root";
     if (repRaw?.parent_span_id) {
       const parentStep = stepBySpanId.get(repRaw.parent_span_id);
-      if (parentStep) parentId = stepIdByStepAndName.get(stepKey(parentStep)) ?? "root";
+      if (parentStep && parentStep !== step) {
+        parentId = stepIdByStepAndName.get(stepKey(parentStep)) ?? "root";
+      } else {
+        parentId = parentIdFor(step);
+      }
+    } else {
+      parentId = parentIdFor(step);
     }
     const type = stepHasInner(step, wrapperCandidates) ? "chain" : "node";
     out.push({
@@ -135,7 +152,7 @@ export function toSpanData(captured: CapturedSpan[]): SpanData[] {
     }
   }
 
-  return out;
+  return clampCycles(out);
 }
 
 // ponytail: a step's ns has at least one "|name:uuid" tail for every
@@ -158,4 +175,27 @@ function collectWrapperCandidates(captured: CapturedSpan[]): { ns: string }[] {
 function stepHasInner(step: Step, candidates: { ns: string }[]): boolean {
   const prefix = `${step.ns}|`;
   return candidates.some((c) => c.ns.startsWith(prefix));
+}
+
+// ponytail: hard ceiling on chain depth. SpanResource.calculateDepth is
+// recursive and a single misplaced parent pointer can crash the thread.
+// Walking the assembled `out` list one final time bumps any cycle back
+// to `root` so the panel never loops.
+const MAX_PARENT_DEPTH = 6;
+function clampCycles(spans: SpanData[]): SpanData[] {
+  const byId = new Map<string, SpanData>(spans.map((s) => [s.id, s]));
+  for (const s of spans) {
+    const seen = new Set<string>([s.id]);
+    let cursor = s.parentSpanId;
+    let depth = 0;
+    while (cursor && !seen.has(cursor) && depth < MAX_PARENT_DEPTH) {
+      seen.add(cursor);
+      depth++;
+      cursor = byId.get(cursor)?.parentSpanId ?? null;
+    }
+    if (cursor && seen.has(cursor)) {
+      s.parentSpanId = "root";
+    }
+  }
+  return spans;
 }

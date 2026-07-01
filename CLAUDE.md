@@ -81,6 +81,8 @@ backend/
   prompt/system.ts        CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, CRYPTO_AGENT_PROMPT, ROUTER_AGENT_PROMPT, RENAME_THREAD_PROMPT
   tool/                   ask_location, geocode_location, get_weather, search_web, fetch_url
   tool/crypto/            get_crypto_price, get_fx_rate, get_token_balances, get_NFT_holdings, connect_wallet, place_crypto_order, get_order_status
+  observability/
+    callback-collector.ts CapturingHandler — BaseCallbackHandler that buffers in-flight spans per runId, persists on chainEnd via injected bulkInsert
 langgraph.json            CLI config: graph id, node version, env file
 app/                      Next.js App Router
   layout.tsx              Root layout, fonts, TooltipProvider
@@ -90,9 +92,18 @@ app/                      Next.js App Router
   api/[..._path]/route.ts Node catch-all proxy to LANGGRAPH_API_URL (withAuth-gated)
   api/alchemy/[...path]/route.ts Server-only JSON-RPC proxy to Alchemy (with key + per-network disabled list)
   api/alchemy/status/route.ts Returns Alchemy key health + disabled-network list
+  api/threads/[id]/observability/route.ts GET / DELETE thread spans (withAuth-gated; ownership check → 404)
   globals.css             Tailwind v4 entry
 components/
   assistant-ui/           Chat primitives (thread, attachment, markdown, reasoning, tool-fallback, tool-group, tooltip-icon-button)
+  assistant-ui/observability-button.tsx        stateless icon button (rule #8 exception) — reads context, opens the Sheet
+  assistant-ui/observability-sheet-context.tsx Provider + useOpenObservabilitySheet() so per-message buttons share one Sheet instance
+  assistant-ui/observability-sheet.tsx         Sheet wrapper (rendered at ThreadRoot), fetches /api/threads/<id>/observability, renders retention banner + waterfall
+observability/                          UI components (button / sheet / sheet-context / panel) — moved out of assistant-ui/ so the feature owns its own folder
+  observability/button.tsx                stateless icon (rule #8 exception) — opens the Sheet via context
+  observability/sheet.tsx                 Sheet wrapper (singleton, at ThreadRoot) — derives threadId via useAuiState
+  observability/sheet-context.tsx         Provider + useOpenObservabilitySheet() so per-message buttons share one Sheet
+  observability/panel.tsx                 Waterfall renderer (SpanResource from @assistant-ui/react-o11y)
   ui/                     shadcn/ui primitives (avatar, button, collapsible, dialog, tooltip) — new-york style, lucide icons
   ui/address-or-hash.tsx  Truncated address/hash with copy-to-clipboard
   tool-ui/ask-location/   Interrupt-driven or addResult-driven location picker card
@@ -102,8 +113,13 @@ lib/utils.ts              cn() = twMerge(clsx(...))
 lib/threads/              Threads module (schema, queries, adapter, validators)
 lib/wagmi.ts              wagmi/RainbowKit config (chains, connectors, WalletConnect projectId)
 lib/alchemy/              networks.ts (slug → Alchemy URL + disabled list) + portfolio.ts (RPC helpers)
+lib/observability/        schema (Drizzle table) · queries (bulkInsert / get / markFailed / delete — with FORBIDDEN regex) · validators (Zod) · config (retention days) · transform (CapturedSpan → SpanData)
 lib/prices/coingecko.ts   CoinGecko free-tier price client (60s in-memory cache)
 lib/decimal.ts            Decimal-based amount math for crypto (no native float)
+scripts/
+  cleanup-observability.ts  Physical-delete older spans: `pnpm exec tsx scripts/cleanup-observability.ts` (cron entry; not yet scheduled — see `docs/OBSERVABILITY.md`)
+docs/
+  OBSERVABILITY.md        Design doc — UI flow, storage schema, FORBIDDEN regex, retention policy, trade-offs. HTTP endpoints are in `docs/APIS.md` § Observability (rule #1).
 ```
 
 ### Backend graph (`backend/agent.ts`)
@@ -158,6 +174,22 @@ Consequences worth knowing:
 ### Web3 providers
 
 `app/layout.tsx` wraps the assistant tree in `<Web3Providers>` (`app/web3-providers.tsx`), which stacks `@tanstack/react-query` `QueryClientProvider`, `WagmiProvider` (configured by `lib/wagmi.ts`), and RainbowKit's `RainbowKitProvider`. Wallet state is global to the browser; the crypto cards read `address` / `chainId` from wagmi hooks directly — they never receive the wallet through tool args. The trade flow is fully SIMULATED regardless of wallet connectivity: `place_crypto_order` auto-funds Mock Coin on the first trade and synthesizes the order on click. Setting `NEXT_PUBLIC_CRYPTO_REAL_SWAP=true` is required to route through any real DEX path (currently dormant — wagmi hooks live in the React tree, so a server-side router alone can't reach them).
+
+### Observability
+
+`backend/model.ts` exports `chatModel` / `chatModelWithoutThink` as `ChatOpenAI.withConfig({ callbacks: [getCapturingHandler()] })`. The handler (`backend/observability/callback-collector.ts`) is a `BaseCallbackHandler` that buffers per-runId spans in a Map (Start hooks create them; End hooks mutate + persist). On every `handleChainEnd` it fires `bulkInsert([span])` against `lib/observability/queries.ts` — the second insert is a no-op via `ON CONFLICT DO NOTHING` so re-flushing an inner span from the outer chain end doesn't double-write.
+
+`bulkInsert` is constructor-injected so the handler stays DB-free and the unit tests run with `vi.fn()`. Wire-up is a one-line `bulkInsert: async (spans) => { await bulkInsertSpans(spans); }` in `getCapturingHandler()`.
+
+Front-end: `<ObservabilityButton>` is icon-only (rule #8 exception) and mounts inside `<AssistantActionBar>` of `components/assistant-ui/thread.tsx` — alongside Copy / Refresh / More on every assistant message. Click opens an `<ObservabilitySheet>` that fetches `GET /api/threads/<threadId>/observability` and renders the waterfall with a retention banner.
+
+The Sheet itself is rendered once at `<ThreadRoot>` (not co-mounted per message — that would pile on dialog backdrops). Per-message buttons talk to the Sheet through `ObservabilitySheetProvider` / `useOpenObservabilitySheet()` from `components/observability/sheet-context.tsx`; the Sheet derives its `threadId` from `useAuiState(... mainThreadId.externalId)` so it follows whichever thread the user is on.
+
+Endpoints live in `app/api/threads/[id]/observability/route.ts` and are wrapped in `withAuth` (rule #9). Ownership → 404 (no existence leak, spec FR-008). Both GET and DELETE shape the response via `lib/observability/validators.ts` Zod schemas.
+
+DB table `observability_spans` in `lib/observability/schema.ts`, FK to `threads(id) ON DELETE CASCADE` (delete the thread row, spans drop with it — no separate cleanup). The `FORBIDDEN` regex in `bulkInsertSpans` rejects any row whose `JSON.stringify` matches `api[_-]?key | _password | ^password$ | _secret$ | ^secret$ | baseURL | organization | bearer <token>` (FR-009 / SC-003). The regex throws — the API is fail-closed: any new provider kwarg that contains a forbidden token stops the write until it's whitelisted.
+
+Retention: env `OBSERVABILITY_RETENTION_DAYS` (default 30, positive int). Physical delete runs via `pnpm exec tsx scripts/cleanup-observability.ts` — system cron is the operator's responsibility (no MVP+scheduling, see `docs/OBSERVABILITY.md` trade-offs).
 
 ### Patches
 
