@@ -25,9 +25,14 @@ export const observabilitySpans = pgTable(
     parentSpanId: text("parent_span_id"),
     name: text("name").notNull(),
     kind: text("kind", {
-      enum: ["llm", "tool", "node", "chain", "retriever", "unknown"],
+      enum: ["llm", "tool", "node", "chain", "retriever", "human", "unknown"],
     }).notNull(),
-    status: text("status", { enum: ["running", "completed", "failed"] })
+    // ponytail: `waiting` is set on a tool span that threw GraphInterrupt
+    // — the call itself is fine, the graph just yielded back to the
+    // runtime pending a human resume. The transform layer maps it to
+    // `running` for the @assistant-ui/react-o11y panel (which has no
+    // waiting state); the DB keeps the precise value for queries.
+    status: text("status", { enum: ["running", "completed", "failed", "waiting"] })
       .notNull()
       .default("running"),
     startedAt: bigint("started_at", { mode: "number" }).notNull(),

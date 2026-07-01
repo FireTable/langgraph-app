@@ -4,6 +4,7 @@
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { Serialized } from "@langchain/core/load/serializable";
 import type { LLMResult } from "@langchain/core/outputs";
+import { isGraphInterrupt } from "@langchain/langgraph";
 
 // Subset of §9.1 columns that a callback handler can populate. Some
 // (thread_id, user_id, turn_no) are fill-in fields — the handler leaves
@@ -12,8 +13,11 @@ export type CapturedSpan = {
   span_id: string;
   parent_span_id: string | null;
   name: string;
-  kind: "llm" | "tool" | "node" | "chain" | "retriever" | "unknown";
-  status: "running" | "completed" | "failed";
+  kind: "llm" | "tool" | "node" | "chain" | "retriever" | "human" | "unknown";
+  // ponytail: `waiting` is the status of a span paused on a LangGraph
+  // `interrupt()` — the tool call itself is fine, it just yielded the
+  // graph back to the runtime so a human (or another agent) can resume.
+  status: "running" | "completed" | "failed" | "waiting";
   started_at: number; // ms epoch
   ended_at: number | null;
   // callback payload fields
@@ -261,6 +265,13 @@ export class CapturingHandler extends BaseCallbackHandler {
   // sibling span whose ns is the current ns with its trailing
   // "|name:uuid" segment stripped. LC's parent_run_id is ignored.
   private runIdByNs = new Map<string, string>();
+  // ponytail: previously tracked the most recent open `kind: "human"`
+  // span here so the next outermost handleChainStart could finalize it.
+  // Removed — in-memory state dies on `langgraphjs dev` process restart
+  // (each resume spawns a fresh process), so the field is write-only in
+  // practice. The visual marker is still useful, just not auto-finalized;
+  // the panel renders `status: "waiting"` as `running` so the bar keeps
+  // ticking until something else updates it.
   private actualParent = new Map<string, string | null>();
 
   // ponytail: per-invoke last HumanMessage id. Set by the outermost
@@ -447,6 +458,56 @@ export class CapturingHandler extends BaseCallbackHandler {
   }
 
   handleToolError(err: Error, runId: string) {
+    // ponytail: GraphInterrupt is what `interrupt()` throws to yield the
+    // graph back to the runtime pending a human resume. It's NOT a
+    // failure — the tool itself is fine. Two observable changes:
+    //   1. The interrupted tool span flips to status="completed" with
+    //      ended_at cleared (the tool "ended" from the model's POV but
+    //      didn't produce a value — the resume will fill it in via the
+    //      re-invoked tool's normal End).
+    //   2. A child synthetic span kind="human" / status="waiting" is
+    //      inserted so the panel shows the wait gap explicitly. It
+    //      stays open (`status: "waiting"` → panel `running`) until the
+    //      next bulkInsert of the same span overwrites it; previously
+    //      an in-memory `openHumanSpanId` field finalized it on the
+    //      next outermost handleChainStart, but that field dies on
+    //      `langgraphjs dev` process restart.
+    if (isGraphInterrupt(err)) {
+      const span = this.spans.get(runId);
+      if (span) {
+        span.status = "completed";
+        span.error = null;
+        span.ended_at = Date.now();
+        this.persistSpan(runId);
+
+        // add human interrupt span
+        const humanSpanId = `${span.span_id}-interrupt`;
+        const humanSpan: CapturedSpan = {
+          span_id: humanSpanId,
+          parent_span_id: span.span_id,
+          name: "interrupt",
+          kind: "human",
+          status: "waiting",
+          started_at: Date.now(),
+          ended_at: null,
+          input: null,
+          output: null,
+          usage: null,
+          error: null,
+          // ponytail: stamp the awaited tool name so bulkInsertSpans'
+          // backfillWaitingInterruptSpans can match on it instead of
+          // closing every waiting human span on the thread. The
+          // openHumanSpanId in-memory finalize was dropped (dies on
+          // langgraphjs dev restart); the DB-side backfill is the
+          // survivor.
+          meta: { ...span.meta, interrupt: true, interrupt_tool: span.name },
+        };
+        this.spans.set(humanSpanId, humanSpan);
+        this.persistSpan(humanSpanId);
+      }
+      return;
+    }
+
     this.end(runId, { status: "failed", error: err.message });
     this.persistSpan(runId);
   }
@@ -505,7 +566,7 @@ export class CapturingHandler extends BaseCallbackHandler {
     patch: {
       output?: unknown;
       usage?: Record<string, unknown> | null;
-      status?: "failed";
+      status?: "failed" | "completed" | "waiting";
       error?: string;
     },
   ) {
@@ -519,7 +580,10 @@ export class CapturingHandler extends BaseCallbackHandler {
     if (patch.usage !== undefined) s.usage = patch.usage;
     if (patch.error !== undefined) s.error = patch.error;
     if (patch.status) s.status = patch.status;
-    else if (s.status !== "failed") s.status = "completed";
+    // ponytail: don't auto-flip a `waiting` span back to `completed` —
+    // that would clobber the interrupt marker set by handleToolError
+    // when an outer chain End fires after the tool errored.
+    else if (s.status !== "failed" && s.status !== "waiting") s.status = "completed";
   }
 
   // ponytail: persist on every End hook that fires. LC's callback

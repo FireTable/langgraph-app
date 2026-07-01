@@ -385,6 +385,165 @@ describe("findLatestParentMessageId (DB fallback)", () => {
   });
 });
 
+describe("bulkInsertSpans — backfillWaitingInterruptSpans", () => {
+  // ponytail: handler inserts a `kind: "human" / status: "waiting"`
+  // span on each tool interrupt, stamping meta.interrupt_tool with
+  // the tool's name. The openHumanSpanId in-memory finalize was
+  // dropped (dies on `langgraphjs dev` restart); the backfill in
+  // bulkInsertSpans takes over: when a new tool span for the same
+  // thread arrives, the prior waiting human span for the SAME tool
+  // flips to completed before this batch's INSERTs. Other tools'
+  // open waits stay open.
+  it("closes a prior waiting human span when a new span for the same tool arrives", async () => {
+    await seedThread("t-resume");
+    const base = Date.now();
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "tool-prior",
+        kind: "tool",
+        name: "ask_location",
+        status: "completed",
+        started_at: base,
+        ended_at: base + 50,
+        meta: { langgraph_thread_id: "t-resume", langgraph_node: "weatherTools" },
+      }),
+      makeSpan({
+        span_id: "tool-prior-interrupt",
+        parent_span_id: "tool-prior",
+        kind: "human",
+        status: "waiting",
+        started_at: base + 60,
+        ended_at: null,
+        meta: {
+          langgraph_thread_id: "t-resume",
+          langgraph_node: "weatherTools",
+          interrupt: true,
+          interrupt_tool: "ask_location",
+        },
+      }),
+    ]);
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "tool-resume",
+        kind: "tool",
+        name: "ask_location",
+        status: "running",
+        started_at: base + 5000,
+        ended_at: null,
+        meta: { langgraph_thread_id: "t-resume", langgraph_node: "weatherTools" },
+      }),
+    ]);
+    const rows = await db
+      .select({
+        spanId: observabilitySpans.spanId,
+        status: observabilitySpans.status,
+        endedAt: observabilitySpans.endedAt,
+      })
+      .from(observabilitySpans);
+    const byId = Object.fromEntries(rows.map((r) => [r.spanId, r]));
+    expect(byId["tool-prior-interrupt"]?.status).toBe("completed");
+    // ended_at is the resume tool's started_at (the gap close), not now().
+    expect(byId["tool-prior-interrupt"]?.endedAt).toBe(base + 5000);
+    expect(byId["tool-resume"]?.status).toBe("running");
+  });
+
+  it("does not close a waiting human span for a different tool", async () => {
+    await seedThread("t-mismatch");
+    const base = Date.now();
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "ask-h",
+        kind: "human",
+        status: "waiting",
+        ended_at: null,
+        meta: {
+          langgraph_thread_id: "t-mismatch",
+          interrupt: true,
+          interrupt_tool: "ask_location",
+        },
+      }),
+    ]);
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "place-order",
+        kind: "tool",
+        name: "place_crypto_order",
+        started_at: base + 1000,
+        meta: { langgraph_thread_id: "t-mismatch" },
+      }),
+    ]);
+    const [row] = await db
+      .select()
+      .from(observabilitySpans)
+      .where(eq(observabilitySpans.spanId, "ask-h"));
+    expect(row.status).toBe("waiting");
+    expect(row.endedAt).toBeNull();
+  });
+
+  it("does not touch a completed (non-waiting) human span", async () => {
+    await seedThread("t-skip");
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "done-human",
+        kind: "human",
+        status: "completed",
+        ended_at: 1234,
+        meta: {
+          langgraph_thread_id: "t-skip",
+          interrupt: true,
+          interrupt_tool: "ask_location",
+        },
+      }),
+    ]);
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "tool-arrives",
+        kind: "tool",
+        name: "ask_location",
+        meta: { langgraph_thread_id: "t-skip" },
+      }),
+    ]);
+    const [row] = await db
+      .select()
+      .from(observabilitySpans)
+      .where(eq(observabilitySpans.spanId, "done-human"));
+    expect(row.status).toBe("completed");
+    expect(row.endedAt).toBe(1234);
+  });
+
+  it("does not touch other threads' waiting human spans", async () => {
+    await seedThread("t-mine");
+    await seedThread("t-other");
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "h-other",
+        kind: "human",
+        status: "waiting",
+        ended_at: null,
+        meta: {
+          langgraph_thread_id: "t-other",
+          interrupt: true,
+          interrupt_tool: "ask_location",
+        },
+      }),
+    ]);
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "tool-mine",
+        kind: "tool",
+        name: "ask_location",
+        meta: { langgraph_thread_id: "t-mine" },
+      }),
+    ]);
+    const [row] = await db
+      .select()
+      .from(observabilitySpans)
+      .where(eq(observabilitySpans.spanId, "h-other"));
+    expect(row.status).toBe("waiting");
+    expect(row.endedAt).toBeNull();
+  });
+});
+
 describe("deleteSpansOlderThan (retention cron helper)", () => {
   it("removes rows whose created_at is older than the cutoff", async () => {
     await seedThread("t-old");

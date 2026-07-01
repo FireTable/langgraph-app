@@ -82,4 +82,37 @@ describe("transformCapturedToSpanData", () => {
     const children = out.filter((s) => s.parentSpanId === step?.id);
     expect(children.map((c) => c.id)).toEqual(["llm-real"]);
   });
+
+  it("includes kind=human leaves so synthetic interrupt spans surface in the panel", () => {
+    // ponytail: CapturingHandler.handleToolError inserts a sibling
+    // `kind: "human"` span when `interrupt()` fires. Without this filter
+    // exemption the panel would show two ask_location bars with no
+    // gap marker — exactly what the user reported before this fix.
+    const out = transformCapturedToSpanData([
+      makeSpan({
+        span_id: "tool-1",
+        name: "ask_location",
+        kind: "tool",
+        started_at: 100,
+        ended_at: null,
+        status: "waiting",
+        meta: { langgraph_node: "weatherTools", langgraph_step: 3, langgraph_checkpoint_ns: "ns3" },
+      }),
+      makeSpan({
+        span_id: "human-1",
+        name: "human_input",
+        kind: "human",
+        started_at: 150,
+        ended_at: null,
+        status: "waiting",
+        meta: { langgraph_node: "weatherTools", langgraph_step: 3, langgraph_checkpoint_ns: "ns3" },
+      }),
+    ]);
+    const step = out.find((s) => s.id === "step-3-weatherTools-ns3");
+    const children = out.filter((s) => s.parentSpanId === step?.id);
+    expect(children.map((c) => c.id).sort()).toEqual(["human-1", "tool-1"]);
+    // waiting → running mapping kicks in for the panel.
+    const human = children.find((c) => c.id === "human-1");
+    expect(human?.status).toBe("running");
+  });
 });

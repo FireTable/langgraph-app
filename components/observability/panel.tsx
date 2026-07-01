@@ -42,6 +42,7 @@ const TYPE_COLORS: Record<string, string> = {
   tool: "hsl(142 71% 45%)",
   node: "hsl(25 95% 53%)",
   chain: "hsl(220 9% 46%)",
+  human: "hsl(217 91% 60%)",
   action: "hsl(221 83% 53%)",
   api: "hsl(262 83% 58%)",
   flow: "hsl(25 95% 53%)",
@@ -239,7 +240,6 @@ const WaterfallRow: FC = () => {
         >
           <span className="w-4.5 shrink-0" />
         </AuiIf>
-        <SpanPrimitive.StatusIndicator className="size-1.5 shrink-0 rounded-full bg-current" />
         <SpanPrimitive.TypeBadge className="border-border text-muted-foreground shrink-0 rounded border px-1 text-[10px]" />
         <SpanPrimitive.Name className="truncate text-sm" />
       </SpanPrimitive.Indent>
@@ -321,7 +321,7 @@ const WaterfallTimeline: FC = () => {
       </WaterfallLayoutContext.Provider>
 
       <div className="border-border text-muted-foreground flex items-center gap-4 border-t px-3 py-2 text-xs">
-        {(["llm", "node", "tool", "chain"] as const).map((t) => (
+        {(["llm", "node", "tool", "chain", "human"] as const).map((t) => (
           <div key={t} className="flex items-center gap-1.5">
             <span className="size-2.5 rounded-sm" style={{ background: TYPE_COLORS[t] }} />
             <span>{t}</span>

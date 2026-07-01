@@ -3,6 +3,29 @@ import type { Serialized } from "@langchain/core/load/serializable";
 import { CapturingHandler } from "@/backend/observability/callback-collector";
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
 
+// ponytail: regression guard for the deleted fire-and-forget DB lookup
+// in start(). Mock the queries module so a re-introduction of an async
+// `findLatestParentMessageId` call from a sync Start hook would fail
+// this assertion. The DB fallback now lives entirely in
+// `bulkInsertSpans` (queries.ts::backfillParentMessageIds), which is
+// covered by its own tests under tests/lib/observability/.
+vi.mock("@/lib/observability/queries", () => ({
+  findLatestParentMessageId: vi.fn(async () => null),
+}));
+
+// ponytail: stub isGraphInterrupt so handleToolError can dispatch to
+// the interrupt branch deterministically. vi.hoisted is required
+// because vi.mock factories are hoisted above top-level let bindings.
+const { isGraphInterruptMock } = vi.hoisted(() => ({
+  isGraphInterruptMock: vi.fn((err: unknown): boolean => {
+    const e = err as { name?: string } | null | undefined;
+    return !!e && (e.name === "GraphInterrupt" || e.name === "NodeInterrupt");
+  }),
+}));
+vi.mock("@langchain/langgraph", () => ({
+  isGraphInterrupt: isGraphInterruptMock,
+}));
+
 // ponytail: Serialized is a structural union; tests only need an object
 // with an `id` array so the handler can pull the class-name tail. Cast
 // through unknown to bypass the union discriminator.
@@ -207,6 +230,153 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     const callB = (bulkInsert.mock.calls[1] as unknown as [CapturedSpan[]])[0];
     expect(callB[0]?.meta.parent_message_id).toBe("h-B");
   });
+});
+
+describe("CapturingHandler — sync Start hooks stay sync", () => {
+  // ponytail: the DB fallback for missing parent_message_id lives in
+  // bulkInsertSpans (pre-INSERT backfill). The Start hook is sync and
+  // MUST NOT touch the queries module — the previous fire-and-forget
+  // `.then()` block was a race (promise resolved after bulkInsertSpans
+  // had already snapshotted the spans). Mocking queries + asserting
+  // it's never called locks the invariant.
+  it("does not call findLatestParentMessageId from handleChainStart when inputs has no HumanMessage", async () => {
+    const { findLatestParentMessageId } = await import("@/lib/observability/queries");
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      { messages: [] },
+      "outer-cold",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-cold" },
+    );
+    handler.handleChainEnd({ ok: true }, "outer-cold");
+    expect(findLatestParentMessageId).not.toHaveBeenCalled();
+  });
+
+  it("does not schedule async work from handleLLMStart even when parent pmid is null", async () => {
+    const { findLatestParentMessageId } = await import("@/lib/observability/queries");
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      { messages: [] },
+      "outer-llm",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-llm" },
+    );
+    handler.handleLLMStart(
+      fakeSerialized("ChatOpenAI"),
+      ["prompt"],
+      "llm-1",
+      "outer-llm",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-llm" },
+    );
+    handler.handleLLMEnd({ generations: [[]] } as never, "llm-1");
+    handler.handleChainEnd({ ok: true }, "outer-llm");
+    expect(findLatestParentMessageId).not.toHaveBeenCalled();
+  });
+});
+
+// ponytail: handleToolError + interrupt semantics. When `interrupt()`
+// fires inside a tool, the tool call is intentional, not a failure.
+// We flip the tool span to `waiting`, insert a sibling `kind: "human"`
+// span to mark the wait gap, and finalize the human span on the next
+// outermost handleChainStart (the resume).
+describe("CapturingHandler — interrupt / human span", () => {
+  function interruptError(): Error {
+    const e = new Error("GraphInterrupt") as Error & { name: string };
+    e.name = "GraphInterrupt";
+    return e;
+  }
+
+  it("flips the tool span to status=completed + clears error + ended_at when interrupt() fires", () => {
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      {},
+      "outer",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-int" },
+    );
+    // handleToolStart signature: (tool, input, runId, parentRunId?, tags?, metadata?, runName?, toolCallId?)
+    handler.handleToolStart(fakeSerialized("ask_location"), "{}", "tool-1", "outer", undefined, {
+      langgraph_thread_id: "t-int",
+    });
+    handler.handleToolError(interruptError(), "tool-1");
+
+    // bulkInsert calls: [0] = tool span re-persisted as completed, [1] = human span
+    const toolFlushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(toolFlushed[0]?.span_id).toBe("tool-1");
+    expect(toolFlushed[0]?.status).toBe("completed");
+    expect(toolFlushed[0]?.error).toBeNull();
+    expect(toolFlushed[0]?.ended_at).toBeNull();
+  });
+
+  it("inserts a child human span with kind=human, status=waiting, parented to the tool", () => {
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      {},
+      "outer",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-int-2" },
+    );
+    handler.handleToolStart(fakeSerialized("ask_location"), "{}", "tool-2", "outer", undefined, {
+      langgraph_thread_id: "t-int-2",
+    });
+    handler.handleToolError(interruptError(), "tool-2");
+
+    const toolFlushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const humanFlushed = (bulkInsert.mock.calls[1] as unknown as [CapturedSpan[]])[0];
+    const human = humanFlushed[0];
+    expect(human?.span_id).toBe("tool-2-interrupt");
+    expect(human?.name).toBe("interrupt");
+    expect(human?.kind).toBe("human");
+    expect(human?.status).toBe("waiting");
+    expect(human?.ended_at).toBeNull();
+    // human is parented to the tool (not the tool's parent), so the
+    // panel nests it directly under the tool bar.
+    expect(human?.parent_span_id).toBe(toolFlushed[0]?.span_id);
+    expect((human?.meta as Record<string, unknown>)?.langgraph_thread_id).toBe("t-int-2");
+    expect((human?.meta as Record<string, unknown>)?.interrupt).toBe(true);
+  });
+
+  it("treats a regular tool error as failed (does not insert a human span)", () => {
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      {},
+      "outer",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-reg" },
+    );
+    handler.handleToolStart(fakeSerialized("ask_location"), "{}", "tool-x", "outer", undefined, {
+      langgraph_thread_id: "t-reg",
+    });
+    handler.handleToolError(new Error("boom"), "tool-x");
+
+    expect(bulkInsert).toHaveBeenCalledTimes(1);
+    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(flushed[0]?.status).toBe("failed");
+    expect(flushed[0]?.error).toBe("boom");
+  });
+
+  // ponytail: the resume-finalize logic was dropped together with the
+  // `openHumanSpanId` field — in-memory state dies on `langgraphjs dev`
+  // process restart, so the field is write-only in practice. The human
+  // span stays `status: "waiting"` (panel maps to `running`) until
+  // something else updates it; that's the deliberate MVP trade-off.
 });
 
 describe("CapturingHandler — payload trims (Phase 1)", () => {

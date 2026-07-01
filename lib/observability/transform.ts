@@ -42,7 +42,10 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
     };
     if (s.started_at < bucket.started) bucket.started = s.started_at;
     if (s.ended_at && (!bucket.ended || s.ended_at > bucket.ended)) bucket.ended = s.ended_at;
-    if ((s.kind === "llm" || s.kind === "tool") && !LANGSMITH_NOISE.has(s.name)) {
+    if (
+      (s.kind === "llm" || s.kind === "tool" || s.kind === "human") &&
+      !LANGSMITH_NOISE.has(s.name)
+    ) {
       bucket.leaves.push(s);
     }
     stepMap.set(key, bucket);
@@ -131,7 +134,7 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
     out.push({
       id,
       parentSpanId: parentId,
-      name: `${step.node} (step ${step.step})`,
+      name: step.node,
       type,
       status: step.ended ? "completed" : "running",
       startedAt: step.started,
@@ -144,7 +147,13 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
         parentSpanId: id,
         name: leaf.name,
         type: leaf.kind === "llm" ? "llm" : leaf.kind === "tool" ? "tool" : leaf.kind,
-        status: leaf.status,
+        // ponytail: SpanData.status from @assistant-ui/react-o11y only
+        // accepts "running" | "completed" | "failed" | "skipped" — no
+        // "waiting". Map DB-side `waiting` (LangGraph interrupt) to
+        // `running` so the panel keeps ticking the open duration. The
+        // synthetic human span alongside the tool conveys the interrupt
+        // semantically; the DB row keeps the precise status for queries.
+        status: leaf.status === "waiting" ? "running" : leaf.status,
         startedAt: leaf.started_at,
         endedAt: leaf.ended_at,
         latencyMs: leaf.ended_at ? leaf.ended_at - leaf.started_at : null,

@@ -117,6 +117,14 @@ export async function bulkInsertSpans(spans: CapturedSpan[]): Promise<number> {
   // Reads use the column so a row written by an earlier invoke but
   // persisted without parent_message_id still drives the fill here.
   await backfillParentMessageIds(rows);
+  // ponytail: finalize any prior `status: "waiting"` interrupt spans on
+  // the same thread before this batch's INSERTs. The handler used to
+  // track the open human span in-memory (`openHumanSpanId`), but that
+  // field dies on `langgraphjs dev` process restart. DB-side fill is
+  // race-free and survives restart: any tool span arriving for the
+  // thread implicitly closes the wait gap that opened on the previous
+  // tool's interrupt.
+  await backfillWaitingInterruptSpans(rows);
   // ponytail: ON CONFLICT DO NOTHING makes the write idempotent — the
   // same runId can fire bulkInsertSpans twice (parent chain end +
   // outermost chain end) and the second call is a no-op.
@@ -162,6 +170,41 @@ async function backfillParentMessageIds(rows: NewObservabilitySpanRow[]): Promis
         r.parentMessageId = latest;
       }
     }
+  }
+}
+
+// ponytail: close any prior waiting human (interrupt) span on threads
+// represented in this batch. We match by `meta->>'interrupt_tool'`
+// so only the gap belonging to the resumed tool is closed — a fresh
+// interrupt on a different tool still waits. The handler's openHumanSpanId
+// in-memory finalize was dropped (dies on langgraphjs dev restart);
+// the DB-side backfill is the survivor. The resume trigger is a tool
+// span in the incoming batch whose `name` matches a waiting human
+// span's `interrupt_tool`; ended_at is set to the resume tool's
+// started_at so the waterfall shows the gap as closed.
+async function backfillWaitingInterruptSpans(rows: NewObservabilitySpanRow[]): Promise<void> {
+  const resumePairs = new Map<string, { toolName: string; resumeAt: number }>();
+  for (const r of rows) {
+    if (r.kind !== "tool" && r.kind !== "node") continue;
+    if (!resumePairs.has(r.threadId)) {
+      resumePairs.set(r.threadId, {
+        toolName: r.name,
+        resumeAt: r.startedAt > 0 ? r.startedAt : Date.now(),
+      });
+    }
+  }
+  for (const [tid, pair] of resumePairs) {
+    await db
+      .update(observabilitySpans)
+      .set({ status: "completed", endedAt: pair.resumeAt })
+      .where(
+        and(
+          eq(observabilitySpans.threadId, tid),
+          eq(observabilitySpans.kind, "human"),
+          eq(observabilitySpans.status, "waiting"),
+          eq(sql`${observabilitySpans.meta}->>'interrupt_tool'`, pair.toolName),
+        ),
+      );
   }
 }
 
