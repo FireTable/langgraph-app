@@ -80,7 +80,11 @@ export const ObservabilitySheet: FC = () => {
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetContent
         side="right"
-        className="flex w-[50vw] min-w-[40rem] max-w-[1200px] flex-col gap-4 overflow-hidden p-6"
+        // ponytail: the right-side variant hard-codes sm:max-w-sm
+        // (~24rem), which clamps width before our responsive utilities
+        // can take over. !max-w-none cancels that clamp so w-full (mobile)
+        // and lg:w-3/4 (≥1024px) are the only constraints left.
+        className="!max-w-none flex w-full flex-col gap-4 overflow-hidden p-6 md:w-3/4"
       >
         <SheetHeader>
           <SheetTitle>Observability</SheetTitle>

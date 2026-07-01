@@ -102,12 +102,11 @@ function formatTimestamp(ms: number): string {
   return new Date(ms).toISOString().replace("T", " ").replace("Z", " UTC");
 }
 
-// ponytail: same shape as the waterfall's axis ticks — <1s in ms, else seconds.
-// Consistent readout across the panel.
+// ponytail: same shape as the waterfall's axis ticks — always seconds.
+// Consistent readout across the panel; sub-second values use 2 decimals
+// (e.g. 49.7s, 1.17s, 0.05s).
 function formatDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const s = ms / 1000;
-  return `${s.toFixed(s < 10 ? 2 : 1)}s`;
+  return `${(ms / 1000).toFixed(2)}s`;
 }
 
 // ponytail: tool output was unwrapped from {lc:1, type:"constructor", ...} envelope
@@ -469,6 +468,9 @@ type RootAggregate = {
   totalDurationMs: number;
   totalInput: number;
   totalOutput: number;
+  // ponytail: input + output billed tokens, excluding cache_read (which
+  // the provider already credits; counting it again inflates the total).
+  totalTokens: number;
   totalCacheRead: number;
   totalReasoning: number;
   // ponytail: TTFT (time-to-first-token) is stamped on LLM spans by
@@ -481,6 +483,7 @@ type RootAggregate = {
   llmSpanCount: number;
   toolSpanCount: number;
   failedCount: number;
+  waitingCount: number;
 };
 
 function aggregateRoot(spans: CapturedSpan[]): RootAggregate | null {
@@ -515,17 +518,20 @@ function aggregateRoot(spans: CapturedSpan[]): RootAggregate | null {
   const ttftAvgMs =
     ttftValues.length > 0 ? ttftValues.reduce((a, b) => a + b, 0) / ttftValues.length : null;
   const ttftMaxMs = ttftValues.length > 0 ? ttftValues.reduce((a, b) => Math.max(a, b), 0) : null;
+
   return {
     totalDurationMs: maxEnd > minStart ? maxEnd - minStart : 0,
     totalInput: input,
     totalOutput: output,
+    totalTokens: input + output,
     totalCacheRead: cache_read,
     totalReasoning: reasoning,
     ttftAvgMs,
     ttftMaxMs,
     llmSpanCount: llms.length,
     toolSpanCount: spans.filter((s) => s.kind === "tool").length,
-    failedCount: spans.filter((s) => s.status === "failed").length,
+    failedCount: spans.filter((s) => s.status === "failed" && s.kind !== "chain").length,
+    waitingCount: spans.filter((s) => s.status === "waiting" && s.kind !== "tool").length,
   };
 }
 
@@ -890,45 +896,58 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
               value={String(root.failedCount)}
             />
           )}
+          {root.waitingCount > 0 && (
+            <StatCard
+              icon={<ClockIcon className="size-3.5" style={{ color: TYPE_COLORS.human }} />}
+              label="Waiting"
+              value={String(root.waitingCount)}
+            />
+          )}
           {root.totalInput > 0 && (
             <StatCard
               icon={<ArrowDownIcon className="text-muted-foreground size-3.5" />}
               label="Input"
-              value={`${fmt(root.totalInput)} tok`}
+              value={`${fmt(root.totalInput)} token`}
             />
           )}
           {root.totalOutput > 0 && (
             <StatCard
               icon={<ArrowUpIcon className="text-muted-foreground size-3.5" />}
               label="Output"
-              value={`${fmt(root.totalOutput)} tok`}
+              value={`${fmt(root.totalOutput)} token`}
             />
           )}
-          {root.totalCacheRead > 0 && (
+          {root.totalTokens > 0 && (
             <StatCard
               icon={<DatabaseIcon className="text-muted-foreground size-3.5" />}
-              label="Cache read"
-              value={`${fmt(root.totalCacheRead)} tok`}
-            />
-          )}
-          {root.ttftAvgMs != null && (
-            <StatCard
-              icon={<ZapIcon className="text-muted-foreground size-3.5" />}
-              label="TTFT avg / max"
-              value={`${formatDuration(root.ttftAvgMs)} / ${formatDuration(root.ttftMaxMs ?? 0)}`}
+              label="Total"
+              value={`${fmt(root.totalTokens)} token`}
             />
           )}
         </div>
       )}
 
-      <div className="-mx-6 min-h-0 flex-1 overflow-auto px-6">
+      <div className="-mx-6 min-h-0 flex-1 overflow-auto px-6 lg:overflow-hidden">
         {rawSpans && rawSpans.length === 0 ? (
           <div className="text-muted-foreground text-sm">No spans recorded.</div>
         ) : (
           <AuiProvider value={aui}>
             <SelectionContext.Provider value={{ selectedId, select: setSelectedId, rawById }}>
-              <WaterfallTimeline retentionDays={retentionDays ?? null} />
-              {selected && <SpanDetails span={selected} />}
+              {/* ponytail: side-by-side on lg+ (waterfall left, details
+                  right). Below lg the grid collapses to a single column
+                  so mobile keeps the natural top-to-bottom flow. Both
+                  cells need min-h-0 so the inner overflow scroll
+                  actually clips instead of pushing the parent taller. */}
+              <div className="flex min-h-0 flex-col gap-4 lg:h-full lg:flex-row">
+                <div className="min-h-0 lg:flex-1 lg:overflow-auto">
+                  <WaterfallTimeline retentionDays={retentionDays ?? null} />
+                </div>
+                {selected && (
+                  <div className="min-h-0 lg:max-w-none lg:w-[min(40%,28rem)] lg:overflow-auto">
+                    <SpanDetails span={selected} />
+                  </div>
+                )}
+              </div>
             </SelectionContext.Provider>
           </AuiProvider>
         )}
