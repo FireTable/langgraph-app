@@ -16,30 +16,29 @@ export type CapturedSpan = {
   status: "running" | "completed" | "failed";
   started_at: number; // ms epoch
   ended_at: number | null;
-  // ponytail: LLM streaming latency — set on the first token callback,
-  // null for non-LLM spans or when streaming isn't observed.
-  time_to_first_token_ms: number | null;
   // callback payload fields
   input: unknown;
   output: unknown;
   usage: Record<string, unknown> | null;
   error: string | null;
-  meta: Record<string, unknown>;
+  // ponytail: LLM-only fields live under meta so the top-level columns
+  // stay stable for §9.1. TTFT is set on the first token callback,
+  // null for non-LLM spans or when streaming isn't observed.
+  meta: Record<string, unknown> & {
+    time_to_first_token_ms?: number | null;
+  };
 };
 
-type Partial = Omit<
-  CapturedSpan,
-  "ended_at" | "output" | "usage" | "error" | "time_to_first_token_ms"
-> & {
+type Partial = Omit<CapturedSpan, "ended_at" | "output" | "usage" | "error" | "meta"> & {
   ended_at: number | null;
   output: unknown;
   usage: Record<string, unknown> | null;
   error: string | null;
-  time_to_first_token_ms: number | null;
+  meta: CapturedSpan["meta"];
 };
 
 type StartPayload = Pick<Partial, "kind" | "name" | "input"> & {
-  meta?: Record<string, unknown>;
+  meta?: CapturedSpan["meta"];
 };
 
 // ponytail: helpers live above the class so oxlint (no function-hoist) can
@@ -212,7 +211,7 @@ export class CapturingHandler extends BaseCallbackHandler {
     this.start(runId, parentRunId ?? null, {
       kind: "llm",
       name: runName ?? llm.id?.[llm.id.length - 1] ?? "llm",
-      input: prompts,
+      input: { prompts },
       meta: {
         ...metadata,
         serialized_llm: llm.id,
@@ -235,14 +234,11 @@ export class CapturingHandler extends BaseCallbackHandler {
     this.start(runId, parentRunId ?? null, {
       kind: "llm",
       name: runName ?? llm.id?.[llm.id.length - 1] ?? "chat-model",
-      // ponytail: input IS the wire prompts — same string shape that
-      // handleLLMStart.prompts gives us.
-      input: messages.map(stringifyMessages),
+      input: { prompts: messages.map(stringifyMessages) },
       meta: {
         ...metadata,
         serialized_llm: llm.id,
         llm_kwargs: redactLLMKwargs(serializedKwargs(llm)),
-        chat_model: true,
         ...(tags?.length ? { tags } : {}),
       },
     });
@@ -290,8 +286,8 @@ export class CapturingHandler extends BaseCallbackHandler {
     const runId = rest.find((a) => typeof a === "string") as string | undefined;
     if (!runId) return;
     const s = this.spans.get(runId);
-    if (s && s.time_to_first_token_ms === null) {
-      s.time_to_first_token_ms = Date.now() - s.started_at;
+    if (s && s.meta.time_to_first_token_ms === undefined) {
+      s.meta.time_to_first_token_ms = Date.now() - s.started_at;
     }
   }
 
@@ -352,6 +348,8 @@ export class CapturingHandler extends BaseCallbackHandler {
     }
     if (typeof ns === "string") this.runIdByNs.set(ns, runId);
     this.actualParent.set(runId, actual);
+    const meta: CapturedSpan["meta"] = { ...partial.meta };
+    meta.time_to_first_token_ms ??= null;
     this.spans.set(runId, {
       span_id: runId,
       parent_span_id: parentRunId,
@@ -360,12 +358,11 @@ export class CapturingHandler extends BaseCallbackHandler {
       status: "running",
       started_at: Date.now(),
       ended_at: null,
-      time_to_first_token_ms: null,
       input: partial.input,
       output: undefined,
       usage: null,
       error: null,
-      meta: partial.meta ?? {},
+      meta,
     });
   }
 
