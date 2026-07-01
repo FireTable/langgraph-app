@@ -81,9 +81,14 @@ function unwrapLCMessage(env: {
   const k = (env.kwargs ?? env.lc_kwargs) as Record<string, unknown>;
   const idArr = env.id ?? env.lc_namespace ?? [];
   const className = idArr[idArr.length - 1] ?? "Message";
-  const result: Record<string, unknown> = {
-    role: ROLE_BY_CLASS[className] ?? className.toLowerCase(),
-  };
+  const role = ROLE_BY_CLASS[className];
+  // ponytail: LC V2 streaming chunks leak envelopes whose id array is
+  // [<chatcmpl-uuid>] or [<message-uuid>] (single element, not the
+  // standard [..., ..., ClassName]). className falls through ROLE_BY_CLASS
+  // and we'd previously fall back to `className.toLowerCase()` — emitting
+  // garbage like role: "e" / role: "0". Drop role entirely when we can't
+  // classify; the message still has content + tool_calls etc.
+  const result: Record<string, unknown> = role ? { role } : {};
   if (k.content !== undefined) {
     // ToolMessage content is often a JSON string — parse it for readable display.
     const c = k.content;
