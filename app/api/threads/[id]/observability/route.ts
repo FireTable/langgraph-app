@@ -13,7 +13,10 @@ type IdParams = { id: string };
 
 // ponytail: rule #9 — every app/api/** route goes through withAuth.
 // Cross-user thread_id is 404 (not 401 / 403) so callers can't
-// enumerate which thread ids exist.
+// enumerate which thread ids exist. This endpoint returns ALL spans for
+// the thread (no parent_message_id filter); the filtered variant is
+// served from the sibling route file at
+// app/api/threads/[id]/observability/[parentMessageId]/route.ts.
 export const GET = withAuth<IdParams>(async (_req, { user, params }) => {
   const thread = await getThreadForUser(params.id, user.id);
   if (!thread) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });

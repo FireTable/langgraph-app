@@ -9,10 +9,11 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 type SheetState = {
   open: boolean;
   threadId: string | null;
+  parentMessageId: string | null;
 };
 
 type SheetControls = {
-  open: (threadId: string) => void;
+  open: (input: { threadId: string; parentMessageId: string | null }) => void;
   close: () => void;
   setOpen: (open: boolean) => void;
   state: SheetState;
@@ -21,16 +22,24 @@ type SheetControls = {
 const ObservabilitySheetContext = createContext<SheetControls | null>(null);
 
 export function ObservabilitySheetProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<SheetState>({ open: false, threadId: null });
+  const [state, setState] = useState<SheetState>({
+    open: false,
+    threadId: null,
+    parentMessageId: null,
+  });
 
-  const open = useCallback((threadId: string) => {
-    setState((prev) => ({ open: true, threadId }));
+  const open = useCallback((input: { threadId: string; parentMessageId: string | null }) => {
+    setState({
+      open: true,
+      threadId: input.threadId,
+      parentMessageId: input.parentMessageId,
+    });
   }, []);
   const close = useCallback(() => {
     setState((prev) => ({ ...prev, open: false }));
   }, []);
   const setOpen = useCallback((next: boolean) => {
-    setState((prev) => (next ? { open: true, threadId: prev.threadId } : { ...prev, open: false }));
+    setState((prev) => (next ? prev : { ...prev, open: false }));
   }, []);
 
   const value = useMemo(() => ({ state, open, close, setOpen }), [state, open, close, setOpen]);
@@ -41,7 +50,10 @@ export function ObservabilitySheetProvider({ children }: { children: ReactNode }
   );
 }
 
-export function useOpenObservabilitySheet(): (threadId: string) => void {
+export function useOpenObservabilitySheet(): (input: {
+  threadId: string;
+  parentMessageId: string | null;
+}) => void {
   const ctx = useContext(ObservabilitySheetContext);
   if (!ctx) throw new Error("useOpenObservabilitySheet outside ObservabilitySheetProvider");
   return ctx.open;

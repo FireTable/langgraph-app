@@ -170,6 +170,58 @@ function unwrapMessage(v: unknown): MessageFields | null {
   return null;
 }
 
+// ponytail: walk the messages array in a graph.invoke input, return the
+// id of the last HumanMessage (or null). The id is what assistant-ui puts
+// on the user message; the assistant message rendered in the thread
+// carries the same id as its `parentId`, so the Sheet can later filter
+// spans by clicking the icon on a specific assistant message.
+function lastHumanMessageId(inputs: Record<string, unknown>): string | null {
+  const messages = (inputs as { messages?: unknown }).messages;
+  if (!Array.isArray(messages)) return null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m || typeof m !== "object") continue;
+    const { role, id } = extractMessageRoleAndId(m as Record<string, unknown>);
+    if (role !== "human" && role !== "user") continue;
+    if (typeof id === "string" && id.length > 0) return id;
+  }
+  return null;
+}
+
+// ponytail: V1 envelopes put "constructor" at the top-level `type` (the
+// envelope kind, not the message kind) — the real type lives in
+// `kwargs.type`. V2 envelopes lack a top-level `type`; the real type
+// lives in `lc_kwargs.type`. readMessageField prefers top-level and
+// therefore returns "constructor" for V1, so we can't reuse it here.
+// This helper skips top-level when an envelope marker is present and
+// looks at kwargs / lc_kwargs instead. Live instances + flat dicts
+// fall through to the top-level path.
+function extractMessageRoleAndId(m: Record<string, unknown>): {
+  role: string | null;
+  id: string | null;
+} {
+  const isEnvelope = m.lc === 1 || "lc_serializable" in m;
+  if (isEnvelope) {
+    const k = m.kwargs as Record<string, unknown> | undefined;
+    const lk = m.lc_kwargs as Record<string, unknown> | undefined;
+    return {
+      role: pickString(k?.type, lk?.type, k?.role, lk?.role),
+      id: pickString(k?.id, lk?.id),
+    };
+  }
+  return {
+    role: pickString(m.type, m.role),
+    id: pickString(m.id),
+  };
+}
+
+function pickString(...vals: unknown[]): string | null {
+  for (const v of vals) {
+    if (typeof v === "string" && v.length > 0) return v;
+  }
+  return null;
+}
+
 function isLCMessageEnvelope(v: unknown): v is Record<string, unknown> {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown> & { [MESSAGE_SYMBOL]?: boolean };
@@ -211,6 +263,15 @@ export class CapturingHandler extends BaseCallbackHandler {
   private runIdByNs = new Map<string, string>();
   private actualParent = new Map<string, string | null>();
 
+  // ponytail: per-invoke last HumanMessage id. Set by the outermost
+  // handleChainStart from `inputs.messages`, inherited unchanged by
+  // nested spans in the same invoke. May be null when the run is a
+  // resume / regen / cold-start invoke with empty inputs — null is
+  // fine because bulkInsertSpans backfills from DB before INSERT,
+  // so spans in interrupted-or-recovered turns still tag with the
+  // thread's most recent non-null parent_message_id.
+  private currentParentMessageId: string | null = null;
+
   // ponytail: bulkInsert is injected by the model wiring layer so this
   // file stays free of DB imports. Default no-op keeps the demo
   // runner and tests work without a live Postgres.
@@ -231,6 +292,13 @@ export class CapturingHandler extends BaseCallbackHandler {
     metadata?: Record<string, unknown>,
     runName?: string,
   ) {
+    // ponytail: outermost call only — overwrite `currentParentMessageId`
+    // with the last HumanMessage id from `inputs.messages`. Null is OK
+    // for resume / regen / cold-start turns — bulkInsertSpans backfills
+    // from DB before INSERT.
+    if (!parentRunId) {
+      this.currentParentMessageId = lastHumanMessageId(inputs);
+    }
     this.start(runId, parentRunId ?? null, {
       kind: "chain",
       name: runName ?? chain.id?.[chain.id.length - 1] ?? "chain",
@@ -333,6 +401,9 @@ export class CapturingHandler extends BaseCallbackHandler {
   // ---- End hooks: mutate the in-flight span. ----
   handleChainEnd(outputs: Record<string, unknown>, runId: string) {
     this.end(runId, { output: deepUnwrapLC(outputs) });
+    // ponytail: outermost chain end → clear the per-invoke parent id so
+    // a subsequent invoke (regenerate, follow-up) recomputes it. Inner
+    // ends leave it intact.
     this.persistSpan(runId);
   }
 
@@ -400,6 +471,19 @@ export class CapturingHandler extends BaseCallbackHandler {
     //   tags for nostream/etc., model name for header, and the TTFT.
     const meta = trimMeta(partial.meta);
     meta.time_to_first_token_ms ??= null;
+    meta.parent_message_id = this.currentParentMessageId;
+
+    // ponytail: when `currentParentMessageId` is null at the outermost
+    // span (interrupt resume / regenerate / cold start — `inputs.messages`
+    // had no HumanMessage), the span gets stamped null here on purpose.
+    // Don't fire a DB lookup from this synchronous Start hook — the
+    // promise would resolve after handleChainEnd has already triggered
+    // bulkInsertSpans, and the `.then()` patch would land on a span
+    // that's been INSERTed (or about to be). The backfill in
+    // `bulkInsertSpans` reads the column at INSERT time and fills every
+    // null row in one pass — single source of truth, race-free by
+    // construction.
+
     this.spans.set(runId, {
       span_id: runId,
       parent_span_id: parentRunId,
@@ -497,6 +581,7 @@ const META_KEEPERS = new Set([
   "ls_model_name",
   "time_to_first_token_ms",
   "tool_call_id",
+  "parent_message_id",
 ]);
 
 function trimMeta(raw: Record<string, unknown> | undefined): CapturedSpan["meta"] {
@@ -504,6 +589,7 @@ function trimMeta(raw: Record<string, unknown> | undefined): CapturedSpan["meta"
     time_to_first_token_ms: null,
   };
   if (!raw) return out;
+
   for (const k of Object.keys(raw)) {
     if (META_KEEPERS.has(k)) (out as Record<string, unknown>)[k] = raw[k];
   }

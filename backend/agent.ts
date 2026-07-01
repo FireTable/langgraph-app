@@ -15,6 +15,8 @@ import { RouterAgentState } from "@/backend/state";
 import { chatModel } from "@/backend/model";
 import { ALL_TOOLS, WEATHER_TOOLS, CRYPTO_TOOLS, CODE_TOOLS } from "@/backend/tool";
 import { CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
+import { getThreadTitle } from "@/lib/threads/queries";
+import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
 
 // USE_SUBGRAPH=true switches the compiled graph between two topologies.
 // Default (false / unset): inlined — flatten weather/chat/crypto model+tool loops
@@ -36,6 +38,29 @@ function routeToSubAgent({
   routerDecision?: { next: "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" };
 }): "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" {
   return routerDecision?.next ?? "chatAgent";
+}
+
+// ponytail: renameThreadAgent only needs to run once per thread — the
+// first time the user sends a message. After that, threads.title is
+// already set; re-invoking the LLM every turn (interrupt + resume,
+// regenerate, follow-up) wastes tokens. Query the title from the DB
+// before entering; if it has been replaced from the default placeholder,
+// skip the node entirely. The conditional edge wires both branches from
+// START, so renameThreadAgent is never even entered (no callback, no
+// span) when the LLM-generated title already exists.
+async function shouldRenameRouter(
+  _state: unknown,
+  config: { configurable?: { thread_id?: string } },
+): Promise<"renameThreadAgent" | "__end__"> {
+  const threadId = config.configurable?.thread_id;
+  if (typeof threadId !== "string" || !threadId) return "__end__";
+  const title = await getThreadTitle(threadId);
+  // ponytail: the column has `notNull().default(DEFAULT_THREAD_TITLE)`
+  // ("New Chat"), so title is always a non-null string in the DB. The
+  // "auto-rename not yet run" signal is `title === DEFAULT_THREAD_TITLE`;
+  // anything else is the LLM-generated title from a prior turn.
+  if (typeof title === "string" && title !== DEFAULT_THREAD_TITLE) return "__end__";
+  return "renameThreadAgent";
 }
 
 // ---------------------------------------------------------------------------
@@ -60,7 +85,10 @@ function buildSubgraph() {
       // write_code's editor card is owned by the code subgraph
       // (see backend/agent/code-agent.ts + components/tool-ui/code).
       // renameThreadAgent is wired off START so its DB side-effect runs in
-      // parallel without touching the messages channel.
+      // parallel without touching the messages channel. The conditional
+      // edge from START routes around the node when threads.title is
+      // already set (re-invoke / interrupt-resume / regenerate), so the
+      // LLM title-generation only runs on the first turn of a new thread.
       .addEdge(START, "routerAgent")
       .addConditionalEdges("routerAgent", routeToSubAgent, [
         "weatherAgent",
@@ -73,8 +101,10 @@ function buildSubgraph() {
       .addEdge("cryptoAgent", "afterAgent")
       .addEdge("codeAgent", "afterAgent")
       .addEdge("afterAgent", END)
-      .addEdge(START, "renameThreadAgent")
-      .addEdge("renameThreadAgent", END)
+      .addConditionalEdges(START, shouldRenameRouter, {
+        renameThreadAgent: "renameThreadAgent",
+        __end__: END,
+      })
   );
 }
 
@@ -174,8 +204,10 @@ function buildInlined() {
       .addConditionalEdges("codeModel", codeRoute, ["codeTools", "afterAgent"])
       .addEdge("codeTools", "codeModel")
       .addEdge("afterAgent", END)
-      .addEdge(START, "renameThreadAgent")
-      .addEdge("renameThreadAgent", END)
+      .addConditionalEdges(START, shouldRenameRouter, {
+        renameThreadAgent: "renameThreadAgent",
+        __end__: END,
+      })
   );
 }
 

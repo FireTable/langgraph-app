@@ -91,6 +91,124 @@ describe("CapturingHandler — bulkInsert wiring", () => {
   });
 });
 
+describe("CapturingHandler — parent_message_id extraction", () => {
+  it("tags every span with the last HumanMessage id from the outermost chain's inputs", async () => {
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      {
+        messages: [
+          { id: "h-1", type: "human", content: "first" },
+          { id: "a-1", type: "ai", content: "first-reply" },
+          { id: "h-2", type: "human", content: "second" },
+        ],
+      },
+      "outer",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-1" },
+    );
+    handler.handleLLMStart(
+      fakeSerialized("ChatOpenAI"),
+      ["prompt"],
+      "llm-1",
+      "outer",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-1", langgraph_node: "agent" },
+    );
+    handler.handleLLMEnd({ generations: [[]] } as never, "llm-1");
+    handler.handleChainEnd({ ok: true }, "outer");
+
+    // ponytail: bulkInsert fires once per End hook. LLMEnd for llm-1
+    // comes first → mock.calls[0] is [llm-1 span]. ChainEnd for outer
+    // comes second → mock.calls[1] is [outer span]. Both should carry
+    // the same parent_message_id since they're in the same invoke.
+    const llmCall = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const chainCall = (bulkInsert.mock.calls[1] as unknown as [CapturedSpan[]])[0];
+    expect(llmCall[0]?.span_id).toBe("llm-1");
+    expect(llmCall[0]?.meta.parent_message_id).toBe("h-2");
+    expect(chainCall[0]?.span_id).toBe("outer");
+    expect(chainCall[0]?.meta.parent_message_id).toBe("h-2");
+  });
+
+  it("peels V1 envelope to find the human message id", async () => {
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    // V1 envelope: {lc:1, type:"constructor", id:[...], kwargs:{type, id, content}}
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      {
+        messages: [
+          {
+            lc: 1,
+            type: "constructor",
+            id: ["langchain_core", "messages", "HumanMessage"],
+            kwargs: { type: "human", id: "h-envelope", content: "hi" },
+          },
+        ],
+      },
+      "outer-2",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-2" },
+    );
+    handler.handleChainEnd({ ok: true }, "outer-2");
+
+    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(flushed[0]?.meta.parent_message_id).toBe("h-envelope");
+  });
+
+  it("sets parent_message_id to null when the outermost chain has no human messages", async () => {
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      { messages: [] },
+      "outer-3",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-3" },
+    );
+    handler.handleChainEnd({ ok: true }, "outer-3");
+    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(flushed[0]?.meta.parent_message_id).toBeNull();
+  });
+
+  it("clears parent_message_id after the outermost chain ends so the next invoke recomputes", async () => {
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    // First invoke: human message h-A
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      { messages: [{ id: "h-A", type: "human", content: "a" }] },
+      "run-A",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-4" },
+    );
+    handler.handleChainEnd({ ok: true }, "run-A");
+    // Second invoke: human message h-B
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      { messages: [{ id: "h-B", type: "human", content: "b" }] },
+      "run-B",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-4" },
+    );
+    handler.handleChainEnd({ ok: true }, "run-B");
+
+    // First call: outer-A end → span meta has h-A
+    const callA = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(callA[0]?.meta.parent_message_id).toBe("h-A");
+    // Second call: outer-B end → span meta has h-B (not stuck on h-A)
+    const callB = (bulkInsert.mock.calls[1] as unknown as [CapturedSpan[]])[0];
+    expect(callB[0]?.meta.parent_message_id).toBe("h-B");
+  });
+});
+
 describe("CapturingHandler — payload trims (Phase 1)", () => {
   it("strips redundant fields from incoming meta before persisting", async () => {
     const bulkInsert = vi.fn(async () => {});

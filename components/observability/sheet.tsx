@@ -16,7 +16,7 @@ import type { CapturedSpan } from "@/backend/observability/callback-collector";
 const LOCAL_THREAD_PREFIX = "__LOCAL_";
 
 export const ObservabilitySheet: FC = () => {
-  const { open, threadId, setOpen } = useObservabilitySheetState();
+  const { open, threadId, parentMessageId, setOpen } = useObservabilitySheetState();
   const [spans, setSpans] = useState<CapturedSpan[]>([]);
   const [spanData, setSpanData] = useState<SpanData[]>([]);
   const [retentionDays, setRetentionDays] = useState<number | null>(null);
@@ -38,11 +38,19 @@ export const ObservabilitySheet: FC = () => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    // ponytail: filtered route takes the path segment
+    // `/api/threads/<id>/observability/<parentMessageId>` so the btree
+    // index observability_spans_thread_parent_started_idx serves it.
+    // When the user clicks an older message whose id isn't captured
+    // in any span (no currentParentMessageId on the outer chain),
+    // parentMessageId is null and we fall back to the un-filtered
+    // route — the panel still renders, just with the merged history.
+    const path = parentMessageId
+      ? `/api/threads/${threadId}/observability/${encodeURIComponent(parentMessageId)}`
+      : `/api/threads/${threadId}/observability`;
     void (async () => {
       try {
-        const res = await fetch(`/api/threads/${threadId}/observability`, {
-          credentials: "include",
-        });
+        const res = await fetch(path, { credentials: "include" });
         if (cancelled) return;
         if (!res.ok) {
           setError(`Failed to load (${res.status})`);
@@ -51,6 +59,7 @@ export const ObservabilitySheet: FC = () => {
         const body = (await res.json()) as {
           thread_id: string;
           retention_days: number;
+          parent_message_id?: string;
           spans: CapturedSpan[];
         };
         setSpans(body.spans);
@@ -65,7 +74,7 @@ export const ObservabilitySheet: FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [open, threadId]);
+  }, [open, threadId, parentMessageId]);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>

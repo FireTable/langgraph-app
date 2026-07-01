@@ -15,12 +15,16 @@ const LOCAL_THREAD_PREFIX = "__LOCAL_";
 
 export const ObservabilityButton: FC = () => {
   const openSheet = useOpenObservabilitySheet();
+
   const threadId = useAuiState((s) => {
     const item = s.threads.threadItems.find((t) => t.id === s.threads.mainThreadId);
     const candidate = item?.externalId ?? s.threads.mainThreadId;
     return candidate && !candidate.startsWith(LOCAL_THREAD_PREFIX) ? candidate : null;
   });
+
+  const message = useAuiState((s) => s.message);
   if (!threadId) return null;
+
   return (
     <TooltipIconButton
       tooltip="Observability"
@@ -29,7 +33,14 @@ export const ObservabilityButton: FC = () => {
       size="icon"
       className="aui-observability-action size-6"
       aria-label="Open observability panel"
-      onClick={() => openSheet(threadId)}
+      onClick={() => {
+        // ponytail: message is the assistant message this button is mounted
+        // on; message.parentId is the human message that triggered it
+        // (assistant-ui convention). The backend tags every span with
+        // that same parent_message_id, so the Sheet filters to the spans
+        // produced for THIS turn only.
+        openSheet({ threadId, parentMessageId: message?.parentId ?? null });
+      }}
     >
       <ActivityIcon className="size-4" />
     </TooltipIconButton>

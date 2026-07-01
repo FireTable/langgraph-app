@@ -8,7 +8,7 @@ import {
   useAui,
   useAuiState,
 } from "@assistant-ui/react";
-import { unstable_createLangGraphStream, useLangGraphRuntime } from "@assistant-ui/react-langgraph";
+import { useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
 import { MenuIcon, MessageSquareTextIcon, PanelLeftIcon, PlusIcon, ShareIcon } from "lucide-react";
@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
 import { cn } from "@/lib/utils";
 import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID, APP_NAME } from "@/lib/constants";
+import { createLangGraphStream } from "@/lib/langgraph/create-stream";
 
 // Provider-scoped values (api, mainThreadId) bridged into a ref so the
 // runtime's eventHandlers can read them — they run before the provider
@@ -170,21 +171,29 @@ export function Assistant() {
   // apiUrl is undefined on the first SSR pass, so the runtime builds lazily.
   const client = useMemo(() => new Client({ apiUrl: apiUrl! }), [apiUrl]);
 
+  // eventHandlers runs INSIDE the runtime, before the provider mounts —
+  // it can't call useAui directly. A child component mounted inside the
+  // provider writes the api + mainThreadId to bridgeRef; the handler
+  // reads them at call time.
+  const bridgeRef = useRef<RuntimeBridge>({ api: null, mainThreadId: null });
+
+  // ponytail: our own `createLangGraphStream` replaces the upstream
+  // `unstable_createLangGraphStream` so we own the stream-build logic
+  // (rule of minimal dependencies) and can extend with parentMessageId
+  // threading. We don't pass parentMessageId here — the helper derives
+  // it from the latest HumanMessage inside the messages array at call
+  // time, so the source of truth stays a single line of code and
+  // doesn't require message-scoped access (which doesn't exist at this
+  // top level of AssistantRuntimeProvider).
   const stream = useMemo(
     () =>
-      unstable_createLangGraphStream({
+      createLangGraphStream({
         client,
         assistantId,
         streamMode: ["messages", "updates", "custom"],
       }),
     [client, assistantId],
   );
-
-  // eventHandlers runs INSIDE the runtime, before the provider mounts —
-  // it can't call useAui directly. A child component mounted inside the
-  // provider writes the api + mainThreadId to bridgeRef; the handler
-  // reads them at call time.
-  const bridgeRef = useRef<RuntimeBridge>({ api: null, mainThreadId: null });
 
   const eventHandlers = useMemo(() => ({}), []);
 

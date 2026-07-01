@@ -11,6 +11,7 @@ import {
   markRunningAsFailed,
   deleteSpansByThreadId,
   deleteSpansOlderThan,
+  findLatestParentMessageId,
 } from "@/lib/observability/queries";
 import { TEST_USER, ensureTestUser } from "@/tests/helpers/auth";
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
@@ -79,28 +80,76 @@ describe("bulkInsertSpans", () => {
     expect(rows).toHaveLength(1);
   });
 
-  it("throws on payload containing api_key (FR-009)", async () => {
+  it("redacts api_key value to first-5 + *** (FR-009, no throw)", async () => {
     await seedThread("t-1");
     const span = makeSpan({
-      meta: { langgraph_thread_id: "t-1", openai_api_key: "sk-leak" },
+      meta: { langgraph_thread_id: "t-1", openai_api_key: "sk-proj-abcdefghij1234567890" },
     });
-    await expect(bulkInsertSpans([span])).rejects.toThrow(/forbidden sensitive field/);
+    const written = await bulkInsertSpans([span]);
+    expect(written).toBe(1);
+    const rows = await db.select().from(observabilitySpans);
+    const persisted = rows[0].meta as Record<string, unknown>;
+    expect(persisted.openai_api_key).toBe("sk-pr***");
   });
 
-  it("throws on payload containing baseURL (FR-009)", async () => {
+  it("does NOT redact baseURL — explicit allowlist (FR-009 narrowed)", async () => {
+    // ponytail: baseURL was dropped from the denylist because LLM output
+    // regularly mentions it as a noun ("default baseURL", "set the
+    // baseURL to ..."), producing false positives. Any URL-shaped value
+    // is still preserved verbatim; we trust the schema / provider kwargs
+    // to keep the real baseURL in env vars, not span payloads.
     await seedThread("t-1");
+    const original = "https://internal-proxy.example.com/v1";
     const span = makeSpan({
-      meta: { langgraph_thread_id: "t-1", baseURL: "https://internal-proxy" },
+      meta: { langgraph_thread_id: "t-1", baseURL: original },
     });
-    await expect(bulkInsertSpans([span])).rejects.toThrow(/forbidden sensitive field/);
+    const written = await bulkInsertSpans([span]);
+    expect(written).toBe(1);
+    const rows = await db.select().from(observabilitySpans);
+    const persisted = rows[0].meta as Record<string, unknown>;
+    expect(persisted.baseURL).toBe(original);
   });
 
-  it("throws on payload containing a Bearer token value (FR-009)", async () => {
+  it("redacts Bearer token value to first-5 + *** (FR-009, no throw)", async () => {
     await seedThread("t-1");
     const span = makeSpan({
-      meta: { langgraph_thread_id: "t-1", header: "Bearer abcdef" },
+      meta: { langgraph_thread_id: "t-1", header: "Bearer abcdef1234567890xyz" },
     });
-    await expect(bulkInsertSpans([span])).rejects.toThrow(/forbidden sensitive field/);
+    const written = await bulkInsertSpans([span]);
+    expect(written).toBe(1);
+    const rows = await db.select().from(observabilitySpans);
+    const persisted = rows[0].meta as Record<string, unknown>;
+    expect(persisted.header).toBe("Bearer abcde***");
+  });
+
+  it("redacts secret in nested output field, not just top-level meta", async () => {
+    await seedThread("t-1");
+    const span = makeSpan({
+      meta: { langgraph_thread_id: "t-1" },
+      output: { headers: { authorization: "Bearer topsecrettoken12345" } },
+    });
+    const written = await bulkInsertSpans([span]);
+    expect(written).toBe(1);
+    const rows = await db.select().from(observabilitySpans);
+    const output = rows[0].output as { headers: { authorization: string } };
+    expect(output.headers.authorization).toBe("Bearer topse***");
+  });
+
+  it("writes spans with no forbidden field verbatim (regression guard)", async () => {
+    await seedThread("t-1");
+    const span = makeSpan({
+      meta: {
+        langgraph_thread_id: "t-1",
+        langgraph_node: "agent",
+        parent_message_id: "msg-12345",
+      },
+    });
+    const written = await bulkInsertSpans([span]);
+    expect(written).toBe(1);
+    const rows = await db.select().from(observabilitySpans);
+    const persisted = rows[0].meta as Record<string, unknown>;
+    expect(persisted.langgraph_node).toBe("agent");
+    expect(persisted.parent_message_id).toBe("msg-12345");
   });
 
   it("throws when the span has no thread_id in meta", async () => {
@@ -108,6 +157,56 @@ describe("bulkInsertSpans", () => {
     // ponytail: threadIdOf accepts both `meta.thread_id` (LC v1.x) and
     // `meta.langgraph_thread_id` (older LC). Neither present → throw.
     await expect(bulkInsertSpans([span])).rejects.toThrow(/thread_id/);
+  });
+
+  it("projects meta.parent_message_id into the column on insert", async () => {
+    await seedThread("t-col");
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "c-1",
+        meta: { langgraph_thread_id: "t-col", parent_message_id: "msg-A" },
+      }),
+      makeSpan({
+        span_id: "c-2",
+        meta: { langgraph_thread_id: "t-col" }, // no parent_message_id
+      }),
+    ]);
+    const rows = await db
+      .select({
+        spanId: observabilitySpans.spanId,
+        parentMessageId: observabilitySpans.parentMessageId,
+      })
+      .from(observabilitySpans);
+    const map = Object.fromEntries(rows.map((r) => [r.spanId, r.parentMessageId]));
+    expect(map["c-1"]).toBe("msg-A");
+    expect(map["c-2"]).toBeNull();
+  });
+
+  it("re-hydrates meta.parent_message_id from the column when meta doesn't carry it", async () => {
+    // ponytail: round-trip guard — the column is indexable storage; if
+    // a row reaches getSpansByThreadId without meta.parent_message_id
+    // (e.g. a future writer bypasses the toRow projection), reads must
+    // re-hydrate so downstream consumers see the same shape they wrote.
+    await seedThread("t-roundtrip");
+    // Direct insert bypassing toRow's projection to force the column-only path.
+    await db.insert(observabilitySpans).values({
+      spanId: "rt-1",
+      threadId: "t-roundtrip",
+      parentSpanId: null,
+      name: "chain",
+      kind: "chain",
+      status: "completed",
+      startedAt: Date.now(),
+      endedAt: Date.now() + 1,
+      input: null,
+      output: null,
+      usage: null,
+      error: null,
+      meta: { langgraph_thread_id: "t-roundtrip" }, // no parent_message_id key here
+      parentMessageId: "msg-from-column-only",
+    });
+    const [fetched] = await getSpansByThreadId("t-roundtrip");
+    expect(fetched?.meta.parent_message_id).toBe("msg-from-column-only");
   });
 });
 
@@ -140,6 +239,46 @@ describe("getSpansByThreadId", () => {
     const b = await getSpansByThreadId("t-b");
     expect(a.map((s) => s.span_id)).toEqual(["x"]);
     expect(b.map((s) => s.span_id)).toEqual(["y"]);
+  });
+
+  it("filters by parentMessageId when supplied", async () => {
+    await seedThread("t-1");
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "a",
+        meta: { langgraph_thread_id: "t-1", parent_message_id: "msg-1" },
+      }),
+      makeSpan({
+        span_id: "b",
+        meta: { langgraph_thread_id: "t-1", parent_message_id: "msg-2" },
+      }),
+      makeSpan({
+        span_id: "c",
+        meta: { langgraph_thread_id: "t-1", parent_message_id: "msg-1" },
+      }),
+      makeSpan({
+        span_id: "d",
+        meta: { langgraph_thread_id: "t-1" }, // no parent_message_id
+      }),
+    ]);
+    const filtered = await getSpansByThreadId("t-1", { parentMessageId: "msg-1" });
+    expect(filtered.map((s) => s.span_id).sort()).toEqual(["a", "c"]);
+  });
+
+  it("returns all spans for the thread when parentMessageId is omitted", async () => {
+    await seedThread("t-1");
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "a",
+        meta: { langgraph_thread_id: "t-1", parent_message_id: "msg-1" },
+      }),
+      makeSpan({
+        span_id: "b",
+        meta: { langgraph_thread_id: "t-1" },
+      }),
+    ]);
+    const spans = await getSpansByThreadId("t-1");
+    expect(spans.map((s) => s.span_id).sort()).toEqual(["a", "b"]);
   });
 });
 
@@ -198,6 +337,51 @@ describe("ON DELETE CASCADE — thread lifecycle", () => {
     await db.delete(threads).where(eq(threads.id, "t-cascade"));
     const remaining = await db.select().from(observabilitySpans);
     expect(remaining).toHaveLength(0);
+  });
+});
+
+describe("findLatestParentMessageId (DB fallback)", () => {
+  // ponytail: this is what the collector's start() calls at the
+  // outermost span when currentParentMessageId is null. The most
+  // recent non-null parent_message_id on the thread is reused so a
+  // resumed / regen / cold-start invoke still tags with the right
+  // turn id.
+  it("returns the most recent parent_message_id for the thread", async () => {
+    await seedThread("t-fl");
+    const base = Date.now();
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "older",
+        started_at: base + 10,
+        meta: { langgraph_thread_id: "t-fl", parent_message_id: "msg-A" },
+      }),
+      makeSpan({
+        span_id: "newer",
+        started_at: base + 20,
+        meta: { langgraph_thread_id: "t-fl", parent_message_id: "msg-B" },
+      }),
+      makeSpan({
+        span_id: "no-pmid",
+        started_at: base + 30,
+        meta: { langgraph_thread_id: "t-fl" },
+      }),
+    ]);
+    expect(await findLatestParentMessageId("t-fl")).toBe("msg-B");
+  });
+
+  it("returns null when the thread has no prior parent_message_id", async () => {
+    await seedThread("t-empty");
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "no-pmid-1",
+        meta: { langgraph_thread_id: "t-empty" },
+      }),
+    ]);
+    expect(await findLatestParentMessageId("t-empty")).toBeNull();
+  });
+
+  it("returns null for an unknown thread", async () => {
+    expect(await findLatestParentMessageId("ghost-thread")).toBeNull();
   });
 });
 

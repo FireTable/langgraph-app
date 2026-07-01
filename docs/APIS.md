@@ -69,7 +69,7 @@ DB rows are cleared automatically by `ON DELETE CASCADE` when the parent `thread
 
 ### `GET /api/threads/[id]/observability`
 
-Returns the thread's captured spans in `started_at` ascending order. The handler is `app/api/threads/[id]/observability/route.ts`. Side effect: preflight `markRunningAsFailed(id)` flips any still-`running` rows to `failed` so the client doesn't see stale running states when the chain crashed mid-flight.
+Returns the thread's captured spans in `started_at` ascending order. The handler is `app/api/threads/[id]/observability/route.ts`. Side effect: preflight `markRunningAsFailed(id)` flips any still-`running` rows to `failed` so the client doesn't see stale running states when the chain crashed mid-flight. This is the un-filtered variant — for spans scoped to a single turn, see `GET /api/threads/[id]/observability/[parentMessageId]` below.
 
 Response (200):
 
@@ -78,6 +78,31 @@ Response (200):
   thread_id: string;
   retention_days: number; // obs: from OBSERVABILITY_RETENTION_DAYS, default 30
   spans: CapturedSpan[];   // ordered by started_at ASC
+}
+```
+
+Status codes:
+
+| Status | Trigger                            | Body                       |
+| ------ | ---------------------------------- | -------------------------- |
+| 200    | owner query                        | the payload above          |
+| 401    | no session                         | `{ code: "UNAUTHORIZED" }` |
+| 404    | thread missing or owned by another | `{ code: "NOT_FOUND" }`    |
+
+### `GET /api/threads/[id]/observability/[parentMessageId]`
+
+Filtered variant of the GET above — returns only the spans tagged with `meta.parent_message_id === <parentMessageId>`. The id is the assistant-ui human-message id (`message.parentId`) that triggered the turn; the backend tags every span for that turn with the same value via `CapturingHandler.currentParentMessageId`. Implementation lives at `app/api/threads/[id]/observability/[parentMessageId]/route.ts`. Served by the btree index `observability_spans_thread_parent_started_idx (thread_id, parent_message_id, started_at)` so the planner can satisfy `WHERE thread_id = ? AND parent_message_id = ? ORDER BY started_at` from the index alone.
+
+The `parent_message_id` column is populated from `meta.parent_message_id` on insert (`toRow` projection in `lib/observability/queries.ts`); on read, `toCapturedSpan` rehydrates the meta key from the column so downstream consumers see one source.
+
+Response (200):
+
+```ts
+{
+  thread_id: string;
+  retention_days: number;
+  parent_message_id: string;
+  spans: CapturedSpan[];   // ordered by started_at ASC, filtered
 }
 ```
 

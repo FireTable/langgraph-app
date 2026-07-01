@@ -79,6 +79,9 @@ function mockByCallShape({
 describe("graph end-to-end", () => {
   it("non-weather turn: router dispatches to chatAgent, renameThreadAgent side-effects", async () => {
     const threadId = "e2e-first-" + Math.random().toString(36).slice(2, 8);
+    // ponytail: seed title=DEFAULT_THREAD_TITLE ("New Chat") so the
+    // conditional edge routes into renameThreadAgent — the LLM-generated
+    // title is expected to overwrite the placeholder after the run.
     await db.insert(threads).values({ id: threadId, userId: owner, title: "New Chat" });
     const agentReply = new AIMessage("Sure, here's how to parse JSON.");
     const weatherReply = new AIMessage("(weather path never runs)");
@@ -107,6 +110,9 @@ describe("graph end-to-end", () => {
 
   it("weather turn: router dispatches to weatherAgent, chatAgent's 'SHOULD NOT APPEAR' reply never reaches state", async () => {
     const threadId = "e2e-weather-" + Math.random().toString(36).slice(2, 8);
+    // ponytail: same as above — title=DEFAULT_THREAD_TITLE so the
+    // conditional edge routes into renameThreadAgent and the LLM
+    // title persists over the placeholder.
     await db.insert(threads).values({ id: threadId, userId: owner, title: "New Chat" });
     const titleReply = new AIMessage("Beijing weather");
     // chatAgent's reply is poisoned: any time the chatAgent branch asks

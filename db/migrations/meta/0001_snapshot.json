@@ -1,5 +1,5 @@
 {
-  "id": "83042f90-5ea6-4361-8390-b8ffe38279d6",
+  "id": "d442929a-fe9a-4742-926c-73faefbd6746",
   "prevId": "eb6a43ac-ee3d-4e73-a518-e4b2a9160c59",
   "version": "7",
   "dialect": "postgresql",
@@ -566,6 +566,12 @@
           "notNull": true,
           "default": "'{}'::jsonb"
         },
+        "parent_message_id": {
+          "name": "parent_message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -580,6 +586,33 @@
           "columns": [
             {
               "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "started_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "observability_spans_thread_parent_started_idx": {
+          "name": "observability_spans_thread_parent_started_idx",
+          "columns": [
+            {
+              "expression": "thread_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "parent_message_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

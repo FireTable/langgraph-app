@@ -37,11 +37,23 @@ export const observabilitySpans = pgTable(
     usage: jsonb("usage"),
     error: text("error"),
     meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
+    // ponytail: column denormalized from meta.parent_message_id so the
+    // path-param route (`/observability/<id>`) can hit a btree instead
+    // of `meta ->> 'parent_message_id'`. Inserted via toRow's meta
+    // projection; the meta key is preserved on read so downstream
+    // consumers (panel renderers, transform layer) keep working.
+    parentMessageId: text("parent_message_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     // GET path: SELECT WHERE thread_id=? ORDER BY started_at
     index("observability_spans_thread_started_idx").on(t.threadId, t.startedAt),
+    // GET filtered: SELECT WHERE thread_id=? AND parent_message_id=? ORDER BY started_at
+    index("observability_spans_thread_parent_started_idx").on(
+      t.threadId,
+      t.parentMessageId,
+      t.startedAt,
+    ),
     // retention cron: DELETE WHERE created_at < now() - INTERVAL
     index("observability_spans_created_idx").on(t.createdAt),
   ],

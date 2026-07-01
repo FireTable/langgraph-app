@@ -24,6 +24,7 @@ export const CapturedSpanSchema = z.object({
 export const GetSpansResponseSchema = z.object({
   thread_id: z.string().min(1),
   retention_days: z.number().int().positive(),
+  parent_message_id: z.string().min(1).nullable(),
   spans: z.array(CapturedSpanSchema),
 });
 
