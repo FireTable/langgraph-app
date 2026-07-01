@@ -22,6 +22,7 @@ import {
   useState,
   type FC,
 } from "react";
+import { BoxIcon, BrainIcon, LinkIcon, UserIcon, WrenchIcon } from "lucide-react";
 
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
 
@@ -49,6 +50,11 @@ const TYPE_COLORS: Record<string, string> = {
   pipeline: "hsl(340 75% 55%)",
 };
 const FALLBACK_COLOR = "hsl(220 9% 46%)";
+
+// ponytail: legend display order. chain (wrapper) first, then the
+// sub-flow nodes, then leaf types, with human last because it only
+// appears in interrupt flows.
+const LEGEND_TYPE_ORDER = ["chain", "node", "llm", "tool", "human"] as const;
 
 const STATUS_OPACITY: Record<SpanItemState["status"], number> = {
   running: 0.7,
@@ -123,6 +129,7 @@ const TimeAxisTicks: FC<{ timeRange: { min: number; max: number }; barWidth: num
 
 const WaterfallBar: FC = () => {
   const { barWidth, timeRange } = useWaterfallLayout();
+  const id = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.id);
   const startedAt = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.startedAt);
   const endedAt = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.endedAt) as
     | number
@@ -131,6 +138,8 @@ const WaterfallBar: FC = () => {
     (s) => (s as unknown as { span: SpanItemState }).span.status,
   ) as SpanItemState["status"];
   const type = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.type);
+  const { selectedId } = useSelection();
+  const isSelected = selectedId === id;
 
   const barRef = useRef<SVGRectElement>(null);
 
@@ -173,6 +182,8 @@ const WaterfallBar: FC = () => {
         fill={fill}
         opacity={opacity}
         className={status === "running" ? "animate-pulse" : ""}
+        stroke={isSelected ? "hsl(220 9% 25%)" : undefined}
+        strokeWidth={isSelected ? 2 : 0}
       />
       {status === "failed" && (
         <rect
@@ -204,6 +215,38 @@ function useSelection(): SelectionContextValue {
   return ctx;
 }
 
+// ponytail: per-type icon. lucide-react picks — keep it to one icon
+// per kind so the row stays scannable.
+const TYPE_ICONS: Record<string, FC<{ className?: string }>> = {
+  llm: BrainIcon,
+  tool: WrenchIcon,
+  node: BoxIcon,
+  chain: LinkIcon,
+  human: UserIcon,
+};
+
+// ponytail: shared chip — used in both the row (TypeBadge slot) and
+// the legend. Pure presentational: caller passes the type string and
+// the chip paints icon + text + border in the per-type color.
+const TypeChip: FC<{ type: string; className?: string }> = ({ type, className = "" }) => {
+  const color = TYPE_COLORS[type] ?? FALLBACK_COLOR;
+  const Icon = TYPE_ICONS[type];
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-0.5 rounded border px-1 text-[10px] leading-none font-medium ${className}`}
+      style={{ color, borderColor: color, paddingTop: 2, paddingBottom: 2 }}
+    >
+      {Icon && <Icon className="size-2.5" />}
+      {type}
+    </span>
+  );
+};
+
+const TypedBadge: FC = () => {
+  const type = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.type) as string;
+  return <TypeChip type={type} />;
+};
+
 const WaterfallRow: FC = () => {
   const { barWidth, contentWidth } = useWaterfallLayout();
   const id = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.id);
@@ -218,7 +261,7 @@ const WaterfallRow: FC = () => {
       <SpanPrimitive.Indent
         baseIndent={8}
         indentPerLevel={12}
-        className="border-border bg-background group-hover:bg-accent/50 sticky left-0 z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2"
+        className="border-border group-hover:bg-accent/50 sticky left-0 z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2"
         style={{ width: LABEL_WIDTH, height: BAR_HEIGHT }}
       >
         <AuiIf
@@ -240,7 +283,7 @@ const WaterfallRow: FC = () => {
         >
           <span className="w-4.5 shrink-0" />
         </AuiIf>
-        <SpanPrimitive.TypeBadge className="border-border text-muted-foreground shrink-0 rounded border px-1 text-[10px]" />
+        <TypedBadge />
         <SpanPrimitive.Name className="truncate text-sm" />
       </SpanPrimitive.Indent>
 
@@ -321,11 +364,8 @@ const WaterfallTimeline: FC = () => {
       </WaterfallLayoutContext.Provider>
 
       <div className="border-border text-muted-foreground flex items-center gap-4 border-t px-3 py-2 text-xs">
-        {(["llm", "node", "tool", "chain", "human"] as const).map((t) => (
-          <div key={t} className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-sm" style={{ background: TYPE_COLORS[t] }} />
-            <span>{t}</span>
-          </div>
+        {LEGEND_TYPE_ORDER.map((t) => (
+          <TypeChip key={t} type={t} />
         ))}
       </div>
     </div>
