@@ -83,15 +83,7 @@ export const ObservabilitySheet: FC = () => {
         className="flex w-[50vw] min-w-[40rem] max-w-[1200px] flex-col gap-4 overflow-hidden p-6"
       >
         <SheetHeader>
-          <div className="flex items-center justify-between gap-3">
-            <SheetTitle>Observability</SheetTitle>
-            {retentionDays !== null && (
-              <span className="text-muted-foreground text-xs">
-                spans 保留 {retentionDays} 天,超过 {retentionDays} 天的数据将在下次 retention
-                清理时删除
-              </span>
-            )}
-          </div>
+          <SheetTitle>Observability</SheetTitle>
         </SheetHeader>
         {auiThreadId && threadId && auiThreadId !== threadId ? (
           <div className="text-muted-foreground text-xs">
@@ -107,7 +99,7 @@ export const ObservabilitySheet: FC = () => {
         ) : !threadId ? (
           <div className="text-muted-foreground text-sm">无对话可查看</div>
         ) : (
-          <ObservabilityPanel spans={spanData} rawSpans={spans} />
+          <ObservabilityPanel spans={spanData} rawSpans={spans} retentionDays={retentionDays} />
         )}
       </SheetContent>
     </Sheet>

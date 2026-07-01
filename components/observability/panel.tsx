@@ -22,7 +22,19 @@ import {
   useState,
   type FC,
 } from "react";
-import { BoxIcon, BrainIcon, LinkIcon, UserIcon, WrenchIcon } from "lucide-react";
+import {
+  AlertCircleIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  BoxIcon,
+  BrainIcon,
+  ClockIcon,
+  DatabaseIcon,
+  LinkIcon,
+  UserIcon,
+  WrenchIcon,
+  ZapIcon,
+} from "lucide-react";
 
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
 
@@ -32,6 +44,10 @@ export type ObservabilityPanelProps = {
   // can show input / output / usage / meta. SpanData only
   // carries the renderer fields — details need the original handler payload.
   rawSpans?: CapturedSpan[];
+  // ponytail: retention policy reported by /api/threads/<id>/observability.
+  // Rendered as a small footer under the legend so the sheet header
+  // stays compact. Null = unknown (don't render).
+  retentionDays?: number | null;
 };
 
 const LABEL_WIDTH = 240;
@@ -109,7 +125,12 @@ const TimeAxisTicks: FC<{ timeRange: { min: number; max: number }; barWidth: num
     x: (i / tickCount) * barWidth,
   }));
   return (
-    <svg aria-hidden width={barWidth} height={28} className="overflow-visible">
+    <svg
+      aria-hidden
+      width={barWidth}
+      height={28}
+      className="overflow-visible shrink-0  py-1.5 text-xs items-center flex"
+    >
       {ticks.map(({ t, x }, i) => (
         <g key={x}>
           <line x1={x} y1={20} x2={x} y2={28} stroke="currentColor" className="text-border" />
@@ -225,6 +246,23 @@ const TYPE_ICONS: Record<string, FC<{ className?: string }>> = {
   human: UserIcon,
 };
 
+// ponytail: compact stat card — used in the panel header to surface
+// aggregate numbers (duration, token counts, LLM call count) with a
+// consistent visual rhythm. Icon over label over big number.
+const StatCard: FC<{ icon: React.ReactNode; label: string; value: string }> = ({
+  icon,
+  label,
+  value,
+}) => (
+  <div className="border-border bg-muted/30 flex min-w-[5.5rem] flex-col gap-0.5 rounded-md border px-2.5 py-1.5">
+    <div className="text-muted-foreground flex items-center gap-1 text-[10px] tracking-wide uppercase">
+      {icon}
+      <span>{label}</span>
+    </div>
+    <div className="text-foreground tabular-nums text-sm leading-tight font-semibold">{value}</div>
+  </div>
+);
+
 // ponytail: shared chip — used in both the row (TypeBadge slot) and
 // the legend. Pure presentational: caller passes the type string and
 // the chip paints icon + text + border in the per-type color.
@@ -250,8 +288,16 @@ const TypedBadge: FC = () => {
 const WaterfallRow: FC = () => {
   const { barWidth, contentWidth } = useWaterfallLayout();
   const id = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.id);
-  const { selectedId, select } = useSelection();
+  const { selectedId, select, rawById } = useSelection();
   const isSelected = selectedId === id;
+  // ponytail: surface the LLM model name ahead of the LangChain class
+  // name (e.g. "ChatOpenAI") so the row reads model-first — useful
+  // when a thread hops between providers. meta.ls_model_name is the
+  // LangSmith-shaped key, set by ChatOpenAI / Anthropic / etc. on
+  // every LLM callback. Falls back silently for tool / node / human.
+  const raw = rawById.get(id);
+  const meta = (raw?.meta ?? null) as Record<string, unknown> | null;
+  const modelName = typeof meta?.ls_model_name === "string" ? meta.ls_model_name : null;
   return (
     <SpanPrimitive.Root
       onClick={() => select(id)}
@@ -284,7 +330,11 @@ const WaterfallRow: FC = () => {
           <span className="w-4.5 shrink-0" />
         </AuiIf>
         <TypedBadge />
-        <SpanPrimitive.Name className="truncate text-sm" />
+        {modelName ? (
+          <span className="text-foreground shrink truncate text-sm ">{modelName}</span>
+        ) : (
+          <SpanPrimitive.Name className="truncate text-sm" />
+        )}
       </SpanPrimitive.Indent>
 
       <div className="group-hover:bg-accent/30" style={{ width: barWidth, height: BAR_HEIGHT }}>
@@ -296,7 +346,7 @@ const WaterfallRow: FC = () => {
   );
 };
 
-const WaterfallTimeline: FC = () => {
+const WaterfallTimeline: FC<{ retentionDays: number | null }> = ({ retentionDays }) => {
   const outerRef = useRef<HTMLDivElement>(null);
   const [barWidth, setBarWidth] = useState(400);
 
@@ -358,15 +408,23 @@ const WaterfallTimeline: FC = () => {
       </div>
 
       <WaterfallLayoutContext.Provider value={layout}>
-        <div style={{ width: contentWidth }}>
+        <div className="py-1.5" style={{ width: contentWidth }}>
           <SpanPrimitive.Children>{() => <WaterfallRow />}</SpanPrimitive.Children>
         </div>
       </WaterfallLayoutContext.Provider>
 
-      <div className="border-border text-muted-foreground flex items-center gap-4 border-t px-3 py-2 text-xs">
-        {LEGEND_TYPE_ORDER.map((t) => (
-          <TypeChip key={t} type={t} />
-        ))}
+      <div className="border-border text-muted-foreground border-t text-xs">
+        <div className="flex items-center gap-2 px-2 py-2">
+          {LEGEND_TYPE_ORDER.map((t) => (
+            <TypeChip key={t} type={t} />
+          ))}
+        </div>
+        {retentionDays != null && (
+          <div className="border-border border-t px-2 py-1.5">
+            Spans are retained for {retentionDays} day{retentionDays === 1 ? "" : "s"}; data older
+            than that is removed on the next retention cleanup.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -413,12 +471,21 @@ type RootAggregate = {
   totalOutput: number;
   totalCacheRead: number;
   totalReasoning: number;
+  // ponytail: TTFT (time-to-first-token) is stamped on LLM spans by
+  // CapturingHandler.handleLLMNewToken as meta.time_to_first_token_ms
+  // (ms from span start). Mean / max surface streaming latency — a slow
+  // TTFT with a fast total usually means the provider is the bottleneck,
+  // not the model.
+  ttftAvgMs: number | null;
+  ttftMaxMs: number | null;
   llmSpanCount: number;
+  toolSpanCount: number;
+  failedCount: number;
 };
 
 function aggregateRoot(spans: CapturedSpan[]): RootAggregate | null {
+  if (spans.length === 0) return null;
   const llms = spans.filter((s) => s.kind === "llm" && s.usage);
-  if (llms.length === 0) return null;
   let input = 0,
     output = 0,
     cache_read = 0,
@@ -437,13 +504,28 @@ function aggregateRoot(spans: CapturedSpan[]): RootAggregate | null {
     if (s.started_at < minStart) minStart = s.started_at;
     if (s.ended_at && s.ended_at > maxEnd) maxEnd = s.ended_at;
   }
+  // ponytail: aggregate TTFT — read meta.time_to_first_token_ms which
+  // the callback stamps on the first handleLLMNewToken. Spans without
+  // streaming (non-LLM / non-streaming LLM) are skipped.
+  const ttftValues: number[] = [];
+  for (const s of llms) {
+    const v = (s.meta as Record<string, unknown> | null | undefined)?.time_to_first_token_ms;
+    if (typeof v === "number" && v > 0) ttftValues.push(v);
+  }
+  const ttftAvgMs =
+    ttftValues.length > 0 ? ttftValues.reduce((a, b) => a + b, 0) / ttftValues.length : null;
+  const ttftMaxMs = ttftValues.length > 0 ? ttftValues.reduce((a, b) => Math.max(a, b), 0) : null;
   return {
     totalDurationMs: maxEnd > minStart ? maxEnd - minStart : 0,
     totalInput: input,
     totalOutput: output,
     totalCacheRead: cache_read,
     totalReasoning: reasoning,
+    ttftAvgMs,
+    ttftMaxMs,
     llmSpanCount: llms.length,
+    toolSpanCount: spans.filter((s) => s.kind === "tool").length,
+    failedCount: spans.filter((s) => s.status === "failed").length,
   };
 }
 
@@ -754,57 +836,17 @@ const SpanDetails: FC<{ span: CapturedSpan }> = ({ span }) => {
   );
 };
 
-// ponytail: name search only. Waterfall is the sole view.
-type PanelFilters = {
-  search: string;
-};
-
-function matchesFilters(span: CapturedSpan, filters: PanelFilters): boolean {
-  if (filters.search.trim()) {
-    const q = filters.search.trim().toLowerCase();
-    const hay =
-      `${span.name} ${span.meta?.langgraph_node ?? ""} ${span.meta?.ls_model_name ?? ""}`.toLowerCase();
-    if (!hay.includes(q)) return false;
-  }
-  return true;
-}
-
-const SearchInput: FC<{ value: string; onChange: (v: string) => void }> = ({ value, onChange }) => (
-  <input
-    type="text"
-    value={value}
-    onChange={(e) => onChange(e.target.value)}
-    placeholder="search name / node / model"
-    className="border-border rounded border bg-background px-2 py-1 text-xs"
-  />
-);
-
-export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({ spans, rawSpans }) => {
-  const [filters, setFilters] = useState<PanelFilters>({
-    search: "",
-  });
+// ponytail: name search was removed — the header now leads with stat
+// cards and the waterfall is the only view. SpanData filtering still
+// happens in Sheet (filtered route by parent_message_id) when needed.
+export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
+  spans,
+  rawSpans,
+  retentionDays,
+}) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // ponytail: filter spans BEFORE handing to SpanResource so the waterfall
-  // tree mirrors what the user asked to see.
-  const filteredSpans = useMemo(() => {
-    if (!rawSpans) return spans;
-    return spans.filter((s) => {
-      const id = s.id;
-      const raw = rawSpans.find((r) => r.span_id === id);
-      if (raw) return matchesFilters(raw, filters);
-      if (
-        filters.search.trim() &&
-        !s.name.toLowerCase().includes(filters.search.trim().toLowerCase())
-      )
-        return false;
-      return true;
-    });
-  }, [spans, rawSpans, filters]);
-
-  const aui = useAui({ span: SpanResource({ spans: filteredSpans }) } as unknown as Parameters<
-    typeof useAui
-  >[0]);
+  const aui = useAui({ span: SpanResource({ spans }) } as unknown as Parameters<typeof useAui>[0]);
 
   // ponytail: rawById is keyed by LangChain run_id (UUID). The SpanDetails
   // card looks up the clicked span by its row id.
@@ -821,18 +863,63 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({ spans, rawSpan
   return (
     <>
       {root && (
-        <div className="text-muted-foreground flex items-center gap-3 text-xs">
-          <span className="tabular-nums">{formatDuration(root.totalDurationMs)}</span>
-          {root.totalInput + root.totalOutput > 0 && (
-            <span className="tabular-nums">{fmt(root.totalInput + root.totalOutput)} tok</span>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <StatCard
+            icon={<ClockIcon className="text-muted-foreground size-3.5" />}
+            label="Duration"
+            value={formatDuration(root.totalDurationMs)}
+          />
+          {root.llmSpanCount > 0 && (
+            <StatCard
+              icon={<BrainIcon className="size-3.5" style={{ color: TYPE_COLORS.llm }} />}
+              label="LLM calls"
+              value={String(root.llmSpanCount)}
+            />
           )}
-          <span className="tabular-nums">{root.llmSpanCount} LLM</span>
+          {root.toolSpanCount > 0 && (
+            <StatCard
+              icon={<WrenchIcon className="size-3.5" style={{ color: TYPE_COLORS.tool }} />}
+              label="Tool calls"
+              value={String(root.toolSpanCount)}
+            />
+          )}
+          {root.failedCount > 0 && (
+            <StatCard
+              icon={<AlertCircleIcon className="text-destructive size-3.5" />}
+              label="Failed"
+              value={String(root.failedCount)}
+            />
+          )}
+          {root.totalInput > 0 && (
+            <StatCard
+              icon={<ArrowDownIcon className="text-muted-foreground size-3.5" />}
+              label="Input"
+              value={`${fmt(root.totalInput)} tok`}
+            />
+          )}
+          {root.totalOutput > 0 && (
+            <StatCard
+              icon={<ArrowUpIcon className="text-muted-foreground size-3.5" />}
+              label="Output"
+              value={`${fmt(root.totalOutput)} tok`}
+            />
+          )}
+          {root.totalCacheRead > 0 && (
+            <StatCard
+              icon={<DatabaseIcon className="text-muted-foreground size-3.5" />}
+              label="Cache read"
+              value={`${fmt(root.totalCacheRead)} tok`}
+            />
+          )}
+          {root.ttftAvgMs != null && (
+            <StatCard
+              icon={<ZapIcon className="text-muted-foreground size-3.5" />}
+              label="TTFT avg / max"
+              value={`${formatDuration(root.ttftAvgMs)} / ${formatDuration(root.ttftMaxMs ?? 0)}`}
+            />
+          )}
         </div>
       )}
-
-      <div className="flex flex-wrap items-center gap-3">
-        <SearchInput value={filters.search} onChange={(v) => setFilters({ search: v })} />
-      </div>
 
       <div className="-mx-6 min-h-0 flex-1 overflow-auto px-6">
         {rawSpans && rawSpans.length === 0 ? (
@@ -840,7 +927,7 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({ spans, rawSpan
         ) : (
           <AuiProvider value={aui}>
             <SelectionContext.Provider value={{ selectedId, select: setSelectedId, rawById }}>
-              <WaterfallTimeline />
+              <WaterfallTimeline retentionDays={retentionDays ?? null} />
               {selected && <SpanDetails span={selected} />}
             </SelectionContext.Provider>
           </AuiProvider>
