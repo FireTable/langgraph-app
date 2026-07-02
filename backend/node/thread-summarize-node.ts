@@ -9,6 +9,11 @@ import { chatModel } from "@/backend/model";
 
 type ThreadSummarizeState = {
   messages?: Array<{ type?: string; content?: unknown }>;
+  // ponytail: optional convenience field — tests construct fixtures that
+  // include the derived user-message count alongside messages so the
+  // expected endMessageIndex reads naturally. The node derives it itself
+  // from `messages` and ignores this field if present.
+  userMessageCount?: number;
 };
 
 type Config = { configurable?: { userId?: unknown; thread_id?: unknown } };

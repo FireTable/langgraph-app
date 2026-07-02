@@ -1,7 +1,5 @@
 import { tool } from "@langchain/core/tools";
-// ponytail: fast-json-patch@3.1.1 ships ESM as `export default Object.assign(core, duplex, {...})` — no named `applyPatch` export. Default-import + destructure is the lowest-friction fix; namespace import would also work but bundlers complain.
-import jsonPatch from "fast-json-patch";
-const { applyPatch: applyJsonPatch } = jsonPatch;
+import { immutableJSONPatch } from "immutable-json-patch";
 import { z } from "zod";
 
 import { MEMORY_PROFILE_MAX_BYTES } from "@/lib/memory/constants";
@@ -57,29 +55,22 @@ async function impl(
   const { patches } = SaveMemoryInputSchema.parse(input);
 
   const current = await getProfileDoc(userId);
-  // ponytail: validate replace/remove paths up-front — fast-json-patch
-  // silently no-ops on a missing path with the default args, which would
-  // let the tool report success on a no-op write. The model would then
-  // "remember" a fact it never actually persisted.
-  const keyPath = (p: string) => p.replace(/^\//, "");
+  // ponytail: validate replace/remove paths up-front — silently no-op'ing
+  // a missing path would let the model "remember" a fact it never
+  // persisted. immutableJSONPatch returns a fresh object, so no clone
+  // is needed.
   for (const patch of patches) {
-    if ((patch.op === "replace" || patch.op === "remove") && !(keyPath(patch.path) in current)) {
+    if ((patch.op === "replace" || patch.op === "remove") && !(patch.path.slice(1) in current)) {
       throw new MemoryPatchError(`path ${patch.path} not found in profile`);
     }
   }
-  // structuredClone first — fast-json-patch mutates in place, which would
-  // ripple the cached store value into the next caller.
-  const draft = structuredClone(current) as Record<string, unknown>;
-  // mutateDocument=true modifies `draft` in place and returns per-op
-  // results whose `newValue` is the touched value, NOT the whole doc.
-  // We read the document back from `draft` after the apply.
-  applyJsonPatch(draft, patches as Parameters<typeof applyJsonPatch>[1], false, true);
-  assertProfileSize(draft, MEMORY_PROFILE_MAX_BYTES);
-  await putProfileDoc(userId, draft);
+  const next = immutableJSONPatch(current, patches) as Record<string, unknown>;
+  assertProfileSize(next, MEMORY_PROFILE_MAX_BYTES);
+  await putProfileDoc(userId, next);
   return JSON.stringify({
     ok: true,
-    bytes: JSON.stringify(draft).length,
-    keyCount: Object.keys(draft).length,
+    bytes: JSON.stringify(next).length,
+    keyCount: Object.keys(next).length,
   });
 }
 
