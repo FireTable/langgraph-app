@@ -8,7 +8,7 @@ import type { FC } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useAuiState } from "@assistant-ui/react";
 import type { SpanData } from "@assistant-ui/react-o11y";
-import { ObservabilityPanel } from "@/components/observability/panel";
+import { ObservabilityPanel, ObservabilityPanelSkeleton } from "@/components/observability/panel";
 import { transformCapturedToSpanData } from "@/lib/observability/transform";
 import { useObservabilitySheetState } from "@/components/observability/sheet-context";
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
@@ -89,9 +89,10 @@ export const ObservabilitySheet: FC = () => {
         <SheetHeader>
           <SheetTitle>Observability</SheetTitle>
         </SheetHeader>
+
         {auiThreadId && threadId && auiThreadId !== threadId ? (
           <div className="text-muted-foreground text-xs">
-            当前对话已切换,点击"关闭"后再次进入查看实时数据
+            Thread has changed — close and reopen to see the latest data.
           </div>
         ) : null}
         {error ? (
@@ -99,9 +100,9 @@ export const ObservabilitySheet: FC = () => {
             {error}
           </div>
         ) : loading && !error ? (
-          <div className="text-muted-foreground text-sm">Loading…</div>
+          <ObservabilityPanelSkeleton />
         ) : !threadId ? (
-          <div className="text-muted-foreground text-sm">无对话可查看</div>
+          <div className="text-muted-foreground text-sm">No thread selected.</div>
         ) : (
           <ObservabilityPanel spans={spanData} rawSpans={spans} retentionDays={retentionDays} />
         )}

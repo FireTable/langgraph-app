@@ -1838,6 +1838,11 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
   const root = useMemo(() => (rawSpans ? aggregateRoot(rawSpans) : null), [rawSpans]);
   const selected = selectedId ? (rawById.get(selectedId) ?? null) : null;
 
+  // ponytail: layout contract — ObservabilityPanelSkeleton (exported below)
+  // mirrors this render tree section-by-section: stat-card grid → waterfall
+  // rows → legend strip. If you change the top-level structure here (add a
+  // new section, change the grid columns, or remove the legend), update the
+  // skeleton to match so the loading state doesn't jump.
   return (
     <>
       {root && (
@@ -1913,6 +1918,96 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
     </>
   );
 };
+
+// ponytail: skeleton loading state — mirrors the ObservabilityPanel layout
+// so the sheet doesn't jump when data arrives. Shimmer widths are staggered
+// to feel organic; structure follows: stat-cards → waterfall → legend footer.
+const SKEL_ROWS = [
+  { label: "75%", bar: "60%" },
+  { label: "55%", bar: "45%" },
+  { label: "80%", bar: "70%" },
+  { label: "50%", bar: "55%" },
+  { label: "70%", bar: "80%" },
+  { label: "60%", bar: "35%" },
+] as const;
+
+export const ObservabilityPanelSkeleton: FC = () => (
+  <div className="flex min-h-0 flex-1 flex-col gap-4 animate-pulse">
+    {/* ── Stat cards: 2 × 4 grid ── */}
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div
+          key={i}
+          className="border-border bg-muted/30 flex min-w-[5.5rem] flex-col gap-1.5 rounded-md border px-2.5 py-1.5"
+        >
+          {/* icon + label row */}
+          <div className="flex items-center gap-1">
+            <div className="bg-muted/50 size-3.5 rounded-sm" />
+            <div className="bg-muted/50 h-2.5 w-16 rounded-sm" />
+          </div>
+          {/* value */}
+          <div className="bg-muted/50 h-4 w-10 rounded-sm" />
+        </div>
+      ))}
+    </div>
+
+    {/* ── Waterfall ── */}
+    <div className="-mx-6 flex min-h-0 flex-1 flex-col overflow-hidden px-6">
+      {/* time axis strip */}
+      <div className="border-border mb-0.5 flex items-center gap-2 border-b pb-1.5">
+        <div className="bg-muted/50 h-2 shrink-0 rounded-sm" style={{ width: LABEL_WIDTH }} />
+        <div className="bg-muted/50 h-2 flex-1 rounded-sm" />
+      </div>
+
+      {/* rows */}
+      <div className="flex flex-col">
+        {SKEL_ROWS.map(({ label, bar }, i) => (
+          <div
+            key={i}
+            className="flex items-center"
+            style={{ height: BAR_HEIGHT }}
+          >
+            {/* label column */}
+            <div
+              className="border-border flex shrink-0 items-center gap-1.5 border-r px-2"
+              style={{ width: LABEL_WIDTH, height: BAR_HEIGHT }}
+            >
+              {/* collapse-toggle placeholder */}
+              <div className="bg-muted/40 size-3.5 shrink-0 rounded-sm" />
+              {/* type chip placeholder */}
+              <div className="bg-muted/50 h-4 w-10 rounded-sm" />
+              {/* name placeholder */}
+              <div
+                className="bg-muted/50 h-3 rounded-sm"
+                style={{ width: label }}
+              />
+            </div>
+            {/* bar column */}
+            <div className="flex flex-1 items-center px-2">
+              <div
+                className="bg-muted/50 h-5 rounded-sm"
+                style={{ width: bar }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* legend strip */}
+      <div className="border-border mt-3 flex items-center gap-3 border-t pt-2">
+        {LEGEND_TYPE_ORDER.map((t) => (
+          <div key={t} className="flex items-center gap-1">
+            <div
+              className="size-2.5 rounded-sm opacity-40"
+              style={{ backgroundColor: TYPE_COLORS[t] }}
+            />
+            <div className="bg-muted/50 h-2 w-8 rounded-sm" />
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
 
 // ponytail: the panel renders inside whatever container the caller
 // supplies — Sheet, Dialog, div, anything. We don't pin it to a
