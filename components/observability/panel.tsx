@@ -1838,6 +1838,16 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
   const root = useMemo(() => (rawSpans ? aggregateRoot(rawSpans) : null), [rawSpans]);
   const selected = selectedId ? (rawById.get(selectedId) ?? null) : null;
 
+  // ponytail: transition helper — keep the last selected span in state so
+  // that when it is deselected, the content doesn't crash or disappear
+  // instantly during the slide-out transition.
+  const [activeSpan, setActiveSpan] = useState<CapturedSpan | null>(null);
+  useEffect(() => {
+    if (selected) {
+      setActiveSpan(selected);
+    }
+  }, [selected]);
+
   // ponytail: layout contract — ObservabilityPanelSkeleton (exported below)
   // mirrors this render tree section-by-section: stat-card grid → waterfall
   // rows → legend strip. If you change the top-level structure here (add a
@@ -1901,15 +1911,20 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
                   so mobile keeps the natural top-to-bottom flow. Both
                   cells need min-h-0 so the inner overflow scroll
                   actually clips instead of pushing the parent taller. */}
-              <div className="flex min-h-0 flex-col gap-2 lg:h-full lg:flex-row">
-                <div className="min-h-0 lg:flex-1 lg:overflow-auto">
+              <div className="flex min-h-0 flex-col lg:h-full lg:flex-row">
+                <div className="min-h-0 flex-1 lg:overflow-auto">
                   <WaterfallTimeline retentionDays={retentionDays ?? null} />
                 </div>
-                {selected && (
-                  <div className="animate-o11y-detail-slide-in min-h-0 lg:max-w-none lg:w-[min(40%,28rem)] lg:overflow-auto">
-                    <SpanDetails span={selected} />
-                  </div>
-                )}
+                <div
+                  className={cn(
+                    "min-h-0 lg:max-w-none overflow-y-auto overflow-x-hidden transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
+                    selected
+                      ? "w-full lg:w-[min(40%,28rem)] opacity-100 translate-x-0 mt-2 lg:mt-0 lg:ml-2"
+                      : "w-0 h-0 lg:h-auto opacity-0 translate-x-4 pointer-events-none mt-0 lg:ml-0"
+                  )}
+                >
+                  {activeSpan && <SpanDetails span={activeSpan} />}
+                </div>
               </div>
             </SelectionContext.Provider>
           </AuiProvider>
