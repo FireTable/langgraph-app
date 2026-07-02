@@ -9,6 +9,7 @@ import { connectWalletTool } from "@/backend/tool/crypto/connect-wallet";
 import { placeCryptoOrderTool } from "@/backend/tool/crypto/place-crypto-order";
 import { getOrderStatusTool } from "@/backend/tool/crypto/get-order-status";
 import { getNftHoldingsTool } from "@/backend/tool/crypto/get-nft-holdings";
+import { saveMemoryTool } from "@/backend/tool/memory/save-memory-tool";
 import { getCodeTools } from "@/backend/tool/code";
 
 // ponytail: keep the tool list in one place so the graph binds it from a
@@ -57,6 +58,7 @@ export const ALL_TOOLS = [
   placeCryptoOrderTool,
   getOrderStatusTool,
   ...(getNftHoldingsTool ? [getNftHoldingsTool] : []),
+  saveMemoryTool,
 ];
 
 export {
