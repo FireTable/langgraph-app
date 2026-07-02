@@ -17,6 +17,7 @@ describe("buildSubgraph", () => {
       "cryptoAgent",
       "renameThreadAgent",
       "routerAgent",
+      "threadSummarize",
       "weatherAgent",
     ]);
   });
@@ -40,6 +41,7 @@ describe("buildInlined", () => {
       "cryptoTools",
       "renameThreadAgent",
       "routerAgent",
+      "threadSummarize",
       "weatherModel",
       "weatherTools",
     ]);

@@ -5,6 +5,7 @@ import { CapturingHandler } from "@/backend/observability/callback-collector";
 import { bulkInsertSpans } from "@/lib/observability/queries";
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 import { afterAgentNode } from "@/backend/node/after-agent-node";
+import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
 import { weatherAgent } from "@/backend/agent/weather-agent";
 import { chatAgent } from "@/backend/agent/chat-agent";
 import { cryptoAgent } from "@/backend/agent/crypto-agent";
@@ -75,10 +76,11 @@ function buildSubgraph() {
       .addNode("chatAgent", chatAgent)
       .addNode("afterAgent", afterAgentNode)
       .addNode("renameThreadAgent", renameThreadAgentNode)
+      .addNode("threadSummarize", threadSummarizeNode)
       .addNode("weatherAgent", weatherAgent)
       .addNode("cryptoAgent", cryptoAgent)
       .addNode("codeAgent", codeAgent)
-      // Sequential: START → routerAgent → (weatherAgent | chatAgent | cryptoAgent | codeAgent) → afterAgent → END.
+      // Sequential: START → routerAgent → (weatherAgent | chatAgent | cryptoAgent | codeAgent) → afterAgent → threadSummarize → END.
       // ask_location's picker card is owned by the weather subgraph
       // (see backend/agent/weather-agent.ts + components/tool-ui/ask-location).
       // ask_crypto_intent's picker card is owned by the crypto subgraph
@@ -90,6 +92,8 @@ function buildSubgraph() {
       // edge from START routes around the node when threads.title is
       // already set (re-invoke / interrupt-resume / regenerate), so the
       // LLM title-generation only runs on the first turn of a new thread.
+      // threadSummarize is a pure side-effect node (no messages channel
+      // writes), self-skips when userMessageCount <= THRESHOLD.
       .addEdge(START, "routerAgent")
       .addConditionalEdges("routerAgent", routeToSubAgent, [
         "weatherAgent",
@@ -101,7 +105,8 @@ function buildSubgraph() {
       .addEdge("weatherAgent", "afterAgent")
       .addEdge("cryptoAgent", "afterAgent")
       .addEdge("codeAgent", "afterAgent")
-      .addEdge("afterAgent", END)
+      .addEdge("afterAgent", "threadSummarize")
+      .addEdge("threadSummarize", END)
       .addConditionalEdges(START, shouldRenameRouter, {
         renameThreadAgent: "renameThreadAgent",
         __end__: END,
@@ -183,8 +188,9 @@ function buildInlined() {
       .addNode("codeTools", codeToolNode)
       .addNode("afterAgent", afterAgentNode)
       .addNode("renameThreadAgent", renameThreadAgentNode)
+      .addNode("threadSummarize", threadSummarizeNode)
       // Sequential: START → routerAgent → (weatherModel | chatModel | cryptoModel | codeModel) →
-      //   (weatherTools | chatTools | cryptoTools | codeTools)* → afterAgent → END.
+      //   (weatherTools | chatTools | cryptoTools | codeTools)* → afterAgent → threadSummarize → END.
       // ask_location's picker card is owned by the weather model/tool loop
       // (see components/tool-ui/ask-location). ask_crypto_intent's picker
       // card is owned by the crypto loop (see components/tool-ui/crypto).
@@ -204,7 +210,8 @@ function buildInlined() {
       .addEdge("cryptoTools", "cryptoModel")
       .addConditionalEdges("codeModel", codeRoute, ["codeTools", "afterAgent"])
       .addEdge("codeTools", "codeModel")
-      .addEdge("afterAgent", END)
+      .addEdge("afterAgent", "threadSummarize")
+      .addEdge("threadSummarize", END)
       .addConditionalEdges(START, shouldRenameRouter, {
         renameThreadAgent: "renameThreadAgent",
         __end__: END,
