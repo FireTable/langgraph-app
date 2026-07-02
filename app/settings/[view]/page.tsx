@@ -15,5 +15,14 @@ export default async function SettingsPage({ params }: { params: Promise<{ view:
   if (!session) redirect("/login");
 
   const { view } = await params;
-  return <Settings path={view} />;
+  // ponytail: outer container caps width and centers — without it the
+  // shadcn <Settings> tabs + cards stretch edge-to-edge on wide
+  // viewports and look "naked". max-w-3xl matches the rest of the app
+  // (see thread.tsx message max-width).
+  return (
+    <div className="mx-auto w-full max-w-3xl px-4 py-8 md:px-6 md:py-12">
+      <h1 className="mb-6 text-2xl font-semibold tracking-tight">Settings</h1>
+      <Settings path={view} />
+    </div>
+  );
 }
