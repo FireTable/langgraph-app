@@ -316,7 +316,12 @@ describe("CapturingHandler — interrupt / human span", () => {
     expect(toolFlushed[0]?.span_id).toBe("tool-1");
     expect(toolFlushed[0]?.status).toBe("completed");
     expect(toolFlushed[0]?.error).toBeNull();
-    expect(toolFlushed[0]?.ended_at).toBeNull();
+    // ponytail: ended_at is stamped to Date.now() (not left null) so
+    // markRunningAsFailed — which keys on ended_at === null to flag
+    // aborted invokes — doesn't mis-attribute the interrupted tool as
+    // a crashed run. The synthetic human span alongside carries the
+    // "wait" semantics; the tool's ended_at just needs to be non-null.
+    expect(toolFlushed[0]?.ended_at).not.toBeNull();
   });
 
   it("inserts a child human span with kind=human, status=waiting, parented to the tool", () => {

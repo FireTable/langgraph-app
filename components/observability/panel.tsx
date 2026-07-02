@@ -37,7 +37,6 @@ import {
   LinkIcon,
   UserIcon,
   WrenchIcon,
-  ZapIcon,
 } from "lucide-react";
 
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
@@ -776,44 +775,6 @@ function flattenFields(v: unknown, prefix = ""): StructuredOutput {
     }
   }
   return out;
-}
-
-function aggregateUsage(spans: CapturedSpan[]): Record<string, unknown> | null {
-  const withUsage = spans.filter((s) => s.usage);
-  if (withUsage.length === 0) return null;
-  let input = 0,
-    output = 0,
-    total = 0,
-    cache_read = 0,
-    reasoning = 0;
-  let hasCache = false,
-    hasReasoning = false;
-  for (const s of withUsage) {
-    const t = readTokens(s.usage);
-    if (!t) continue;
-    input += t.input;
-    output += t.output;
-    total += t.total;
-    if (t.cache_read > 0) {
-      cache_read += t.cache_read;
-      hasCache = true;
-    }
-    if (t.reasoning > 0) {
-      reasoning += t.reasoning;
-      hasReasoning = true;
-    }
-  }
-  const inputDetails: Record<string, unknown> = {};
-  const outputDetails: Record<string, unknown> = {};
-  if (hasCache) inputDetails.cache_read = cache_read;
-  if (hasReasoning) outputDetails.reasoning = reasoning;
-  return {
-    input_tokens: input,
-    output_tokens: output,
-    total_tokens: total,
-    ...(Object.keys(inputDetails).length ? { input_token_details: inputDetails } : {}),
-    ...(Object.keys(outputDetails).length ? { output_token_details: outputDetails } : {}),
-  };
 }
 
 function fmt(n: number): string {
@@ -1880,61 +1841,47 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
   return (
     <>
       {root && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <StatCard
+            icon={<BrainIcon className="size-3.5" style={{ color: TYPE_COLORS.llm }} />}
+            label="LLM calls"
+            value={String(root.llmSpanCount)}
+          />
+          <StatCard
+            icon={<WrenchIcon className="size-3.5" style={{ color: TYPE_COLORS.tool }} />}
+            label="Tool calls"
+            value={String(root.toolSpanCount)}
+          />
+          <StatCard
+            icon={<UserIcon className="size-3.5" style={{ color: TYPE_COLORS.human }} />}
+            label="Human in the loop"
+            value={String(root.waitingCount)}
+          />
+          <StatCard
+            icon={<AlertCircleIcon className="text-destructive size-3.5" />}
+            label="Failed"
+            value={String(root.failedCount)}
+          />
+          <StatCard
+            icon={<ArrowDownIcon className="text-muted-foreground size-3.5" />}
+            label="Input"
+            value={`${fmt(root.totalInput)} token`}
+          />
+          <StatCard
+            icon={<ArrowUpIcon className="text-muted-foreground size-3.5" />}
+            label="Output"
+            value={`${fmt(root.totalOutput)} token`}
+          />
+          <StatCard
+            icon={<DatabaseIcon className="text-muted-foreground size-3.5" />}
+            label="Total"
+            value={`${fmt(root.totalTokens)} token`}
+          />
           <StatCard
             icon={<ClockIcon className="text-muted-foreground size-3.5" />}
             label="Duration"
             value={formatDuration(root.totalDurationMs)}
           />
-          {root.llmSpanCount > 0 && (
-            <StatCard
-              icon={<BrainIcon className="size-3.5" style={{ color: TYPE_COLORS.llm }} />}
-              label="LLM calls"
-              value={String(root.llmSpanCount)}
-            />
-          )}
-          {root.toolSpanCount > 0 && (
-            <StatCard
-              icon={<WrenchIcon className="size-3.5" style={{ color: TYPE_COLORS.tool }} />}
-              label="Tool calls"
-              value={String(root.toolSpanCount)}
-            />
-          )}
-          {root.failedCount > 0 && (
-            <StatCard
-              icon={<AlertCircleIcon className="text-destructive size-3.5" />}
-              label="Failed"
-              value={String(root.failedCount)}
-            />
-          )}
-          {root.waitingCount > 0 && (
-            <StatCard
-              icon={<ClockIcon className="size-3.5" style={{ color: TYPE_COLORS.human }} />}
-              label="Waiting"
-              value={String(root.waitingCount)}
-            />
-          )}
-          {root.totalInput > 0 && (
-            <StatCard
-              icon={<ArrowDownIcon className="text-muted-foreground size-3.5" />}
-              label="Input"
-              value={`${fmt(root.totalInput)} token`}
-            />
-          )}
-          {root.totalOutput > 0 && (
-            <StatCard
-              icon={<ArrowUpIcon className="text-muted-foreground size-3.5" />}
-              label="Output"
-              value={`${fmt(root.totalOutput)} token`}
-            />
-          )}
-          {root.totalTokens > 0 && (
-            <StatCard
-              icon={<DatabaseIcon className="text-muted-foreground size-3.5" />}
-              label="Total"
-              value={`${fmt(root.totalTokens)} token`}
-            />
-          )}
         </div>
       )}
 
