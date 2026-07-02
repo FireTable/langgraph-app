@@ -120,6 +120,55 @@ Clears all spans for the thread. Returns `{ cleared: number }` (the row count). 
 
 Status codes: 200 / 401 / 404 (same triggers as GET).
 
+## Memory
+
+Backed by the LangGraph `PostgresStore` (per-user, cross-thread long-term memory). Every route is `withAuth`-wrapped and isolation is by namespace prefix `[userId, ...]`. Storage detail: `lib/memory/queries.ts`; schema (RFC 6902 patches, store): `lib/memory/validators.ts`; size guard: `backend/memory/profile-size.ts`. Read counterpart of `save_memory` (see "Graph tools").
+
+### `GET /api/memory/profile`
+
+Returns the user's profile doc plus read-only better-auth fields that the agent already sees via the recall middleware. Profile rows render with a delete button in the settings UI; session + social rows are read-only (they're sourced from `auth.user` / `auth.account`, not from the store).
+
+|              |                                                                                                                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body | (none)                                                                                                                                                                           |
+| Output       | `{ profile: Record<string, unknown>, session: { name, email, image }, socialAccounts: Array<{ provider: string }> }`                                                             |
+| Status codes | 200 / 401 / 500 (store throws). 401 is returned by the shared `withAuth` wrapper, not the handler body.                                                                          |
+| Field notes  | `socialAccounts[].provider` is the better-auth `providerId` for each linked OAuth account (`github`, `google`, ...). `accountId` / tokens are deliberately NOT exposed (FR-020). |
+
+### `DELETE /api/memory/profile/[key]`
+
+Removes a single profile key. Modeled as a one-shot RFC 6902 remove patch against `[userId,"profile"] main`. There is no separate "forget" tool — the Memory tab is the only path to forgetting.
+
+|               |                                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | (none)                                                                                                                                                       |
+| Output        | `{ ok: true, deletedKey }` on success                                                                                                                        |
+| Status codes  | 200 / 400 / 401 / 404                                                                                                                                        |
+| Path regex    | `:key` MUST match `^[A-Za-z0-9_-]{1,64}$`. Decoded via `decodeURIComponent` first — `%2F` becomes `/` and is rejected. Empty string after decode also → 400. |
+| Failure modes | 404 when the profile doc does not exist OR when `key` is not a top-level property of the doc. 400 when the regex fails.                                      |
+
+### `GET /api/memory/threads`
+
+Lists thread summaries the user has generated. Grouped by `threadId`, sorted by sequence desc within a group and by `updatedAt` desc across groups. Corrupt Zod-failing summaries are skipped server-side.
+
+|              |                                                                                                                                                                                              |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body | (none)                                                                                                                                                                                       |
+| Output       | `{ threads: Array<{ threadId: string, summaries: Summary[] }> }`. `Summary` shape: `{ threadId, sequence, name, description, startMessageIndex, endMessageIndex, messageCount, updatedAt }`. |
+| Status codes | 200 / 401 / 500                                                                                                                                                                              |
+| Field notes  | `startMessageIndex` / `endMessageIndex` are inclusive bounds on the user-message window (FR-010 closed interval); `messageCount === end - start + 1`.                                        |
+
+### `DELETE /api/memory/threads/[threadId]`
+
+Collapses all summary docs whose key starts with `${threadId}:` under the user's `[userId,"threads"]` namespace.
+
+|               |                                                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------------- |
+| Request body  | (none)                                                                                            |
+| Output        | `{ ok: true, deletedCount }` on success                                                           |
+| Status codes  | 200 / 401 / 404                                                                                   |
+| Failure modes | 404 when no summary doc exists for `threadId` for the current user (a no-op for an empty thread). |
+
 ## Proxy
 
 | Endpoint             | Purpose                                                                                                                                                                   |
@@ -183,6 +232,20 @@ Read a public web page and return it as markdown via Jina Reader (`r.jina.ai`).
 ### Key pool semantics
 
 `JINA_API_KEYS` is parsed once at module load into an in-memory pool. Each request picks a key at random. On `401` or `403`, the key is removed from the pool and the request retries with another random key. Up to N retries are attempted where N is the pool size at call start; once every key has rejected the same request, the tool throws. The pool is process-local and resets on LangGraph dev-server restart.
+
+### `save_memory(patches)`
+
+Persist structured facts to the user's long-term profile via RFC 6902 JSON Patch operations against `[userId,"profile"] main`. Implementation: `backend/tool/memory/save-memory-tool.ts`. Read counterpart (better-auth session / social accounts / thread summaries that the model already sees) is prepended to every model call by `withMemoryRecall` at `backend/middleware/with-memory-recall.ts`.
+
+|                |                                                                                                                                                                                                                              |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input          | `{ patches: Array<MemoryPatch> }`. `MemoryPatch` discriminated union of `{op:"add", path, value}`, `{op:"replace", path, value}`, `{op:"remove", path}`. `move`/`copy`/`test` are rejected at the schema layer.              |
+| Path shape     | RFC 6901. The profile is a flat k-v bag, so paths are constrained to `/[A-Za-z_][A-Za-z0-9_-]*` (object property names, NOT array indices).                                                                                  |
+| Output         | `{ ok: true, bytes, keyCount }` (JSON string)                                                                                                                                                                                |
+| Auth           | The `config.configurable.userId` arg passed to LangGraph — injected by the Next.js `/api/[..._path]` proxy after `withAuth`. Missing / empty userId **fails-fast**: throws `MissingUserIdError` (`code: "MISSING_USER_ID"`). |
+| Size guard     | `MEMORY_PROFILE_MAX_BYTES` (default 8192) — measured post-patch against the serialized JSON. Failure throws `MemorySizeError` (`code: "MEMORY_SIZE_EXCEEDED"`) before any `store.put`.                                       |
+| Patch validity | `replace` and `remove` ops on a path not present in the current profile throw `MemoryPatchError` (`code: "PATCH_FAILED"`) — silent no-op on a non-existent path is the failure mode this rule exists to avoid.               |
+| Deletion UX    | No separate `forget_memory` tool — to forget a fact, the user removes it from the Memory settings tab (which calls `DELETE /api/memory/profile/[key]`).                                                                      |
 
 ## Crypto tools
 
