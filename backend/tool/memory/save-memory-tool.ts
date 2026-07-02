@@ -1,5 +1,7 @@
 import { tool } from "@langchain/core/tools";
-import { applyPatch as applyJsonPatch } from "fast-json-patch";
+// ponytail: fast-json-patch@3.1.1 ships ESM as `export default Object.assign(core, duplex, {...})` — no named `applyPatch` export. Default-import + destructure is the lowest-friction fix; namespace import would also work but bundlers complain.
+import jsonPatch from "fast-json-patch";
+const { applyPatch: applyJsonPatch } = jsonPatch;
 import { z } from "zod";
 
 import { MEMORY_PROFILE_MAX_BYTES } from "@/lib/memory/constants";
