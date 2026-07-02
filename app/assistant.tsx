@@ -107,11 +107,7 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
         {collapsed ? (
           <UserButton size="icon" className="border-border bg-card border" links={memoryLink} />
         ) : (
-          <UserButton
-            className="border-border bg-card w-full border"
-            hideSettings
-            links={memoryLink}
-          />
+          <UserButton className="border-border bg-card w-full border" links={memoryLink} />
         )}
       </div>
     </aside>
