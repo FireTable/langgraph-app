@@ -11,7 +11,14 @@ import {
 import { useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
-import { MenuIcon, MessageSquareTextIcon, PanelLeftIcon, PlusIcon, ShareIcon } from "lucide-react";
+import {
+  Brain,
+  MenuIcon,
+  MessageSquareTextIcon,
+  PanelLeftIcon,
+  PlusIcon,
+  ShareIcon,
+} from "lucide-react";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
@@ -32,6 +39,19 @@ type RuntimeBridge = {
   api: ReturnType<typeof useAui> | null;
   mainThreadId: string | null;
 };
+
+// ponytail: UserButton's `links` slot is the lowest-friction way to
+// surface the Memory tab without rebuilding better-auth-ui's settings
+// surface — and at the version installed here, `settingsTabs` has types
+// but no render site. `MemoryView` lives at /settings/memory.
+const memoryLink = [
+  {
+    label: "Memory",
+    href: "/settings/memory",
+    icon: <Brain className="text-muted-foreground" />,
+    visibility: "authenticated" as const,
+  },
+];
 
 const Logo: FC = () => {
   return (
@@ -85,9 +105,13 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
       )}
       <div className={cn("shrink-0 p-2", collapsed ? "flex justify-center" : "")}>
         {collapsed ? (
-          <UserButton size="icon" className="border-border bg-card border" />
+          <UserButton size="icon" className="border-border bg-card border" links={memoryLink} />
         ) : (
-          <UserButton className="border-border bg-card w-full border" hideSettings />
+          <UserButton
+            className="border-border bg-card w-full border"
+            hideSettings
+            links={memoryLink}
+          />
         )}
       </div>
     </aside>
@@ -111,7 +135,11 @@ const MobileSidebar: FC = () => {
           <ThreadList />
         </div>
         <div className="shrink-0 p-2">
-          <UserButton className="border-border bg-card w-full border" hideSettings />
+          <UserButton
+            className="border-border bg-card w-full border"
+            hideSettings
+            links={memoryLink}
+          />
         </div>
       </SheetContent>
     </Sheet>

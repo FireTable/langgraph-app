@@ -1,5 +1,9 @@
+import { eq } from "drizzle-orm";
+
 import { store } from "@/backend/store";
-import { SummaryEntrySchema, type SummaryEntry } from "@/lib/memory/validators";
+import { db } from "@/db/client";
+import { account } from "@/lib/auth/schema";
+import { SummaryEntrySchema, type SocialAccount, type SummaryEntry } from "@/lib/memory/validators";
 
 const PROFILE_KEY = "main";
 const THREADS_NAMESPACE = "threads";
@@ -94,4 +98,15 @@ export async function writeSummary(
     full as unknown as Record<string, unknown>,
   );
   return full;
+}
+
+// ponytail: explicit `.select({ provider: account.providerId })` keeps
+// `accountId` / tokens out of the recall payload (FR-020). Same shape
+// across providers — GitHub, Google — so the UI renders a uniform list.
+export async function getSocialAccounts(userId: string): Promise<SocialAccount[]> {
+  const rows = await db
+    .select({ provider: account.providerId })
+    .from(account)
+    .where(eq(account.userId, userId));
+  return rows.map((r) => ({ provider: r.provider }));
 }
