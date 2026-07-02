@@ -398,13 +398,19 @@ export class CapturingHandler extends BaseCallbackHandler {
   }
 
   // ponytail: TTFT (time-to-first-token) — LangSmith's core LLM latency
-  // metric. LangChain core 1.2.x signature: handleLLMNewToken(token, runId).
-  // Set on the first token; later tokens no-op.
+  // metric. LangChain core 1.2.x signature: handleLLMNewToken(token, idx, runId, ...).
+  // The third positional arg is the runId; `rest` is a `unknown[]` so we
+  // grab the first string match. Set on the first token; later tokens no-op.
+  // ponytail: trimMeta initializes time_to_first_token_ms to null at
+  // start() time, so the guard must accept both null and undefined —
+  // checking only === undefined means the first token never sets TTFT
+  // and every row persists as null.
   handleLLMNewToken(_token: string, ...rest: unknown[]) {
     const runId = rest.find((a) => typeof a === "string") as string | undefined;
     if (!runId) return;
     const s = this.spans.get(runId);
-    if (s && s.meta.time_to_first_token_ms === undefined) {
+    const current = s?.meta.time_to_first_token_ms;
+    if (s && (current === undefined || current === null)) {
       s.meta.time_to_first_token_ms = Date.now() - s.started_at;
     }
   }
