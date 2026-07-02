@@ -93,12 +93,10 @@ app/                      Next.js App Router
   api/alchemy/[...path]/route.ts Server-only JSON-RPC proxy to Alchemy (with key + per-network disabled list)
   api/alchemy/status/route.ts Returns Alchemy key health + disabled-network list
   api/threads/[id]/observability/route.ts GET / DELETE thread spans (withAuth-gated; ownership check → 404)
+  api/threads/[id]/observability/[parentMessageId]/route.ts GET spans for a single turn (parent_message_id filter)
   globals.css             Tailwind v4 entry
 components/
   assistant-ui/           Chat primitives (thread, attachment, markdown, reasoning, tool-fallback, tool-group, tooltip-icon-button)
-  assistant-ui/observability-button.tsx        stateless icon button (rule #8 exception) — reads context, opens the Sheet
-  assistant-ui/observability-sheet-context.tsx Provider + useOpenObservabilitySheet() so per-message buttons share one Sheet instance
-  assistant-ui/observability-sheet.tsx         Sheet wrapper (rendered at ThreadRoot), fetches /api/threads/<id>/observability, renders retention banner + waterfall
 observability/                          UI components (button / sheet / sheet-context / panel) — moved out of assistant-ui/ so the feature owns its own folder
   observability/button.tsx                stateless icon (rule #8 exception) — opens the Sheet via context
   observability/sheet.tsx                 Sheet wrapper (singleton, at ThreadRoot) — derives threadId via useAuiState

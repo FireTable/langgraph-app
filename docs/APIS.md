@@ -61,7 +61,7 @@ Response shape (single row, same for list / fetch / create / update):
 
 ## Observability
 
-Per-thread captured LLM / Tool / Chain / Node spans — written at every `handleChainEnd` by the callback handler attached to `chatModel` via `.withConfig({ callbacks })` in `backend/model.ts`. Design doc: [`docs/OBSERVABILITY.md`](./OBSERVABILITY.md) (storage, retention, FORBIDDEN regex, trade-offs).
+Per-thread captured LLM / Tool / Chain / Node / Human spans — written at every End hook by the callback handler attached to the compiled graph in `backend/agent.ts` via `compile({ checkpointer }).withConfig({ callbacks: [capturingHandler] })`. Attaching at the compile layer (not per-model) ensures ToolNode spans are captured too. Design doc: [`docs/OBSERVABILITY.md`](./OBSERVABILITY.md) (storage, retention, FORBIDDEN regex, trade-offs).
 
 **Auth + isolation contract**: every endpoint below is wrapped in `withAuth` (rule #9). Path id is a LangGraph `thread_id` — ownership is checked against the calling user; cross-user access returns 404 (no existence leak).
 
