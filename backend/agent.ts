@@ -11,6 +11,7 @@ import { cryptoAgent } from "@/backend/agent/crypto-agent";
 import { codeAgent } from "@/backend/agent/code-agent";
 import { routerAgentNode } from "@/backend/node/router-agent-node";
 import { checkpointer } from "@/backend/checkpointer";
+import { store } from "@/backend/store";
 import { RouterAgentState } from "@/backend/state";
 import { chatModel } from "@/backend/model";
 import { ALL_TOOLS, WEATHER_TOOLS, CRYPTO_TOOLS, CODE_TOOLS } from "@/backend/tool";
@@ -232,7 +233,7 @@ const capturingHandler = new CapturingHandler({
 // LC use), the second expects PregelOptions (LangGraph-flavored —
 // accepts `callbacks` directly). TS can't pick for a bare callbacks
 // object — cast to the Pregel-options overload at the call site.
-const compiled = builder.compile({ checkpointer });
+const compiled = builder.compile({ checkpointer, store });
 type WithConfigPregel = (config: Record<string, unknown>) => typeof compiled;
 export const graph = (compiled.withConfig as unknown as WithConfigPregel)({
   callbacks: [capturingHandler],
