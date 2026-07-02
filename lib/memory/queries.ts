@@ -101,12 +101,14 @@ export async function writeSummary(
 }
 
 // ponytail: explicit `.select({ provider: account.providerId })` keeps
-// `accountId` / tokens out of the recall payload (FR-020). Same shape
-// across providers — GitHub, Google — so the UI renders a uniform list.
+// `accountId` / tokens out of the recall payload (FR-020). Filter out
+// better-auth's `"credential"` provider — that's the email+password
+// account, not a social login; showing it in the Memory view as a
+// "linked account" is misleading.
 export async function getSocialAccounts(userId: string): Promise<SocialAccount[]> {
   const rows = await db
     .select({ provider: account.providerId })
     .from(account)
     .where(eq(account.userId, userId));
-  return rows.map((r) => ({ provider: r.provider }));
+  return rows.filter((r) => r.provider !== "credential").map((r) => ({ provider: r.provider }));
 }
