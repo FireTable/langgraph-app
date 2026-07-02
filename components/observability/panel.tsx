@@ -568,7 +568,8 @@ const WaterfallTimeline: FC<{ retentionDays: number | null }> = ({ retentionDays
         </div>
         <h3 className="text-foreground text-sm font-semibold">No traces captured</h3>
         <p className="text-muted-foreground mt-1.5 max-w-[300px] text-xs leading-relaxed">
-          Spans will appear here once the agent starts running model or tool invocations in this thread.
+          Spans will appear here once the agent starts running model or tool invocations in this
+          thread.
         </p>
       </div>
     );
@@ -671,7 +672,7 @@ type RootAggregate = {
   llmSpanCount: number;
   toolSpanCount: number;
   failedCount: number;
-  waitingCount: number;
+  humanCount: number;
 };
 
 function aggregateRoot(spans: CapturedSpan[]): RootAggregate | null {
@@ -718,8 +719,8 @@ function aggregateRoot(spans: CapturedSpan[]): RootAggregate | null {
     ttftMaxMs,
     llmSpanCount: llms.length,
     toolSpanCount: spans.filter((s) => s.kind === "tool").length,
-    failedCount: spans.filter((s) => s.status === "failed" && s.kind !== "chain").length,
-    waitingCount: spans.filter((s) => s.status === "waiting" && s.kind !== "tool").length,
+    failedCount: spans.filter((s) => s.status === "failed").length,
+    humanCount: spans.filter((s) => s.kind === "human").length,
   };
 }
 
@@ -1877,7 +1878,7 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
           <StatCard
             icon={<UserIcon className="size-3.5" style={{ color: TYPE_COLORS.human }} />}
             label="Human in the loop"
-            value={String(root.waitingCount)}
+            value={String(root.humanCount)}
           />
           <StatCard
             icon={<AlertCircleIcon className="text-destructive size-3.5" />}
@@ -1915,7 +1916,8 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
             </div>
             <h3 className="text-foreground text-sm font-semibold">No traces captured</h3>
             <p className="text-muted-foreground mt-1.5 max-w-[300px] text-xs leading-relaxed">
-              Spans will appear here once the agent starts running model or tool invocations in this thread.
+              Spans will appear here once the agent starts running model or tool invocations in this
+              thread.
             </p>
           </div>
         ) : (
@@ -1935,7 +1937,7 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
                     "min-h-0 lg:max-w-none overflow-y-auto overflow-x-hidden transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
                     selected
                       ? "w-full lg:w-[min(40%,28rem)] opacity-100 translate-x-0 mt-2 lg:mt-0 lg:ml-2"
-                      : "w-0 h-0 lg:h-auto opacity-0 translate-x-4 pointer-events-none mt-0 lg:ml-0"
+                      : "w-0 h-0 lg:h-auto opacity-0 translate-x-4 pointer-events-none mt-0 lg:ml-0",
                   )}
                 >
                   {activeSpan && <SpanDetails span={activeSpan} />}
@@ -1994,11 +1996,7 @@ export const ObservabilityPanelSkeleton: FC = () => (
       {/* rows */}
       <div className="flex flex-col">
         {SKEL_ROWS.map(({ label, bar }, i) => (
-          <div
-            key={i}
-            className="flex items-center"
-            style={{ height: BAR_HEIGHT }}
-          >
+          <div key={i} className="flex items-center" style={{ height: BAR_HEIGHT }}>
             {/* label column */}
             <div
               className="border-border flex shrink-0 items-center gap-1.5 border-r px-2"
@@ -2009,17 +2007,11 @@ export const ObservabilityPanelSkeleton: FC = () => (
               {/* type chip placeholder */}
               <div className="bg-muted/50 h-4 w-10 rounded-sm" />
               {/* name placeholder */}
-              <div
-                className="bg-muted/50 h-3 rounded-sm"
-                style={{ width: label }}
-              />
+              <div className="bg-muted/50 h-3 rounded-sm" style={{ width: label }} />
             </div>
             {/* bar column */}
             <div className="flex flex-1 items-center px-2">
-              <div
-                className="bg-muted/50 h-5 rounded-sm"
-                style={{ width: bar }}
-              />
+              <div className="bg-muted/50 h-5 rounded-sm" style={{ width: bar }} />
             </div>
           </div>
         ))}
