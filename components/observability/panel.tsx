@@ -6,6 +6,7 @@
 // panel in a second dialog — exactly what we don't want. No Sheet /
 // Dialog imports in this file.
 import { AuiIf, AuiProvider, useAui, useAuiState } from "@assistant-ui/react";
+import { cn } from "@/lib/utils";
 import {
   SpanPrimitive,
   SpanResource,
@@ -17,6 +18,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -28,7 +30,9 @@ import {
   ArrowUpIcon,
   BoxIcon,
   BrainIcon,
+  CheckIcon,
   ClockIcon,
+  CopyIcon,
   DatabaseIcon,
   LinkIcon,
   UserIcon,
@@ -96,10 +100,6 @@ function useWaterfallLayout(): WaterfallLayout {
 function formatTime(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)} ms`;
   return `${(ms / 1000).toFixed(1)} s`;
-}
-
-function formatTimestamp(ms: number): string {
-  return new Date(ms).toISOString().replace("T", " ").replace("Z", " UTC");
 }
 
 // ponytail: same shape as the waterfall's axis ticks — always seconds.
@@ -227,6 +227,20 @@ type SelectionContextValue = {
   rawById: Map<string, CapturedSpan>;
 };
 
+type TooltipState = { x: number; y: number; raw: CapturedSpan } | null;
+type TooltipContextValue = {
+  tooltip: TooltipState;
+  setTooltip: (updater: TooltipState | ((prev: TooltipState) => TooltipState)) => void;
+};
+
+const TooltipContext = createContext<TooltipContextValue | null>(null);
+
+function useTooltip(): TooltipContextValue {
+  const ctx = useContext(TooltipContext);
+  if (!ctx) throw new Error("useTooltip must be used inside TooltipContext");
+  return ctx;
+}
+
 const SelectionContext = createContext<SelectionContextValue | null>(null);
 
 function useSelection(): SelectionContextValue {
@@ -284,10 +298,57 @@ const TypedBadge: FC = () => {
   return <TypeChip type={type} />;
 };
 
+// ponytail: status badge — pill with a dot + uppercase label. The
+// header's right-hand status indicator used to be plain text
+// ("COMPLETED"), which read as faded metadata; the badge makes the
+// success / failure state land first. Colors mirror the legend's
+// per-status intent: green for completed, blue for running, red for
+// failed, purple for waiting (interrupt gap).
+const STATUS_STYLE: Record<string, { color: string; bg: string; border: string }> = {
+  completed: {
+    color: "hsl(142 71% 45%)",
+    bg: "hsl(142 71% 45% / 0.1)",
+    border: "hsl(142 71% 45% / 0.3)",
+  },
+  running: {
+    color: "hsl(217 91% 60%)",
+    bg: "hsl(217 91% 60% / 0.1)",
+    border: "hsl(217 91% 60% / 0.3)",
+  },
+  failed: { color: "hsl(0 84% 60%)", bg: "hsl(0 84% 60% / 0.1)", border: "hsl(0 84% 60% / 0.3)" },
+  waiting: {
+    color: "hsl(262 83% 58%)",
+    bg: "hsl(262 83% 58% / 0.1)",
+    border: "hsl(262 83% 58% / 0.3)",
+  },
+};
+
+const StatusBadge: FC<{ status: string }> = ({ status }) => {
+  const style = STATUS_STYLE[status] ?? STATUS_STYLE.completed;
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-1.5 py-0 text-[9px] leading-[1.4] font-medium tracking-wide uppercase"
+      style={{ color: style.color, backgroundColor: style.bg, border: `1px solid ${style.border}` }}
+    >
+      <span
+        className="inline-block size-1.5 rounded-full"
+        style={{ backgroundColor: style.color }}
+      />
+      {status}
+    </span>
+  );
+};
+
 const WaterfallRow: FC = () => {
   const { barWidth, contentWidth } = useWaterfallLayout();
   const id = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.id);
+  const name = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.name);
+  const type = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.type);
+  const status = useAuiState((s) => (s as unknown as { span: SpanItemState }).span.status) as
+    | SpanItemState["status"]
+    | undefined;
   const { selectedId, select, rawById } = useSelection();
+  const { setTooltip } = useTooltip();
   const isSelected = selectedId === id;
   // ponytail: surface the LLM model name ahead of the LangChain class
   // name (e.g. "ChatOpenAI") so the row reads model-first — useful
@@ -297,9 +358,34 @@ const WaterfallRow: FC = () => {
   const raw = rawById.get(id);
   const meta = (raw?.meta ?? null) as Record<string, unknown> | null;
   const modelName = typeof meta?.ls_model_name === "string" ? meta.ls_model_name : null;
+  // ponytail: hover is row-level (label + bar both trigger). The bar
+  // is short on inner steps so row-level hover makes the tooltip
+  // actually reachable on every kind.
+  const buildTooltip = (e: React.MouseEvent<HTMLElement>) => {
+    const r = rawById.get(id);
+    if (!r || !status) return;
+    const safeStatus: CapturedSpan["status"] =
+      status === "skipped" ? "completed" : (status as CapturedSpan["status"]);
+    const kindMap: Record<string, CapturedSpan["kind"]> = {
+      llm: "llm",
+      tool: "tool",
+      node: "node",
+      chain: "chain",
+      human: "human",
+    };
+    const kind = kindMap[type] ?? "unknown";
+    setTooltip({ x: e.clientX, y: e.clientY, raw: { ...r, name, kind, status: safeStatus } });
+  };
+  const onEnter = (e: React.MouseEvent<HTMLElement>) => buildTooltip(e);
+  const onMove = (e: React.MouseEvent<HTMLElement>) =>
+    setTooltip((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev));
+  const onLeave = () => setTooltip(null);
   return (
     <SpanPrimitive.Root
       onClick={() => select(id)}
+      onMouseEnter={onEnter}
+      onMouseMove={onMove}
+      onMouseLeave={onLeave}
       className={`group flex cursor-pointer items-center ${isSelected ? "bg-accent/60" : ""}`}
       style={{ width: contentWidth, height: BAR_HEIGHT }}
     >
@@ -345,9 +431,102 @@ const WaterfallRow: FC = () => {
   );
 };
 
+// ponytail: lightweight hover popup. Anchored to mouse coords on
+// clientX/Y. Renders a compact card with name, kind, time range, and
+// duration — the same fields the details panel shows, minus the
+// payload. Kept off the bar's own positioning so the popup never
+// gets clipped by overflow:hidden on the timeline container. Reads
+// the same schema as SpanDetails and filters rows with `tooltip:true`.
+// ponytail: hover popup. Walks the kind's section list, keeps only
+// rows where the field opted in via `tooltip:true` (start / end /
+// duration / ttft / model / step / name / tokens). The header keeps
+// the chip + name — both come from the span itself, not the schema.
+// ponytail: more breathing room than the previous px-2.5 py-1.5 +
+// gap-x-1.5. Added a thin separator under the chip+name row so the
+// metadata rows read as a distinct group, and gap-y-1 keeps the
+// label/value pairs from crowding into each other at 10px font.
+const TooltipPopup: FC = () => {
+  const { tooltip } = useTooltip();
+  const ref = useRef<HTMLDivElement | null>(null);
+  // ponytail: tooltip is fixed-positioned at the cursor. The naive
+  // `left: x + 12` overflows the right edge when the user hovers
+  // rows near the browser's right gutter (e.g. an LLM row at the
+  // tail of a long waterfall). Measure the actual rendered width
+  // after layout and flip to the cursor's left when it doesn't fit.
+  const [flip, setFlip] = useState(false);
+  useLayoutEffect(() => {
+    if (!tooltip || !ref.current) return;
+    const w = ref.current.offsetWidth;
+    const EDGE = 12;
+    setFlip(w > 0 && x + EDGE + w > window.innerWidth - 4);
+    // x is a primitive — including it in deps would re-measure every
+    // mousemove, which we want (cursor can leave the row but the
+    // tooltip stays; the next hover sets a new x and re-flip).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tooltip]);
+  if (!tooltip) return null;
+  const { raw, x, y } = tooltip;
+  const sections = resolveSections(raw, DETAIL_SECTIONS_BY_KIND[raw.kind]);
+  const tooltipRows = sections.flatMap((s) => s.rows).filter((r) => r.tooltip);
+  const EDGE = 12;
+  const style = flip
+    ? { left: Math.max(4, x - EDGE - (ref.current?.offsetWidth ?? 0)), top: y + EDGE }
+    : { left: x + EDGE, top: y + EDGE };
+  return (
+    <div
+      ref={ref}
+      role="tooltip"
+      className="border-border bg-popover text-popover-foreground pointer-events-none fixed z-50 max-w-xs rounded-md border px-3 py-2.5 text-xs shadow-md"
+      style={style}
+    >
+      <div className="flex items-center gap-1.5 pb-1.5">
+        <TypeChip type={raw.kind} />
+        <span className="truncate font-medium">{raw.name}</span>
+      </div>
+      {tooltipRows.length > 0 && (
+        <div className="border-border grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 border-t pt-1.5 font-mono text-[10px]">
+          {tooltipRows.map((r) => (
+            <RowPreview key={r.id} row={r} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ponytail: tooltip row preview — for a `text` or `badge` value,
+// render the label: value pair. Anything else (json / tokens /
+// structured) is ignored in the tooltip because it doesn't fit on
+// one line. Badge re-uses the same field renderer with `compact`
+// mode (smaller font, no border) so the tooltip chip stays light.
+// Values right-align so the column reads as a clean 2-column KV —
+// `auto | 1fr` puts labels flush-left, values flush-right.
+const RowPreview: FC<{ row: ResolvedRow }> = ({ row }) => {
+  if (row.value.kind === "text") {
+    return (
+      <>
+        <span className="text-muted-foreground">{row.label}</span>
+        <span className="truncate text-right">{row.value.text}</span>
+      </>
+    );
+  }
+  if (row.value.kind === "badge") {
+    return (
+      <>
+        <span className="text-muted-foreground">{row.label}</span>
+        <span className="flex justify-end">
+          <FieldRenderer value={row.value} compact />
+        </span>
+      </>
+    );
+  }
+  return null;
+};
+
 const WaterfallTimeline: FC<{ retentionDays: number | null }> = ({ retentionDays }) => {
   const outerRef = useRef<HTMLDivElement>(null);
   const [barWidth, setBarWidth] = useState(400);
+  const [tooltip, setTooltip] = useState<TooltipState>(null);
 
   const hasSpans = useAuiState(
     (s) => (s as unknown as { span: { hasChildren: boolean } }).span.hasChildren,
@@ -390,42 +569,45 @@ const WaterfallTimeline: FC<{ retentionDays: number | null }> = ({ retentionDays
   }
 
   return (
-    <div ref={outerRef} className="border-border overflow-hidden rounded-lg border">
-      <div
-        className="border-border bg-background sticky top-0 z-20 flex border-b"
-        style={{ width: contentWidth }}
-      >
+    <TooltipContext.Provider value={{ tooltip, setTooltip }}>
+      <div ref={outerRef} className="border-border relative overflow-hidden rounded-lg border">
         <div
-          className="border-border bg-background text-muted-foreground sticky left-0 z-30 shrink-0 border-r px-2 py-1.5 text-xs"
-          style={{ width: LABEL_WIDTH }}
+          className="border-border bg-background sticky top-0 z-20 flex border-b"
+          style={{ width: contentWidth }}
         >
-          Span
-        </div>
-        <div style={{ width: barWidth, height: 28 }}>
-          <TimeAxisTicks timeRange={renderTimeRange} barWidth={barWidth} />
-        </div>
-      </div>
-
-      <WaterfallLayoutContext.Provider value={layout}>
-        <div className="py-1.5" style={{ width: contentWidth }}>
-          <SpanPrimitive.Children>{() => <WaterfallRow />}</SpanPrimitive.Children>
-        </div>
-      </WaterfallLayoutContext.Provider>
-
-      <div className="border-border text-muted-foreground border-t text-xs">
-        <div className="flex items-center gap-2 px-2 py-2">
-          {LEGEND_TYPE_ORDER.map((t) => (
-            <TypeChip key={t} type={t} />
-          ))}
-        </div>
-        {retentionDays != null && (
-          <div className="border-border border-t px-2 py-1.5">
-            Spans are retained for {retentionDays} day{retentionDays === 1 ? "" : "s"}; data older
-            than that is removed on the next retention cleanup.
+          <div
+            className="border-border bg-background text-muted-foreground sticky left-0 z-30 shrink-0 border-r px-2 py-1.5 text-xs"
+            style={{ width: LABEL_WIDTH }}
+          >
+            Span
           </div>
-        )}
+          <div style={{ width: barWidth, height: 28 }}>
+            <TimeAxisTicks timeRange={renderTimeRange} barWidth={barWidth} />
+          </div>
+        </div>
+
+        <WaterfallLayoutContext.Provider value={layout}>
+          <div className="py-1.5" style={{ width: contentWidth }}>
+            <SpanPrimitive.Children>{() => <WaterfallRow />}</SpanPrimitive.Children>
+          </div>
+        </WaterfallLayoutContext.Provider>
+
+        <div className="border-border text-muted-foreground border-t text-xs">
+          <div className="flex items-center gap-2 px-2 py-2">
+            {LEGEND_TYPE_ORDER.map((t) => (
+              <TypeChip key={t} type={t} />
+            ))}
+          </div>
+          {retentionDays != null && (
+            <div className="border-border border-t px-2 py-1.5">
+              Spans are retained for {retentionDays} day{retentionDays === 1 ? "" : "s"}; data older
+              than that is removed on the next retention cleanup.
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+      <TooltipPopup />
+    </TooltipContext.Provider>
   );
 };
 
@@ -639,46 +821,170 @@ function fmt(n: number): string {
   return String(n);
 }
 
+// ponytail: detail schema. SpanDetails + TooltipPopup both render from
+// the same per-kind section list. To add a new field: declare one
+// FieldDef, drop it in the right section, and the details card + the
+// hover tooltip (when `tooltip: true`) both pick it up. No more if-chain
+// branches to keep in sync.
+type FieldValue =
+  | { kind: "text"; text: string; mono?: boolean }
+  | { kind: "code"; data: unknown; maxHeight?: number }
+  | { kind: "tokens"; tokens: TokenBreakdown }
+  | { kind: "prompts"; prompts: string[] }
+  | { kind: "structured"; fields: StructuredOutput }
+  // ponytail: badge — small chip with a colored border + bg, used
+  // when a single token-like value should pop out of the row
+  // (model name, status, step id). `color` matches the TYPE_COLORS
+  // keys; falls back to FALLBACK_COLOR when missing.
+  | { kind: "badge"; text: string; color?: string }
+  | { kind: "raw"; node: React.ReactNode };
+
+type ResolvedRow = {
+  id: string;
+  label: string;
+  value: FieldValue;
+  tooltip: boolean;
+  details: boolean;
+  bare: boolean;
+};
+
+type ResolvedSection = {
+  id: string;
+  title: string;
+  rows: ResolvedRow[];
+};
+
+type FieldDef = {
+  id: string;
+  label: string;
+  show?: (span: CapturedSpan) => boolean;
+  value: (span: CapturedSpan) => FieldValue | null;
+  // ponytail: opt-in. When true, the field is also surfaced in the
+  // hover tooltip. Default false — most fields are too long for a
+  // 1-line popup (json blobs, structured fields). Time + status are
+  // the obvious yes; tokens are too dense for a tooltip.
+  tooltip?: boolean;
+  // ponytail: opt-out. Default true — the field renders in the details
+  // card. Set false to keep a field in the tooltip only. Use this when
+  // the same data is already shown in a more detailed section below
+  // (e.g. "Tokens" row duplicates the Total cost breakdown).
+  details?: boolean;
+  // ponytail: opt-in. When true, the field renders WITHOUT the
+  // standard `label: value` row — useful for a single-field section
+  // (e.g. Total cost breakdown) where the renderer carries its own
+  // internal labels and the wrapper label would be redundant.
+  bare?: boolean;
+};
+
+type SectionDef = {
+  id: string;
+  title: string;
+  fields: FieldDef[];
+};
+
+function resolveSections(span: CapturedSpan, sections: SectionDef[]): ResolvedSection[] {
+  const out: ResolvedSection[] = [];
+  for (const s of sections) {
+    const rows: ResolvedRow[] = [];
+    for (const f of s.fields) {
+      if (f.show && !f.show(span)) continue;
+      const v = f.value(span);
+      if (v === null) continue;
+      rows.push({
+        id: `${s.id}.${f.id}`,
+        label: f.label,
+        value: v,
+        tooltip: !!f.tooltip,
+        details: f.details !== false,
+        bare: !!f.bare,
+      });
+    }
+    if (rows.length > 0) out.push({ id: s.id, title: s.title, rows });
+  }
+  return out;
+}
+
+// ponytail: YYYY-MM-DD HH:MM:SS.mmm — date prefix is non-negotiable
+// for debugging; a 30-minute trace that crosses midnight renders
+// identically to one that doesn't without it. Format still fits in
+// the tooltip's max-w-xs (tooltip content is short by design).
+function compactTime(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+// ponytail: stack label above value. Side-by-side (88px label, 1fr
+// value) wasted half the card on the value column when the value is
+// short (a timestamp, a duration). Stacking lets the value use the
+// full width and reads top-to-bottom like a normal form. Row label
+// is sentence-style muted, not uppercase — the section title already
+// shouts, repeating that at the row level makes "INPUT / Input"
+// feel redundant.
 const DetailRow: FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
-  <div className="grid grid-cols-[140px_1fr] gap-3 py-1 text-sm">
-    <div className="text-muted-foreground">{label}</div>
-    <div>{children}</div>
+  <div className="text-sm">
+    <div className="text-muted-foreground text-xs">{label}</div>
+    <div className="mt-0.5 min-w-0">{children}</div>
   </div>
 );
 
+const DetailSection: FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="border-border space-y-3 border-t pt-3 first:border-t-0 first:pt-0">
+    {/* ponytail: stacked rows mean each row is label+value, so a
+        little more between-row gap than the side-by-side layout
+        needed. 12px chunk boundary + 12px row rhythm → consistent
+        ~24px / 12px feel. */}
+    <div className="text-muted-foreground text-[10px] tracking-wider uppercase">{title}</div>
+    {children}
+  </div>
+);
+
+// ponytail: LangSmith-style breakdown — three plain rows
+// (Input / Output / Total), each laid out as
+//   [label]   [X% · N · {meta}]
+// where the meta annotation is `cache N` for input and
+// `reasoning N` for output. Single-line per row, no progress bar
+// (the percentage is enough), no separate Tokens label (the
+// section title already says "Total cost breakdown"). Number
+// column right-aligned; label muted, number bold for scannability.
 const TokenBreakdownView: FC<{ tokens: TokenBreakdown }> = ({ tokens }) => {
-  const input = Math.max(tokens.input, 1);
-  const output = Math.max(tokens.output, 1);
-  const total = tokens.total || input + output;
+  const total = tokens.total || tokens.input + tokens.output;
   const inputPct = Math.round((tokens.input / Math.max(total, 1)) * 100);
   const outputPct = 100 - inputPct;
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground text-xs">Input</span>
-        <span className="text-xs tabular-nums">
-          {inputPct}% / {fmt(tokens.input)}
-        </span>
-        {tokens.cache_read > 0 && (
-          <span className="text-muted-foreground text-xs">cache_read {fmt(tokens.cache_read)}</span>
-        )}
-        <div className="bg-muted ml-auto h-1.5 w-32 overflow-hidden rounded">
-          <div className="bg-primary h-full" style={{ width: `${inputPct}%` }} />
+    <div className="text-xs">
+      <div className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 py-1">
+        <div className="text-muted-foreground">Input</div>
+        <div className="text-right tabular-nums">
+          <span>{inputPct}%</span>
+          <span className="text-muted-foreground"> · </span>
+          <span className="font-medium">{fmt(tokens.input)}</span>
+          {tokens.cache_read > 0 && (
+            <>
+              <span className="text-muted-foreground"> · </span>
+              <span className="text-muted-foreground">cache {fmt(tokens.cache_read)}</span>
+            </>
+          )}
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground text-xs">Output</span>
-        <span className="text-xs tabular-nums">
-          {outputPct}% / {fmt(tokens.output)}
-        </span>
-        {tokens.reasoning > 0 && (
-          <span className="text-muted-foreground text-xs">reasoning {fmt(tokens.reasoning)}</span>
-        )}
-        <div className="bg-muted ml-auto h-1.5 w-32 overflow-hidden rounded">
-          <div className="bg-primary h-full" style={{ width: `${outputPct}%` }} />
+      <div className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 py-1">
+        <div className="text-muted-foreground">Output</div>
+        <div className="text-right tabular-nums">
+          <span>{outputPct}%</span>
+          <span className="text-muted-foreground"> · </span>
+          <span className="font-medium">{fmt(tokens.output)}</span>
+          {tokens.reasoning > 0 && (
+            <>
+              <span className="text-muted-foreground"> · </span>
+              <span className="text-muted-foreground">reasoning {fmt(tokens.reasoning)}</span>
+            </>
+          )}
         </div>
       </div>
-      <div className="text-muted-foreground text-xs">Total {fmt(total)}</div>
+      <div className="text-muted-foreground grid grid-cols-[auto_1fr] items-baseline gap-x-3 py-1">
+        <span>Total</span>
+        <span className="text-right font-medium tabular-nums">{fmt(total)}</span>
+      </div>
     </div>
   );
 };
@@ -692,151 +998,842 @@ const JsonBlock: FC<{ data: unknown; maxHeight?: number }> = ({ data, maxHeight 
   </pre>
 );
 
-const SpanDetails: FC<{ span: CapturedSpan }> = ({ span }) => {
-  const tokens = readTokens(span.usage);
-  const durationMs = span.ended_at ? span.ended_at - span.started_at : null;
-  const meta = span.meta ?? {};
-  const node = (meta.langgraph_node as string | undefined) ?? null;
-  const step = meta.langgraph_step;
-  const model = (meta.ls_model_name as string | undefined) ?? null;
-  const provider = (meta.ls_provider as string | undefined) ?? null;
+// ponytail: compact copy-as-JSON button. Same navigator.clipboard path
+// as the chat CodeBlock header; "Copied" feedback flips the icon for
+// ~1.5s. No tooltip wrapper — aria-label + the post-click state carry
+// the affordance. Floating it top-right of a block lets the pre below
+// keep its current padding / scroll behavior.
+const CopyJsonButton: FC<{ getText: () => string; label?: string; className?: string }> = ({
+  getText,
+  label = "Copy",
+  className,
+}) => {
+  const [copied, setCopied] = useState(false);
+  const onClick = () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    navigator.clipboard.writeText(getText()).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      },
+      () => {},
+    );
+  };
   return (
-    <div className="border-border bg-card mt-3 space-y-2 rounded-lg border p-4">
-      <div className="flex items-center gap-2">
-        <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-xs">
-          {span.kind}
-        </span>
-        <span className="font-medium">
-          {span.kind === "tool" || span.kind === "llm" ? span.name : (node ?? span.name)}
-        </span>
-        {node && span.name !== node && (span.kind === "tool" || span.kind === "llm") && (
-          <span className="text-muted-foreground text-xs">@ {node}</span>
-        )}
-        <span className="text-muted-foreground text-xs">id={span.span_id.slice(0, 8)}</span>
-        <span className="ml-auto text-xs">
-          {span.status} · {durationMs !== null ? formatDuration(durationMs) : "running"}
-        </span>
-      </div>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={copied ? "Copied" : label}
+      className={cn(
+        "text-muted-foreground hover:text-foreground hover:bg-muted/60 inline-flex size-5 items-center justify-center rounded transition-colors",
+        className,
+      )}
+    >
+      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+    </button>
+  );
+};
 
-      <DetailRow label="Time">
-        <div className="text-xs">
-          Start {formatTimestamp(span.started_at)}
-          {span.ended_at && <span> · End {formatTimestamp(span.ended_at)}</span>}
+// ponytail: shared renderer for FieldValue. Both SpanDetails rows and
+// TooltipPopup rows resolve to the same FieldValue, so the visual
+// decision lives in one place. The "raw" variant is the escape hatch
+// for one-off cases (e.g. the multi-line prompt group renderer with
+// per-message collapse toggles) — we don't try to flatten those into
+// the schema.
+const FieldRenderer: FC<{ value: FieldValue; compact?: boolean }> = ({ value, compact }) => {
+  switch (value.kind) {
+    case "text": {
+      const cls = compact
+        ? "text-muted-foreground font-mono text-[10px]"
+        : value.mono
+          ? "font-mono text-xs"
+          : "text-muted-foreground text-xs";
+      return <span className={cls}>{value.text}</span>;
+    }
+    case "badge": {
+      const c = value.color ?? FALLBACK_COLOR;
+      // ponytail: same chip pattern as TypeChip — colored text +
+      // border in the same hue. `compact` mode drops the border
+      // for the tooltip variant (the surrounding tooltip border
+      // is enough visual anchor; a chip-in-a-chip looks heavy).
+      return (
+        <span
+          className={
+            compact
+              ? "font-mono text-[10px] font-medium"
+              : "inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[11px] font-medium"
+          }
+          style={{ color: c, ...(compact ? {} : { borderColor: c }) }}
+        >
+          {value.text}
+        </span>
+      );
+    }
+    case "code": {
+      const text =
+        typeof value.data === "string" ? value.data : JSON.stringify(value.data, null, 2);
+      return (
+        <div className="relative">
+          <CopyJsonButton
+            getText={() => text}
+            label="Copy JSON"
+            className="absolute top-1.5 right-1.5 z-10"
+          />
+          <JsonBlock data={value.data} maxHeight={value.maxHeight ?? 240} />
         </div>
-      </DetailRow>
-
-      {step !== undefined && (
-        <DetailRow label="Tags">
-          <span className="bg-muted rounded px-1.5 py-0.5 text-xs">{`graph:step:${String(step)}`}</span>
-          {typeof meta.aggregated_children === "number" && meta.aggregated_children > 1 && (
-            <span className="text-muted-foreground ml-2 text-xs">
-              (aggregated {String(meta.aggregated_children)} spans)
-            </span>
-          )}
-        </DetailRow>
-      )}
-
-      {model && (
-        <DetailRow label="Model">
-          <span className="text-xs">
-            {model}
-            {provider && <span className="text-muted-foreground"> · {provider}</span>}
-          </span>
-        </DetailRow>
-      )}
-
-      {tokens && (
-        <DetailRow label="Token breakdown">
-          <TokenBreakdownView tokens={tokens} />
-        </DetailRow>
-      )}
-
-      {span.kind === "tool" && (
-        <>
-          <DetailRow label="Input">
-            <JsonBlock data={typeof span.input === "string" ? span.input : span.input} />
-          </DetailRow>
-          <DetailRow label="Output">
-            <JsonBlock data={span.output} maxHeight={240} />
-          </DetailRow>
-        </>
-      )}
-
-      {span.kind === "llm" && Array.isArray(span.input) && span.input.length > 0 && (
-        <DetailRow label={`Wire prompts (${span.input.length})`}>
-          <div className="space-y-2">
-            {span.input.map((promptGroup: string, i: number) => {
-              // ponytail: stringifyMessages joins messages with "\n", so a
-              // multi-line system prompt ("system: ...\n  rules...\n- next: ...")
-              // looks like a sequence of role lines. Only split on lines
-              // whose prefix is a known role — otherwise treat as body.
-              const knownRoles = new Set([
-                "system",
-                "human",
-                "ai",
-                "assistant",
-                "tool",
-                "function",
-              ]);
-              const tokens: { role: string; body: string }[] = [];
-              let current: { role: string; body: string[] } | null = null;
-              for (const line of promptGroup.split("\n")) {
-                const colonAt = line.indexOf(": ");
-                const maybeRole = colonAt > 0 ? line.slice(0, colonAt) : "";
-                if (knownRoles.has(maybeRole)) {
-                  if (current) tokens.push({ role: current.role, body: current.body.join("\n") });
-                  current = { role: maybeRole, body: [line.slice(colonAt + 2)] };
-                } else if (current) {
-                  current.body.push(line);
-                }
+      );
+    }
+    case "tokens":
+      return <TokenBreakdownView tokens={value.tokens} />;
+    case "prompts": {
+      // ponytail: each prompt group is split on role-prefixed lines
+      // ("system: ...", "human: ...") so the operator can collapse
+      // each role independently. Same shape the previous inline block
+      // produced — pulled verbatim into the schema path.
+      const knownRoles = new Set(["system", "human", "ai", "assistant", "tool", "function"]);
+      return (
+        <div className="space-y-2">
+          {value.prompts.map((promptGroup, i) => {
+            const tokens: { role: string; body: string }[] = [];
+            let current: { role: string; body: string[] } | null = null;
+            for (const line of promptGroup.split("\n")) {
+              const colonAt = line.indexOf(": ");
+              const maybeRole = colonAt > 0 ? line.slice(0, colonAt) : "";
+              if (knownRoles.has(maybeRole)) {
+                if (current) tokens.push({ role: current.role, body: current.body.join("\n") });
+                current = { role: maybeRole, body: [line.slice(colonAt + 2)] };
+              } else if (current) {
+                current.body.push(line);
               }
-              if (current) tokens.push({ role: current.role, body: current.body.join("\n") });
-              return (
-                <div key={i} className="border-border space-y-1 rounded-md border p-2">
-                  {tokens.map((t, j) => (
-                    <details key={j} open className="text-xs">
-                      <summary className="bg-muted/40 cursor-pointer rounded px-1.5 py-0.5 font-medium">
-                        {t.role}
-                      </summary>
-                      <pre className="text-foreground mt-1 overflow-auto px-1.5 py-1 text-xs whitespace-pre-wrap">
-                        {t.body}
-                      </pre>
-                    </details>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-        </DetailRow>
-      )}
-
-      {span.kind === "llm" &&
-        (() => {
-          const fields = readStructuredOutput(span);
-          if (!fields || fields.length === 0) return null;
-          return (
-            <DetailRow label={`Fields (${String(fields.length)})`}>
-              <div className="border-border rounded-md border">
-                {fields.map((f, i) => (
-                  <div
-                    key={i}
-                    className="border-border flex items-center gap-2 border-b px-2 py-1 text-xs last:border-b-0"
-                  >
-                    <span className="text-muted-foreground font-mono">{f.path}</span>
-                    <span className="ml-auto font-mono">
-                      {typeof f.value === "string" ? f.value : JSON.stringify(f.value)}
-                    </span>
-                  </div>
+            }
+            if (current) tokens.push({ role: current.role, body: current.body.join("\n") });
+            return (
+              <div key={i} className="border-border space-y-1 rounded-md border p-2">
+                {tokens.map((t, j) => (
+                  <details key={j} open className="text-xs">
+                    <summary className="bg-muted/40 cursor-pointer rounded px-1.5 py-0.5 font-medium">
+                      {t.role}
+                    </summary>
+                    <pre className="text-foreground mt-1 overflow-auto px-1.5 py-1 text-xs whitespace-pre-wrap">
+                      {t.body}
+                    </pre>
+                  </details>
                 ))}
               </div>
-            </DetailRow>
-          );
-        })()}
+            );
+          })}
+        </div>
+      );
+    }
+    case "structured": {
+      // ponytail: collapse the flattened {path, value}[] back into a
+      // plain JSON object so the user gets the same shape they'd see
+      // in the raw output. Duplicates (last wins) are good enough —
+      // the renderer already de-dups by `show` so this is rare.
+      const json = value.fields.reduce<Record<string, unknown>>((acc, f) => {
+        acc[f.path] = f.value;
+        return acc;
+      }, {});
+      return (
+        // ponytail: copy button sits to the right of the K column, not
+        // floating over the rows. Keeps the table chrome clean and
+        // aligns with the rest of the panel's "label + value" rhythm.
+        <div className="flex items-start gap-1.5">
+          <div className="border-border flex-1 rounded-md border">
+            {value.fields.map((f, i) => (
+              <div
+                key={i}
+                className="border-border flex items-baseline gap-3 border-b px-3 py-2 text-xs last:border-b-0"
+              >
+                <span className="text-muted-foreground shrink-0 font-mono">{f.path}</span>
+                <span
+                  className="text-foreground ml-auto truncate text-right font-mono"
+                  title={String(f.value)}
+                >
+                  {typeof f.value === "string" ? f.value : JSON.stringify(f.value)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <CopyJsonButton
+            getText={() => JSON.stringify(json, null, 2)}
+            label="Copy fields"
+            className="mt-1.5"
+          />
+        </div>
+      );
+    }
+    case "raw":
+      return <>{value.node}</>;
+  }
+};
+
+// ponytail: TTFT (time-to-first-token) per span. Read from
+// meta.time_to_first_token_ms, set by CapturingHandler.handleLLMNewToken
+// on the first streaming token. Null / non-positive → no TTFT (the
+// span was either non-LLM or non-streaming).
+function readTtftMs(span: CapturedSpan): number | null {
+  const v = (span.meta as Record<string, unknown> | null | undefined)?.time_to_first_token_ms;
+  return typeof v === "number" && v > 0 ? v : null;
+}
+
+// ponytail: per-kind section lists. Both the details card and the
+// hover tooltip walk the same list; tooltip:true opts a field into the
+// popup. `show` / value() returning null drops the row at render time,
+// so empty sections never render.
+const DETAIL_SECTIONS_BY_KIND: Record<CapturedSpan["kind"], SectionDef[]> = {
+  llm: [
+    {
+      id: "time",
+      title: "Time",
+      fields: [
+        {
+          id: "start",
+          label: "Start",
+          value: (s) => ({ kind: "text", text: compactTime(s.started_at) }),
+          tooltip: true,
+        },
+        {
+          id: "end",
+          label: "End",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({ kind: "text", text: compactTime(s.ended_at as number) }),
+          tooltip: true,
+        },
+        {
+          id: "duration",
+          label: "Duration",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({
+            kind: "text",
+            text: formatDuration((s.ended_at as number) - s.started_at),
+          }),
+          tooltip: true,
+        },
+        {
+          id: "ttft",
+          label: "Time to first token",
+          show: (s) => readTtftMs(s) != null,
+          value: (s) => ({ kind: "text", text: formatDuration(readTtftMs(s) as number) }),
+          tooltip: true,
+        },
+      ],
+    },
+    {
+      id: "context",
+      title: "Context",
+      fields: [
+        {
+          id: "step",
+          label: "Step",
+          show: (s) => typeof s.meta?.langgraph_step === "number",
+          value: (s) => ({
+            kind: "raw",
+            node: (
+              <>
+                <span className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+                  {`graph:step:${String(s.meta?.langgraph_step)}`}
+                </span>
+                {typeof s.meta?.aggregated_children === "number" &&
+                  (s.meta.aggregated_children as number) > 1 && (
+                    <span className="text-muted-foreground ml-2 text-xs">
+                      (× {String(s.meta.aggregated_children)})
+                    </span>
+                  )}
+              </>
+            ),
+          }),
+        },
+        {
+          id: "model",
+          label: "Model",
+          show: (s) => typeof s.meta?.ls_model_name === "string",
+          // ponytail: badge kind so the model name reads as a
+          // pill in the LLM color (purple). When a provider is
+          // available, keep it on the same row as muted text —
+          // it's a sub-annotation, not a separate data point.
+          value: (s) => ({
+            kind: "badge",
+            text: s.meta?.ls_model_name as string,
+            color: TYPE_COLORS.llm,
+          }),
+          tooltip: true,
+        },
+        {
+          // ponytail: single-line token summary for the hover
+          // tooltip — "In 720 / Out 90" reads at a glance. The full
+          // TokenBreakdownView (with percentages and cache / reasoning
+          // breakdown) lives in the Total cost breakdown section below;
+          // we drop the row from the details card to avoid duplication,
+          // and keep it in the tooltip only.
+          id: "tokens",
+          label: "Tokens",
+          show: (s) => readTokens(s.usage) != null,
+          value: (s) => {
+            const t = readTokens(s.usage) as TokenBreakdown;
+            const parts = [`In ${fmt(t.input)}`, `Out ${fmt(t.output)}`];
+            if (t.cache_read > 0) parts.push(`Cache ${fmt(t.cache_read)}`);
+            return { kind: "text", text: parts.join(" / ") };
+          },
+          tooltip: true,
+          details: false,
+        },
+      ],
+    },
+    {
+      id: "tokens",
+      title: "Total cost breakdown",
+      fields: [
+        {
+          // ponytail: bare field — TokenBreakdownView carries its
+          // own "Input / Output / Total" labels, so the section's
+          // wrapping row label would be redundant. The `bare` flag
+          // tells ResolvedSections to skip the DetailRow wrapper
+          // and render the value directly under the section title.
+          id: "tokens",
+          label: "",
+          bare: true,
+          show: (s) => readTokens(s.usage) != null,
+          value: (s) => ({ kind: "tokens", tokens: readTokens(s.usage) as TokenBreakdown }),
+        },
+      ],
+    },
+    {
+      id: "prompts",
+      title: "Prompts",
+      fields: [
+        {
+          id: "prompts",
+          label: "Prompts",
+          show: (s) => Array.isArray(s.input) && (s.input as string[]).length > 0,
+          value: (s) => ({ kind: "prompts", prompts: s.input as string[] }),
+        },
+      ],
+    },
+    {
+      id: "structured",
+      title: "Fields",
+      fields: [
+        {
+          id: "fields",
+          label: "Fields",
+          show: (s) => {
+            const f = readStructuredOutput(s);
+            return f != null && f.length > 0;
+          },
+          value: (s) => ({
+            kind: "structured",
+            fields: readStructuredOutput(s) as StructuredOutput,
+          }),
+        },
+      ],
+    },
+  ],
+  tool: [
+    {
+      id: "time",
+      title: "Time",
+      fields: [
+        {
+          id: "start",
+          label: "Start",
+          value: (s) => ({ kind: "text", text: compactTime(s.started_at) }),
+          tooltip: true,
+        },
+        {
+          id: "end",
+          label: "End",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({ kind: "text", text: compactTime(s.ended_at as number) }),
+          tooltip: true,
+        },
+        {
+          id: "duration",
+          label: "Duration",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({
+            kind: "text",
+            text: formatDuration((s.ended_at as number) - s.started_at),
+          }),
+          tooltip: true,
+        },
+      ],
+    },
+    {
+      id: "context",
+      title: "Context",
+      fields: [
+        {
+          id: "step",
+          label: "Step",
+          show: (s) => typeof s.meta?.langgraph_step === "number",
+          value: (s) => ({
+            kind: "raw",
+            node: (
+              <span className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+                {`graph:step:${String(s.meta?.langgraph_step)}`}
+              </span>
+            ),
+          }),
+        },
+        {
+          id: "tags",
+          label: "Tags",
+          show: (s) => {
+            const tags = s.meta?.tags;
+            return Array.isArray(tags) && tags.length > 0;
+          },
+          value: (s) => {
+            const tags = s.meta?.tags as string[] | undefined;
+            return { kind: "text", text: (tags ?? []).join(", "), mono: true };
+          },
+        },
+      ],
+    },
+    {
+      // ponytail: tool payload — Input and Output in one section
+      // (Payload) so the row labels carry the direction. Splitting
+      // them into separate "Input" / "Output" sections with row
+      // labels of the same name printed "INPUT / Input" twice in
+      // a row, which is visual noise.
+      id: "payload",
+      title: "Payload",
+      fields: [
+        {
+          id: "input",
+          label: "Input",
+          show: (s) => s.input != null,
+          value: (s) => ({ kind: "code", data: s.input, maxHeight: 240 }),
+        },
+        {
+          id: "output",
+          label: "Output",
+          show: (s) => s.output != null,
+          value: (s) => ({ kind: "code", data: s.output, maxHeight: 240 }),
+        },
+      ],
+    },
+  ],
+  node: [
+    {
+      id: "time",
+      title: "Time",
+      fields: [
+        {
+          id: "start",
+          label: "Start",
+          value: (s) => ({ kind: "text", text: compactTime(s.started_at) }),
+          tooltip: true,
+        },
+        {
+          id: "end",
+          label: "End",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({ kind: "text", text: compactTime(s.ended_at as number) }),
+          tooltip: true,
+        },
+        {
+          id: "duration",
+          label: "Duration",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({
+            kind: "text",
+            text: formatDuration((s.ended_at as number) - s.started_at),
+          }),
+          tooltip: true,
+        },
+      ],
+    },
+    {
+      id: "context",
+      title: "Context",
+      fields: [
+        {
+          id: "step",
+          label: "Step",
+          show: (s) => typeof s.meta?.langgraph_step === "number",
+          value: (s) => ({
+            kind: "raw",
+            node: (
+              <span className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+                {`graph:step:${String(s.meta?.langgraph_step)}`}
+              </span>
+            ),
+          }),
+          tooltip: true,
+        },
+        {
+          id: "name",
+          label: "Name",
+          // ponytail: hide the Name row when it duplicates the
+          // langgraph_node (e.g. step wrappers named after their
+          // node like `weatherModel`). The row only carries signal
+          // when the LC-level class name is different from the
+          // node name (e.g. `RunnableSequence` inside `routerAgent`).
+          show: (s) =>
+            typeof s.meta?.langgraph_node === "string" && s.name !== s.meta.langgraph_node,
+          value: (s) => ({ kind: "text", text: s.name, mono: true }),
+          tooltip: true,
+        },
+        {
+          id: "node",
+          label: "Node",
+          show: (s) =>
+            typeof s.meta?.langgraph_node === "string" && s.meta.langgraph_node !== s.name,
+          value: (s) => ({ kind: "text", text: s.meta?.langgraph_node as string, mono: true }),
+        },
+        {
+          id: "ns",
+          label: "NS",
+          show: (s) =>
+            typeof s.meta?.langgraph_checkpoint_ns === "string" && !!s.meta.langgraph_checkpoint_ns,
+          value: (s) => ({
+            kind: "text",
+            text: s.meta?.langgraph_checkpoint_ns as string,
+            mono: true,
+          }),
+        },
+      ],
+    },
+    {
+      id: "payload",
+      title: "Payload",
+      fields: [
+        {
+          id: "input",
+          label: "Input",
+          show: (s) => s.input != null,
+          value: (s) => ({ kind: "code", data: s.input, maxHeight: 240 }),
+        },
+        {
+          id: "output",
+          label: "Output",
+          show: (s) => s.output != null,
+          value: (s) => ({ kind: "code", data: s.output, maxHeight: 240 }),
+        },
+      ],
+    },
+  ],
+  chain: [
+    {
+      id: "time",
+      title: "Time",
+      fields: [
+        {
+          id: "start",
+          label: "Start",
+          value: (s) => ({ kind: "text", text: compactTime(s.started_at) }),
+          tooltip: true,
+        },
+        {
+          id: "end",
+          label: "End",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({ kind: "text", text: compactTime(s.ended_at as number) }),
+          tooltip: true,
+        },
+        {
+          id: "duration",
+          label: "Duration",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({
+            kind: "text",
+            text: formatDuration((s.ended_at as number) - s.started_at),
+          }),
+          tooltip: true,
+        },
+      ],
+    },
+    {
+      id: "context",
+      title: "Context",
+      fields: [
+        {
+          id: "step",
+          label: "Step",
+          show: (s) => typeof s.meta?.langgraph_step === "number",
+          value: (s) => ({
+            kind: "raw",
+            node: (
+              <span className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+                {`graph:step:${String(s.meta?.langgraph_step)}`}
+              </span>
+            ),
+          }),
+          tooltip: true,
+        },
+        {
+          id: "name",
+          label: "Name",
+          // ponytail: hide the Name row when it duplicates the
+          // langgraph_node (e.g. step wrappers named after their
+          // node like `weatherModel`). The row only carries signal
+          // when the LC-level class name is different from the
+          // node name (e.g. `RunnableSequence` inside `routerAgent`).
+          show: (s) =>
+            typeof s.meta?.langgraph_node === "string" && s.name !== s.meta.langgraph_node,
+          value: (s) => ({ kind: "text", text: s.name, mono: true }),
+          tooltip: true,
+        },
+        {
+          id: "ns",
+          label: "NS",
+          show: (s) =>
+            typeof s.meta?.langgraph_checkpoint_ns === "string" && !!s.meta.langgraph_checkpoint_ns,
+          value: (s) => ({
+            kind: "text",
+            text: s.meta?.langgraph_checkpoint_ns as string,
+            mono: true,
+          }),
+        },
+      ],
+    },
+    {
+      id: "payload",
+      title: "Payload",
+      fields: [
+        {
+          id: "input",
+          label: "Input",
+          show: (s) => s.input != null,
+          value: (s) => ({ kind: "code", data: s.input, maxHeight: 240 }),
+        },
+        {
+          id: "output",
+          label: "Output",
+          show: (s) => s.output != null,
+          value: (s) => ({ kind: "code", data: s.output, maxHeight: 240 }),
+        },
+      ],
+    },
+  ],
+  human: [
+    {
+      id: "time",
+      title: "Time",
+      fields: [
+        {
+          id: "start",
+          label: "Start",
+          value: (s) => ({ kind: "text", text: compactTime(s.started_at) }),
+          tooltip: true,
+        },
+        {
+          id: "end",
+          label: "End",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({ kind: "text", text: compactTime(s.ended_at as number) }),
+          tooltip: true,
+        },
+        {
+          id: "duration",
+          label: "Duration",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({
+            kind: "text",
+            text: formatDuration((s.ended_at as number) - s.started_at),
+          }),
+          tooltip: true,
+        },
+      ],
+    },
+    {
+      id: "context",
+      title: "Context",
+      fields: [
+        {
+          id: "step",
+          label: "Step",
+          show: (s) => typeof s.meta?.langgraph_step === "number",
+          value: (s) => ({
+            kind: "raw",
+            node: (
+              <span className="bg-muted rounded px-1.5 py-0.5 font-mono text-xs">
+                {`graph:step:${String(s.meta?.langgraph_step)}`}
+              </span>
+            ),
+          }),
+        },
+        {
+          id: "name",
+          label: "Name",
+          // ponytail: same hide-when-duplicate guard as the node /
+          // chain Name rows. Interrupt's name is `interrupt` and
+          // langgraph_node is the awaited step (e.g. `weatherTools`)
+          // — different — so the row fires for interrupts and
+          // disappears if a future human span happens to land in
+          // a same-named step.
+          show: (s) =>
+            typeof s.meta?.langgraph_node === "string" && s.name !== s.meta.langgraph_node,
+          value: (s) => ({ kind: "text", text: s.name, mono: true }),
+        },
+        {
+          id: "tool",
+          label: "Awaited tool",
+          show: (s) => typeof s.meta?.interrupt_tool === "string",
+          value: (s) => ({ kind: "text", text: s.meta?.interrupt_tool as string, mono: true }),
+        },
+      ],
+    },
+  ],
+  retriever: [
+    {
+      id: "time",
+      title: "Time",
+      fields: [
+        {
+          id: "start",
+          label: "Start",
+          value: (s) => ({ kind: "text", text: compactTime(s.started_at) }),
+          tooltip: true,
+        },
+        {
+          id: "end",
+          label: "End",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({ kind: "text", text: compactTime(s.ended_at as number) }),
+          tooltip: true,
+        },
+        {
+          id: "duration",
+          label: "Duration",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({
+            kind: "text",
+            text: formatDuration((s.ended_at as number) - s.started_at),
+          }),
+          tooltip: true,
+        },
+      ],
+    },
+  ],
+  unknown: [
+    {
+      id: "time",
+      title: "Time",
+      fields: [
+        {
+          id: "start",
+          label: "Start",
+          value: (s) => ({ kind: "text", text: compactTime(s.started_at) }),
+          tooltip: true,
+        },
+        {
+          id: "end",
+          label: "End",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({ kind: "text", text: compactTime(s.ended_at as number) }),
+          tooltip: true,
+        },
+        {
+          id: "duration",
+          label: "Duration",
+          show: (s) => s.ended_at != null,
+          value: (s) => ({
+            kind: "text",
+            text: formatDuration((s.ended_at as number) - s.started_at),
+          }),
+          tooltip: true,
+        },
+      ],
+    },
+  ],
+};
+
+// ponytail: shared section renderer. Walks the resolved sections and
+// emits DetailSection + DetailRow per row. Header is rendered separately
+// in SpanDetails (it carries status / id which aren't schema fields).
+const ResolvedSections: FC<{ sections: ResolvedSection[] }> = ({ sections }) => (
+  <>
+    {sections.map((s) => {
+      // ponytail: details:false opts a row out of the details card but
+      // leaves it in the tooltip. Used when a fuller version of the
+      // same data lives in a later section (Tokens row vs Total cost
+      // breakdown).
+      const visible = s.rows.filter((r) => r.details);
+      if (visible.length === 0) return null;
+      return (
+        <DetailSection key={s.id} title={s.title}>
+          {visible.map((r) =>
+            r.bare ? (
+              <FieldRenderer key={r.id} value={r.value} />
+            ) : (
+              <DetailRow key={r.id} label={r.label}>
+                <FieldRenderer value={r.value} />
+              </DetailRow>
+            ),
+          )}
+        </DetailSection>
+      );
+    })}
+    {/* Error sits outside the schema — every kind can have one, and
+        putting it in each kind's list would duplicate the boilerplate. */}
+  </>
+);
+
+const SpanDetails: FC<{ span: CapturedSpan }> = ({ span }) => {
+  const meta = span.meta ?? {};
+  const node = (meta.langgraph_node as string | undefined) ?? null;
+  // ponytail: walk the kind's section list. show/value() returns null
+  // → row dropped. Section with all rows dropped → whole section
+  // dropped. Single source of truth for both details and tooltip.
+  const sections = resolveSections(span, DETAIL_SECTIONS_BY_KIND[span.kind]);
+  return (
+    <div className="border-border bg-card space-y-3 rounded-lg border p-4 text-sm">
+      {/* ponytail: header — name on its own line (full width, no
+          squeeze from a floated status column), then a metadata row
+          with kind chip + id (left) and StatusBadge (right).
+          Duration used to live in the header but it duplicates the
+          Duration row in the TIME section below — drop it. */}
+      <div className="space-y-1.5">
+        <div className="flex items-baseline gap-2">
+          <span className="truncate font-semibold">
+            {/* ponytail: use span.name for llm/tool/human/retriever
+                (those have meaningful names — "ChatOpenAI",
+                "ask_location", "interrupt"). For node/chain, name is
+                often a generic LC class like "RunnableSequence" and
+                the langgraph_node is the readable identifier. The
+                `@{node}` annotation sits next to the name when the
+                two differ and the kind is one of the meaningful-name
+                kinds — the wrapper case (node/chain) doesn't need
+                it because node already drives the title. */}
+            {span.kind === "llm" ||
+            span.kind === "tool" ||
+            span.kind === "human" ||
+            span.kind === "retriever"
+              ? span.name
+              : (node ?? span.name)}
+          </span>
+          {node &&
+            span.name !== node &&
+            (span.kind === "llm" ||
+              span.kind === "tool" ||
+              span.kind === "human" ||
+              span.kind === "retriever") && (
+              <span className="text-muted-foreground shrink-0 text-xs">@{node}</span>
+            )}
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-muted-foreground flex items-center gap-2 text-xs">
+            {/* ponytail: kind uses the same colored TypeChip as the
+                legend rows so the header shares one label design
+                language with the status badge (pill + dot vs pill +
+                icon — same shape, different glyph). */}
+            <TypeChip type={span.kind} />
+            <span className="font-mono text-[10px]">id={span.span_id.slice(0, 8)}</span>
+          </div>
+          <StatusBadge status={span.status} />
+        </div>
+      </div>
+
+      <ResolvedSections sections={sections} />
 
       {span.error && (
-        <DetailRow label="Error">
-          <pre className="text-destructive text-xs whitespace-pre-wrap">{span.error}</pre>
-        </DetailRow>
+        <DetailSection title="Error">
+          <pre className="text-destructive overflow-auto rounded-md bg-destructive/10 p-2 text-xs whitespace-pre-wrap">
+            {span.error}
+          </pre>
+        </DetailSection>
       )}
     </div>
   );
@@ -854,14 +1851,28 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
 
   const aui = useAui({ span: SpanResource({ spans }) } as unknown as Parameters<typeof useAui>[0]);
 
-  // ponytail: rawById is keyed by LangChain run_id (UUID). The SpanDetails
-  // card looks up the clicked span by its row id.
+  // ponytail: rawById is keyed by SpanData.id (what the row carries).
+  // For leaf rows that's the LC run_id directly. For step wrappers
+  // (id = "step-N-node-ns") the transform picks the earliest raw span
+  // inside that step as the representative — clicking the row should
+  // surface that span's full meta/payload in the details card.
   const rawById = useMemo(() => {
     const m = new Map<string, CapturedSpan>();
     if (!rawSpans) return m;
     for (const s of rawSpans) m.set(s.span_id, s);
+    for (const spanData of spans) {
+      if (m.has(spanData.id)) continue;
+      const node = spanData.name;
+      // ponytail: collect every raw span that belongs to this step
+      // (same node name) and pick the earliest-starting one — matches
+      // transform.ts's repRaw selection.
+      const candidates = rawSpans
+        .filter((s) => s.meta?.langgraph_node === node)
+        .sort((a, b) => a.started_at - b.started_at);
+      if (candidates[0]) m.set(spanData.id, candidates[0]);
+    }
     return m;
-  }, [rawSpans]);
+  }, [rawSpans, spans]);
 
   const root = useMemo(() => (rawSpans ? aggregateRoot(rawSpans) : null), [rawSpans]);
   const selected = selectedId ? (rawById.get(selectedId) ?? null) : null;
@@ -938,7 +1949,7 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
                   so mobile keeps the natural top-to-bottom flow. Both
                   cells need min-h-0 so the inner overflow scroll
                   actually clips instead of pushing the parent taller. */}
-              <div className="flex min-h-0 flex-col gap-4 lg:h-full lg:flex-row">
+              <div className="flex min-h-0 flex-col gap-2 lg:h-full lg:flex-row">
                 <div className="min-h-0 lg:flex-1 lg:overflow-auto">
                   <WaterfallTimeline retentionDays={retentionDays ?? null} />
                 </div>
