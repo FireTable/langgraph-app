@@ -1922,6 +1922,8 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
 // ponytail: skeleton loading state — mirrors the ObservabilityPanel layout
 // so the sheet doesn't jump when data arrives. Shimmer widths are staggered
 // to feel organic; structure follows: stat-cards → waterfall → legend footer.
+// CRITICAL: If you modify the main panel's render hierarchy/layout in ObservabilityPanel,
+// make sure to keep this skeleton in sync (grid dimensions, column structures, heights, etc).
 const SKEL_ROWS = [
   { label: "75%", bar: "60%" },
   { label: "55%", bar: "45%" },
