@@ -25,6 +25,7 @@ import {
   type FC,
 } from "react";
 import {
+  Activity,
   AlertCircleIcon,
   ArrowDownIcon,
   ArrowUpIcon,
@@ -561,8 +562,14 @@ const WaterfallTimeline: FC<{ retentionDays: number | null }> = ({ retentionDays
 
   if (!hasSpans) {
     return (
-      <div className="border-border text-muted-foreground rounded-lg border py-12 text-center text-sm">
-        No spans recorded.
+      <div className="border-border bg-muted/10 flex flex-col items-center justify-center rounded-lg border py-16 px-4 text-center">
+        <div className="bg-muted/30 border-border mb-4 flex size-12 items-center justify-center rounded-full border shadow-sm">
+          <Activity className="text-muted-foreground/60 size-5 animate-pulse" />
+        </div>
+        <h3 className="text-foreground text-sm font-semibold">No traces captured</h3>
+        <p className="text-muted-foreground mt-1.5 max-w-[300px] text-xs leading-relaxed">
+          Spans will appear here once the agent starts running model or tool invocations in this thread.
+        </p>
       </div>
     );
   }
@@ -1902,7 +1909,15 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
 
       <div className="-mx-6 min-h-0 flex-1 overflow-auto px-6 lg:overflow-hidden">
         {rawSpans && rawSpans.length === 0 ? (
-          <div className="text-muted-foreground text-sm">No spans recorded.</div>
+          <div className="border-border bg-muted/10 flex flex-col items-center justify-center rounded-lg border py-16 px-4 text-center">
+            <div className="bg-muted/30 border-border mb-4 flex size-12 items-center justify-center rounded-full border shadow-sm">
+              <Activity className="text-muted-foreground/60 size-5 animate-pulse" />
+            </div>
+            <h3 className="text-foreground text-sm font-semibold">No traces captured</h3>
+            <p className="text-muted-foreground mt-1.5 max-w-[300px] text-xs leading-relaxed">
+              Spans will appear here once the agent starts running model or tool invocations in this thread.
+            </p>
+          </div>
         ) : (
           <AuiProvider value={aui}>
             <SelectionContext.Provider value={{ selectedId, select: setSelectedId, rawById }}>
