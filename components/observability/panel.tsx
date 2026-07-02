@@ -1906,7 +1906,7 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
                   <WaterfallTimeline retentionDays={retentionDays ?? null} />
                 </div>
                 {selected && (
-                  <div className="min-h-0 lg:max-w-none lg:w-[min(40%,28rem)] lg:overflow-auto">
+                  <div className="animate-o11y-detail-slide-in min-h-0 lg:max-w-none lg:w-[min(40%,28rem)] lg:overflow-auto">
                     <SpanDetails span={selected} />
                   </div>
                 )}
