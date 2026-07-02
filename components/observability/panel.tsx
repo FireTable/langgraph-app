@@ -1108,7 +1108,10 @@ const FieldRenderer: FC<{ value: FieldValue; compact?: boolean }> = ({ value, co
         // floating over the rows. Keeps the table chrome clean and
         // aligns with the rest of the panel's "label + value" rhythm.
         <div className="flex items-start gap-1.5">
-          <div className="border-border flex-1 rounded-md border">
+          <div
+            className="border-border flex-1 overflow-auto rounded-md border"
+            style={{ maxHeight: 240 }}
+          >
             {value.fields.map((f, i) => (
               <div
                 key={i}
@@ -1116,7 +1119,7 @@ const FieldRenderer: FC<{ value: FieldValue; compact?: boolean }> = ({ value, co
               >
                 <span className="text-muted-foreground shrink-0 font-mono">{f.path}</span>
                 <span
-                  className="text-foreground ml-auto truncate text-right font-mono"
+                  className="text-foreground ml-auto min-w-0 text-right font-mono break-words"
                   title={String(f.value)}
                 >
                   {typeof f.value === "string" ? f.value : JSON.stringify(f.value)}
