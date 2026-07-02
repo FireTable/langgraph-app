@@ -9,13 +9,20 @@ if (!secret) throw new Error("BETTER_AUTH_SECRET is required");
 
 const baseURL = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 
-// ponytail: single instance per Node process; HMR-safe via globalThis.
-// The slot type uses the default-generic Auth<> because two distinct generic
-// instantiations of `betterAuth({...})` aren't structurally compatible in TS
-// (each call widens the options type). Cast on assignment.
+// ponytail: instantiating fresh on every HMR pass keeps config edits
+// (freshAge, plugins, etc.) live without a server restart. The slot type
+// uses the default-generic Auth<> because two distinct generic
+// instantiations of `betterAuth({...})` aren't structurally compatible in
+// TS (each call widens the options type). Cast on assignment.
 declare global {
   // biome-ignore lint/suspicious/noExplicitAny: see comment above.
   var __auth: any;
+}
+
+if (process.env.NODE_ENV !== "production") {
+  // Drop the cached instance on every module reload so the next `??`
+  // pick-up reads the new options.
+  delete globalThis.__auth;
 }
 
 export const auth =
@@ -40,6 +47,13 @@ export const auth =
     session: {
       expiresIn: 60 * 60 * 24 * 7,
       updateAge: 60 * 60 * 24,
+      // ponytail: better-auth's list-sessions (and other sensitive-session
+      // endpoints) reject sessions older than `freshAge` with 403
+      // SESSION_NOT_FRESH. Default is 24h — fine in production where users
+      // sign in daily, but dev fixtures keep a single session for days
+      // and break the Security tab's "Active sessions" card. Setting to 0
+      // disables the fresh check; session expiry (7d) still bounds exposure.
+      freshAge: 0,
     },
     socialProviders: {
       github: {
