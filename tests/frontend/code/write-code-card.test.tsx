@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 
 const sendCommand = vi.fn();
 
@@ -29,9 +29,11 @@ const baseProps: any = {
 
 beforeEach(() => {
   sendCommand.mockReset();
+  vi.useFakeTimers();
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.unstubAllEnvs();
 });
@@ -52,6 +54,10 @@ describe("WriteCodeCard", () => {
 
   it("calls sendCommand with action: run + the args code + language on Run in sandbox click", () => {
     render(<WriteCodeCard {...baseProps} />);
+    // advance past the streaming-settles debounce (1s after last code change)
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
     fireEvent.click(screen.getByRole("button", { name: /Run in sandbox/ }));
     expect(sendCommand).toHaveBeenCalledWith({
       resume: { action: "run", code: args.code, language: "typescript" },
@@ -65,6 +71,9 @@ describe("WriteCodeCard", () => {
         args={{ code: "import sys\nprint(sys.version)", language: "python" }}
       />,
     );
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
     fireEvent.click(screen.getByRole("button", { name: /Run in sandbox/ }));
     expect(sendCommand).toHaveBeenCalledWith({
       resume: { action: "run", code: "import sys\nprint(sys.version)", language: "python" },
@@ -73,8 +82,41 @@ describe("WriteCodeCard", () => {
 
   it("calls sendCommand with action: cancel on Skip run click", () => {
     render(<WriteCodeCard {...baseProps} />);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
     fireEvent.click(screen.getByRole("button", { name: "Skip run" }));
     expect(sendCommand).toHaveBeenCalledWith({ resume: { action: "cancel" } });
+  });
+
+  it("keeps action buttons disabled while args.code is still streaming", () => {
+    const { rerender } = render(<WriteCodeCard {...baseProps} />);
+    // 500ms after first mount, code length hasn't changed — still within
+    // the 1s settle window, so both buttons stay disabled.
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.getByRole("button", { name: "Skip run" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Run in sandbox/ })).toBeDisabled();
+
+    // another chunk of code arrives mid-window — resets the timer.
+    rerender(
+      <WriteCodeCard
+        {...baseProps}
+        args={{ code: args.code + "\nconst y = 2;", language: "typescript" }}
+      />,
+    );
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.getByRole("button", { name: /Run in sandbox/ })).toBeDisabled();
+
+    // another full second passes with no further length change → settled.
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.getByRole("button", { name: /Run in sandbox/ })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Skip run" })).not.toBeDisabled();
   });
 
   it("hides the action buttons once the result resolves", () => {

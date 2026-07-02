@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2Icon, PlayIcon, XIcon } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 import { useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
@@ -49,6 +49,20 @@ export const WriteCodeCard: ToolCallMessagePartComponent<Args> = ({ args, result
   const language: CodeLanguage =
     args?.language === "javascript" || args?.language === "python" ? args.language : "typescript";
   const awaitingCode = code.trim().length === 0;
+  // ponytail: the model streams tool-call args incrementally — args.code
+  // keeps growing on each render. A length check (awaitingCode above)
+  // only catches the empty pre-stream state; once a single token lands,
+  // it's truthy forever. Debounce on code length: each change resets a
+  // 1s timer; once the timer fires without a fresh change, we consider
+  // the stream settled and unlock the action buttons. Cleared on unmount
+  // so the next mount doesn't inherit a stale timer.
+  const codeLength = code.length;
+  const [codeSettled, setCodeSettled] = useState(false);
+  useEffect(() => {
+    setCodeSettled(false);
+    const t = setTimeout(() => setCodeSettled(true), 1000);
+    return () => clearTimeout(t);
+  }, [codeLength]);
 
   const resolved = unwrapToolResult<{ action: string }>(result) != null;
   const ran = resolved && unwrapToolResult<{ action: string }>(result)?.action === "run";
@@ -94,7 +108,7 @@ export const WriteCodeCard: ToolCallMessagePartComponent<Args> = ({ args, result
             size="sm"
             variant="outline"
             onClick={handleCancel}
-            disabled={submitting != null}
+            disabled={submitting != null || !codeSettled}
             className="flex-1"
           >
             Skip run
@@ -103,7 +117,7 @@ export const WriteCodeCard: ToolCallMessagePartComponent<Args> = ({ args, result
             type="button"
             size="sm"
             onClick={handleRun}
-            disabled={submitting != null || awaitingCode}
+            disabled={submitting != null || !codeSettled}
             className="flex-1"
           >
             {submitting === "run" ? (
