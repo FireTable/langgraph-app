@@ -40,6 +40,7 @@ yarn-error.log*
 
 # local visual verification screenshots
 /.verify
+/.observability-screens
 # ad-hoc screenshots/logs dropped at repo root during manual testing
 /*.png
 /*.jpg

@@ -72,4 +72,16 @@ export async function touchLastMessageAt(id: string): Promise<void> {
   await db.update(threads).set({ lastMessageAt: new Date() }).where(eq(threads.id, id));
 }
 
+// ponytail: title-only read for the renameThreadAgent conditional edge.
+// Avoids fetching the full thread row (status, custom, last_message_at...)
+// when all we need is "is the title set yet?".
+export async function getThreadTitle(id: string): Promise<string | null> {
+  const [row] = await db
+    .select({ title: threads.title })
+    .from(threads)
+    .where(eq(threads.id, id))
+    .limit(1);
+  return row?.title ?? null;
+}
+
 export type { Thread, ThreadCustom };
