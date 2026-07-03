@@ -180,6 +180,41 @@ describe("threadSummarizeNode (FR-009..012)", () => {
     expect(out).toEqual({});
     expect(mockWriteSummary).not.toHaveBeenCalled();
   });
+
+  it("sends a SystemMessage + HumanMessage(transcript) carrying both user and assistant turns", async () => {
+    mockGetAllUserSummaries.mockResolvedValueOnce([]);
+    mockInvoke.mockResolvedValueOnce({ name: "n", description: "d" });
+    mockWriteSummary.mockResolvedValueOnce({});
+
+    // 11 human turns interleaved with 11 ai turns → 22 messages total.
+    // Window math is keyed off the human count (11), so endIdx in the
+    // human-only sequence is 7. Mapping back: humanMessages.slice(0, 8)
+    // has 8 entries → endOffset = 8 in the original array → slice
+    // messages[0..8) = turns 0..7 = 4 User (turns 0,2,4,6) + 4 Assistant
+    // (turns 1,3,5,7). turn-8 (human) and beyond are out.
+    const messages = Array.from({ length: 22 }, (_, i) => ({
+      type: (i % 2 === 0 ? "human" : "ai") as "human" | "ai",
+      content: `turn-${i}`,
+    }));
+
+    await threadSummarizeNode({ messages }, { configurable: { userId: "u1", thread_id: "t1" } });
+
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    const call = mockInvoke.mock.calls[0][0] as Array<{
+      constructor: { name: string };
+      content: string;
+    }>;
+    expect(call).toHaveLength(2);
+    expect(call[0].constructor.name).toBe("SystemMessage");
+    expect(call[1].constructor.name).toBe("HumanMessage");
+    const transcript = call[1].content;
+    expect((transcript.match(/^User:/gm) ?? []).length).toBe(4);
+    expect((transcript.match(/^Assistant:/gm) ?? []).length).toBe(4);
+    expect(transcript).toContain("turn-1");
+    expect(transcript).toContain("turn-7");
+    expect(transcript).not.toContain("turn-8");
+    expect(transcript).not.toContain("turn-12");
+  });
 });
 
 function makeSummary(threadId: string, sequence: number, start: number, end: number) {

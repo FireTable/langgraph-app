@@ -1,3 +1,4 @@
+import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { z } from "zod";
 
 import {
@@ -6,6 +7,7 @@ import {
 } from "@/lib/memory/constants";
 import { getAllUserSummaries, writeSummary } from "@/lib/memory/queries";
 import { chatModel } from "@/backend/model";
+import { THREAD_SUMMARIZE_PROMPT } from "@/backend/prompt/system";
 
 type ThreadSummarizeState = {
   messages?: Array<{ type?: string; content?: unknown }>;
@@ -22,6 +24,11 @@ type Config = { configurable?: { userId?: unknown; thread_id?: unknown } };
 // uses endIdx+1 to materialize the inclusive range. The skip condition
 // is `endIdx < startIdx` (window is zero messages); 1-message and
 // 2-message windows are valid (FR-010 edge cases).
+//
+// Window math is keyed off the user-message count (startIdx/endIdx
+// index into the human-only sequence), but the LLM is shown the full
+// human+ai transcript slice — summaries need to see the assistant's
+// replies to know what the discussion actually resolved.
 export async function threadSummarizeNode(
   state: ThreadSummarizeState,
   config: Config,
@@ -31,8 +38,8 @@ export async function threadSummarizeNode(
   if (typeof userId !== "string" || userId.length === 0) return {};
   if (typeof threadId !== "string" || threadId.length === 0) return {};
 
-  const allMessages = (state.messages ?? []).filter((m) => m.type === "human" || m.type === "ai");
-  const userMessageCount = allMessages.filter((m) => m.type === "human").length;
+  const humanMessages = (state.messages ?? []).filter((m) => m.type === "human");
+  const userMessageCount = humanMessages.length;
   if (userMessageCount <= MEMORY_THREAD_SUMMARY_THRESHOLD) return {};
 
   const allSummaries = await getAllUserSummaries(userId);
@@ -44,18 +51,33 @@ export async function threadSummarizeNode(
   const endIdx = userMessageCount - MEMORY_THREAD_SUMMARY_KEEP_RECENT;
   if (endIdx < startIdx) return {};
 
-  const window = allMessages.slice(startIdx, endIdx + 1);
+  // ponytail: indices name positions in the human-only sequence, but
+  // the model needs the actual turns (user + assistant) to write a
+  // meaningful summary. Map startIdx..endIdx back to the corresponding
+  // slice in the original messages array, then keep only human/ai
+  // turns inside that range.
+  const startOffset = humanMessages.slice(0, startIdx).length;
+  const endOffset = humanMessages.slice(0, endIdx + 1).length;
+  const window = (state.messages ?? [])
+    .slice(startOffset, endOffset)
+    .filter((m) => m.type === "human" || m.type === "ai");
   if (window.length === 0) return {};
 
-  const prompt = `Summarize the following conversation excerpt. Reply with JSON: {"name": "≤80-char title", "description": "≤500-char summary"}.\n\n${JSON.stringify(window)}`;
   const schema = z.object({
     name: z.string().min(1).max(120),
     description: z.string().min(1).max(800),
   });
 
+  const transcript = window
+    .map((m) => `${m.type === "human" ? "User" : "Assistant"}: ${stringifyContent(m.content)}`)
+    .join("\n\n");
+
   const out = (await chatModel
     .withStructuredOutput(schema, { method: "jsonSchema" })
-    .invoke(prompt)) as { name: string; description: string };
+    .invoke([new SystemMessage(THREAD_SUMMARIZE_PROMPT), new HumanMessage(transcript)])) as {
+    name: string;
+    description: string;
+  };
 
   await writeSummary(userId, {
     threadId,
@@ -68,4 +90,16 @@ export async function threadSummarizeNode(
   });
 
   return {};
+}
+
+function stringifyContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part === "object" && part && "text" in part ? String(part.text) : ""))
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (content == null) return "";
+  return JSON.stringify(content);
 }

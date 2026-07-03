@@ -190,6 +190,34 @@ ON FAILURE:
 //                         what to skip, conflict resolution. Gated by
 //                         {{#memoryJson}} so the rules ship together
 //                         with the data they govern.
+// Dropped into the threadSummarize node. Compresses a slice of the
+// thread's human+ai transcript into a single structured SummaryEntry
+// that gets written to the LangGraph store under [userId, "threads"]
+// for later recall into the system prompt.
+export const THREAD_SUMMARIZE_PROMPT = `You are a thread summarizer. Given the transcript excerpt below, produce a short name + one-paragraph description that captures what the conversation was about.
+
+OUTPUT (strict JSON, no surrounding prose):
+- name: a thread title, ≤80 chars, no trailing punctuation.
+- description: a one-paragraph summary, ≤500 chars, written in the dominant language of the transcript. Cover what the user was trying to do, what the assistant did, and the outcome (open question, resolved, etc.).
+- Do not mention the assistant by name. Do not refer to "this thread" or "the conversation" — write as if summarizing a topic.
+- Preserve concrete facts the user shared (numbers, names, places, IDs) when they fit; skip filler.`;
+
+// ponytail: shared system-prompt skeleton — wraps the per-agent base
+// prompt (CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, etc.) with the
+// user-memory + past-thread context blocks. Renders as {{base}} +
+// conditional <memory>/<threads> sections. Mustache truthy sections
+// (`{{#var}}…{{/var}}`) drop whole blocks when var is empty so the
+// no-memory / no-thread path leaves the base prompt untouched.
+//
+// Three layers inside <memory>:
+//   - <memory>          = conceptual scope (it's memory, not chat history)
+//   - <memory_json>     = syntactic scope — wraps the JSON literal so the
+//                         model treats it as opaque data, not as a sample
+//                         of dialogue to imitate.
+//   - <save_memory_rule> = write-side rules — when to call save_memory,
+//                         what to skip, conflict resolution. Gated by
+//                         {{#memoryJson}} so the rules ship together
+//                         with the data they govern.
 export const MEMORY_AUGMENTED_PROMPT_TEMPLATE = `{{base}}
 
 {{#memoryJson}} MEMORY:
