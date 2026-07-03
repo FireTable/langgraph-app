@@ -1077,10 +1077,10 @@ const FieldRenderer: FC<{ value: FieldValue; compact?: boolean }> = ({ value, co
             }
             if (current) tokens.push({ role: current.role, body: current.body.join("\n") });
             return (
-              <div key={i} className="border-border space-y-1 rounded-md border p-2">
+              <div key={i} className="border-border space-y-1 rounded-md">
                 {tokens.map((t, j) => (
                   <details key={j} open className="text-xs">
-                    <summary className="bg-muted/40 cursor-pointer rounded px-1.5 py-0.5 font-medium">
+                    <summary className="bg-muted/40 cursor-pointer rounded px-1.5 py-0.5 font-medium capitalize">
                       {t.role}
                     </summary>
                     <pre className="text-foreground mt-1 overflow-auto px-1.5 py-1 text-xs whitespace-pre-wrap">
@@ -1275,10 +1275,23 @@ const DETAIL_SECTIONS_BY_KIND: Record<CapturedSpan["kind"], SectionDef[]> = {
       title: "Prompts",
       fields: [
         {
+          // ponytail: handler stores llm input as { prompts: string[] }
+          // (legacy completion) or { prompts: string[] } (chat model) —
+          // always wrapped, never a bare array. Reach through the wrapper.
+          // bare:true skips the DetailRow label — the section title
+          // "PROMPTS" already says it; printing "Prompts" again under
+          // it is the duplicate the screenshot showed.
           id: "prompts",
-          label: "Prompts",
-          show: (s) => Array.isArray(s.input) && (s.input as string[]).length > 0,
-          value: (s) => ({ kind: "prompts", prompts: s.input as string[] }),
+          label: "",
+          bare: true,
+          show: (s) => {
+            const p = (s.input as { prompts?: unknown })?.prompts;
+            return Array.isArray(p) && (p as unknown[]).length > 0;
+          },
+          value: (s) => ({
+            kind: "prompts",
+            prompts: (s.input as { prompts: string[] }).prompts,
+          }),
         },
       ],
     },
