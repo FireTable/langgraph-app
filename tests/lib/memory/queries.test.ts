@@ -180,21 +180,28 @@ describe("lib/memory/queries", () => {
       mockStore.search.mockResolvedValueOnce([]);
       const n = await deleteThreadSummaries(USER, "t1");
       expect(n).toBe(0);
-      expect(mockStore.batch).not.toHaveBeenCalled();
+      expect(mockStore.delete).not.toHaveBeenCalled();
     });
 
-    it("batches a delete for every matching key and reports the count", async () => {
+    // ponytail: PostgresStore.batch (langgraph-checkpoint-postgres 1.0.4)
+    // has no delete-op branch — its dispatch covers put / get / search /
+    // listNamespaces only. `store.batch([{op:"delete"}])` throws inside
+    // the loop and silently leaves rows behind. The fix is per-key
+    // `store.delete(namespace, key)`, which the upstream library was
+    // written to support.
+    it("deletes per-key via store.delete, never store.batch", async () => {
       mockStore.search.mockResolvedValueOnce([
         { key: "t1:1", value: makeSummary("t1", 1, "2026-07-02T00:00:00.000Z") },
         { key: "t1:2", value: makeSummary("t1", 2, "2026-07-02T00:00:00.000Z") },
         { key: "t2:1", value: makeSummary("t2", 1, "2026-07-02T00:00:00.000Z") },
       ]);
-      mockStore.batch.mockResolvedValueOnce(undefined);
+      mockStore.delete.mockResolvedValue(undefined);
       const n = await deleteThreadSummaries(USER, "t1");
       expect(n).toBe(2);
-      expect(mockStore.batch).toHaveBeenCalledTimes(1);
-      const ops = mockStore.batch.mock.calls[0]?.[0] as Array<unknown>;
-      expect(ops).toHaveLength(2);
+      expect(mockStore.delete).toHaveBeenCalledTimes(2);
+      expect(mockStore.batch).not.toHaveBeenCalled();
+      expect(mockStore.delete).toHaveBeenNthCalledWith(1, [USER, "threads"], "t1:1");
+      expect(mockStore.delete).toHaveBeenNthCalledWith(2, [USER, "threads"], "t1:2");
     });
   });
 });

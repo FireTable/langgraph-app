@@ -1,6 +1,7 @@
 import { START, END, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import type { RunnableConfig } from "@langchain/core/runnables";
 import { CapturingHandler } from "@/backend/observability/callback-collector";
 import { bulkInsertSpans } from "@/lib/observability/queries";
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
@@ -119,37 +120,37 @@ function buildSubgraph() {
 // crypto-agent.ts model/tool loops into the parent graph. Keep in sync
 // with those files.
 // ---------------------------------------------------------------------------
-async function weatherModelNode({ messages }: { messages: BaseMessage[] }) {
+async function weatherModelNode({ messages }: { messages: BaseMessage[] }, config: RunnableConfig) {
   const history = messages.filter((m) => !(m instanceof SystemMessage));
   const response = await chatModel
     .bindTools(WEATHER_TOOLS)
-    .invoke([new SystemMessage(WEATHER_AGENT_PROMPT), ...history]);
+    .invoke([new SystemMessage(WEATHER_AGENT_PROMPT), ...history], config);
   return { messages: [response] };
 }
 
-async function chatModelNode({ messages }: { messages: BaseMessage[] }) {
+async function chatModelNode({ messages }: { messages: BaseMessage[] }, config: RunnableConfig) {
   const history = messages.filter((m) => !(m instanceof SystemMessage));
   const response = await chatModel
     .bindTools(ALL_TOOLS)
-    .invoke([new SystemMessage(CHAT_AGENT_PROMPT), ...history]);
+    .invoke([new SystemMessage(CHAT_AGENT_PROMPT), ...history], config);
   return { messages: [response] };
 }
 
-async function cryptoModelNode({ messages }: { messages: BaseMessage[] }) {
+async function cryptoModelNode({ messages }: { messages: BaseMessage[] }, config: RunnableConfig) {
   const { CRYPTO_AGENT_PROMPT } = await import("@/backend/prompt/system");
   const history = messages.filter((m) => !(m instanceof SystemMessage));
   const response = await chatModel
     .bindTools(CRYPTO_TOOLS)
-    .invoke([new SystemMessage(CRYPTO_AGENT_PROMPT), ...history]);
+    .invoke([new SystemMessage(CRYPTO_AGENT_PROMPT), ...history], config);
   return { messages: [response] };
 }
 
-async function codeModelNode({ messages }: { messages: BaseMessage[] }) {
+async function codeModelNode({ messages }: { messages: BaseMessage[] }, config: RunnableConfig) {
   const { CODE_AGENT_PROMPT } = await import("@/backend/prompt/system");
   const history = messages.filter((m) => !(m instanceof SystemMessage));
   const response = await chatModel
     .bindTools(CODE_TOOLS)
-    .invoke([new SystemMessage(CODE_AGENT_PROMPT), ...history]);
+    .invoke([new SystemMessage(CODE_AGENT_PROMPT), ...history], config);
   return { messages: [response] };
 }
 

@@ -76,13 +76,17 @@ export async function deleteThreadSummaries(userId: string, threadId: string): P
   const all = await getAllUserSummaries(userId);
   const toDelete = all.filter((s) => s.value.threadId === threadId);
   if (toDelete.length === 0) return 0;
-  await store!.batch(
-    toDelete.map((s) => ({
-      op: "delete" as const,
-      namespace: threadsNs(userId),
-      key: s.key,
-    })),
-  );
+  // ponytail: PostgresStore.batch only handles put/get/search/listNamespaces
+  // — a `{ op: "delete" }` entry throws "Unsupported operation type" inside
+  // the batch loop (verified at @langchain/langgraph-checkpoint-postgres
+  // 1.0.4 /store/index.js:155). The previous code's batch op never
+  // actually deleted rows — the API surfaced `deletedCount: toDelete.length`
+  // anyway, which is why the Memory tab re-fetch kept showing the same
+  // thread summary. Loop store.delete() per key, matching the call pattern
+  // the upstream library was written for.
+  for (const s of toDelete) {
+    await store!.delete(threadsNs(userId), s.key);
+  }
   return toDelete.length;
 }
 

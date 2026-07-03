@@ -22,11 +22,25 @@ vi.mock("@/lib/auth/config", () => ({
 
 import { withMemoryRecall } from "@/backend/middleware/with-memory-recall";
 
-function fakeModel(): BaseChatModel {
-  const invoke = vi.fn(async () => ({ content: "ok" }));
-  const bindTools = vi.fn(() => fakeModel());
-  const fake = { invoke, bindTools } as unknown as BaseChatModel;
-  return fake;
+type FakeModel = {
+  invoke: ReturnType<typeof vi.fn>;
+  bindTools: ReturnType<typeof vi.fn>;
+} & BaseChatModel;
+
+function fakeModel(): FakeModel {
+  // ponytail: bindTools returns a *new* model whose `.invoke` is a fresh
+  // mock — without sharing, the bindTools regression test can't observe
+  // whether recall fires on the bound model. We share one invoke across
+  // the whole fake tree by passing it through closures.
+  const model = {} as FakeModel;
+  model.invoke = vi.fn(async () => ({ content: "ok" })) as never;
+  model.bindTools = vi.fn(() => {
+    const child = {} as FakeModel;
+    child.invoke = model.invoke;
+    child.bindTools = vi.fn(() => child);
+    return child;
+  });
+  return model;
 }
 
 describe("withMemoryRecall", () => {
@@ -117,5 +131,34 @@ describe("withMemoryRecall", () => {
     const wrapped = withMemoryRecall(inner);
     await expect(wrapped.invoke([], { configurable: { userId: "u1" } })).resolves.toBeDefined();
     expect(inner.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  // ponytail: bug found via live recall test — chatAgent + inlined builder
+  // both do `chatModel.bindTools(ALL_TOOLS).invoke(...)`. Without re-wrap,
+  // the bindTools result bypasses our outer Proxy and recall never fires.
+  it("re-wraps bindTools result so recall still fires after bindTools", async () => {
+    mockGetProfileDoc.mockResolvedValueOnce({ role: "backend" });
+    mockGetSession.mockResolvedValueOnce(null);
+    mockGetSocialAccounts.mockResolvedValueOnce([]);
+    mockGetRecentThreadSummaries.mockResolvedValueOnce([]);
+
+    const inner = fakeModel();
+    const wrapped = withMemoryRecall(inner);
+
+    // bindTools on the wrapper must return another wrapped model, so the
+    // subsequent .invoke also fires the recall arm.
+    const bound = (wrapped as unknown as { bindTools: (...a: never[]) => unknown }).bindTools(
+      [] as never,
+    );
+    await (bound as unknown as { invoke: (m: unknown, o?: unknown) => Promise<unknown> }).invoke(
+      [],
+      {
+        configurable: { userId: "u1" },
+      },
+    );
+
+    expect(inner.invoke).toHaveBeenCalledTimes(1);
+    const calledWith = inner.invoke.mock.calls[0]?.[0] as BaseMessage[];
+    expect(String((calledWith[0] as { content: unknown }).content)).toContain("<memory>");
   });
 });

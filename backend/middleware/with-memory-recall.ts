@@ -54,11 +54,15 @@ async function buildMemoryPayload(userId: string, headers: Headers): Promise<unk
   };
 }
 
-export function withMemoryRecall<T extends BaseChatModel>(model: T): T {
-  // ponytail: a Proxy intercepts only `.invoke`. Everything else
-  // (`bindTools`, `withConfig`, `stream`, `batch`, ...) forwards to
-  // the inner ChatOpenAI — call sites stay identical.
-  return new Proxy(model, {
+function wrapRecall<T extends BaseChatModel>(inner: T): T {
+  // ponytail: a Proxy intercepts `.invoke` AND `.bindTools`. The bindTools
+  // arm exists because every chat call site (chatAgent + inlined builder)
+  // does `chatModel.bindTools(ALL_TOOLS).invoke(...)` — without re-wrap,
+  // bindTools returns a fresh BaseChatModel that bypasses our outer Proxy
+  // and the recall wrapper never fires. Verified live: agent replied "I
+  // don't currently have any stored information about you" to a fresh
+  // thread even though profile={"city":"San Francisco"} was persisted.
+  return new Proxy(inner, {
     get(target, prop, receiver) {
       if (prop === "invoke") {
         return async (messages: BaseMessage | BaseMessage[], options?: RecallOptions) => {
@@ -73,7 +77,19 @@ export function withMemoryRecall<T extends BaseChatModel>(model: T): T {
           return target.invoke(merged as never, options as never);
         };
       }
+      if (prop === "bindTools") {
+        return (...args: never[]) =>
+          wrapRecall(
+            (target as unknown as { bindTools: (...a: never[]) => BaseChatModel }).bindTools(
+              ...args,
+            ),
+          );
+      }
       return Reflect.get(target, prop, receiver);
     },
   }) as T;
+}
+
+export function withMemoryRecall<T extends BaseChatModel>(model: T): T {
+  return wrapRecall(model);
 }

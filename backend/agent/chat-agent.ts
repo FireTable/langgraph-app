@@ -1,6 +1,7 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import type { RunnableConfig } from "@langchain/core/runnables";
 import { chatModel } from "@/backend/model";
 import { ALL_TOOLS } from "@/backend/tool";
 import { CHAT_AGENT_PROMPT } from "@/backend/prompt/system";
@@ -11,13 +12,19 @@ import { CommonAgentState } from "@/backend/state";
 // tools stay available so chatAgent can answer follow-up turns that
 // landed on it for some reason (e.g. the router hiccupped).
 
-async function chatModelNode({ messages }: { messages: BaseMessage[] }) {
+// ponytail: the withMemoryRecall Proxy on chatModel reads userId from
+// `options.configurable.userId` — LangGraph only injects it into the
+// graph config the proxy route sets, so we MUST pass the node's
+// RunnableConfig through to model.invoke. Dropping config here was the
+// bug that left recall a no-op for every chat run (verified via
+// /tmp/memory-recall-trace.log: 6 invokes, 0 userIds).
+async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?: RunnableConfig) {
   // Strip any stale system messages — bindTools runnables share
   // invocation context, so a previous prompt would leak through.
   const history = messages.filter((m) => !(m instanceof SystemMessage));
   const response = await chatModel
     .bindTools(ALL_TOOLS)
-    .invoke([new SystemMessage(CHAT_AGENT_PROMPT), ...history]);
+    .invoke([new SystemMessage(CHAT_AGENT_PROMPT), ...history], config);
   return { messages: [response] };
 }
 
