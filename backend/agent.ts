@@ -55,15 +55,15 @@ function routeToSubAgent({
 async function shouldRenameRouter(
   _state: unknown,
   config: { configurable?: { thread_id?: string } },
-): Promise<"renameThreadAgent" | "__end__"> {
+): Promise<"renameThreadAgent" | typeof END> {
   const threadId = config.configurable?.thread_id;
-  if (typeof threadId !== "string" || !threadId) return "__end__";
+  if (typeof threadId !== "string" || !threadId) return END;
   const title = await getThreadTitle(threadId);
   // ponytail: the column has `notNull().default(DEFAULT_THREAD_TITLE)`
   // ("New Chat"), so title is always a non-null string in the DB. The
   // "auto-rename not yet run" signal is `title === DEFAULT_THREAD_TITLE`;
   // anything else is the LLM-generated title from a prior turn.
-  if (typeof title === "string" && title !== DEFAULT_THREAD_TITLE) return "__end__";
+  if (typeof title === "string" && title !== DEFAULT_THREAD_TITLE) return END;
   return "renameThreadAgent";
 }
 

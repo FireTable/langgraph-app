@@ -19,6 +19,7 @@ vi.mock("@/backend/model", () => ({
 
 vi.mock("@/backend/store", () => ({ store: {} }));
 
+import { END } from "@langchain/langgraph";
 import { shouldSummarizeRouter, threadSummarizeNode } from "@/backend/node/thread-summarize-node";
 
 const makeMessages = (n: number) =>
@@ -29,9 +30,9 @@ describe("shouldSummarizeRouter", () => {
     // ponytail: THRESHOLD=10, KEEP_RECENT=4 → the necessary condition
     // is userMessageCount > 14. Below that the LLM + store write can
     // never produce a non-empty window, so skip entirely.
-    expect(shouldSummarizeRouter({ messages: makeMessages(0) })).toBe("__end__");
-    expect(shouldSummarizeRouter({ messages: makeMessages(11) })).toBe("__end__");
-    expect(shouldSummarizeRouter({ messages: makeMessages(14) })).toBe("__end__");
+    expect(shouldSummarizeRouter({ messages: makeMessages(0) })).toBe(END);
+    expect(shouldSummarizeRouter({ messages: makeMessages(11) })).toBe(END);
+    expect(shouldSummarizeRouter({ messages: makeMessages(14) })).toBe(END);
   });
 
   it("routes through threadSummarize once userMessageCount exceeds THRESHOLD + KEEP_RECENT", () => {
@@ -49,8 +50,8 @@ describe("shouldSummarizeRouter", () => {
   });
 
   it("treats missing/empty messages as zero", () => {
-    expect(shouldSummarizeRouter({})).toBe("__end__");
-    expect(shouldSummarizeRouter({ messages: [] })).toBe("__end__");
+    expect(shouldSummarizeRouter({})).toBe(END);
+    expect(shouldSummarizeRouter({ messages: [] })).toBe(END);
   });
 });
 
