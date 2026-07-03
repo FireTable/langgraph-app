@@ -75,10 +75,40 @@ async function impl(
   // their About-you mid-conversation would keep seeing the old copy
   // until the 60s TTL (or LRU eviction) catches up.
   invalidateMemory(userId);
+  // ponytail: the tool's ToolMessage is what the SaveMemoryCard reads
+  // to render a before/after diff. We re-walk the patch list against
+  // a running copy of the doc so each entry's `oldValue` is the value
+  // that was actually there *just before that patch ran* — a
+  // `remove /city` after a `replace /city` should report the replaced
+  // value, not the original. Without the running copy the card would
+  // show stale (and misleading) "before" values when a single call
+  // chains multiple ops on the same key.
+  const running: MemoryDoc = { ...effective };
+  const normalized: Array<
+    | { op: "add"; path: string; value: unknown }
+    | { op: "replace"; path: string; oldValue: unknown; value: unknown }
+    | { op: "remove"; path: string; oldValue: unknown }
+  > = [];
+  for (const p of patches) {
+    const path = p.path.slice(1);
+    if (p.op === "add") {
+      normalized.push({ op: "add", path, value: p.value });
+      running[path] = p.value;
+    } else if (p.op === "replace") {
+      normalized.push({ op: "replace", path, oldValue: running[path], value: p.value });
+      running[path] = p.value;
+    } else {
+      normalized.push({ op: "remove", path, oldValue: running[path] });
+      delete running[path];
+    }
+  }
   return JSON.stringify({
     ok: true,
     bytes: JSON.stringify(nextStore).length,
     keyCount: Object.keys(nextStore).length,
+    before: effective,
+    after: next,
+    patches: normalized,
   });
 }
 

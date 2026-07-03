@@ -13,6 +13,7 @@ import {
   PlaceCryptoOrderCard,
 } from "@/components/tool-ui/crypto";
 import { WriteCodeCard, ExecuteCodeResult } from "@/components/tool-ui/code";
+import { SaveMemoryCard } from "@/components/tool-ui/memory";
 
 // Frontend-side tool registrations. `execute` lives on the LangGraph
 // backend (backend/tool/) and is dispatched via useLangGraphRuntime —
@@ -111,8 +112,26 @@ const codeToolkit = defineToolkit({
   },
 });
 
+const memoryToolkit = defineToolkit({
+  save_memory: {
+    description:
+      "Render a card showing what was added/updated/removed in the user's memory. Read-only — the tool result already mutated the store.",
+    parameters: z.object({
+      patches: z.array(
+        z.object({
+          op: z.enum(["add", "replace", "remove"]),
+          path: z.string(),
+          value: z.unknown().optional(),
+        }),
+      ),
+    }),
+    render: SaveMemoryCard,
+  },
+});
+
 export default defineToolkit({
   ...weatherToolkit,
   ...cryptoToolkit,
   ...codeToolkit,
+  ...memoryToolkit,
 });

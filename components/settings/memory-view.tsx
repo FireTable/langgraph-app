@@ -17,6 +17,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { mergeMemory, type AuthInfo, type MemoryDoc } from "@/lib/memory/merge";
 import { AUTH_OVERLAY_KEYS, type AuthOverlayKey } from "@/lib/memory/constants";
+import { prettifyKey } from "@/lib/memory/format";
 import type { SummaryEntry } from "@/lib/memory/validators";
 import { cn } from "@/lib/utils";
 
@@ -33,17 +34,6 @@ type MemoryResponse = {
 };
 
 type Row = { kind: "store" | "account"; key: string; value: string };
-
-// ponytail: prettifyKey is a UI-only transform. Store keys stay raw
-// (deletion, save_memory patches, profile API) — this only changes
-// the visible label. Splits on _/- and capitalizes each word.
-function prettifyKey(key: string): string {
-  return key
-    .split(/[_-]+/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
 
 function buildRows(store: MemoryDoc, auth: AuthInfo): Row[] {
   const merged = mergeMemory(store, auth);

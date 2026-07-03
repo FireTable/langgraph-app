@@ -59,7 +59,7 @@ export const SuccessBanner: FC<SuccessBannerProps> = ({ title, subtitle, icon, c
       className,
     )}
   >
-    {icon ?? <CheckIcon className="text-primary size-5 shrink-0" />}
+    {icon ?? <CheckIcon className="text-emerald-600 dark:text-emerald-400 size-5 shrink-0" />}
     <div className="min-w-0 flex-1">
       <p className="truncate text-sm font-medium">{title}</p>
       {subtitle != null && <p className="text-muted-foreground mt-0.5 text-xs">{subtitle}</p>}

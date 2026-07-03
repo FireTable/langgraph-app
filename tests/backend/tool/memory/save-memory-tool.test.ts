@@ -42,7 +42,11 @@ describe("saveMemoryTool — patch matrix (FR-001..003)", () => {
       cfg("u1"),
     );
     expect(mockPutMemoryDoc).toHaveBeenCalledWith("u1", { role: "frontend" });
-    expect(JSON.parse(out as string)).toMatchObject({ ok: true, keyCount: 1 });
+    const result = JSON.parse(out as string);
+    expect(result).toMatchObject({ ok: true, keyCount: 1 });
+    expect(result.before).toEqual({});
+    expect(result.after).toEqual({ role: "frontend" });
+    expect(result.patches).toEqual([{ op: "add", path: "role", value: "frontend" }]);
   });
 
   it("merges multiple adds with existing keys (non-destructive)", async () => {
@@ -139,6 +143,37 @@ describe("saveMemoryTool — patch matrix (FR-001..003)", () => {
     mockPutMemoryDoc.mockResolvedValueOnce(undefined);
     await saveMemoryTool.invoke({ patches: [] }, cfg("u1"));
     expect(mockPutMemoryDoc).toHaveBeenCalledWith("u1", { role: "frontend" });
+  });
+
+  it("returns before/after + normalized patches for the SaveMemoryCard to render", async () => {
+    mockGetMemoryDoc.mockResolvedValueOnce({ city: "Berlin" });
+    mockPutMemoryDoc.mockResolvedValueOnce(undefined);
+    const out = await saveMemoryTool.invoke(
+      {
+        patches: [
+          { op: "add", path: "/name", value: "Lin" },
+          { op: "replace", path: "/city", value: "Munich" },
+          { op: "remove", path: "/city" },
+          { op: "add", path: "/city", value: "Hamburg" },
+        ],
+      },
+      cfg("u1"),
+    );
+    const result = JSON.parse(out as string);
+    expect(result.before).toEqual({ city: "Berlin" });
+    expect(result.after).toEqual({ name: "Lin", city: "Hamburg" });
+    // The first replace against `Berlin` carries the pre-patch value;
+    // the remove carries the post-replace value (`Munich`); the add
+    // never has an oldValue.
+    expect(result.patches[0]).toEqual({ op: "add", path: "name", value: "Lin" });
+    expect(result.patches[1]).toEqual({
+      op: "replace",
+      path: "city",
+      oldValue: "Berlin",
+      value: "Munich",
+    });
+    expect(result.patches[2]).toEqual({ op: "remove", path: "city", oldValue: "Munich" });
+    expect(result.patches[3]).toEqual({ op: "add", path: "city", value: "Hamburg" });
   });
 });
 
