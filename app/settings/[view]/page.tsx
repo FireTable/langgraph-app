@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 
 import { Settings } from "@/components/auth/settings/settings";
+import { BrandMarkLink } from "@/components/brand-mark";
 import { auth } from "@/lib/auth/config";
 
 // ponytail: catch-all routes /settings/account, /settings/security, and
@@ -18,11 +19,19 @@ export default async function SettingsPage({ params }: { params: Promise<{ view:
   // ponytail: outer container caps width and centers — without it the
   // shadcn <Settings> tabs + cards stretch edge-to-edge on wide
   // viewports and look "naked". max-w-3xl matches the rest of the app
-  // (see thread.tsx message max-width).
+  // (see thread.tsx message max-width). The BrandMarkLink lives in a
+  // separate top row at the viewport's left edge so its x-position
+  // matches the chat sidebar's brand (px-6 from the left) — the only
+  // way out of a settings page that has no sidebar of its own.
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-8 md:px-6 md:py-12">
-      <h1 className="mb-6 text-2xl font-semibold tracking-tight">Settings</h1>
-      <Settings path={view} />
-    </div>
+    <>
+      <div className="mt-2 flex h-12 shrink-0 items-center px-4 md:px-6">
+        <BrandMarkLink />
+      </div>
+      <div className="mx-auto w-full px-4 md:px-6 pb-8 pt-4 md:pb-12 md:pt-8">
+        <h1 className="mb-6 text-2xl font-semibold tracking-tight">Settings</h1>
+        <Settings path={view} />
+      </div>
+    </>
   );
 }

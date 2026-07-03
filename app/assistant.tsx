@@ -11,14 +11,9 @@ import {
 import { useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
-import {
-  Brain,
-  MenuIcon,
-  MessageSquareTextIcon,
-  PanelLeftIcon,
-  PlusIcon,
-  ShareIcon,
-} from "lucide-react";
+import { Brain, MenuIcon, PanelLeftIcon, PlusIcon, ShareIcon } from "lucide-react";
+
+import { BrandMark } from "@/components/brand-mark";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
@@ -29,7 +24,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
 import { cn } from "@/lib/utils";
-import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID, APP_NAME } from "@/lib/constants";
+import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID } from "@/lib/constants";
 import { createLangGraphStream } from "@/lib/langgraph/create-stream";
 
 // Provider-scoped values (api, mainThreadId) bridged into a ref so the
@@ -53,15 +48,6 @@ const memoryLink = [
   },
 ];
 
-const Logo: FC = () => {
-  return (
-    <div className="flex items-center gap-2 px-2 text-sm font-medium">
-      <MessageSquareTextIcon className="text-foreground/90 size-5" />
-      <span className="text-foreground/90">{APP_NAME}</span>
-    </div>
-  );
-};
-
 const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
   return (
     <aside
@@ -76,15 +62,7 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
           collapsed ? "px-3.5" : "px-6",
         )}
       >
-        <MessageSquareTextIcon className="text-foreground/90 size-5 shrink-0" />
-        <span
-          className={cn(
-            "text-foreground/90 ml-2 text-sm font-medium whitespace-nowrap transition-opacity duration-200",
-            collapsed && "opacity-0",
-          )}
-        >
-          {APP_NAME}
-        </span>
+        <BrandMark collapsed={collapsed} />
       </div>
       {collapsed ? (
         <ThreadListPrimitive.New asChild>
@@ -125,7 +103,7 @@ const MobileSidebar: FC = () => {
       </SheetTrigger>
       <SheetContent side="left" className="flex w-70 flex-col p-0">
         <div className="flex h-12 shrink-0 items-center px-4">
-          <Logo />
+          <BrandMark />
         </div>
         <div className="relative flex-1 overflow-y-auto p-3">
           <ThreadList />
