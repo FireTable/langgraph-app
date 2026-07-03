@@ -1,5 +1,4 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { END } from "@langchain/langgraph";
 import { z } from "zod";
 
 import {
@@ -38,15 +37,6 @@ type Config = { configurable?: { userId?: unknown; thread_id?: unknown } };
 // check (endIdx < startIdx, missing userId/thread_id) still lives
 // here so the node stays the single source of truth for "is there
 // work to do?" once it's been entered.
-export function shouldSummarizeRouter(state: {
-  messages?: Array<{ type?: string }>;
-}): "summarize" | typeof END {
-  const userMessageCount = (state.messages ?? []).filter((m) => m.type === "human").length;
-  return userMessageCount > MEMORY_THREAD_SUMMARY_THRESHOLD + MEMORY_THREAD_SUMMARY_KEEP_RECENT
-    ? "summarize"
-    : END;
-}
-
 export async function threadSummarizeNode(
   state: ThreadSummarizeState,
   config: Config,

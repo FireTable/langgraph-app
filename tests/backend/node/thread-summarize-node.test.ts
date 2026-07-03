@@ -20,7 +20,8 @@ vi.mock("@/backend/model", () => ({
 vi.mock("@/backend/store", () => ({ store: {} }));
 
 import { END } from "@langchain/langgraph";
-import { shouldSummarizeRouter, threadSummarizeNode } from "@/backend/node/thread-summarize-node";
+import { shouldSummarizeRouter } from "@/backend/agent";
+import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
 
 const makeMessages = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ type: "human" as const, content: `m${i}` }));
@@ -36,8 +37,8 @@ describe("shouldSummarizeRouter", () => {
   });
 
   it("routes through threadSummarize once userMessageCount exceeds THRESHOLD + KEEP_RECENT", () => {
-    expect(shouldSummarizeRouter({ messages: makeMessages(15) })).toBe("summarize");
-    expect(shouldSummarizeRouter({ messages: makeMessages(20) })).toBe("summarize");
+    expect(shouldSummarizeRouter({ messages: makeMessages(15) })).toBe("threadSummarize");
+    expect(shouldSummarizeRouter({ messages: makeMessages(20) })).toBe("threadSummarize");
   });
 
   it("only counts human turns (ignores tool calls / AI replies)", () => {
@@ -46,7 +47,7 @@ describe("shouldSummarizeRouter", () => {
       { type: "ai" as const, content: "ignored" },
       { type: "tool" as const, content: "ignored" },
     ];
-    expect(shouldSummarizeRouter({ messages: mixed })).toBe("summarize");
+    expect(shouldSummarizeRouter({ messages: mixed })).toBe("threadSummarize");
   });
 
   it("treats missing/empty messages as zero", () => {

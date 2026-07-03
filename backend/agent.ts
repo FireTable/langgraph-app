@@ -6,7 +6,11 @@ import { CapturingHandler } from "@/backend/observability/callback-collector";
 import { bulkInsertSpans } from "@/lib/observability/queries";
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 import { afterAgentNode } from "@/backend/node/after-agent-node";
-import { shouldSummarizeRouter, threadSummarizeNode } from "@/backend/node/thread-summarize-node";
+import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
+import {
+  MEMORY_THREAD_SUMMARY_KEEP_RECENT,
+  MEMORY_THREAD_SUMMARY_THRESHOLD,
+} from "@/lib/memory/constants";
 import { weatherAgent } from "@/backend/agent/weather-agent";
 import { chatAgent } from "@/backend/agent/chat-agent";
 import { cryptoAgent } from "@/backend/agent/crypto-agent";
@@ -180,6 +184,23 @@ function cryptoRoute(state: { messages: BaseMessage[] }) {
 }
 function codeRoute(state: { messages: BaseMessage[] }) {
   return toolsCondition(state) === END ? "afterAgent" : "codeTools";
+}
+
+// ponytail: cheap necessary-condition gate before threadSummarizeNode.
+// Returns the registered node name when there's potentially a window
+// (userMessageCount > THRESHOLD + KEEP_RECENT), otherwise LangGraph's
+// END sentinel. The pathMap `{ threadSummarize: "threadSummarize",
+// __end__: END }` in the two builders below compares the router's
+// return via ===, so the literal "threadSummarize" string here MUST
+// match the addNode key exactly. The store-dependent close-window
+// check (endIdx < startIdx) lives inside threadSummarizeNode itself.
+export function shouldSummarizeRouter(state: {
+  messages?: Array<{ type?: string }>;
+}): "threadSummarize" | typeof END {
+  const userMessageCount = (state.messages ?? []).filter((m) => m.type === "human").length;
+  return userMessageCount > MEMORY_THREAD_SUMMARY_THRESHOLD + MEMORY_THREAD_SUMMARY_KEEP_RECENT
+    ? "threadSummarize"
+    : END;
 }
 
 function buildInlined() {
