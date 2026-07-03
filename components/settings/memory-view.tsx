@@ -64,95 +64,32 @@ function stringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
-// ponytail: nested renderer for object/array values. Primitives render
-// as a single leaf row; objects/arrays expand into indented child rows
-// up to 3 levels deep (anything beyond flattens to JSON to keep the
-// card from scrolling forever on a degenerate large payload).
-type Child = { key: string; node: ValueNode };
-type ValueNode =
-  | { kind: "leaf"; display: string }
-  | { kind: "empty"; display: string }
-  | { kind: "branch"; children: Child[] };
+// ponytail: structured values (object/array) render as a pretty-printed
+// JSON block — same shape the user already sees in the save_memory
+// card's CHANGED row, so the two surfaces read consistently. Primitive
+// leaves stay inline so single-value rows like "Role: engineering
+// manager" don't get their own code block.
+type ValueNode = { kind: "leaf"; display: string } | { kind: "branch"; raw: unknown };
 
 function toNode(value: unknown): ValueNode {
-  if (value === null || value === undefined) return { kind: "empty", display: "(empty)" };
+  if (value === null || value === undefined) return { kind: "leaf", display: "(empty)" };
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return { kind: "leaf", display: String(value) };
   }
-  if (Array.isArray(value)) {
-    if (value.length === 0) return { kind: "empty", display: "(empty array)" };
-    return {
-      kind: "branch",
-      children: value.map((v, i) => ({ key: String(i), node: toNode(v) })),
-    };
-  }
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>);
-    if (entries.length === 0) return { kind: "empty", display: "(empty object)" };
-    return {
-      kind: "branch",
-      children: entries.map(([k, v]) => ({ key: k, node: toNode(v) })),
-    };
-  }
-  return { kind: "leaf", display: String(value) };
+  // ponytail: keep the original JS shape (object/array) so the renderer
+  // can dump it via JSON.stringify without losing keys or array order.
+  return { kind: "branch", raw: value };
 }
 
-const MAX_DEPTH = 3;
-
-// ponytail: JSON value rendering mirrors `FieldRenderer` in
-// observability/panel.tsx (the "structured" case) — two-column
-// key/value table, mono font, row dividers, copy-button. Same visual
-// rhythm the user already saw in the observability sheet, so
-// settings/memory matches it without a new design pass.
-function NestedValue({ node, depth = 0 }: { node: ValueNode; depth?: number }) {
-  if (node.kind === "leaf" || node.kind === "empty") {
-    return <span className="text-foreground text-xs">{node.display}</span>;
-  }
-  if (depth >= MAX_DEPTH) {
-    // ponytail: paths deeper than MAX_DEPTH collapse to flat JSON to
-    // keep the card from scrolling forever on a degenerate payload.
-    return (
-      <div className="text-foreground truncate font-mono text-xs">
-        {JSON.stringify(serializeNode(node))}
-      </div>
-    );
+function NestedValue({ node }: { node: ValueNode }) {
+  if (node.kind === "leaf") {
+    return <span className="text-foreground text-sm">{node.display}</span>;
   }
   return (
-    <div className="border-border rounded-md border mt-1.5">
-      {node.children.map((child) => (
-        <div
-          key={child.key}
-          className={cn(
-            "border-border flex items-baseline gap-3 border-b px-3 py-2 text-xs last:border-b-0",
-          )}
-        >
-          <span className="text-muted-foreground shrink-0 font-mono">{prettifyKey(child.key)}</span>
-          <span className="text-foreground ml-auto min-w-0 text-right font-mono break-words">
-            {renderChild(child, depth)}
-          </span>
-        </div>
-      ))}
-    </div>
+    <pre className="bg-muted/40 text-foreground mt-1.5 overflow-x-auto rounded-md p-3 font-mono text-xs leading-relaxed">
+      {JSON.stringify(node.raw, null, 2)}
+    </pre>
   );
-}
-
-function renderChild(child: Child, depth: number): React.ReactNode {
-  if (child.node.kind === "leaf" || child.node.kind === "empty") {
-    return child.node.display;
-  }
-  // ponytail: nested branches get their own boxed table instead of an
-  // inline expansion — keeps the parent row visually flat so the
-  // outer table still reads as a single block. Rendered via a fresh
-  // NestedValue invocation at depth+1.
-  return <NestedValue node={child.node} depth={depth + 1} />;
-}
-
-// ponytail: MAX_DEPTH path leaks the runtime node shape; re-serialize
-// to a plain JSON-serializable object so JSON.stringify doesn't drop
-// fields because of class identity.
-function serializeNode(node: ValueNode): unknown {
-  if (node.kind === "leaf" || node.kind === "empty") return node.display;
-  return node.children.map((c) => ({ key: c.key, value: serializeNode(c.node) }));
 }
 
 async function deleteProfile(key: string) {
@@ -285,7 +222,7 @@ export function MemoryView({ className }: { className?: string }) {
               ) : (
                 rows.map((row, index) => {
                   const node = toNode(parseValue(row.value));
-                  const isPrimitive = node.kind === "leaf" || node.kind === "empty";
+                  const isPrimitive = node.kind === "leaf";
                   return (
                     <div key={`${row.kind}-${row.key}`}>
                       {index > 0 && <Separator />}

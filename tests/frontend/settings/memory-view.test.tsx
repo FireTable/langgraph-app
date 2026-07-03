@@ -200,12 +200,15 @@ describe("MemoryView", () => {
     expect(ordered).toEqual(["Name", "Email", "Socials", "Role", "Wallet"]);
   });
 
-  it("expands array values into nested child rows", async () => {
+  it("expands array values into pretty-printed JSON", async () => {
     render(<MemoryView />);
     await screen.findByText(/Yongzhuo/);
-    // socials fixture is [{ provider: "github" }] — nested Pretty `Provider`
-    // and `github` value should both render
-    expect(screen.getByText(/^Provider$/)).toBeInTheDocument();
-    expect(screen.getByText(/github/)).toBeInTheDocument();
+    // ponytail: structured values render as a single <pre>{JSON.stringify(...)}</pre>
+    // block. The socials fixture is [{ provider: "github" }], so the
+    // block must contain both the key `provider` and the value `github`.
+    const pre = document.querySelector("pre");
+    expect(pre).not.toBeNull();
+    expect(pre?.textContent ?? "").toContain("provider");
+    expect(pre?.textContent ?? "").toContain("github");
   });
 });
