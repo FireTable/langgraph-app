@@ -78,17 +78,17 @@ export async function threadSummarizeNode(
   // turns inside that range.
   const startOffset = humanMessages.slice(0, startIdx).length;
   const endOffset = humanMessages.slice(0, endIdx + 1).length;
-  const window = (state.messages ?? [])
+  const excerpt = (state.messages ?? [])
     .slice(startOffset, endOffset)
     .filter((m) => m.type === "human" || m.type === "ai");
-  if (window.length === 0) return {};
+  if (excerpt.length === 0) return {};
 
   const schema = z.object({
     name: z.string().min(1).max(120),
     description: z.string().min(1).max(800),
   });
 
-  const transcript = window
+  const transcript = excerpt
     .map((m) => `${m.type === "human" ? "User" : "Assistant"}: ${stringifyContent(m.content)}`)
     .join("\n\n");
 

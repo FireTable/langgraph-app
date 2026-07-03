@@ -37,6 +37,7 @@ export function createLangGraphStream({
       streamMode,
       signal: config.abortSignal,
       onDisconnect,
+      multitaskStrategy: "interrupt",
       ...(config.command != null && { command: config.command }),
       ...(config.checkpointId != null && {
         checkpoint: { checkpoint_id: config.checkpointId },
