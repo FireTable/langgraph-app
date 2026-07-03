@@ -763,6 +763,97 @@ function readStructuredOutput(span: CapturedSpan): StructuredOutput | null {
   return null;
 }
 
+// ponytail: the LLM "Messages" section unifies two streams:
+//   - input.prompts: role-prefixed strings (one per chat message,
+//     "system: ...", "human: ..."), already serialized by the handler.
+//   - output.generations[*][*].message: each row's AIMessage (or
+//     ChatMessage), shaped { getType, content, tool_calls }.
+// We split prompts on role-prefix lines the same way the old renderer
+// did, then append one entry per generated message flagged `isNew`
+// so the operator can read the prompt and the model's actual reply
+// as one continuous thread.
+type MessageEntry = { role: string; body: string; isNew?: boolean };
+
+const KNOWN_ROLES = new Set(["system", "human", "ai", "assistant", "tool", "function"]);
+
+function parsePromptGroup(group: string): MessageEntry[] {
+  const out: MessageEntry[] = [];
+  let current: { role: string; body: string[] } | null = null;
+  for (const line of group.split("\n")) {
+    const colonAt = line.indexOf(": ");
+    const maybeRole = colonAt > 0 ? line.slice(0, colonAt) : "";
+    if (KNOWN_ROLES.has(maybeRole)) {
+      if (current) out.push({ role: current.role, body: current.body.join("\n") });
+      current = { role: maybeRole, body: [line.slice(colonAt + 2)] };
+    } else if (current) {
+      current.body.push(line);
+    }
+  }
+  if (current) out.push({ role: current.role, body: current.body.join("\n") });
+  return out;
+}
+
+function readOutputMessages(span: CapturedSpan): MessageEntry[] {
+  if (span.kind !== "llm") return [];
+  const out = span.output as unknown;
+  if (!out || typeof out !== "object") return [];
+  const generations = (out as Record<string, unknown>).generations;
+  if (!Array.isArray(generations)) return [];
+  const entries: MessageEntry[] = [];
+  for (const row of generations) {
+    if (!Array.isArray(row)) continue;
+    for (const gen of row) {
+      if (!gen || typeof gen !== "object") continue;
+      const msg = (gen as Record<string, unknown>).message as Record<string, unknown> | undefined;
+      if (!msg) continue;
+      const role =
+        typeof (msg as Record<string, unknown>).getType === "function"
+          ? ((msg as unknown as { getType: () => string }).getType() as string)
+          : typeof msg.role === "string"
+            ? (msg.role as string)
+            : "ai";
+      const raw = msg.content;
+      let body = "";
+      if (typeof raw === "string") {
+        body = raw;
+      } else if (Array.isArray(raw)) {
+        body = raw
+          .map((part) =>
+            part && typeof part === "object" && "text" in (part as object)
+              ? String((part as Record<string, unknown>).text ?? "")
+              : "",
+          )
+          .filter(Boolean)
+          .join("\n");
+      } else if (raw && typeof raw === "object") {
+        body = JSON.stringify(raw, null, 2);
+      }
+      const tcs = msg.tool_calls;
+      if ((!body || body.trim() === "") && Array.isArray(tcs) && tcs.length > 0) {
+        body = tcs
+          .map((tc) => {
+            const t = tc as { name?: unknown; args?: unknown };
+            return `[tool_call ${String(t.name ?? "?")}(${JSON.stringify(t.args ?? {})})]`;
+          })
+          .join("\n");
+      }
+      entries.push({ role, body, isNew: true });
+    }
+  }
+  return entries;
+}
+
+function buildLlmMessages(span: CapturedSpan): MessageEntry[] {
+  const input = (span.input as { prompts?: unknown } | null)?.prompts;
+  const inputEntries: MessageEntry[] = [];
+  if (Array.isArray(input)) {
+    for (const group of input) {
+      if (typeof group === "string") inputEntries.push(...parsePromptGroup(group));
+    }
+  }
+  return [...inputEntries, ...readOutputMessages(span)];
+}
+
 function flattenFields(v: unknown, prefix = ""): StructuredOutput {
   if (v === null || v === undefined) return [{ path: prefix || "(value)", value: v }];
   if (typeof v !== "object") return [{ path: prefix || "(value)", value: v }];
@@ -798,7 +889,16 @@ type FieldValue =
   | { kind: "text"; text: string; mono?: boolean }
   | { kind: "code"; data: unknown; maxHeight?: number }
   | { kind: "tokens"; tokens: TokenBreakdown }
-  | { kind: "prompts"; prompts: string[] }
+  // ponytail: shared role/body list renderer for the LLM "Messages"
+  // section. Drives both input prompts (isNew absent) and the model's
+  // returned AIMessage(s) (isNew: true, separator + chip). The input
+  // prompts carry role-prefixed lines from LangChain's serializer; the
+  // output messages come from output.generations[*][*].message — see
+  // buildLlmMessages() below.
+  | {
+      kind: "messages";
+      entries: { role: string; body: string; isNew?: boolean }[];
+    }
   | { kind: "structured"; fields: StructuredOutput }
   // ponytail: badge — small chip with a colored border + bg, used
   // when a single token-like value should pop out of the row
@@ -1024,43 +1124,34 @@ const FieldRenderer: FC<{ value: FieldValue; compact?: boolean }> = ({ value, co
     }
     case "tokens":
       return <TokenBreakdownView tokens={value.tokens} />;
-    case "prompts": {
-      // ponytail: each prompt group is split on role-prefixed lines
-      // ("system: ...", "human: ...") so the operator can collapse
-      // each role independently. Same shape the previous inline block
-      // produced — pulled verbatim into the schema path.
-      const knownRoles = new Set(["system", "human", "ai", "assistant", "tool", "function"]);
+    case "messages": {
+      // ponytail: each role gets its own collapsible block; consecutive
+      // new entries (the model's response(s)) get a "New" chip so the
+      // operator can tell at a glance which turn was just produced vs.
+      // what was already in the prompt.
       return (
         <div className="space-y-2">
-          {value.prompts.map((promptGroup, i) => {
-            const tokens: { role: string; body: string }[] = [];
-            let current: { role: string; body: string[] } | null = null;
-            for (const line of promptGroup.split("\n")) {
-              const colonAt = line.indexOf(": ");
-              const maybeRole = colonAt > 0 ? line.slice(0, colonAt) : "";
-              if (knownRoles.has(maybeRole)) {
-                if (current) tokens.push({ role: current.role, body: current.body.join("\n") });
-                current = { role: maybeRole, body: [line.slice(colonAt + 2)] };
-              } else if (current) {
-                current.body.push(line);
-              }
-            }
-            if (current) tokens.push({ role: current.role, body: current.body.join("\n") });
-            return (
-              <div key={i} className="border-border space-y-1 rounded-md">
-                {tokens.map((t, j) => (
-                  <details key={j} open className="text-xs">
-                    <summary className="bg-muted/40 cursor-pointer rounded px-1.5 py-0.5 font-medium capitalize">
-                      {t.role}
-                    </summary>
-                    <pre className="text-foreground mt-1 overflow-auto px-1.5 py-1 text-xs whitespace-pre-wrap">
-                      {t.body}
-                    </pre>
-                  </details>
-                ))}
-              </div>
-            );
-          })}
+          {value.entries.map((entry, i) => (
+            <details key={i} className="text-xs">
+              {/* ponytail: summary's default `display: list-item` carries
+                  the disclosure triangle marker. Anything other than
+                  list-item drops it — so flex layout for the role+chip
+                  lives on an inner wrapper, not on <summary> itself. */}
+              <summary className="bg-muted/40 cursor-pointer rounded px-1.5 py-1 font-medium capitalize marker:text-muted-foreground">
+                <span className="inline-flex items-center gap-2">
+                  <span>{entry.role}</span>
+                  {entry.isNew && (
+                    <span className="bg-primary text-primary-foreground inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wider uppercase">
+                      New
+                    </span>
+                  )}
+                </span>
+              </summary>
+              <pre className="text-foreground mt-1 overflow-auto px-1.5 py-1 text-xs whitespace-pre-wrap">
+                {entry.body}
+              </pre>
+            </details>
+          ))}
         </div>
       );
     }
@@ -1241,26 +1332,21 @@ const DETAIL_SECTIONS_BY_KIND: Record<CapturedSpan["kind"], SectionDef[]> = {
       ],
     },
     {
-      id: "prompts",
-      title: "Prompts",
+      id: "messages",
+      title: "Messages",
       fields: [
         {
-          // ponytail: handler stores llm input as { prompts: string[] }
-          // (legacy completion) or { prompts: string[] } (chat model) —
-          // always wrapped, never a bare array. Reach through the wrapper.
-          // bare:true skips the DetailRow label — the section title
-          // "PROMPTS" already says it; printing "Prompts" again under
-          // it is the duplicate the screenshot showed.
-          id: "prompts",
+          // ponytail: the section unifies input prompts (the provider's
+          // perspective on what was sent) and output.generations[*][*].message
+          // (the model's returned AIMessage(s), flagged with a New chip).
+          // bare:true drops the row label — the section title carries it.
+          id: "messages",
           label: "",
           bare: true,
-          show: (s) => {
-            const p = (s.input as { prompts?: unknown })?.prompts;
-            return Array.isArray(p) && (p as unknown[]).length > 0;
-          },
+          show: (s) => buildLlmMessages(s).length > 0,
           value: (s) => ({
-            kind: "prompts",
-            prompts: (s.input as { prompts: string[] }).prompts,
+            kind: "messages",
+            entries: buildLlmMessages(s),
           }),
         },
       ],
