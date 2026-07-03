@@ -6,7 +6,7 @@ import { CapturingHandler } from "@/backend/observability/callback-collector";
 import { bulkInsertSpans } from "@/lib/observability/queries";
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 import { afterAgentNode } from "@/backend/node/after-agent-node";
-import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
+import { shouldSummarizeRouter, threadSummarizeNode } from "@/backend/node/thread-summarize-node";
 import { weatherAgent } from "@/backend/agent/weather-agent";
 import { chatAgent } from "@/backend/agent/chat-agent";
 import { cryptoAgent } from "@/backend/agent/crypto-agent";
@@ -107,7 +107,17 @@ function buildSubgraph() {
       .addEdge("weatherAgent", "afterAgent")
       .addEdge("cryptoAgent", "afterAgent")
       .addEdge("codeAgent", "afterAgent")
-      .addEdge("afterAgent", "threadSummarize")
+      // ponytail: only enter threadSummarize when there's potentially a
+      // window to summarize. shouldSummarizeRouter checks the cheap
+      // necessary condition (userMessageCount > THRESHOLD) off the
+      // messages channel alone — the close-window check (endIdx <
+      // startIdx) still runs inside the node, so this avoids cluttering
+      // observability with a threadSummarize span on every turn while
+      // keeping the edge budget identical.
+      .addConditionalEdges("afterAgent", shouldSummarizeRouter, {
+        threadSummarize: "threadSummarize",
+        __end__: END,
+      })
       .addEdge("threadSummarize", END)
       .addConditionalEdges(START, shouldRenameRouter, {
         renameThreadAgent: "renameThreadAgent",
@@ -208,7 +218,12 @@ function buildInlined() {
       .addEdge("cryptoTools", "cryptoModel")
       .addConditionalEdges("codeModel", codeRoute, ["codeTools", "afterAgent"])
       .addEdge("codeTools", "codeModel")
-      .addEdge("afterAgent", "threadSummarize")
+      // ponytail: see the subgraph builder's afterAgent → threadSummarize
+      // note — same conditional routing, same trade-off.
+      .addConditionalEdges("afterAgent", shouldSummarizeRouter, {
+        threadSummarize: "threadSummarize",
+        __end__: END,
+      })
       .addEdge("threadSummarize", END)
       .addConditionalEdges(START, shouldRenameRouter, {
         renameThreadAgent: "renameThreadAgent",

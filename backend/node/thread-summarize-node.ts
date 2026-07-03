@@ -29,6 +29,23 @@ type Config = { configurable?: { userId?: unknown; thread_id?: unknown } };
 // index into the human-only sequence), but the LLM is shown the full
 // human+ai transcript slice — summaries need to see the assistant's
 // replies to know what the discussion actually resolved.
+//
+// Routing split: `shouldSummarizeRouter` is the conditional-edge gate
+// that runs BEFORE this node (see backend/agent.ts). It returns the
+// cheap "is there potentially a window?" answer from the messages
+// channel alone — no store read. The store-dependent close-window
+// check (endIdx < startIdx, missing userId/thread_id) still lives
+// here so the node stays the single source of truth for "is there
+// work to do?" once it's been entered.
+export function shouldSummarizeRouter(state: {
+  messages?: Array<{ type?: string }>;
+}): "summarize" | "__end__" {
+  const userMessageCount = (state.messages ?? []).filter((m) => m.type === "human").length;
+  return userMessageCount > MEMORY_THREAD_SUMMARY_THRESHOLD + MEMORY_THREAD_SUMMARY_KEEP_RECENT
+    ? "summarize"
+    : "__end__";
+}
+
 export async function threadSummarizeNode(
   state: ThreadSummarizeState,
   config: Config,
@@ -40,6 +57,9 @@ export async function threadSummarizeNode(
 
   const humanMessages = (state.messages ?? []).filter((m) => m.type === "human");
   const userMessageCount = humanMessages.length;
+  // ponytail: the router only checks the cheap necessary condition
+  // (> THRESHOLD + KEEP_RECENT); this catches the rare "prior summary
+  // already covered through the endIdx" case where the window is empty.
   if (userMessageCount <= MEMORY_THREAD_SUMMARY_THRESHOLD) return {};
 
   const allSummaries = await getAllUserSummaries(userId);

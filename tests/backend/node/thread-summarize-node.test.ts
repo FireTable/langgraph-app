@@ -19,10 +19,40 @@ vi.mock("@/backend/model", () => ({
 
 vi.mock("@/backend/store", () => ({ store: {} }));
 
-import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
+import { shouldSummarizeRouter, threadSummarizeNode } from "@/backend/node/thread-summarize-node";
 
 const makeMessages = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ type: "human" as const, content: `m${i}` }));
+
+describe("shouldSummarizeRouter", () => {
+  it("routes around threadSummarize when userMessageCount is at or below THRESHOLD + KEEP_RECENT", () => {
+    // ponytail: THRESHOLD=10, KEEP_RECENT=4 → the necessary condition
+    // is userMessageCount > 14. Below that the LLM + store write can
+    // never produce a non-empty window, so skip entirely.
+    expect(shouldSummarizeRouter({ messages: makeMessages(0) })).toBe("__end__");
+    expect(shouldSummarizeRouter({ messages: makeMessages(11) })).toBe("__end__");
+    expect(shouldSummarizeRouter({ messages: makeMessages(14) })).toBe("__end__");
+  });
+
+  it("routes through threadSummarize once userMessageCount exceeds THRESHOLD + KEEP_RECENT", () => {
+    expect(shouldSummarizeRouter({ messages: makeMessages(15) })).toBe("summarize");
+    expect(shouldSummarizeRouter({ messages: makeMessages(20) })).toBe("summarize");
+  });
+
+  it("only counts human turns (ignores tool calls / AI replies)", () => {
+    const mixed = [
+      ...makeMessages(15), // 15 humans
+      { type: "ai" as const, content: "ignored" },
+      { type: "tool" as const, content: "ignored" },
+    ];
+    expect(shouldSummarizeRouter({ messages: mixed })).toBe("summarize");
+  });
+
+  it("treats missing/empty messages as zero", () => {
+    expect(shouldSummarizeRouter({})).toBe("__end__");
+    expect(shouldSummarizeRouter({ messages: [] })).toBe("__end__");
+  });
+});
 
 describe("threadSummarizeNode (FR-009..012)", () => {
   beforeEach(() => {

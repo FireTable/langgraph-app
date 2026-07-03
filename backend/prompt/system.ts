@@ -220,7 +220,8 @@ OUTPUT (strict JSON, no surrounding prose):
 //                         with the data they govern.
 export const MEMORY_AUGMENTED_PROMPT_TEMPLATE = `{{base}}
 
-{{#memoryJson}} MEMORY:
+{{#memoryJson}}
+MEMORY:
 About User Memory (stable facts the user has shared + their account identity; use to skip re-asking)
 <memory>
 
@@ -235,7 +236,8 @@ list, treat the statement as ephemeral and continue.
 </save_memory_rule>
 </memory>{{/memoryJson}}
 
-{{#threadsJson}} THREADS:
+{{#threadsJson}}
+THREADS:
 About Past conversation summaries (compressed context from prior threads; reference instead of re-deriving)
 <threads>
 {{threadsJson}}
