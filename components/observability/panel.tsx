@@ -851,6 +851,16 @@ function buildLlmMessages(span: CapturedSpan): MessageEntry[] {
       if (typeof group === "string") inputEntries.push(...parsePromptGroup(group));
     }
   }
+  // ponytail: flag the most recent human message in the input as New —
+  // it's the message that triggered this LLM call, so "this turn" reads
+  // as user prompt + assistant reply with prior conversation context
+  // muted. Same flag the output generations carry.
+  for (let i = inputEntries.length - 1; i >= 0; i--) {
+    if (inputEntries[i].role === "human") {
+      inputEntries[i] = { ...inputEntries[i], isNew: true };
+      break;
+    }
+  }
   return [...inputEntries, ...readOutputMessages(span)];
 }
 
