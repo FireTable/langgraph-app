@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { JsonBlock } from "@/components/tool-ui/primitives/json-block";
+import { CopyButton } from "@/components/ui/copy-button";
 import { mergeMemory, type AuthInfo, type MemoryDoc } from "@/lib/memory/merge";
 import { AUTH_OVERLAY_KEYS, type AuthOverlayKey } from "@/lib/memory/constants";
 import { prettifyKey } from "@/lib/memory/format";
@@ -85,10 +87,20 @@ function NestedValue({ node }: { node: ValueNode }) {
   if (node.kind === "leaf") {
     return <span className="text-foreground text-sm">{node.display}</span>;
   }
+  // ponytail: same JsonBlock the observability panel uses for span
+  // payloads. maxHeight caps the height so a deep profile field
+  // (e.g. travel_preferences with many keys) can't push the rest of
+  // the card off-screen — overflow scrolls inside the block.
+  const json = JSON.stringify(node.raw, null, 2);
   return (
-    <pre className="bg-muted/40 text-foreground mt-1.5 overflow-x-auto rounded-md p-3 font-mono text-xs leading-relaxed">
-      {JSON.stringify(node.raw, null, 2)}
-    </pre>
+    <div className="relative mt-1.5">
+      <JsonBlock data={node.raw} maxHeight={240} />
+      <CopyButton
+        className="absolute top-1.5 right-1.5"
+        getTextAction={() => json}
+        label="Copy JSON"
+      />
+    </div>
   );
 }
 
