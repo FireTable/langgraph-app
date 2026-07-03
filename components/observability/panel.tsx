@@ -851,17 +851,25 @@ function buildLlmMessages(span: CapturedSpan): MessageEntry[] {
       if (typeof group === "string") inputEntries.push(...parsePromptGroup(group));
     }
   }
-  // ponytail: flag the most recent human message in the input as New —
-  // it's the message that triggered this LLM call, so "this turn" reads
-  // as user prompt + assistant reply with prior conversation context
-  // muted. Same flag the output generations carry.
+  // ponytail: scope "New" to the conversation turn — everything from the
+  // most recent human message forward is this LLM call's contribution
+  // (the user prompt, any tool-call + tool-result exchange that
+  // happened inside the same turn, and the model's reply). Earlier
+  // messages are conversation history and stay muted. Without this
+  // boundary, a turn that goes Human → Ai(tool_call) → Tool → Ai leaves
+  // the middle pair unflagged, which read as "context" rather than
+  // "this turn's work".
+  let lastHumanIdx = -1;
   for (let i = inputEntries.length - 1; i >= 0; i--) {
     if (inputEntries[i].role === "human") {
-      inputEntries[i] = { ...inputEntries[i], isNew: true };
+      lastHumanIdx = i;
       break;
     }
   }
-  return [...inputEntries, ...readOutputMessages(span)];
+  const newInputEntries = inputEntries.map((e, i) =>
+    i >= lastHumanIdx ? { ...e, isNew: true } : e,
+  );
+  return [...newInputEntries, ...readOutputMessages(span)];
 }
 
 function flattenFields(v: unknown, prefix = ""): StructuredOutput {
@@ -1143,19 +1151,20 @@ const FieldRenderer: FC<{ value: FieldValue; compact?: boolean }> = ({ value, co
         <div className="space-y-2">
           {value.entries.map((entry, i) => (
             <details key={i} className="text-xs">
-              {/* ponytail: summary's default `display: list-item` carries
-                  the disclosure triangle marker. Anything other than
-                  list-item drops it — so flex layout for the role+chip
-                  lives on an inner wrapper, not on <summary> itself. */}
-              <summary className="bg-muted/40 cursor-pointer rounded px-1.5 py-1 font-medium capitalize marker:text-muted-foreground">
-                <span className="inline-flex items-center gap-2">
-                  <span>{entry.role}</span>
-                  {entry.isNew && (
-                    <span className="bg-primary text-primary-foreground inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wider uppercase">
-                      New
-                    </span>
-                  )}
-                </span>
+              {/* ponytail: keep summary's default list-item + ::marker so
+                  the native disclosure triangle (and its open/close
+                  rotation) survive. Right-align the chip with absolute
+                  positioning — that's the only way to push past the
+                  marker without forcing the row into `display: flex`
+                  (which kills the marker). `pr-*` reserves the chip's
+                  slot so role text doesn't run underneath it. */}
+              <summary className="bg-muted/40 relative cursor-pointer rounded px-1.5 py-1 pr-20 font-medium capitalize marker:text-muted-foreground">
+                <span>{entry.role}</span>
+                {entry.isNew && (
+                  <span className="bg-primary text-primary-foreground absolute top-1/2 right-1.5 inline-flex -translate-y-1/2 items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wider uppercase">
+                    New
+                  </span>
+                )}
               </summary>
               <pre className="text-foreground mt-1 overflow-auto px-1.5 py-1 text-xs whitespace-pre-wrap">
                 {entry.body}
