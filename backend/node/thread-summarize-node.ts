@@ -83,12 +83,11 @@ export async function threadSummarizeNode(
     .map((m) => `${m.type === "human" ? "User" : "Assistant"}: ${stringifyContent(m.content)}`)
     .join("\n\n");
 
-  const out = (await chatModel
+  const out = await chatModel
     .withStructuredOutput(schema, { method: "jsonSchema" })
-    .invoke([new SystemMessage(THREAD_SUMMARIZE_PROMPT), new HumanMessage(transcript)])) as {
-    name: string;
-    description: string;
-  };
+    .invoke([new SystemMessage(THREAD_SUMMARIZE_PROMPT), new HumanMessage(transcript)], {
+      tags: ["nostream"],
+    });
 
   await writeSummary(userId, {
     threadId,
