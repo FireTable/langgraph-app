@@ -1,42 +1,168 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Bot, User, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import type { ProfileResponse, ThreadsResponse } from "@/lib/memory/validators";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { mergeMemory, type AuthInfo, type MemoryDoc } from "@/lib/memory/merge";
+import { AUTH_OVERLAY_KEYS, type AuthOverlayKey } from "@/lib/memory/constants";
+import type { SummaryEntry } from "@/lib/memory/validators";
 import { cn } from "@/lib/utils";
 
-// ponytail: shape mirrors the shadcn Settings tabs — every section is a
-// `h2 + Card/CardContent + Separator`. Row type encodes which affordance
-// to render: session/social rows are read-only with an "(from account)"
-// hint, store rows get a Delete button.
-type Row = { kind: "session" | "store" | "social"; key: string; value: string };
+// ponytail: the API returns {store, auth, threads} as separate
+// fields. The UI runs the same mergeMemory the model uses on the
+// system-prompt side, then classifies each merged field as
+// "summarized by AI" (key present in store) vs "from account" (key
+// filled only by the auth overlay). Single source of truth for
+// merge logic across backend / frontend.
+type MemoryResponse = {
+  store: MemoryDoc;
+  auth: AuthInfo;
+  threads: Array<{ key: string; value: SummaryEntry }>;
+};
 
-function buildRows(payload: ProfileResponse): Row[] {
-  const rows: Row[] = [];
-  if (payload.session.name)
-    rows.push({ kind: "session", key: "name", value: payload.session.name });
-  if (payload.session.email)
-    rows.push({ kind: "session", key: "email", value: payload.session.email });
-  if (payload.session.image)
-    rows.push({ kind: "session", key: "image", value: payload.session.image });
-  for (const account of payload.socialAccounts) {
-    const label = account.provider.charAt(0).toUpperCase() + account.provider.slice(1);
-    rows.push({ kind: "social", key: account.provider, value: label });
-  }
-  for (const [key, value] of Object.entries(payload.profile)) {
-    rows.push({ kind: "store", key, value: stringify(value) });
-  }
-  return rows;
+type Row = { kind: "store" | "account"; key: string; value: string };
+
+// ponytail: prettifyKey is a UI-only transform. Store keys stay raw
+// (deletion, save_memory patches, profile API) — this only changes
+// the visible label. Splits on _/- and capitalizes each word.
+function prettifyKey(key: string): string {
+  return key
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function buildRows(store: MemoryDoc, auth: AuthInfo): Row[] {
+  const merged = mergeMemory(store, auth);
+  const storeKeys = new Set(Object.keys(store));
+  const storeKeyList = [...storeKeys].sort();
+  // ponytail: account rows first in AUTH_OVERLAY_KEYS order (stable:
+  // name, email, image, socials), then store rows alphabetically.
+  const accountOrder = new Map<AuthOverlayKey, number>(AUTH_OVERLAY_KEYS.map((k, i) => [k, i]));
+  const rows: Row[] = Object.entries(merged).map(([key, value]) => ({
+    key,
+    value: stringify(value),
+    kind: storeKeys.has(key) ? "store" : "account",
+  }));
+  return rows.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === "account" ? -1 : 1;
+    if (a.kind === "account" && b.kind === "account") {
+      const ai = accountOrder.get(a.key as AuthOverlayKey) ?? 0;
+      const bi = accountOrder.get(b.key as AuthOverlayKey) ?? 0;
+      return ai - bi;
+    }
+    return storeKeyList.indexOf(a.key) - storeKeyList.indexOf(b.key);
+  });
 }
 
 function stringify(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
   return JSON.stringify(value);
+}
+
+// ponytail: nested renderer for object/array values. Primitives render
+// as a single leaf row; objects/arrays expand into indented child rows
+// up to 3 levels deep (anything beyond flattens to JSON to keep the
+// card from scrolling forever on a degenerate large payload).
+type Child = { key: string; node: ValueNode };
+type ValueNode =
+  | { kind: "leaf"; display: string }
+  | { kind: "empty"; display: string }
+  | { kind: "branch"; children: Child[] };
+
+function toNode(value: unknown): ValueNode {
+  if (value === null || value === undefined) return { kind: "empty", display: "(empty)" };
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return { kind: "leaf", display: String(value) };
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return { kind: "empty", display: "(empty array)" };
+    return {
+      kind: "branch",
+      children: value.map((v, i) => ({ key: String(i), node: toNode(v) })),
+    };
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return { kind: "empty", display: "(empty object)" };
+    return {
+      kind: "branch",
+      children: entries.map(([k, v]) => ({ key: k, node: toNode(v) })),
+    };
+  }
+  return { kind: "leaf", display: String(value) };
+}
+
+const MAX_DEPTH = 3;
+
+// ponytail: JSON value rendering mirrors `FieldRenderer` in
+// observability/panel.tsx (the "structured" case) — two-column
+// key/value table, mono font, row dividers, copy-button. Same visual
+// rhythm the user already saw in the observability sheet, so
+// settings/memory matches it without a new design pass.
+function NestedValue({ node, depth = 0 }: { node: ValueNode; depth?: number }) {
+  if (node.kind === "leaf" || node.kind === "empty") {
+    return <span className="text-foreground text-xs">{node.display}</span>;
+  }
+  if (depth >= MAX_DEPTH) {
+    // ponytail: paths deeper than MAX_DEPTH collapse to flat JSON to
+    // keep the card from scrolling forever on a degenerate payload.
+    return (
+      <div className="text-foreground truncate font-mono text-xs">
+        {JSON.stringify(serializeNode(node))}
+      </div>
+    );
+  }
+  return (
+    <div className="border-border rounded-md border mt-1.5">
+      {node.children.map((child) => (
+        <div
+          key={child.key}
+          className={cn(
+            "border-border flex items-baseline gap-3 border-b px-3 py-2 text-xs last:border-b-0",
+          )}
+        >
+          <span className="text-muted-foreground shrink-0 font-mono">{prettifyKey(child.key)}</span>
+          <span className="text-foreground ml-auto min-w-0 text-right font-mono break-words">
+            {renderChild(child, depth)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function renderChild(child: Child, depth: number): React.ReactNode {
+  if (child.node.kind === "leaf" || child.node.kind === "empty") {
+    return child.node.display;
+  }
+  // ponytail: nested branches get their own boxed table instead of an
+  // inline expansion — keeps the parent row visually flat so the
+  // outer table still reads as a single block. Rendered via a fresh
+  // NestedValue invocation at depth+1.
+  return <NestedValue node={child.node} depth={depth + 1} />;
+}
+
+// ponytail: MAX_DEPTH path leaks the runtime node shape; re-serialize
+// to a plain JSON-serializable object so JSON.stringify doesn't drop
+// fields because of class identity.
+function serializeNode(node: ValueNode): unknown {
+  if (node.kind === "leaf" || node.kind === "empty") return node.display;
+  return node.children.map((c) => ({ key: c.key, value: serializeNode(c.node) }));
 }
 
 async function deleteProfile(key: string) {
@@ -55,22 +181,28 @@ async function deleteThread(threadId: string) {
 }
 
 export function MemoryView({ className }: { className?: string }) {
-  const [profile, setProfile] = useState<ProfileResponse | null>(null);
-  const [threads, setThreads] = useState<ThreadsResponse | null>(null);
+  const [memory, setMemory] = useState<MemoryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ponytail: dialog content reads `displayTarget*` so the description
+  // stays stable across the close animation. `pendingProfileKey` flips
+  // the dialog open/closed; `displayTargetProfile` only updates when a
+  // NEW dialog opens — close-only events never clear it, so Radix can
+  // finish its zoom-out animation without the description going null
+  // mid-transition.
+  const [pendingProfileKey, setPendingProfileKey] = useState<string | null>(null);
+  const [pendingThreadId, setPendingThreadId] = useState<string | null>(null);
+  const [displayTargetProfile, setDisplayTargetProfile] = useState<string | null>(null);
+  const [displayTargetThread, setDisplayTargetThread] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [pRes, tRes] = await Promise.all([
-        fetch("/api/memory/profile"),
-        fetch("/api/memory/threads"),
-      ]);
-      if (!pRes.ok || !tRes.ok) {
-        setError(`failed to load (${pRes.status}/${tRes.status})`);
+      const res = await fetch("/api/memory/profile");
+      if (!res.ok) {
+        setError(`failed to load (${res.status})`);
         return;
       }
-      setProfile((await pRes.json()) as ProfileResponse);
-      setThreads((await tRes.json()) as ThreadsResponse);
+      setMemory((await res.json()) as MemoryResponse);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -80,6 +212,20 @@ export function MemoryView({ className }: { className?: string }) {
     void load();
   }, [load]);
 
+  // ponytail: clear the display targets AFTER the dialog close animation
+  // finishes — 250ms matches Radix's data-[state=closed] duration. If we
+  // cleared immediately, the description would flicker to null mid-fade.
+  useEffect(() => {
+    if (pendingProfileKey !== null) return;
+    const t = setTimeout(() => setDisplayTargetProfile(null), 250);
+    return () => clearTimeout(t);
+  }, [pendingProfileKey]);
+  useEffect(() => {
+    if (pendingThreadId !== null) return;
+    const t = setTimeout(() => setDisplayTargetThread(null), 250);
+    return () => clearTimeout(t);
+  }, [pendingThreadId]);
+
   if (error) {
     return (
       <div className={cn("text-destructive p-6 text-sm", className)} role="alert">
@@ -87,114 +233,250 @@ export function MemoryView({ className }: { className?: string }) {
       </div>
     );
   }
-  if (!profile || !threads) {
+  if (!memory) {
     return (
       <div className={cn("text-muted-foreground p-6 text-sm", className)}>Loading memory…</div>
     );
   }
 
-  const rows = buildRows(profile);
+  const rows = buildRows(memory.store, memory.auth);
+  // The /api/memory/threads endpoint groups summaries by thread.
+  // We pass-through the threads array here; the Thread summaries
+  // card below uses its own fetch so this kept wire-level identical.
+  const threadGroups = memory.threads.map((entry) => ({
+    threadId: entry.value.threadId,
+    summaries: [entry.value],
+  }));
 
-  const removeRow = async (key: string) => {
-    await deleteProfile(key);
-    await load();
+  const openProfileDialog = (key: string) => {
+    setDisplayTargetProfile(key);
+    setPendingProfileKey(key);
   };
-  const removeThread = async (threadId: string) => {
-    await deleteThread(threadId);
-    await load();
+  const openThreadDialog = (threadId: string) => {
+    setDisplayTargetThread(threadId);
+    setPendingThreadId(threadId);
+  };
+  const confirmRemoveRow = async () => {
+    const key = pendingProfileKey;
+    setPendingProfileKey(null);
+    if (!key) return;
+    try {
+      await deleteProfile(key);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const confirmRemoveThread = async () => {
+    const threadId = pendingThreadId;
+    setPendingThreadId(null);
+    if (!threadId) return;
+    try {
+      await deleteThread(threadId);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   return (
-    <div className={cn("flex w-full flex-col gap-4 md:gap-6", className)}>
-      <section>
-        <h2 className="text-sm font-semibold mb-3">About you</h2>
-        <Card className="p-0">
-          <CardContent className="p-0">
-            {rows.length === 0 ? (
-              <p className="text-muted-foreground p-6 text-sm">No profile fields yet.</p>
-            ) : (
-              rows.map((row, index) => (
-                <div key={`${row.kind}-${row.key}`}>
-                  {index > 0 && <Separator />}
-                  <div className="flex items-center justify-between gap-4 p-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-muted-foreground text-xs">{row.key}</div>
-                      <div className="truncate text-sm">
-                        {row.value || <span className="text-muted-foreground">(empty)</span>}
-                      </div>
-                    </div>
-                    <span
-                      className="text-muted-foreground text-xs"
-                      data-hint={row.kind === "store" ? "saved-by-you" : "from-account"}
-                    >
-                      {row.kind === "store" ? "(saved by you)" : "(from account)"}
-                    </span>
-                    {row.kind === "store" ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void removeRow(row.key)}
-                      >
-                        <Trash2 aria-hidden />
-                        Delete
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold mb-3">Thread summaries</h2>
-        {threads.threads.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No thread summaries yet.</p>
-        ) : (
+    <TooltipProvider delayDuration={150}>
+      <div className={cn("flex w-full flex-col gap-4 md:gap-6", className)}>
+        <section>
+          <h2 className="text-sm font-semibold mb-1">About you</h2>
+          <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
+            Here is what our chat remembers about you, so future conversations don&apos;t have to
+            start from scratch. You can edit, delete, or add anything you like.
+          </p>
           <Card className="p-0">
             <CardContent className="p-0">
-              {threads.threads.map((group, index) => (
-                <div key={group.threadId}>
-                  {index > 0 && <Separator />}
-                  <div className="space-y-2 p-4">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="text-muted-foreground text-xs">{group.threadId}</div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void removeThread(group.threadId)}
-                        aria-label={`Delete all summaries for ${group.threadId}`}
-                      >
-                        <Trash2 aria-hidden />
-                        Delete all
-                      </Button>
+              {rows.length === 0 ? (
+                <p className="text-muted-foreground p-6 text-sm">No profile fields yet.</p>
+              ) : (
+                rows.map((row, index) => {
+                  const node = toNode(parseValue(row.value));
+                  const isPrimitive = node.kind === "leaf" || node.kind === "empty";
+                  return (
+                    <div key={`${row.kind}-${row.key}`}>
+                      {index > 0 && <Separator />}
+                      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-2 px-4 py-3">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label={
+                                row.kind === "store"
+                                  ? "Summarized by AI — written by your assistant during a past conversation"
+                                  : "From your account — read from your login profile"
+                              }
+                              className="text-muted-foreground hover:text-foreground inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-muted"
+                              data-hint={row.kind === "store" ? "summarized-by-ai" : "from-account"}
+                            >
+                              {row.kind === "store" ? (
+                                <Bot className="size-5" aria-hidden />
+                              ) : (
+                                <User className="size-5" aria-hidden />
+                              )}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            {row.kind === "store"
+                              ? "Summarized by AI — written by your assistant during a past conversation. You can delete this."
+                              : "From your account — read from your login profile. Edit it in account settings."}
+                          </TooltipContent>
+                        </Tooltip>
+                        <div className="min-w-0">
+                          <div className="text-muted-foreground text-xs">
+                            {prettifyKey(row.key)}
+                          </div>
+                          <div className="mt-0.5">
+                            {isPrimitive ? (
+                              <div className="text-sm">
+                                {row.value || (
+                                  <span className="text-muted-foreground">(empty)</span>
+                                )}
+                              </div>
+                            ) : (
+                              <NestedValue node={node} />
+                            )}
+                          </div>
+                        </div>
+                        {row.kind === "store" ? (
+                          <Button
+                            type="button"
+                            className="ml-auto shrink-0"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openProfileDialog(row.key)}
+                            aria-label={`Delete ${prettifyKey(row.key)}`}
+                          >
+                            <Trash2 aria-hidden />
+                            Delete
+                          </Button>
+                        ) : (
+                          <span aria-hidden />
+                        )}
+                      </div>
                     </div>
-                    <ul className="space-y-1 text-sm">
-                      {group.summaries.map((s) => (
-                        <li
-                          key={`${s.threadId}:${s.sequence}`}
-                          className="flex justify-between gap-3"
-                        >
-                          <span>
-                            <span className="text-muted-foreground text-xs">#{s.sequence}</span>{" "}
-                            {s.name}
-                          </span>
-                          <span className="text-muted-foreground text-xs truncate">
-                            {s.description}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              ))}
+                  );
+                })
+              )}
             </CardContent>
           </Card>
-        )}
-      </section>
-    </div>
+        </section>
+
+        <section>
+          <h2 className="text-sm font-semibold mb-3">Thread summaries</h2>
+          {threadGroups.length === 0 ? (
+            <p className="text-muted-foreground text-sm">No thread summaries yet.</p>
+          ) : (
+            <Card className="p-0">
+              <CardContent className="p-0">
+                {threadGroups.map((group, index) => (
+                  <div key={group.threadId}>
+                    {index > 0 && <Separator />}
+                    <div className="space-y-2 p-4">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="text-muted-foreground text-xs">{group.threadId}</div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openThreadDialog(group.threadId)}
+                          aria-label={`Delete all summaries for ${group.threadId}`}
+                        >
+                          <Trash2 aria-hidden />
+                          Delete all
+                        </Button>
+                      </div>
+                      <ul className="space-y-1 text-sm">
+                        {group.summaries.map((s) => (
+                          <li
+                            key={`${s.threadId}:${s.sequence}`}
+                            className="flex justify-between gap-3"
+                          >
+                            <span>
+                              <span className="text-muted-foreground text-xs">#{s.sequence}</span>{" "}
+                              {s.name}
+                            </span>
+                            <span className="text-muted-foreground text-xs truncate">
+                              {s.description}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </section>
+      </div>
+
+      <Dialog
+        open={pendingProfileKey !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingProfileKey(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this memory?</DialogTitle>
+            <DialogDescription>
+              {displayTargetProfile
+                ? `“${prettifyKey(displayTargetProfile)}” will be removed from what the assistant remembers about you. This cannot be undone.`
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingProfileKey(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void confirmRemoveRow()}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingThreadId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingThreadId(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete all thread summaries?</DialogTitle>
+            <DialogDescription>
+              {displayTargetThread
+                ? `All summaries in thread ${displayTargetThread} will be removed. This cannot be undone.`
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingThreadId(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void confirmRemoveThread()}>
+              Delete all
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </TooltipProvider>
   );
+}
+
+// ponytail: round-trip a stringified value back to its real shape so
+// toNode sees objects/arrays instead of pre-stringified JSON. Strings
+// re-pass as strings (via empty / single-quote proxy).
+function parseValue(value: string): unknown {
+  if (value === "") return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }

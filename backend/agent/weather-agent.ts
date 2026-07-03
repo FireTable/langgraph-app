@@ -1,10 +1,12 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import type { RunnableConfig } from "@langchain/core/runnables";
 import { chatModel } from "@/backend/model";
 import { WEATHER_TOOLS } from "@/backend/tool";
 import { WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
+import { buildSystemMessageWithMemory } from "@/backend/memory/template";
 
 // Weather agent: a focused sub-agent that owns the RAG-style weather
 // flow (resolve place → fetch forecast → answer). The whole flow
@@ -16,14 +18,16 @@ import { CommonAgentState } from "@/backend/state";
 // ask_location is a pure trigger — its sentinel ToolMessage is what
 // the frontend card keys on, and the user's pick comes back as an
 // overwritten tool result on the next model pass.
-async function weatherModelNode({ messages }: { messages: BaseMessage[] }) {
-  const system = new SystemMessage(WEATHER_AGENT_PROMPT);
-
+async function weatherModelNode(
+  { messages }: { messages: BaseMessage[] },
+  config?: RunnableConfig,
+) {
   const messagesWithoutSystem = messages.filter((m) => !(m instanceof SystemMessage));
+  const sysMsg = await buildSystemMessageWithMemory(WEATHER_AGENT_PROMPT, config);
 
   const response = await chatModel
     .bindTools(WEATHER_TOOLS)
-    .invoke([system, ...messagesWithoutSystem]);
+    .invoke([sysMsg, ...messagesWithoutSystem], config);
 
   return { messages: [response] };
 }

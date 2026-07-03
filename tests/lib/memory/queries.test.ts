@@ -1,3 +1,8 @@
+/* oxlint-disable unicorn/no-thenable */
+// ponytail: drizzle's query builder is a thenable — `await db.select(...)`
+// executes the query. The mock has to be thenable for `await` to work,
+// but the lint rule (unicorn/no-thenable) forbids `then` on objects/classes.
+// We need a real thenable for the SUT's `await db.select(...)` to work.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Hoisted mock so `vi.mock("@/backend/store")` can see it before the
@@ -12,70 +17,122 @@ const { mockStore } = vi.hoisted(() => ({
   },
 }));
 
+// ponytail: chainable drizzle mock. Two select paths exist:
+//   1) db.select(...).from(user).where(...).limit(1)   → mockSelectLimit result
+//   2) db.select(...).from(account).where(...)         → mockSelectAll result
+// Each step in the chain is itself thenable (resolves to mockSelectAll by
+// default) AND has a method to advance to the next step. .limit(1) short-
+// circuits the thenable to mockSelectLimit. Two mocks because the queries
+// are independent — different stages can be in flight in the same test.
+const { mockSelectLimit, mockSelectAll } = vi.hoisted(() => ({
+  mockSelectLimit: vi.fn(),
+  mockSelectAll: vi.fn(),
+}));
+
+// ponytail: drizzle's query builder is a thenable — `await db.select(...)`
+// executes the query. The mock has to be thenable for `await` to work,
+// but the lint rule (unicorn/no-thenable) flags `then` as a method.
+// Class with `then` on the prototype is the cleanest way to express this.
+class FakeQueryBuilder {
+  terminal: () => unknown;
+  constructor(terminal: () => unknown = () => mockSelectAll()) {
+    this.terminal = terminal;
+  }
+}
+(FakeQueryBuilder.prototype as unknown as { then: unknown }).then = function (
+  this: FakeQueryBuilder,
+  resolve: (v: unknown) => unknown,
+  reject: (e: unknown) => unknown,
+) {
+  return Promise.resolve(this.terminal()).then(resolve, reject);
+};
+
+function makeChainable(
+  next: Record<string, () => unknown> = {},
+  terminal: () => unknown = () => mockSelectAll(),
+) {
+  const builder = new FakeQueryBuilder(terminal);
+  for (const [k, v] of Object.entries(next)) {
+    (builder as unknown as Record<string, unknown>)[k] = v;
+  }
+  return builder;
+}
+
+const withLimit = makeChainable({}, mockSelectLimit);
+const afterFrom = makeChainable({ where: () => makeChainable({ limit: () => withLimit }) });
+const startChain = makeChainable({ from: () => afterFrom });
+
 vi.mock("@/backend/store", () => ({ store: mockStore }));
-vi.mock("@/db/client", () => ({ db: {} }));
+vi.mock("@/db/client", () => ({ db: { select: vi.fn(() => startChain) } }));
+vi.mock("@/lib/auth/schema", () => ({
+  account: { userId: "userId", providerId: "providerId" },
+  user: { id: "id", name: "name", email: "email", image: "image" },
+}));
 
 import {
-  getProfileDoc,
-  putProfileDoc,
-  deleteProfileField,
+  getMemoryDoc,
+  putMemoryDoc,
+  deleteMemoryField,
   getAllUserSummaries,
   getRecentThreadSummaries,
   deleteThreadSummaries,
   writeSummary,
+  getAuthInfo,
 } from "@/lib/memory/queries";
 
 const USER = "u-test";
 
 beforeEach(() => {
   Object.values(mockStore).forEach((fn) => (fn as ReturnType<typeof vi.fn>).mockReset());
+  mockSelectLimit.mockReset();
+  mockSelectAll.mockReset();
 });
 
 describe("lib/memory/queries", () => {
-  describe("getProfileDoc", () => {
-    it("returns an empty profile when the store has no row", async () => {
+  describe("getMemoryDoc", () => {
+    it("returns an empty memory when the store has no row", async () => {
       mockStore.get.mockResolvedValueOnce(null);
-      const doc = await getProfileDoc(USER);
+      const doc = await getMemoryDoc(USER);
       expect(doc).toEqual({});
-      expect(mockStore.get).toHaveBeenCalledWith([USER, "profile"], "main");
+      expect(mockStore.get).toHaveBeenCalledWith([USER, "memory"], "main");
     });
 
     it("returns the stored value object unwrapped", async () => {
       mockStore.get.mockResolvedValueOnce({
-        namespace: [USER, "profile"],
+        namespace: [USER, "memory"],
         key: "main",
         value: { role: "frontend", language: "zh" },
         createdAt: "2026-07-02T00:00:00.000Z",
         updatedAt: "2026-07-02T00:00:00.000Z",
       });
-      const doc = await getProfileDoc(USER);
+      const doc = await getMemoryDoc(USER);
       expect(doc).toEqual({ role: "frontend", language: "zh" });
     });
   });
 
-  describe("putProfileDoc", () => {
+  describe("putMemoryDoc", () => {
     it("writes to the canonical namespace + key", async () => {
       mockStore.put.mockResolvedValueOnce(undefined);
-      await putProfileDoc(USER, { role: "frontend" });
-      expect(mockStore.put).toHaveBeenCalledWith([USER, "profile"], "main", {
+      await putMemoryDoc(USER, { role: "frontend" });
+      expect(mockStore.put).toHaveBeenCalledWith([USER, "memory"], "main", {
         role: "frontend",
       });
     });
   });
 
-  describe("deleteProfileField", () => {
-    it("returns null when profile does not exist", async () => {
+  describe("deleteMemoryField", () => {
+    it("returns null when memory does not exist", async () => {
       mockStore.get.mockResolvedValueOnce(null);
-      const result = await deleteProfileField(USER, "role");
+      const result = await deleteMemoryField(USER, "role");
       expect(result).toBeNull();
       expect(mockStore.put).not.toHaveBeenCalled();
     });
 
-    it("returns null when key is not in the profile", async () => {
+    it("returns null when key is not in the memory", async () => {
       mockStore.get.mockResolvedValueOnce({
         value: { language: "zh" },
       });
-      const result = await deleteProfileField(USER, "role");
+      const result = await deleteMemoryField(USER, "role");
       expect(result).toBeNull();
     });
 
@@ -84,11 +141,39 @@ describe("lib/memory/queries", () => {
         value: { role: "frontend", language: "zh" },
       });
       mockStore.put.mockResolvedValueOnce(undefined);
-      const result = await deleteProfileField(USER, "role");
+      const result = await deleteMemoryField(USER, "role");
       expect(result).toBe("role");
-      expect(mockStore.put).toHaveBeenCalledWith([USER, "profile"], "main", {
+      expect(mockStore.put).toHaveBeenCalledWith([USER, "memory"], "main", {
         language: "zh",
       });
+    });
+  });
+
+  describe("getAuthInfo", () => {
+    it("returns name/email/image from user + providers from account", async () => {
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([{ provider: "github" }, { provider: "google" }]);
+      const info = await getAuthInfo(USER);
+      expect(info).toEqual({
+        name: "Lin",
+        email: "lin@x.com",
+        image: null,
+        socials: [{ provider: "github" }, { provider: "google" }],
+      });
+    });
+
+    it("returns nulls + empty socials when user has no auth row", async () => {
+      mockSelectLimit.mockResolvedValueOnce([]);
+      mockSelectAll.mockResolvedValueOnce([]);
+      const info = await getAuthInfo(USER);
+      expect(info).toEqual({ name: null, email: null, image: null, socials: [] });
+    });
+
+    it("filters out the credential provider (email+password account)", async () => {
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([{ provider: "credential" }, { provider: "github" }]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([{ provider: "github" }]);
     });
   });
 
@@ -183,12 +268,6 @@ describe("lib/memory/queries", () => {
       expect(mockStore.delete).not.toHaveBeenCalled();
     });
 
-    // ponytail: PostgresStore.batch (langgraph-checkpoint-postgres 1.0.4)
-    // has no delete-op branch — its dispatch covers put / get / search /
-    // listNamespaces only. `store.batch([{op:"delete"}])` throws inside
-    // the loop and silently leaves rows behind. The fix is per-key
-    // `store.delete(namespace, key)`, which the upstream library was
-    // written to support.
     it("deletes per-key via store.delete, never store.batch", async () => {
       mockStore.search.mockResolvedValueOnce([
         { key: "t1:1", value: makeSummary("t1", 1, "2026-07-02T00:00:00.000Z") },

@@ -1,10 +1,12 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import type { RunnableConfig } from "@langchain/core/runnables";
 import { chatModel } from "@/backend/model";
 import { CRYPTO_TOOLS } from "@/backend/tool";
 import { CRYPTO_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
+import { buildSystemMessageWithMemory } from "@/backend/memory/template";
 
 // Crypto sub-agent: mirrors the weather subgraph. The model ↔ tools
 // loop runs end-to-end inside the subgraph so the parent graph doesn't
@@ -13,12 +15,12 @@ import { CommonAgentState } from "@/backend/state";
 // what the frontend card keys on, and the user's pick comes back as
 // an overwritten tool result on the next model pass.
 
-async function cryptoModelNode({ messages }: { messages: BaseMessage[] }) {
-  const system = new SystemMessage(CRYPTO_AGENT_PROMPT);
+async function cryptoModelNode({ messages }: { messages: BaseMessage[] }, config?: RunnableConfig) {
   const messagesWithoutSystem = messages.filter((m) => !(m instanceof SystemMessage));
+  const sysMsg = await buildSystemMessageWithMemory(CRYPTO_AGENT_PROMPT, config);
   const response = await chatModel
     .bindTools(CRYPTO_TOOLS)
-    .invoke([system, ...messagesWithoutSystem]);
+    .invoke([sysMsg, ...messagesWithoutSystem], config);
   return { messages: [response] };
 }
 

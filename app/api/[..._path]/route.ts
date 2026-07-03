@@ -72,6 +72,7 @@ async function proxyRequest(
         if (parsed && typeof parsed === "object") {
           const config = (parsed.config ?? {}) as Record<string, unknown>;
           const configurable = (config.configurable ?? {}) as Record<string, unknown>;
+          // append userId to the langgraph context
           configurable.userId = ctx.user.id;
           config.configurable = configurable;
           parsed.config = config;

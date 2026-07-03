@@ -482,3 +482,50 @@ describe("CapturingHandler — payload trims (Phase 1)", () => {
     expect(genInfo).not.toHaveProperty("system_fingerprint");
   });
 });
+
+describe("CapturingHandler — AIMessage with tool_calls renders body", () => {
+  // ponytail: handleChatModelStart records the LLM span on a Start hook
+  // and the matching handleLLMEnd flushes it through bulkInsert. Going
+  // through both hooks is the only way to inspect the captured input.
+  function capturePrompt(messages: Array<Record<string, unknown>>, runId: string) {
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChatModelStart(fakeSerialized("ChatOpenAI"), [messages] as never, runId);
+    handler.handleLLMEnd({ generations: [] } as never, runId);
+    const [spans] = bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]];
+    return (spans[0].input as { prompts: string[] }).prompts[0];
+  }
+
+  it("serializes tool_call name + args when content is empty", () => {
+    const prompt = capturePrompt(
+      [
+        {
+          getType: () => "ai",
+          content: "",
+          tool_calls: [{ name: "geocode_location", args: { location: "LongJiang" } }],
+        },
+      ],
+      "run-tc",
+    );
+    expect(prompt).toBe('ai: [tool_call geocode_location({"location":"LongJiang"})]');
+  });
+
+  it("prefers content over tool_calls when both are present", () => {
+    const prompt = capturePrompt(
+      [
+        {
+          getType: () => "ai",
+          content: "let me look that up",
+          tool_calls: [{ name: "get_weather", args: { lat: 22.8, lon: 113.1 } }],
+        },
+      ],
+      "run-both",
+    );
+    expect(prompt).toBe("ai: let me look that up");
+  });
+
+  it("renders content as-is for plain AI text replies (no tool_calls)", () => {
+    const prompt = capturePrompt([{ getType: () => "ai", content: "hello there" }], "run-text");
+    expect(prompt).toBe("ai: hello there");
+  });
+});

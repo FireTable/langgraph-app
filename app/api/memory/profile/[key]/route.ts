@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { withAuth } from "@/lib/auth/with-auth";
-import { deleteProfileField } from "@/lib/memory/queries";
+import { deleteMemoryField } from "@/lib/memory/queries";
 
 type KeyParams = { key: string };
 
@@ -17,7 +17,7 @@ export const DELETE = withAuth<KeyParams>(async (_req, { user, params }) => {
   if (!KEY_REGEX.test(key)) {
     return NextResponse.json({ code: "BAD_KEY" }, { status: 400 });
   }
-  const deleted = await deleteProfileField(user.id, key);
+  const deleted = await deleteMemoryField(user.id, key);
   if (deleted === null) {
     return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   }

@@ -31,9 +31,7 @@ import {
   ArrowUpIcon,
   BoxIcon,
   BrainIcon,
-  CheckIcon,
   ClockIcon,
-  CopyIcon,
   DatabaseIcon,
   LinkIcon,
   UserIcon,
@@ -41,6 +39,7 @@ import {
 } from "lucide-react";
 
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import { CopyButton } from "@/components/ui/copy-button";
 
 export type ObservabilityPanelProps = {
   spans: SpanData[];
@@ -972,36 +971,7 @@ const JsonBlock: FC<{ data: unknown; maxHeight?: number }> = ({ data, maxHeight 
 // ~1.5s. No tooltip wrapper — aria-label + the post-click state carry
 // the affordance. Floating it top-right of a block lets the pre below
 // keep its current padding / scroll behavior.
-const CopyJsonButton: FC<{ getText: () => string; label?: string; className?: string }> = ({
-  getText,
-  label = "Copy",
-  className,
-}) => {
-  const [copied, setCopied] = useState(false);
-  const onClick = () => {
-    if (typeof navigator === "undefined" || !navigator.clipboard) return;
-    navigator.clipboard.writeText(getText()).then(
-      () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      },
-      () => {},
-    );
-  };
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={copied ? "Copied" : label}
-      className={cn(
-        "text-muted-foreground hover:text-foreground hover:bg-muted/60 inline-flex size-5 items-center justify-center rounded transition-colors",
-        className,
-      )}
-    >
-      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-    </button>
-  );
-};
+const CopyJsonButton = CopyButton;
 
 // ponytail: shared renderer for FieldValue. Both SpanDetails rows and
 // TooltipPopup rows resolve to the same FieldValue, so the visual
@@ -1044,7 +1014,7 @@ const FieldRenderer: FC<{ value: FieldValue; compact?: boolean }> = ({ value, co
       return (
         <div className="relative">
           <CopyJsonButton
-            getText={() => text}
+            getTextAction={() => text}
             label="Copy JSON"
             className="absolute top-1.5 right-1.5 z-10"
           />
@@ -1128,7 +1098,7 @@ const FieldRenderer: FC<{ value: FieldValue; compact?: boolean }> = ({ value, co
             ))}
           </div>
           <CopyJsonButton
-            getText={() => JSON.stringify(json, null, 2)}
+            getTextAction={() => JSON.stringify(json, null, 2)}
             label="Copy fields"
             className="mt-1.5"
           />
@@ -1893,7 +1863,7 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
           />
           <StatCard
             icon={<UserIcon className="size-3.5" style={{ color: TYPE_COLORS.human }} />}
-            label="Human in the loop"
+            label="HITL"
             value={String(root.humanCount)}
           />
           <StatCard

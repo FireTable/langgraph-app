@@ -20,6 +20,7 @@ import { ALL_TOOLS, WEATHER_TOOLS, CRYPTO_TOOLS, CODE_TOOLS } from "@/backend/to
 import { CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
 import { getThreadTitle } from "@/lib/threads/queries";
 import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
+import { buildSystemMessageWithMemory } from "@/backend/memory/template";
 
 // USE_SUBGRAPH=true switches the compiled graph between two topologies.
 // Default (false / unset): inlined — flatten weather/chat/crypto model+tool loops
@@ -122,35 +123,31 @@ function buildSubgraph() {
 // ---------------------------------------------------------------------------
 async function weatherModelNode({ messages }: { messages: BaseMessage[] }, config: RunnableConfig) {
   const history = messages.filter((m) => !(m instanceof SystemMessage));
-  const response = await chatModel
-    .bindTools(WEATHER_TOOLS)
-    .invoke([new SystemMessage(WEATHER_AGENT_PROMPT), ...history], config);
+  const sysMsg = await buildSystemMessageWithMemory(WEATHER_AGENT_PROMPT, config);
+  const response = await chatModel.bindTools(WEATHER_TOOLS).invoke([sysMsg, ...history], config);
   return { messages: [response] };
 }
 
 async function chatModelNode({ messages }: { messages: BaseMessage[] }, config: RunnableConfig) {
   const history = messages.filter((m) => !(m instanceof SystemMessage));
-  const response = await chatModel
-    .bindTools(ALL_TOOLS)
-    .invoke([new SystemMessage(CHAT_AGENT_PROMPT), ...history], config);
+  const sysMsg = await buildSystemMessageWithMemory(CHAT_AGENT_PROMPT, config);
+  const response = await chatModel.bindTools(ALL_TOOLS).invoke([sysMsg, ...history], config);
   return { messages: [response] };
 }
 
 async function cryptoModelNode({ messages }: { messages: BaseMessage[] }, config: RunnableConfig) {
   const { CRYPTO_AGENT_PROMPT } = await import("@/backend/prompt/system");
   const history = messages.filter((m) => !(m instanceof SystemMessage));
-  const response = await chatModel
-    .bindTools(CRYPTO_TOOLS)
-    .invoke([new SystemMessage(CRYPTO_AGENT_PROMPT), ...history], config);
+  const sysMsg = await buildSystemMessageWithMemory(CRYPTO_AGENT_PROMPT, config);
+  const response = await chatModel.bindTools(CRYPTO_TOOLS).invoke([sysMsg, ...history], config);
   return { messages: [response] };
 }
 
 async function codeModelNode({ messages }: { messages: BaseMessage[] }, config: RunnableConfig) {
   const { CODE_AGENT_PROMPT } = await import("@/backend/prompt/system");
   const history = messages.filter((m) => !(m instanceof SystemMessage));
-  const response = await chatModel
-    .bindTools(CODE_TOOLS)
-    .invoke([new SystemMessage(CODE_AGENT_PROMPT), ...history], config);
+  const sysMsg = await buildSystemMessageWithMemory(CODE_AGENT_PROMPT, config);
+  const response = await chatModel.bindTools(CODE_TOOLS).invoke([sysMsg, ...history], config);
   return { messages: [response] };
 }
 

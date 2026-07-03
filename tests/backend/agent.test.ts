@@ -23,7 +23,6 @@ vi.mock("@/backend/model", () => {
         invoke: (...args: unknown[]) => mockInvokeStructured(...args),
       }),
     },
-    chatModelWithoutThink: { invoke: boundInvoke },
   };
 });
 
@@ -51,9 +50,8 @@ beforeEach(async () => {
 });
 
 // Dispatch mocked chat-model invocations by the system prompt that
-// leads the message list. The router agent, chatAgent, weatherAgent,
-// and renameThreadAgent all invoke chatModel; renameThreadAgent uses
-// chatModelWithoutThink but in this mock they share the queue.
+// leads the message list. routerAgent / chatAgent / weatherAgent /
+// renameThreadAgent all invoke the same chatModel.
 function mockByCallShape({
   routerDecision,
   agentReply,

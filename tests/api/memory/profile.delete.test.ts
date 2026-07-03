@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getSession, mockDeleteProfileField } = vi.hoisted(() => ({
+const { getSession, mockDeleteMemoryField } = vi.hoisted(() => ({
   getSession: vi.fn(),
-  mockDeleteProfileField: vi.fn(),
+  mockDeleteMemoryField: vi.fn(),
 }));
 
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("@/lib/auth/config", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/lib/memory/queries", () => ({
-  deleteProfileField: mockDeleteProfileField,
+  deleteMemoryField: mockDeleteMemoryField,
 }));
 
 const KEY_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
@@ -29,12 +29,12 @@ function buildRequest(params: Record<string, string>) {
 describe("DELETE /api/memory/profile/[key]", () => {
   beforeEach(() => {
     getSession.mockReset();
-    mockDeleteProfileField.mockReset();
+    mockDeleteMemoryField.mockReset();
     getSession.mockResolvedValue({
       user: { id: "u1", email: "u1@example.com" },
       session: { id: "s1", userId: "u1" },
     });
-    mockDeleteProfileField.mockResolvedValue("role");
+    mockDeleteMemoryField.mockResolvedValue("role");
   });
 
   afterEach(() => {
@@ -60,7 +60,7 @@ describe("DELETE /api/memory/profile/[key]", () => {
   });
 
   it("returns 404 when the profile does not contain the key", async () => {
-    mockDeleteProfileField.mockResolvedValueOnce(null);
+    mockDeleteMemoryField.mockResolvedValueOnce(null);
     const { DELETE } = await import("@/app/api/memory/profile/[key]/route");
     const res = await DELETE(buildRequest({ key: "missing" }), {
       params: Promise.resolve({ key: "missing" }),

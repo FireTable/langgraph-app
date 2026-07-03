@@ -9,7 +9,7 @@
 把 `backend/store.ts` 已接好的 `PostgresStore` 真正用起来,落地 per-user 长期记忆。短期(checkpointer)管 thread 内消息,长期(store)管跨 thread 用户画像 + 历史摘要。
 
 - **写入面**: 单个 `save_memory(patches: JSONPatch[])` 工具(RFC 6902),大小上限 8KB fail-fast,接进 `ALL_TOOLS`,所有 `chatModelNode` 自动可见
-- **召回面**: `withMemoryRecall` middleware 包 `chatModel`(不包 `chatModelWithoutThink`),每次 invoke 合并 profile + better-auth session + socialAccounts + threads top-K,合成为单个 `<memory>{...}</memory>` system message prepend
+- **召回面**: `withMemoryRecall` middleware 包 `chatModel`,每次 invoke 合并 profile + better-auth session + socialAccounts + threads top-K,合成为单个 `<memory>{...}</memory>` system message prepend
 - **摘要节点**: `threadSummarize` node 在 `afterAgent` 后,user msg > threshold 触发,生成 `{name, description}` 写 `[userId, "threads"]`
 - **API**: 4 个 `withAuth` 端点(`GET /api/memory/profile`、`DELETE /api/memory/profile/:key`、`GET /api/memory/threads`、`DELETE /api/memory/threads/:threadId`)
 - **Settings UI**: 通过 better-auth-ui 的 `settingsTabs` 插件加 "Memory" tab,声明 `SettingsViewPaths.memory`,两个区块 Profile / Thread Summaries

@@ -715,6 +715,10 @@ function trimToolOutput(output: unknown): unknown {
 
 // ponytail: one helper, one place. Prompts are what the provider sees — keep
 // them as the model sees them, don't down-cast to structured messages.
+//
+// AIMessage with tool_calls has empty content (the model emitted no prose,
+// just a function call). Without the tool_call fallback the panel renders a
+// blank <pre> for that message.
 function stringifyMessages(msgs: BaseMessage[]): string {
   return msgs
     .map((m) => {
@@ -723,7 +727,15 @@ function stringifyMessages(msgs: BaseMessage[]): string {
       const role = (m as unknown as { getType: () => string }).getType();
       const content =
         typeof m.content === "string" ? m.content : JSON.stringify(m.content, null, 0);
-      return `${role}: ${content}`;
+      // ponytail: tool_calls lives on AIMessage; ToolMessage has tool_call_id
+      // instead. Cast mirrors LangChain's own serialize() shape.
+      const toolCalls = (m as unknown as { tool_calls?: Array<{ name: string; args: unknown }> })
+        .tool_calls;
+      const toolCallBody =
+        toolCalls && toolCalls.length > 0
+          ? toolCalls.map((tc) => `[tool_call ${tc.name}(${JSON.stringify(tc.args)})]`).join("\n")
+          : "";
+      return `${role}: ${content || toolCallBody}`;
     })
     .join("\n");
 }

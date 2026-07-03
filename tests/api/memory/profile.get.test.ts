@@ -1,47 +1,70 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getSession, mockGetProfileDoc, mockGetSocialAccounts } = vi.hoisted(() => ({
-  getSession: vi.fn(),
-  mockGetProfileDoc: vi.fn(),
-  mockGetSocialAccounts: vi.fn(),
-}));
+const { getSession, mockGetMemoryDoc, mockGetAuthInfo, mockGetRecentThreadSummaries } = vi.hoisted(
+  () => ({
+    getSession: vi.fn(),
+    mockGetMemoryDoc: vi.fn(),
+    mockGetAuthInfo: vi.fn(),
+    mockGetRecentThreadSummaries: vi.fn(),
+  }),
+);
 
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("@/lib/auth/config", () => ({ auth: { api: { getSession } } }));
 vi.mock("@/db/client", () => ({ db: {} }));
 vi.mock("@/lib/auth/schema", () => ({ account: {} }));
 vi.mock("@/lib/memory/queries", () => ({
-  getProfileDoc: mockGetProfileDoc,
-  getSocialAccounts: mockGetSocialAccounts,
+  getMemoryDoc: mockGetMemoryDoc,
+  getAuthInfo: mockGetAuthInfo,
+  getRecentThreadSummaries: mockGetRecentThreadSummaries,
 }));
 
 describe("GET /api/memory/profile", () => {
   beforeEach(() => {
     getSession.mockReset();
-    mockGetProfileDoc.mockReset();
-    mockGetSocialAccounts.mockReset();
+    mockGetMemoryDoc.mockReset();
+    mockGetAuthInfo.mockReset();
+    mockGetRecentThreadSummaries.mockReset();
     getSession.mockResolvedValue({
       user: { id: "u1", name: "Yongzhuo", email: "y@example.com", image: null },
       session: { id: "s1", userId: "u1" },
     });
-    mockGetProfileDoc.mockResolvedValue({ role: "frontend" });
-    mockGetSocialAccounts.mockResolvedValue([{ provider: "github" }]);
+    // ponytail: API returns store + auth + threads separately so the
+    // frontend can run the same mergeMemory the model uses. Store
+    // has user-saved fields; auth holds OAuth fields that overlay
+    // only when the store key is missing.
+    mockGetMemoryDoc.mockResolvedValue({ role: "frontend" });
+    mockGetAuthInfo.mockResolvedValue({
+      name: "Yongzhuo",
+      email: "y@example.com",
+      image: null,
+      socials: [],
+    });
+    mockGetRecentThreadSummaries.mockResolvedValue([
+      { key: "t1:1", value: { threadId: "t1", sequence: 1 } as never },
+    ]);
   });
 
   afterEach(() => {
     vi.resetModules();
   });
 
-  it("returns 200 with profile + session + socialAccounts", async () => {
+  it("returns 200 with the {store, auth, threads} payload (separate fields, not merged)", async () => {
     const { GET } = await import("@/app/api/memory/profile/route");
     const res = await GET(new Request("http://localhost/api/memory/profile"), {
       params: Promise.resolve({} as never),
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.profile).toEqual({ role: "frontend" });
-    expect(body.session).toEqual({ name: "Yongzhuo", email: "y@example.com", image: null });
-    expect(body.socialAccounts).toEqual([{ provider: "github" }]);
+    expect(body.store).toMatchObject({ role: "frontend" });
+    expect(body.auth).toMatchObject({
+      name: "Yongzhuo",
+      email: "y@example.com",
+    });
+    expect(body.threads).toHaveLength(1);
+    // ponytail: the API MUST NOT return a merged `memory` field — that
+    // would hide provenance and force the UI to guess source.
+    expect(body).not.toHaveProperty("memory");
   });
 
   it("returns 401 when there is no session", async () => {
@@ -53,8 +76,14 @@ describe("GET /api/memory/profile", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns 500 when the store throws", async () => {
-    mockGetProfileDoc.mockRejectedValueOnce(new Error("db down"));
+  it("returns 500 when an unhandled DB error escapes the catch fallback", async () => {
+    // ponytail: each query has its own .catch() that swallows errors,
+    // so a single query failing returns 200 with degraded data. To
+    // exercise the 500 path, the auth check itself must throw
+    // synchronously after Promise.all resolves.
+    mockGetAuthInfo.mockImplementationOnce(() => {
+      throw new Error("auth service down");
+    });
     const { GET } = await import("@/app/api/memory/profile/route");
     const res = await GET(new Request("http://localhost/api/memory/profile"), {
       params: Promise.resolve({} as never),

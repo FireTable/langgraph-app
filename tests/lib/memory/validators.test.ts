@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MemoryPatchSchema,
   SaveMemoryInputSchema,
-  ProfileResponseSchema,
+  MemoryResponseSchema,
   ThreadsResponseSchema,
   SummaryEntrySchema,
   ProfileDeleteResponseSchema,
@@ -104,21 +104,33 @@ describe("lib/memory/validators", () => {
     });
   });
 
-  describe("ProfileResponseSchema", () => {
+  describe("MemoryResponseSchema", () => {
     it("accepts a full payload", () => {
-      const r = ProfileResponseSchema.safeParse({
-        profile: { role: "frontend" },
-        session: { name: "Yongzhuo", email: "y@example.com", image: null },
-        socialAccounts: [{ provider: "github" }],
+      const r = MemoryResponseSchema.safeParse({
+        memory: { role: "frontend", name: "Yongzhuo" },
+        threads: [
+          {
+            key: "t1:1",
+            value: {
+              threadId: "t1",
+              sequence: 1,
+              name: "intro",
+              description: "met",
+              startMessageIndex: 0,
+              endMessageIndex: 6,
+              messageCount: 7,
+              updatedAt: "2026-07-02T00:00:00.000Z",
+            },
+          },
+        ],
       });
       expect(r.success).toBe(true);
     });
 
-    it("accepts an empty profile + no social accounts", () => {
-      const r = ProfileResponseSchema.safeParse({
-        profile: {},
-        session: { name: null, email: null, image: null },
-        socialAccounts: [],
+    it("accepts an empty memory + no threads", () => {
+      const r = MemoryResponseSchema.safeParse({
+        memory: {},
+        threads: [],
       });
       expect(r.success).toBe(true);
     });

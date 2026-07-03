@@ -101,6 +101,9 @@ importers:
       immutable-json-patch:
         specifier: ^6.0.3
         version: 6.0.3
+      lru-cache:
+        specifier: ^11.5.1
+        version: 11.5.1
       lucide-react:
         specifier: ^1.23.0
         version: 1.23.0(react@19.2.7)

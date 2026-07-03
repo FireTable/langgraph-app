@@ -1,7 +1,5 @@
 import { ChatOpenAI } from "@langchain/openai";
 
-import { withMemoryRecall } from "@/backend/middleware/with-memory-recall";
-
 const commonOptions = {
   model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
   apiKey: process.env.OPENAI_API_KEY,
@@ -11,23 +9,17 @@ const commonOptions = {
   streaming: true,
 };
 
-const baseChatModel = new ChatOpenAI({
+// ponytail: memory injection lives in each model node via
+// buildSystemMessageWithMemory (backend/memory/template.ts) — the node
+// reads userId from its RunnableConfig and prepends a <memory> block
+// to the system message before invoking the model. The model export
+// is intentionally un-wrapped: the CapturingHandler callback is wired
+// at the graph level in backend/agent.ts so spans aren't double-fired
+// for nested model calls.
+export const chatModel: ChatOpenAI = new ChatOpenAI({
   ...commonOptions,
   modelKwargs: {
     // only minimax will use this param
-    reasoning_split: true,
-  },
-});
-
-// ponytail: rename is a background task that runs *before* the user
-// starts chatting — it must NOT prefill the model with profile /
-// threads context that belongs to a different user. Keep the un-wrapped
-// export for that node; only chatModel gets the recall wrapper.
-export const chatModel = withMemoryRecall(baseChatModel);
-
-export const chatModelWithoutThink = new ChatOpenAI({
-  ...commonOptions,
-  modelKwargs: {
     reasoning_split: true,
   },
 });

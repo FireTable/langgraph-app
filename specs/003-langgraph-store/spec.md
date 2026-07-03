@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-02
 
-**Status**: Draft
+**Status**: Completed (refactored)
 
 **Input**: User requirement: "对接 store, 各种长期记忆" — wire LangGraph `PostgresStore` for cross-thread long-term memory (per-user profile + thread summaries), exposed through a single JSON-Patch tool, a `withMemoryRecall` middleware, and a thread-summarize node; visible/deletable via a Memory tab in settings.
 
@@ -103,7 +103,7 @@
 
 ### Memory recall surface
 
-- **FR-005** A `withMemoryRecall` middleware MUST wrap `chatModel` (only — `chatModelWithoutThink` MUST NOT be wrapped, rename is a background task).
+- **FR-005** A `withMemoryRecall` middleware MUST wrap `chatModel`.
 - **FR-006** On each `invoke`, the middleware MUST: read `[userId, "profile"] main`, fetch `auth.api.getSession`, query better-auth `account` table for `socialAccounts`, search `[userId, "threads"]` with `limit: MEMORY_THREAD_RECALL_LIMIT` ordered by recency.
 - **FR-007** If `config.configurable.userId` is absent (e.g., internal invoke during `langgraphjs dev` startup), the middleware MUST pass through unchanged — no system message injected.
 - **FR-008** The merged context MUST be prepended as a single system message in the form `<memory>{...}</memory>` so the model can distinguish recalled memory from operational system prompt.

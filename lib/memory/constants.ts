@@ -44,3 +44,10 @@ export const MEMORY_THREAD_RECALL_LIMIT = nonNegativeInt(
   process.env.MEMORY_THREAD_RECALL_LIMIT,
   DEFAULTS.threadRecallLimit,
 );
+
+// ponytail: keys that may be filled from the auth record (OAuth /
+// Better Auth) when the user-saved doc doesn't have them. Listed
+// once so mergeMemory iterates them — the UI's "(from account)"
+// hint and the LLM's system-prompt overlay use the same set.
+export const AUTH_OVERLAY_KEYS = ["name", "email", "image", "socials"] as const;
+export type AuthOverlayKey = (typeof AUTH_OVERLAY_KEYS)[number];

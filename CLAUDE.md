@@ -67,7 +67,7 @@ LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`)
 backend/
   agent.ts                LangGraph graph — two topologies gated by USE_SUBGRAPH
   state.ts                RouterAgentState (parent) + CommonAgentState (subgraphs)
-  model.ts                ChatOpenAI singletons (chatModel + chatModelWithoutThink)
+  model.ts                ChatOpenAI singleton (chatModel)
   checkpointer.ts         PostgresSaver (LangGraph Postgres checkpoint tables)
   agent/
     chat-agent.ts         chatAgent compiled subgraph (USE_SUBGRAPH=true path)
@@ -114,6 +114,11 @@ lib/alchemy/              networks.ts (slug → Alchemy URL + disabled list) + p
 lib/observability/        schema (Drizzle table) · queries (bulkInsert / get / markFailed / delete — with FORBIDDEN regex) · validators (Zod) · config (retention days) · transform (CapturedSpan → SpanData)
 lib/prices/coingecko.ts   CoinGecko free-tier price client (60s in-memory cache)
 lib/decimal.ts            Decimal-based amount math for crypto (no native float)
+lib/memory/               Memory queries (getProfileDoc / putProfileDoc / getSocialAccounts / getRecentThreadSummaries) + validators (RFC 6902 patch schema) + constants (env-tuned limits)
+backend/memory/
+  recall.ts                buildAugmentedSystemMessage — loads + caches memory per userId, returns the merged SystemMessage; selective sources via opts; LRU cache (max 1000, 60s TTL)
+  template.ts              createSystemPromptTemplate — mustache `{{base}} {{#memoryJson}}<memory>...</memory>{{/memoryJson}}` so the no-memory path skips the section
+  profile-size.ts          assertProfileSize — guard before the store write (NFR-003)
 scripts/
   cleanup-observability.ts  Physical-delete older spans: `pnpm exec tsx scripts/cleanup-observability.ts` (cron entry; not yet scheduled — see `docs/OBSERVABILITY.md`)
 docs/
@@ -175,7 +180,7 @@ Consequences worth knowing:
 
 ### Observability
 
-`backend/model.ts` exports `chatModel` / `chatModelWithoutThink` as `ChatOpenAI.withConfig({ callbacks: [getCapturingHandler()] })`. The handler (`backend/observability/callback-collector.ts`) is a `BaseCallbackHandler` that buffers per-runId spans in a Map (Start hooks create them; End hooks mutate + persist). On every `handleChainEnd` it fires `bulkInsert([span])` against `lib/observability/queries.ts` — the second insert is a no-op via `ON CONFLICT DO NOTHING` so re-flushing an inner span from the outer chain end doesn't double-write.
+`backend/model.ts` exports `chatModel` as `ChatOpenAI.withConfig({ callbacks: [getCapturingHandler()] })`. The handler (`backend/observability/callback-collector.ts`) is a `BaseCallbackHandler` that buffers per-runId spans in a Map (Start hooks create them; End hooks mutate + persist). On every `handleChainEnd` it fires `bulkInsert([span])` against `lib/observability/queries.ts` — the second insert is a no-op via `ON CONFLICT DO NOTHING` so re-flushing an inner span from the outer chain end doesn't double-write.
 
 `bulkInsert` is constructor-injected so the handler stays DB-free and the unit tests run with `vi.fn()`. Wire-up is a one-line `bulkInsert: async (spans) => { await bulkInsertSpans(spans); }` in `getCapturingHandler()`.
 

@@ -277,9 +277,9 @@ export function Assistant() {
         prompt: "Please analyze the website https://firetable.tech",
       },
       {
-        title: "What’s the weather like at today?",
+        title: "What’s the weather like today?",
         label: "",
-        prompt: "What’s the weather like at today?",
+        prompt: "What’s the weather like today?",
       },
       {
         title: "I want to buy 2 ETH",
@@ -292,9 +292,9 @@ export function Assistant() {
         prompt: "Show me my NFTs",
       },
       {
-        title: "Write a Typescript function to solve `Two Sum` leetcode problem",
+        title: "Write a Typescript function about `Two Sum`",
         label: "",
-        prompt: "Write a Typescript function to solve `Two Sum` leetcode problem",
+        prompt: "Write a Typescript function about `Two Sum`",
       },
     ]),
   });

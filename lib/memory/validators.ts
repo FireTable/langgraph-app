@@ -35,22 +35,6 @@ export const SaveMemoryInputSchema = z.object({
   patches: z.array(MemoryPatchSchema).min(0).max(50),
 });
 
-export const SessionContextSchema = z.object({
-  name: z.string().nullable(),
-  email: z.string().nullable(),
-  image: z.string().nullable(),
-});
-
-export const SocialAccountSchema = z.object({
-  provider: z.string().min(1),
-});
-
-export const ProfileResponseSchema = z.object({
-  profile: z.record(z.string(), z.unknown()),
-  session: SessionContextSchema,
-  socialAccounts: z.array(SocialAccountSchema),
-});
-
 export const SummaryEntrySchema = z
   .object({
     threadId: z.string().min(1),
@@ -70,6 +54,20 @@ export const SummaryEntrySchema = z
     (s) => s.messageCount === s.endMessageIndex - s.startMessageIndex + 1,
     "messageCount must equal endMessageIndex - startMessageIndex + 1",
   );
+
+export const MemoryResponseSchema = z.object({
+  // ponytail: `memory` is the user-saved doc overlaid with live auth
+  // (name/email/image/socials from drizzle user+account tables). Model
+  // and UI both see the same merged shape — one function (`loadMemory`)
+  // is the single source of truth.
+  memory: z.record(z.string(), z.unknown()),
+  threads: z.array(
+    z.object({
+      key: z.string(),
+      value: SummaryEntrySchema,
+    }),
+  ),
+});
 
 export const ThreadSummaryGroupSchema = z.object({
   threadId: z.string().min(1),
@@ -92,11 +90,9 @@ export const ThreadsDeleteResponseSchema = z.object({
 
 export type MemoryPatch = z.infer<typeof MemoryPatchSchema>;
 export type SaveMemoryInput = z.infer<typeof SaveMemoryInputSchema>;
-export type ProfileResponse = z.infer<typeof ProfileResponseSchema>;
+export type MemoryResponse = z.infer<typeof MemoryResponseSchema>;
 export type ThreadsResponse = z.infer<typeof ThreadsResponseSchema>;
 export type SummaryEntry = z.infer<typeof SummaryEntrySchema>;
 export type ThreadSummaryGroup = z.infer<typeof ThreadSummaryGroupSchema>;
-export type SessionContext = z.infer<typeof SessionContextSchema>;
-export type SocialAccount = z.infer<typeof SocialAccountSchema>;
 export type ProfileDeleteResponse = z.infer<typeof ProfileDeleteResponseSchema>;
 export type ThreadsDeleteResponse = z.infer<typeof ThreadsDeleteResponseSchema>;

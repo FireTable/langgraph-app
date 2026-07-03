@@ -2,9 +2,11 @@ import { tool } from "@langchain/core/tools";
 import { immutableJSONPatch } from "immutable-json-patch";
 
 import { MEMORY_PROFILE_MAX_BYTES } from "@/lib/memory/constants";
-import { getProfileDoc, putProfileDoc } from "@/lib/memory/queries";
+import { getAuthInfo, getMemoryDoc, putMemoryDoc } from "@/lib/memory/queries";
+import { mergeMemory, type AuthInfo, type MemoryDoc } from "@/lib/memory/merge";
 import { SaveMemoryInputSchema, type SaveMemoryInput } from "@/lib/memory/validators";
 import { assertProfileSize, MemorySizeError } from "@/backend/memory/profile-size";
+import { invalidateMemory } from "@/backend/memory/recall";
 
 // ponytail: FR-023 fail-fast — a missing/empty userId on a *write* is
 // never safe (we'd silently write to the wrong user's profile or, worse,
@@ -31,6 +33,8 @@ function extractUserId(config?: { configurable?: { userId?: unknown } }): string
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
+const EMPTY_AUTH: AuthInfo = { name: null, email: null, image: null, socials: [] };
+
 async function impl(
   input: SaveMemoryInput,
   config?: { configurable?: { userId?: unknown } },
@@ -40,24 +44,70 @@ async function impl(
 
   const { patches } = input;
 
-  const current = await getProfileDoc(userId);
-  // ponytail: validate replace/remove paths up-front — silently no-op'ing
-  // a missing path would let the model "remember" a fact it never
-  // persisted. immutableJSONPatch returns a fresh object, so no clone
-  // is needed.
+  const [storeDoc, auth] = await Promise.all([
+    getMemoryDoc(userId),
+    getAuthInfo(userId).catch(() => EMPTY_AUTH),
+  ]);
+  // ponytail: patches operate on the merged view (store + auth
+  // overlay) — same shape the model sees in <memory>. Validating
+  // against `effective` lets `replace /name "X"` succeed when the
+  // model is reacting to a name field that came from OAuth, without
+  // a brittle replace→add fallback that hides the truth from the
+  // model.
+  const effective = mergeMemory(storeDoc, auth);
   for (const patch of patches) {
-    if ((patch.op === "replace" || patch.op === "remove") && !(patch.path.slice(1) in current)) {
-      throw new MemoryPatchError(`path ${patch.path} not found in profile`);
+    if ((patch.op === "replace" || patch.op === "remove") && !(patch.path.slice(1) in effective)) {
+      throw new MemoryPatchError(`path ${patch.path} not found in memory`);
     }
   }
-  const next = immutableJSONPatch(current, patches) as Record<string, unknown>;
-  assertProfileSize(next, MEMORY_PROFILE_MAX_BYTES);
-  await putProfileDoc(userId, next);
+  const next = immutableJSONPatch(effective, patches) as MemoryDoc;
+  // ponytail: write-back only persists fields that diverge from auth.
+  // Without this, every save_memory would copy the OAuth email/name
+  // into store — bloating the doc and making "is this from account?"
+  // impossible to answer from the store alone. Auth-only fields that
+  // weren't touched (or were `remove`d) drop out; patched fields
+  // become store-owned and win the next merge.
+  const nextStore = filterToStoreOnly(next, storeDoc, patches);
+  assertProfileSize(nextStore, MEMORY_PROFILE_MAX_BYTES);
+  await putMemoryDoc(userId, nextStore);
+  // ponytail: bust the per-turn recall cache so the very next model
+  // invoke sees the patched profile. Without this, a user who edits
+  // their About-you mid-conversation would keep seeing the old copy
+  // until the 60s TTL (or LRU eviction) catches up.
+  invalidateMemory(userId);
   return JSON.stringify({
     ok: true,
-    bytes: JSON.stringify(next).length,
-    keyCount: Object.keys(next).length,
+    bytes: JSON.stringify(nextStore).length,
+    keyCount: Object.keys(nextStore).length,
   });
+}
+
+// ponytail: a field stays in store when it was already in store (we
+// own it) OR a patch wrote a new value into the merged view. Fields
+// that exist only because of the auth overlay and weren't touched
+// drop out — without this, every save_memory would copy the OAuth
+// email/name into store, bloating the doc and making "is this from
+// account?" impossible to answer from the store alone.
+//
+// Note: `next` is the result of immutableJSONPatch(effective, ...).
+// The patch library preserves keys that weren't in `effective`, so a
+// patch like `replace /city "Munich"` leaves `name` in `next` (with
+// its old value) even if no patch touched it. We use the patch set
+// itself as the source of truth for what changed.
+function filterToStoreOnly(
+  next: MemoryDoc,
+  storeDoc: MemoryDoc,
+  patches: SaveMemoryInput["patches"],
+): MemoryDoc {
+  const out: MemoryDoc = {};
+  const storeKeys = new Set(Object.keys(storeDoc));
+  const patchedKeys = new Set(patches.map((p) => p.path.slice(1)));
+  for (const [k, v] of Object.entries(next)) {
+    if (storeKeys.has(k) || patchedKeys.has(k)) {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 // ponytail: pass SaveMemoryInputSchema directly to LangChain's `tool(...)` —
@@ -68,19 +118,48 @@ async function impl(
 // API contract — test fixtures and the SDK agree on the same wire format.
 export const saveMemoryTool = tool(impl, {
   name: "save_memory",
-  description: `Persist a structured fact to the user's long-term profile via RFC 6902 JSON Patch operations. Use it whenever the user reveals a stable fact about themselves (name, role, location, preferences, wallet, language, project, etc.) so future conversations can recall them without re-asking. Without these facts the agent cannot remember the user across conversations.
+  description: `Persist a structured fact to the user's long-term profile via RFC 6902 JSON Patch operations. Without these facts the agent cannot remember the user across conversations.
 
-Pass the input as { "patches": [...] }. Each patch object MUST have:
-  - "op": one of "add" (set/insert a field), "replace" (overwrite an existing field), "remove" (delete a field).
-  - "path": the field as "/<key>" (RFC 6901 pointer starting with /; key must start with a letter or underscore).
-  - "value": required for add/replace; any JSON-compatible value (string, number, boolean, array, object).
+WHEN TO CALL:
+- The user explicitly states a stable biographical fact (role, location, preference, project context, recurring schedule).
+- The conversation reveals a durable fact useful for future sessions (primary tech stack, stable tool/service relationships, facts surfaced via tool calls like ask_location or place_crypto_order).
 
-Example — the user says "I'm Lin, a backend engineer in Singapore" → call:
-  save_memory({ "patches": [
-    { "op": "add", "path": "/name", "value": "Lin" },
-    { "op": "add", "path": "/role", "value": "backend engineer" },
-    { "op": "add", "path": "/city", "value": "Singapore" }
-  ] })`,
+CONSTRAINTS (DO NOT):
+- DO NOT save ephemeral chat ("I'm tired", "today is hot", single emojis).
+- DO NOT save model inferences or questions about the user.
+- DO NOT save sensitive content the user wouldn't want surfaced later (passwords, financial details, medical info, intimate relationships) — use judgment.
+- DO NOT save external data returned by tools (weather, prices, balances, fetched URLs) — only the user's input portion.
+- DO NOT call more than once per turn (group multiple updates into one patch set).
+
+CONFLICT RESOLUTION:
+If the same key already exists with a different value, ask a brief clarifying question before overwriting. Facts evolve — don't silently rewrite the user's history.
+
+FALLBACK:
+If save_memory is not in your current tool list, treat the statement as ephemeral and continue.
+
+SCHEMA:
+Pass input as { "patches": [...] }. Each patch MUST have:
+- "op": "add" | "replace" | "remove".
+- "path": "/<key>" (RFC 6901 pointer; key must start with a letter or underscore).
+- "value": required for add/replace; any JSON-compatible value.
+
+EXAMPLES:
+1. User says "I'm Lin, a backend engineer in Singapore" (no prior memory):
+   save_memory({ "patches": [
+     { "op": "add", "path": "/name", "value": "Lin" },
+     { "op": "add", "path": "/role", "value": "backend engineer" },
+     { "op": "add", "path": "/city", "value": "Singapore" }
+   ] })
+
+2. Existing memory has { "city": "Berlin" }. User says "actually I moved to Munich last month":
+   save_memory({ "patches": [
+     { "op": "replace", "path": "/city", "value": "Munich" }
+   ] })
+
+3. User says "forget my wallet address" and memory has { "wallet": "0xabc" }:
+   save_memory({ "patches": [
+     { "op": "remove", "path": "/wallet" }
+   ] })`,
   schema: SaveMemoryInputSchema,
 });
 

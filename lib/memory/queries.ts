@@ -2,43 +2,43 @@ import { eq } from "drizzle-orm";
 
 import { store } from "@/backend/store";
 import { db } from "@/db/client";
-import { account } from "@/lib/auth/schema";
-import { SummaryEntrySchema, type SocialAccount, type SummaryEntry } from "@/lib/memory/validators";
+import { account, user } from "@/lib/auth/schema";
+import { SummaryEntrySchema, type SummaryEntry } from "@/lib/memory/validators";
 
-const PROFILE_KEY = "main";
+const MEMORY_KEY = "main";
 const THREADS_NAMESPACE = "threads";
-const PROFILE_NAMESPACE = "profile";
+const MEMORY_NAMESPACE = "memory";
 
-// ponytail: Profile doc is a flat k-v bag at [userId,"profile"] key=main.
+// ponytail: Memory doc is a flat k-v bag at [userId,"memory"] key=main.
 // JSONB column accepts any JSON; reads return null when the row is absent.
-export type ProfileDoc = Record<string, unknown>;
+export type MemoryDoc = Record<string, unknown>;
 
-function profileNs(userId: string): string[] {
-  return [userId, PROFILE_NAMESPACE];
+function memoryNs(userId: string): string[] {
+  return [userId, MEMORY_NAMESPACE];
 }
 
 function threadsNs(userId: string): string[] {
   return [userId, THREADS_NAMESPACE];
 }
 
-export async function getProfileDoc(userId: string): Promise<ProfileDoc> {
-  const item = await store?.get(profileNs(userId), PROFILE_KEY);
-  const value = (item?.value ?? {}) as ProfileDoc;
+export async function getMemoryDoc(userId: string): Promise<MemoryDoc> {
+  const item = await store?.get(memoryNs(userId), MEMORY_KEY);
+  const value = (item?.value ?? {}) as MemoryDoc;
   return value;
 }
 
-export async function putProfileDoc(userId: string, value: ProfileDoc): Promise<void> {
-  await store!.put(profileNs(userId), PROFILE_KEY, value as Record<string, unknown>);
+export async function putMemoryDoc(userId: string, value: MemoryDoc): Promise<void> {
+  await store!.put(memoryNs(userId), MEMORY_KEY, value as Record<string, unknown>);
 }
 
 // ponytail: delete = apply RFC 6902 remove patch via the same path
 // save_memory uses, so the model can also remove fields. Returns null
 // when the row / key is missing — the DELETE handler surfaces 404.
-export async function deleteProfileField(userId: string, key: string): Promise<string | null> {
-  const doc = await getProfileDoc(userId);
+export async function deleteMemoryField(userId: string, key: string): Promise<string | null> {
+  const doc = await getMemoryDoc(userId);
   if (!(key in doc)) return null;
   const { [key]: _omitted, ...rest } = doc;
-  await putProfileDoc(userId, rest);
+  await putMemoryDoc(userId, rest);
   return key;
 }
 
@@ -109,10 +109,29 @@ export async function writeSummary(
 // better-auth's `"credential"` provider — that's the email+password
 // account, not a social login; showing it in the Memory view as a
 // "linked account" is misleading.
-export async function getSocialAccounts(userId: string): Promise<SocialAccount[]> {
-  const rows = await db
+export type AuthInfo = {
+  name: string | null;
+  email: string | null;
+  image: string | null;
+  socials: Array<{ provider: string }>;
+};
+
+export async function getAuthInfo(userId: string): Promise<AuthInfo> {
+  const [u] = await db
+    .select({ name: user.name, email: user.email, image: user.image })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  const accounts = await db
     .select({ provider: account.providerId })
     .from(account)
     .where(eq(account.userId, userId));
-  return rows.filter((r) => r.provider !== "credential").map((r) => ({ provider: r.provider }));
+  return {
+    name: u?.name ?? null,
+    email: u?.email ?? null,
+    image: u?.image ?? null,
+    socials: accounts
+      .filter((r) => r.provider !== "credential")
+      .map((r) => ({ provider: r.provider })),
+  };
 }
