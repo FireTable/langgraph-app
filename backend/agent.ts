@@ -47,63 +47,54 @@ async function shouldRenameRouter(
   return "renameThreadAgent";
 }
 
-function buildSubgraph() {
-  return (
-    new StateGraph(RouterAgentState)
-      .addNode("routerAgent", routerAgentNode)
-      .addNode("chatAgent", chatAgent)
-      .addNode("weatherAgent", weatherAgent)
-      .addNode("cryptoAgent", cryptoAgent)
-      .addNode("codeAgent", codeAgent)
-      .addNode("scheduleBackground", scheduleBackgroundNode)
-      .addNode("renameThreadAgent", renameThreadAgentNode)
-      // Topology:
-      //   START ──▶ routerAgent ──▶ (sub-agent) ──▶ scheduleBackground ──▶ END
-      //   START ─────────────────────────────────▶ renameThreadAgent (parallel, leaf)
-      //
-      // ask_location's picker card is owned by the weather subgraph
-      // (see backend/agent/weather-agent.ts + components/tool-ui/ask-location).
-      // ask_crypto_intent's picker card is owned by the crypto subgraph
-      // (see backend/agent/crypto-agent.ts + components/tool-ui/crypto).
-      // write_code's editor card is owned by the code subgraph
-      // (see backend/agent/code-agent.ts + components/tool-ui/code).
-      //
-      // renameThreadAgent runs as a parallel leaf off the main response
-      // path (END). The graph invocation only returns after ALL active
-      // branches complete, but the chat stream ends on the END branch,
-      // so the user sees no rename latency.
-      //
-      // scheduleBackground is the chat's last node before END. It fires
-      // the `background_agent` graph (registered separately in
-      // langgraph.json) and returns `{}` immediately — that graph does
-      // `last_message_at` touch + threadSummarizeNode work on its own
-      // thread. See backend/node/schedule-background-node.ts for the
-      // fire-and-forget pattern; see backend/background-agent.ts for
-      // what the background graph runs.
-      .addEdge(START, "routerAgent")
-      .addConditionalEdges("routerAgent", routeToSubAgent, [
-        "weatherAgent",
-        "chatAgent",
-        "cryptoAgent",
-        "codeAgent",
-      ])
-      .addEdge("chatAgent", "scheduleBackground")
-      .addEdge("weatherAgent", "scheduleBackground")
-      .addEdge("cryptoAgent", "scheduleBackground")
-      .addEdge("codeAgent", "scheduleBackground")
-      .addEdge("scheduleBackground", END)
-      .addConditionalEdges(START, shouldRenameRouter, {
-        renameThreadAgent: "renameThreadAgent",
-        __end__: END,
-      })
-  );
-}
+export const builder = new StateGraph(RouterAgentState)
+  .addNode("routerAgent", routerAgentNode)
+  .addNode("chatAgent", chatAgent)
+  .addNode("weatherAgent", weatherAgent)
+  .addNode("cryptoAgent", cryptoAgent)
+  .addNode("codeAgent", codeAgent)
+  .addNode("scheduleBackground", scheduleBackgroundNode)
+  .addNode("renameThreadAgent", renameThreadAgentNode)
+  // Topology:
+  //   START ──▶ routerAgent ──▶ (sub-agent) ──▶ scheduleBackground ──▶ END
+  //   START ─────────────────────────────────▶ renameThreadAgent (parallel, leaf)
+  //
+  // ask_location's picker card is owned by the weather subgraph
+  // (see backend/agent/weather-agent.ts + components/tool-ui/ask-location).
+  // ask_crypto_intent's picker card is owned by the crypto subgraph
+  // (see backend/agent/crypto-agent.ts + components/tool-ui/crypto).
+  // write_code's editor card is owned by the code subgraph
+  // (see backend/agent/code-agent.ts + components/tool-ui/code).
+  //
+  // renameThreadAgent runs as a parallel leaf off the main response
+  // path (END). The graph invocation only returns after ALL active
+  // branches complete, but the chat stream ends on the END branch,
+  // so the user sees no rename latency.
+  //
+  // scheduleBackground is the chat's last node before END. It fires
+  // the `background_agent` graph (registered separately in
+  // langgraph.json) and returns `{}` immediately — that graph does
+  // `last_message_at` touch + threadSummarizeNode work on its own
+  // thread. See backend/node/schedule-background-node.ts for the
+  // fire-and-forget pattern; see backend/background-agent.ts for
+  // what the background graph runs.
+  .addEdge(START, "routerAgent")
+  .addConditionalEdges("routerAgent", routeToSubAgent, [
+    "weatherAgent",
+    "chatAgent",
+    "cryptoAgent",
+    "codeAgent",
+  ])
+  .addEdge("chatAgent", "scheduleBackground")
+  .addEdge("weatherAgent", "scheduleBackground")
+  .addEdge("cryptoAgent", "scheduleBackground")
+  .addEdge("codeAgent", "scheduleBackground")
+  .addEdge("scheduleBackground", END)
+  .addConditionalEdges(START, shouldRenameRouter, {
+    renameThreadAgent: "renameThreadAgent",
+    __end__: END,
+  })
 
-const builder = buildSubgraph();
-
-// Exported for the topology smoke test (tests/backend/agent-topologies.test.ts).
-// Don't use this directly in app code — go through `graph`.
-export { buildSubgraph };
 
 // ponytail: one handler per process (per module), shared across all
 // concurrent runs AND across every Pregel that wires it via withConfig.
