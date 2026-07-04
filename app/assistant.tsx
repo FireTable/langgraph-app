@@ -201,6 +201,8 @@ export function Assistant() {
   const eventHandlers = useMemo(() => ({}), []);
 
   const runtime = useLangGraphRuntime({
+    unstable_allowCancellation: true,
+    unstable_enableMessageQueue: true,
     unstable_threadListAdapter: threadListAdapter,
     stream,
     eventHandlers,

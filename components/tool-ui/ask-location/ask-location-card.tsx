@@ -2,14 +2,14 @@
 
 import { useState, type FC, type ReactNode } from "react";
 import { AlertCircleIcon, CheckIcon, Loader2Icon, MapPinIcon, SearchIcon } from "lucide-react";
-import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
+import { type ToolCallMessagePartComponent } from "@assistant-ui/react";
 
 import { Button } from "@/components/ui/button";
 import { CardHeader, CardShell } from "@/components/tool-ui/primitives/card";
 import { ErrorBanner, SuccessBanner } from "@/components/tool-ui/primitives/banners";
 import { geocodeLocation, reverseGeocode } from "@/lib/open-meteo";
 import { unwrapToolResult } from "@/components/tool-ui/tool-result";
-import { useLangGraphInterruptState, useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
+import { useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
 
 // Tool result the user picks from the card. The backend tool pauses via
 // interrupt({ ui: 'ask_location' }); this card renders in the InterruptUI
@@ -48,27 +48,15 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
   const [mode, setMode] = useState<Mode>({ kind: "idle" });
   const [cityQuery, setCityQuery] = useState("");
   const sendCommand = useLangGraphSendCommand();
-  const interrupt = useLangGraphInterruptState();
-
-
 
   const parsed = parseResult(result);
 
   const addResult = async (payload: AskLocationResult) => {
-    const json = JSON.stringify(payload);
-    // ponytail: runtime emits `id` on every interrupt event payload
-    // (see pregel/interrupt.js:71 XXH3(ns.join("|"))), but the SDK's
-    // public LangGraphInterruptState type only exposes `ns`. Cast
-    // locally — the same gap the SDK comment acknowledges at
-    // thread.tsx:138 "LangGraphCommand.resume is typed string but we
-    // know the runtime accepts a JSON payload".
-    const interruptId = (interrupt as { id?: unknown } | undefined)?.id;
-
     sendCommand({
-      resume:
-        typeof interruptId === "string" ? { [interruptId]: json } : json,
-    } as unknown as { resume: string });
+      resume: JSON.stringify(payload)
+    });
   };
+
   const handleUseDeviceLocation = async () => {
     setMode({ kind: "requesting_permission" });
     try {
