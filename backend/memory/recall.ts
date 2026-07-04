@@ -1,23 +1,21 @@
 import { LRUCache } from "lru-cache";
 import type { RunnableConfig } from "@langchain/core/runnables";
 
-import {
-  getAuthInfo,
-  getMemoryDoc,
-  getRecentThreadSummaries,
-  type MemoryDoc,
-} from "@/lib/memory/queries";
+import { getAuthInfo, getMemoryDoc } from "@/lib/memory/queries";
 import { mergeMemory } from "@/lib/memory/merge";
-import { MEMORY_THREAD_RECALL_LIMIT } from "@/lib/memory/constants";
-import type { SummaryEntry } from "@/lib/memory/validators";
+import type { MemoryDoc } from "@/lib/memory/queries";
 
+// ponytail: user-saved doc with auth fields overlaid. user-saved wins
+// when a field is present (the user explicitly stored it via
+// save_memory); otherwise the live auth record fills the gap so the
+// model always sees a name/email even when nothing was saved yet.
+//
+// `threads` is no longer in the LLM-facing payload — that path was
+// retired (cross-thread summary injection was leaky; thread summaries
+// now live inline in the messages channel of each thread). The Memory
+// tab UI still fetches past-thread summaries via /api/memory/threads.
 export type LoadedMemory = {
-  // ponytail: user-saved doc with auth fields overlaid. user-saved wins
-  // when a field is present (the user explicitly stored it via
-  // save_memory); otherwise the live auth record fills the gap so the
-  // model always sees a name/email even when nothing was saved yet.
   memory: MemoryDoc;
-  threads: Array<{ key: string; value: SummaryEntry }>;
 };
 
 // ponytail: 1000 entries × ~10-50KB per payload = single-digit MB. Way
@@ -39,7 +37,7 @@ export function extractUserId(
 }
 
 export async function loadMemory(userId: string): Promise<LoadedMemory> {
-  const [doc, auth, threads] = await Promise.all([
+  const [doc, auth] = await Promise.all([
     getMemoryDoc(userId).catch(() => ({})),
     getAuthInfo(userId).catch(() => ({
       name: null,
@@ -47,9 +45,8 @@ export async function loadMemory(userId: string): Promise<LoadedMemory> {
       image: null,
       socials: [] as Array<{ provider: string }>,
     })),
-    getRecentThreadSummaries(userId, MEMORY_THREAD_RECALL_LIMIT).catch(() => []),
   ]);
-  return { memory: mergeMemory(doc, auth), threads };
+  return { memory: mergeMemory(doc, auth) };
 }
 
 export async function getCachedMemory(userId: string): Promise<LoadedMemory | null> {

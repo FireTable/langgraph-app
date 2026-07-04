@@ -68,7 +68,7 @@ export async function getRecentThreadSummaries(
 ): Promise<Array<{ key: string; value: SummaryEntry }>> {
   const all = await getAllUserSummaries(userId);
   return [...all]
-    .sort((a, b) => b.value.updatedAt.localeCompare(a.value.updatedAt))
+    .sort((a, b) => b.value.createdAt.localeCompare(a.value.createdAt))
     .slice(0, limit);
 }
 
@@ -90,12 +90,18 @@ export async function deleteThreadSummaries(userId: string, threadId: string): P
   return toDelete.length;
 }
 
+// ponytail: writeSummary persists the SummaryEntry bookkeeping row for
+// a single in-thread compression pass. The actual compressed text is
+// also injected as a HumanMessage into the thread's `messages` channel
+// by threadSummarizeNode — the doc here is for the Memory tab list and
+// future rehydration (the messageIds array maps Q&A mini-ids back to
+// their original BaseMessage.id values).
 export async function writeSummary(
   userId: string,
-  doc: Omit<SummaryEntry, "updatedAt"> & { updatedAt?: string },
+  doc: Omit<SummaryEntry, "createdAt"> & { createdAt?: string },
 ): Promise<SummaryEntry> {
-  const updatedAt = doc.updatedAt ?? new Date().toISOString();
-  const full = { ...doc, updatedAt } as SummaryEntry;
+  const createdAt = doc.createdAt ?? new Date().toISOString();
+  const full = { ...doc, createdAt } as SummaryEntry;
   await store!.put(
     threadsNs(userId),
     `${doc.threadId}:${doc.sequence}`,

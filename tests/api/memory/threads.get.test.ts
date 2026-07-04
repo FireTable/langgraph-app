@@ -25,7 +25,7 @@ describe("GET /api/memory/threads", () => {
     vi.resetModules();
   });
 
-  it("groups summaries by threadId, sorts each group by sequence desc + group by updatedAt desc", async () => {
+  it("groups summaries by threadId, sorts each group by sequence desc + group by createdAt desc", async () => {
     mockGetAllUserSummaries.mockResolvedValueOnce([
       {
         key: "t1:2",
@@ -60,15 +60,15 @@ describe("GET /api/memory/threads", () => {
   });
 });
 
-function summary(threadId: string, sequence: number, updatedAt: string) {
+function summary(threadId: string, sequence: number, createdAt: string) {
   return {
     threadId,
     sequence,
-    name: "n",
-    description: "d",
     startMessageIndex: 0,
     endMessageIndex: 0,
     messageCount: 1,
-    updatedAt,
+    messageIds: ["m0"],
+    summary: "#1 Q: ... A: ...",
+    createdAt,
   };
 }

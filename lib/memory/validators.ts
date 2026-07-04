@@ -35,16 +35,39 @@ export const SaveMemoryInputSchema = z.object({
   patches: z.array(MemoryPatchSchema).min(0).max(50),
 });
 
+// ponytail: SummaryEntry = metadata for ONE in-thread compression pass.
+//   - threadId + sequence        = identity / ordering inside the thread.
+//   - startMessageIndex..endMessageIndex + messageCount = closed-interval
+//     range of human-only turn indices the summary covers.
+//   - messageIds                 = parallel array of the BaseMessage.id
+//     values the compression replaced; required so a future tool can
+//     rehydrate the original messages by id (or re-summarize differently
+//     without re-tokenizing). Program-resolved (the LLM never sees it).
+//   - summary                    = the formatted Q&A text the LLM
+//     produced (e.g. "#1-#4 Q: … A: …\n#5-#6 Q: … A: …"). This is what
+//     the user sees in the Memory tab and what the model-side
+//     conversation sees as an inserted message (NOT this doc — the
+//     summary lives in the messages channel; the store doc is bookkeeping
+//     for the Memory tab list + future rehydration).
+//   - createdAt                  = when this batch was generated.
+//     Renamed from updatedAt because summaries are immutable once written.
+const summaryMessageCount = z.number().int().positive();
+const summaryMinIndex = z.number().int().nonnegative();
+
 export const SummaryEntrySchema = z
   .object({
     threadId: z.string().min(1),
     sequence: z.number().int().positive(),
-    name: z.string().min(1),
-    description: z.string().min(1),
-    startMessageIndex: z.number().int().nonnegative(),
-    endMessageIndex: z.number().int().nonnegative(),
-    messageCount: z.number().int().positive(),
-    updatedAt: z.string().datetime(),
+    startMessageIndex: summaryMinIndex,
+    endMessageIndex: summaryMinIndex,
+    messageCount: summaryMessageCount,
+    messageIds: z.array(z.string().min(1)).nonempty(),
+    summary: z.string().min(1),
+    // ponytail: zod v4 moved format shorthands to top-level helpers;
+    // z.string().datetime() is deprecated. z.iso.datetime() validates
+    // an ISO-8601 datetime (the same shape new Date().toISOString()
+    // emits) without the deprecation warning.
+    createdAt: z.iso.datetime(),
   })
   // ponytail: closed-interval invariant — messageCount MUST equal the
   // inclusive count, not the half-open count. The schema rejects drift
@@ -53,6 +76,13 @@ export const SummaryEntrySchema = z
   .refine(
     (s) => s.messageCount === s.endMessageIndex - s.startMessageIndex + 1,
     "messageCount must equal endMessageIndex - startMessageIndex + 1",
+  )
+  // ponytail: messageIds length MUST equal messageCount — the ids array
+  // is positional over the closed human-only interval, so off-by-one
+  // indicates the program-side mapping is wrong.
+  .refine(
+    (s) => s.messageIds.length === s.messageCount,
+    "messageIds length must equal messageCount",
   );
 
 export const MemoryResponseSchema = z.object({

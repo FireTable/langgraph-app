@@ -66,6 +66,15 @@ function stringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+// ponytail: ISO-8601 → human timestamp for the Memory tab's per-summary
+// header. Kept inline (not in `lib/memory/format.ts`) so the settings
+// view has no module coupling — the format is only used here.
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
+}
+
 // ponytail: structured values (object/array) render as a pretty-printed
 // JSON block — same shape the user already sees in the save_memory
 // card's CHANGED row, so the two surfaces read consistently. Primitive
@@ -328,19 +337,19 @@ export function MemoryView({ className }: { className?: string }) {
                           Delete all
                         </Button>
                       </div>
-                      <ul className="space-y-1 text-sm">
+                      <ul className="space-y-2.5 text-sm">
                         {group.summaries.map((s) => (
-                          <li
-                            key={`${s.threadId}:${s.sequence}`}
-                            className="flex justify-between gap-3"
-                          >
-                            <span>
-                              <span className="text-muted-foreground text-xs">#{s.sequence}</span>{" "}
-                              {s.name}
-                            </span>
-                            <span className="text-muted-foreground text-xs truncate">
-                              {s.description}
-                            </span>
+                          <li key={`${s.threadId}:${s.sequence}`} className="space-y-1">
+                            <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                              <span>#{s.sequence}</span>
+                              <span>
+                                messages [{s.startMessageIndex}..{s.endMessageIndex}]
+                              </span>
+                              <time dateTime={s.createdAt}>{formatTimestamp(s.createdAt)}</time>
+                            </div>
+                            <pre className="text-foreground whitespace-pre-wrap text-sm">
+                              {s.summary}
+                            </pre>
                           </li>
                         ))}
                       </ul>

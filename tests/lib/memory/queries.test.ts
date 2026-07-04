@@ -178,21 +178,42 @@ describe("lib/memory/queries", () => {
   });
 
   describe("writeSummary", () => {
-    it("stores under [userId,threads] with composite key + ISO updatedAt", async () => {
+    it("stores under [userId,threads] with composite key + ISO createdAt", async () => {
       mockStore.put.mockResolvedValueOnce(undefined);
       const written = await writeSummary(USER, {
         threadId: "t1",
         sequence: 1,
-        name: "intro",
-        description: "met",
         startMessageIndex: 0,
         endMessageIndex: 6,
         messageCount: 7,
-      } as never);
+        messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
+        summary: "#1-#4 Q: ... A: ...",
+      });
       expect(written.threadId).toBe("t1");
       expect(written.sequence).toBe(1);
-      expect(typeof (written as { updatedAt: string }).updatedAt).toBe("string");
+      expect(typeof written.createdAt).toBe("string");
       expect(mockStore.put).toHaveBeenCalledWith([USER, "threads"], "t1:1", written);
+    });
+
+    it("rejects summaries whose messageIds length drifts from messageCount", async () => {
+      // ponytail: the schema's `messageIds.length === messageCount` refine
+      // catches the bug at write-time so the node can't persist a row
+      // that's out of sync with the closed interval. writeSummary itself
+      // trusts its caller — the schema gate happens in callers that
+      // import SummaryEntrySchema. This test pins the schema invariant
+      // here too so a future reader sees the rule.
+      const { SummaryEntrySchema } = await import("@/lib/memory/validators");
+      const r = SummaryEntrySchema.safeParse({
+        threadId: "t1",
+        sequence: 1,
+        startMessageIndex: 0,
+        endMessageIndex: 2,
+        messageCount: 3,
+        messageIds: ["m0", "m1"],
+        summary: "#1-#3 Q: ... A: ...",
+        createdAt: "2026-07-02T00:00:00.000Z",
+      });
+      expect(r.success).toBe(false);
     });
   });
 
@@ -205,12 +226,12 @@ describe("lib/memory/queries", () => {
           value: {
             threadId: "t1",
             sequence: 1,
-            name: "intro",
-            description: "met",
             startMessageIndex: 0,
             endMessageIndex: 6,
             messageCount: 7,
-            updatedAt: "2026-07-02T00:00:00.000Z",
+            messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
+            summary: "#1-#4 Q: ... A: ...",
+            createdAt: "2026-07-02T00:00:00.000Z",
           },
           createdAt: "2026-07-02T00:00:00.000Z",
           updatedAt: "2026-07-02T00:00:00.000Z",
@@ -233,12 +254,12 @@ describe("lib/memory/queries", () => {
           value: {
             threadId: "t2",
             sequence: 1,
-            name: "followup",
-            description: "x",
             startMessageIndex: 0,
             endMessageIndex: 0,
             messageCount: 1,
-            updatedAt: "2026-07-02T00:00:00.000Z",
+            messageIds: ["m0"],
+            summary: "#1 Q: ... A: ...",
+            createdAt: "2026-07-02T00:00:00.000Z",
           },
         },
       ]);
@@ -249,7 +270,7 @@ describe("lib/memory/queries", () => {
   });
 
   describe("getRecentThreadSummaries", () => {
-    it("orders by updatedAt desc and returns top-K", async () => {
+    it("orders by createdAt desc and returns top-K", async () => {
       mockStore.search.mockResolvedValueOnce([
         { key: "t1:1", value: makeSummary("t1", 1, "2026-07-01T00:00:00.000Z") },
         { key: "t2:1", value: makeSummary("t2", 1, "2026-07-02T00:00:00.000Z") },
@@ -285,16 +306,16 @@ describe("lib/memory/queries", () => {
   });
 });
 
-function makeSummary(threadId: string, sequence: number, updatedAt: string) {
+function makeSummary(threadId: string, sequence: number, createdAt: string) {
   return {
     threadId,
     sequence,
-    name: "n",
-    description: "d",
     startMessageIndex: 0,
     endMessageIndex: 0,
     messageCount: 1,
-    updatedAt,
+    messageIds: ["m0"],
+    summary: "#1 Q: ... A: ...",
+    createdAt,
   };
 }
 

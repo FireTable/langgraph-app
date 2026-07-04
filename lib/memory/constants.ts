@@ -5,9 +5,19 @@
 // the env var is missing / empty / non-numeric / out of valid range.
 
 const DEFAULTS = {
+  // ponytail: BATCH_SIZE = how many human turns ONE LLM summarize call
+  // covers. KEEP_RECENT = how many recent human turns we leave alone
+  // (never summarized). THRESHOLD is kept as a safety floor — if
+  // userMessageCount falls below it, the gateway skips the summarize
+  // call entirely (avoids edge-case work for tiny threads).
   threshold: 10,
   keepRecent: 4,
+  batchSize: 6,
   profileMaxBytes: 8192,
+  // ponytail: RECALL_LIMIT caps the cross-thread list shown in the
+  // Memory tab UI — it no longer feeds the model prompt (that path
+  // was retired: single-thread summaries live inline in the
+  // messages channel; cross-thread history was leaky and is gone).
   threadRecallLimit: 3,
 } as const;
 
@@ -33,6 +43,17 @@ export const MEMORY_THREAD_SUMMARY_THRESHOLD = positiveInt(
 export const MEMORY_THREAD_SUMMARY_KEEP_RECENT = nonNegativeInt(
   process.env.MEMORY_THREAD_SUMMARY_KEEP_RECENT,
   DEFAULTS.keepRecent,
+);
+
+// ponytail: BATCH_SIZE is the ONLY knob the user controls here.
+// Larger → fewer LLM calls but more context per call (and the per-
+// call Q&A summary may need truncation). Smaller → more LLM calls
+// but bounded per-call work. The router compares userMessageCount to
+// KEEP_RECENT + BATCH_SIZE before entering the summarize node, so
+// values < 1 collapse to a no-op.
+export const MEMORY_THREAD_SUMMARY_BATCH_SIZE = positiveInt(
+  process.env.MEMORY_THREAD_SUMMARY_BATCH_SIZE,
+  DEFAULTS.batchSize,
 );
 
 export const MEMORY_PROFILE_MAX_BYTES = positiveInt(

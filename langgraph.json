@@ -2,7 +2,8 @@
   "node_version": "22",
   "dependencies": ["."],
   "graphs": {
-    "agent": "./backend/agent.ts:graph"
+    "agent": "./backend/agent.ts:graph",
+    "background_agent": "./backend/background-agent.ts:graph"
   },
   "env": ".env.local"
 }

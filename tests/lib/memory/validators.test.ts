@@ -105,7 +105,7 @@ describe("lib/memory/validators", () => {
   });
 
   describe("MemoryResponseSchema", () => {
-    it("accepts a full payload", () => {
+    it("accepts a full payload (memory + threads)", () => {
       const r = MemoryResponseSchema.safeParse({
         memory: { role: "frontend", name: "Yongzhuo" },
         threads: [
@@ -114,12 +114,12 @@ describe("lib/memory/validators", () => {
             value: {
               threadId: "t1",
               sequence: 1,
-              name: "intro",
-              description: "met",
               startMessageIndex: 0,
               endMessageIndex: 6,
               messageCount: 7,
-              updatedAt: "2026-07-02T00:00:00.000Z",
+              messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
+              summary: "#1-#4 Q: ... A: ...",
+              createdAt: "2026-07-02T00:00:00.000Z",
             },
           },
         ],
@@ -146,12 +146,12 @@ describe("lib/memory/validators", () => {
               {
                 threadId: "t1",
                 sequence: 1,
-                name: "intro",
-                description: "met",
                 startMessageIndex: 0,
                 endMessageIndex: 6,
                 messageCount: 7,
-                updatedAt: "2026-07-02T00:00:00.000Z",
+                messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
+                summary: "#1-#7 Q: ... A: ...",
+                createdAt: "2026-07-02T00:00:00.000Z",
               },
             ],
           },
@@ -166,12 +166,12 @@ describe("lib/memory/validators", () => {
       const r = SummaryEntrySchema.safeParse({
         threadId: "t1",
         sequence: 1,
-        name: "intro",
-        description: "met",
         startMessageIndex: 0,
         endMessageIndex: 6,
         messageCount: 7,
-        updatedAt: "2026-07-02T00:00:00.000Z",
+        messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
+        summary: "#1-#4 Q: ... A: ...",
+        createdAt: "2026-07-02T00:00:00.000Z",
       });
       expect(r.success).toBe(true);
     });
@@ -180,12 +180,54 @@ describe("lib/memory/validators", () => {
       const r = SummaryEntrySchema.safeParse({
         threadId: "t1",
         sequence: 1,
-        name: "intro",
-        description: "met",
         startMessageIndex: 0,
         endMessageIndex: 6,
         messageCount: 5,
-        updatedAt: "2026-07-02T00:00:00.000Z",
+        messageIds: ["m0"],
+        summary: "#1-#4 Q: ... A: ...",
+        createdAt: "2026-07-02T00:00:00.000Z",
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("requires summary (no name/description in the new schema)", () => {
+      const r = SummaryEntrySchema.safeParse({
+        threadId: "t1",
+        sequence: 1,
+        startMessageIndex: 0,
+        endMessageIndex: 0,
+        messageCount: 1,
+        messageIds: ["m0"],
+        // summary missing
+        createdAt: "2026-07-02T00:00:00.000Z",
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("requires non-empty messageIds array (one per covered human-only turn)", () => {
+      const r = SummaryEntrySchema.safeParse({
+        threadId: "t1",
+        sequence: 1,
+        startMessageIndex: 0,
+        endMessageIndex: 0,
+        messageCount: 1,
+        messageIds: [],
+        summary: "#1 Q: ... A: ...",
+        createdAt: "2026-07-02T00:00:00.000Z",
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("requires messageIds.length === messageCount", () => {
+      const r = SummaryEntrySchema.safeParse({
+        threadId: "t1",
+        sequence: 1,
+        startMessageIndex: 0,
+        endMessageIndex: 2,
+        messageCount: 3,
+        messageIds: ["m0", "m1"], // one short
+        summary: "#1-#3 Q: ... A: ...",
+        createdAt: "2026-07-02T00:00:00.000Z",
       });
       expect(r.success).toBe(false);
     });

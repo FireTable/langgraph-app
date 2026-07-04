@@ -1,15 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SystemMessage } from "@langchain/core/messages";
 
-const { mockGetMemoryDoc, mockGetRecentThreadSummaries, mockGetAuthInfo } = vi.hoisted(() => ({
+const { mockGetMemoryDoc, mockGetAuthInfo } = vi.hoisted(() => ({
   mockGetMemoryDoc: vi.fn(),
-  mockGetRecentThreadSummaries: vi.fn(),
   mockGetAuthInfo: vi.fn(),
 }));
 
 vi.mock("@/lib/memory/queries", () => ({
   getMemoryDoc: mockGetMemoryDoc,
-  getRecentThreadSummaries: mockGetRecentThreadSummaries,
   getAuthInfo: mockGetAuthInfo,
 }));
 
@@ -30,7 +28,6 @@ const emptyAuth = {
 
 beforeEach(() => {
   mockGetMemoryDoc.mockReset();
-  mockGetRecentThreadSummaries.mockReset();
   mockGetAuthInfo.mockReset();
   // ponytail: the LRU cache is module-scoped — drain every test userId
   // before each test so cross-test pollution doesn't make hits look
@@ -69,7 +66,12 @@ describe("extractUserId", () => {
 });
 
 describe("loadMemory", () => {
-  it("fetches memory + auth + threads in parallel and overlays auth", async () => {
+  it("fetches memory + auth in parallel and overlays auth (no threads fetch)", async () => {
+    // ponytail: loadMemory used to call getRecentThreadSummaries too,
+    // but cross-thread summary injection into the system prompt was
+    // retired — that path leaked threads into the model's context and
+    // is replaced by inline messages-channel summaries. Same fetch cost
+    // as before minus one Postgres scan, so memory loading stays cheap.
     mockGetMemoryDoc.mockResolvedValueOnce({ role: "backend" });
     mockGetAuthInfo.mockResolvedValueOnce({
       name: "Lin",
@@ -77,22 +79,20 @@ describe("loadMemory", () => {
       image: null,
       socials: [{ provider: "github" }],
     });
-    mockGetRecentThreadSummaries.mockResolvedValueOnce([
-      { key: "t1:1", value: { threadId: "t1", sequence: 1 } as never },
-    ]);
 
     const payload = await loadMemory("u1");
 
     expect(mockGetMemoryDoc).toHaveBeenCalledWith("u1");
     expect(mockGetAuthInfo).toHaveBeenCalledWith("u1");
-    expect(mockGetRecentThreadSummaries).toHaveBeenCalledWith("u1", expect.any(Number));
     expect(payload.memory).toEqual({
       role: "backend",
       name: "Lin",
       email: "lin@x.com",
       socials: [{ provider: "github" }],
     });
-    expect(payload.threads).toHaveLength(1);
+    // ponytail: payload no longer carries `threads` — that field was
+    // removed when cross-thread injection was retired.
+    expect(payload).not.toHaveProperty("threads");
   });
 
   it("user-saved fields win over auth overlay (name/email/image/socials)", async () => {
@@ -103,7 +103,6 @@ describe("loadMemory", () => {
       image: null,
       socials: [{ provider: "github" }],
     });
-    mockGetRecentThreadSummaries.mockResolvedValueOnce([]);
 
     const payload = await loadMemory("u1");
 
@@ -119,7 +118,6 @@ describe("loadMemory", () => {
   it("degrades to empty when memory fetch rejects", async () => {
     mockGetMemoryDoc.mockRejectedValueOnce(new Error("db down"));
     mockGetAuthInfo.mockResolvedValueOnce(emptyAuth);
-    mockGetRecentThreadSummaries.mockResolvedValueOnce([]);
 
     const payload = await loadMemory("u1");
 
@@ -130,7 +128,6 @@ describe("loadMemory", () => {
   it("degrades to empty when auth fetch rejects", async () => {
     mockGetMemoryDoc.mockResolvedValueOnce({ role: "backend" });
     mockGetAuthInfo.mockRejectedValueOnce(new Error("db down"));
-    mockGetRecentThreadSummaries.mockResolvedValueOnce([]);
 
     const payload = await loadMemory("u1");
 
@@ -143,7 +140,6 @@ describe("getCachedMemory", () => {
   it("fetches and caches on miss", async () => {
     mockGetMemoryDoc.mockResolvedValueOnce({ role: "backend" });
     mockGetAuthInfo.mockResolvedValueOnce(emptyAuth);
-    mockGetRecentThreadSummaries.mockResolvedValueOnce([]);
 
     const first = await getCachedMemory("u1");
     const second = await getCachedMemory("u1");
@@ -164,7 +160,6 @@ describe("invalidateMemory", () => {
   it("forces the next read to refetch", async () => {
     mockGetMemoryDoc.mockResolvedValueOnce({ v: 1 });
     mockGetAuthInfo.mockResolvedValue(emptyAuth);
-    mockGetRecentThreadSummaries.mockResolvedValue([]);
 
     const before = await getCachedMemory("u1");
     expect(before?.memory.v).toBe(1);
@@ -189,7 +184,6 @@ describe("buildSystemMessageWithMemory", () => {
   it("merges memory block into the system message when userId is present", async () => {
     mockGetMemoryDoc.mockResolvedValueOnce({ role: "backend" });
     mockGetAuthInfo.mockResolvedValueOnce(emptyAuth);
-    mockGetRecentThreadSummaries.mockResolvedValueOnce([]);
 
     const msg = await buildSystemMessageWithMemory("You are helpful.", {
       configurable: { userId: "u1" },
@@ -199,5 +193,22 @@ describe("buildSystemMessageWithMemory", () => {
     expect(text).toContain("You are helpful.");
     expect(text).toContain("<memory>");
     expect(text).toContain("backend");
+  });
+
+  it("does NOT render a <threads> block (cross-thread injection retired)", async () => {
+    // ponytail: the previous shape injected cross-thread summaries into
+    // the system prompt via {{#threadsJson}}<threads>...</threads>.
+    // That was confusing and leaky — thread summaries now live inline
+    // in the messages channel of each thread. The Memory tab UI still
+    // shows past-thread summaries via /api/memory/threads.
+    mockGetMemoryDoc.mockResolvedValueOnce({ role: "backend" });
+    mockGetAuthInfo.mockResolvedValueOnce(emptyAuth);
+
+    const msg = await buildSystemMessageWithMemory("You are helpful.", {
+      configurable: { userId: "u1" },
+    });
+    const text = String(msg.content);
+    expect(text).not.toContain("<threads>");
+    expect(text).not.toContain("</threads>");
   });
 });

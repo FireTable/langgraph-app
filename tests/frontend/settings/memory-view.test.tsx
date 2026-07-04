@@ -46,12 +46,12 @@ const PROFILE_WITH_THREADS = {
       value: {
         threadId: "t1",
         sequence: 1,
-        name: "intro",
-        description: "met",
         startMessageIndex: 0,
         endMessageIndex: 6,
         messageCount: 7,
-        updatedAt: "2026-07-02T00:00:00.000Z",
+        messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
+        summary: "#1-#4 Q: intro question A: met answer",
+        createdAt: "2026-07-02T00:00:00.000Z",
       },
     },
   ],
@@ -104,7 +104,9 @@ describe("MemoryView", () => {
   it("renders Thread Summaries grouped by threadId (FR-018)", async () => {
     render(<MemoryView />);
     // Wait for the threads section to render before asserting on it.
-    expect(await screen.findByText(/intro/)).toBeInTheDocument();
+    // The Memory tab now renders the `summary` text inline per row
+    // (was `name` + `description` in the old schema).
+    expect(await screen.findByText(/intro question/)).toBeInTheDocument();
     expect(screen.getAllByText("t1").length).toBeGreaterThan(0);
   });
 
@@ -157,7 +159,7 @@ describe("MemoryView", () => {
 
   it("calls DELETE /api/memory/threads/:threadId only after the dialog is confirmed", async () => {
     render(<MemoryView />);
-    await screen.findByText(/intro/);
+    await screen.findByText(/intro question/);
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,

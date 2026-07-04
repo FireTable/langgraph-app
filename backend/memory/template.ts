@@ -1,42 +1,34 @@
 import { PromptTemplate } from "@langchain/core/prompts";
 import { SystemMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import type { SummaryEntry } from "@/lib/memory/validators";
 import type { MemoryDoc } from "@/lib/memory/queries";
 import { extractUserId, getCachedMemory, type LoadedMemory } from "@/backend/memory/recall";
 import { MEMORY_AUGMENTED_PROMPT_TEMPLATE } from "@/backend/prompt/system";
 
-// ponytail: the schema for what we inject into every model call. memory
-// is the merged user-saved doc + live auth overlay (see mergeMemory in
-// recall.ts); threads is the top-K recent summaries the user has
-// touched in past sessions.
-export type MemoryPayload = LoadedMemory & {
-  memory: MemoryDoc;
-  threads: Array<{ key: string; value: SummaryEntry }>;
-};
+// ponytail: the system prompt is now memory-only — the cross-thread
+// threadsJson block was removed (see MEMORY_AUGMENTED_PROMPT_TEMPLATE).
+// Thread summaries live inline in the messages channel for the current
+// thread (see threadSummarizeNode), so the model reads them in
+// conversation order instead of as an out-of-band "previous chats"
+// block that mixed contexts across threads.
+export type MemoryPayload = Pick<LoadedMemory, "memory"> & { memory: MemoryDoc };
 
 const promptTemplate = new PromptTemplate({
   template: MEMORY_AUGMENTED_PROMPT_TEMPLATE,
   templateFormat: "mustache",
-  inputVariables: ["base", "memoryJson", "threadsJson"],
+  inputVariables: ["base", "memoryJson"],
 });
-
-function isEmptyPayload(p: MemoryPayload): boolean {
-  return Object.keys(p.memory).length === 0 && p.threads.length === 0;
-}
 
 export async function createSystemPromptWithMemoryTemplate(
   base: string,
   memory: MemoryPayload | null,
 ): Promise<SystemMessage> {
-  const effective = memory && !isEmptyPayload(memory) ? memory : null;
+  const effective = memory && Object.keys(memory.memory).length > 0 ? memory : null;
   const memoryJson = effective ? JSON.stringify(effective.memory, null, 2) : "";
-  const threadsJson =
-    effective && effective.threads.length > 0 ? JSON.stringify(effective.threads, null, 2) : "";
   // ponytail: mustache keeps the `\n\n` after `{{base}}` even when the
   // section is empty, so the no-memory path would render an extra blank
   // line. trimEnd strips it.
-  const content = (await promptTemplate.format({ base, memoryJson, threadsJson })).trimEnd();
+  const content = (await promptTemplate.format({ base, memoryJson })).trimEnd();
 
   return new SystemMessage(content);
 }
@@ -53,5 +45,6 @@ export async function buildSystemMessageWithMemory(
   const userId = extractUserId(config);
   if (!userId) return new SystemMessage(basePrompt);
   const loaded = await getCachedMemory(userId);
-  return createSystemPromptWithMemoryTemplate(basePrompt, loaded);
+  if (!loaded) return new SystemMessage(basePrompt);
+  return createSystemPromptWithMemoryTemplate(basePrompt, { memory: loaded.memory });
 }

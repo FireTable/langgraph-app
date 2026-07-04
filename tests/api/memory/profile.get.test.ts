@@ -41,7 +41,19 @@ describe("GET /api/memory/profile", () => {
       socials: [],
     });
     mockGetRecentThreadSummaries.mockResolvedValue([
-      { key: "t1:1", value: { threadId: "t1", sequence: 1 } as never },
+      {
+        key: "t1:1",
+        value: {
+          threadId: "t1",
+          sequence: 1,
+          startMessageIndex: 0,
+          endMessageIndex: 6,
+          messageCount: 7,
+          messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
+          summary: "#1-#4 Q: ... A: ...",
+          createdAt: "2026-07-02T00:00:00.000Z",
+        },
+      },
     ]);
   });
 

@@ -10,7 +10,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
   });
 
   it("appends a <memory> block when memory is provided", async () => {
-    const payload = { memory: { role: "backend" }, threads: [] };
+    const payload = { memory: { role: "backend" } };
     const msg = await createSystemPromptWithMemoryTemplate("You are helpful.", payload);
     const text = String(msg.content);
     expect(text).toContain("You are helpful.");
@@ -19,16 +19,22 @@ describe("createSystemPromptWithMemoryTemplate", () => {
     expect(text).toContain("</memory>");
   });
 
-  it("appends a <threads> block when summaries are present", async () => {
-    const payload = {
+  it("does NOT render a <threads> block (cross-thread injection retired)", async () => {
+    // ponytail: the cross-thread threadsJson block was removed from the
+    // MEMORY_AUGMENTED_PROMPT_TEMPLATE — thread summaries now live inline
+    // in the messages channel of each thread. The {{threadsJson}} field
+    // is gone from the template, so even if a caller passed one it would
+    // be a no-op. The template-level test is the simplest place to pin
+    // this invariant so a future copy-paster can't reintroduce the leak.
+    const msg = await createSystemPromptWithMemoryTemplate("base", {
       memory: { role: "backend" },
-      threads: [{ key: "t1:1", value: { threadId: "t1", sequence: 1 } as never }],
-    };
-    const msg = await createSystemPromptWithMemoryTemplate("base", payload);
+    });
     const text = String(msg.content);
-    expect(text).toContain("<threads>");
-    expect(text).toContain("</threads>");
-    expect(text).toContain("t1:1");
+    expect(text).not.toContain("<threads>");
+    expect(text).not.toContain("</threads>");
+    // ponytail: the template's input variables no longer include
+    // threadsJson — passing it is just ignored.
+    expect(text).not.toContain("threadsJson");
   });
 
   it("does not include a <memory> block when memory is null", async () => {
@@ -36,18 +42,15 @@ describe("createSystemPromptWithMemoryTemplate", () => {
     expect(String(msg.content)).not.toContain("<memory>");
   });
 
-  it("omits both blocks when memory is an empty payload", async () => {
-    // ponytail: an empty payload (no memory, no threads) renders as "{}"
-    // — mustache's `{{#var}}` section treats non-empty strings as
-    // truthy, so we'd accidentally render empty tags. The template
-    // layer normalizes empty-payload to null so both sections are
-    // skipped entirely.
-    const msg = await createSystemPromptWithMemoryTemplate("base", {
-      memory: {},
-      threads: [],
+  it("omits both blocks when memory is empty", () => {
+    // ponytail: an empty memory ({}) renders as "{}" — mustache's
+    // `{{#var}}` section treats non-empty strings as truthy, so we'd
+    // accidentally render empty tags. The template layer short-circuits
+    // empty-memory to null so the section is skipped entirely.
+    return createSystemPromptWithMemoryTemplate("base", { memory: {} }).then((msg) => {
+      expect(String(msg.content)).not.toContain("<memory>");
+      expect(String(msg.content)).not.toContain("<threads>");
     });
-    expect(String(msg.content)).not.toContain("<memory>");
-    expect(String(msg.content)).not.toContain("<threads>");
   });
 
   it("preserves base prompt verbatim including newlines and special chars", async () => {
@@ -57,7 +60,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
   });
 
   it("serializes memory as pretty-printed JSON for readability", async () => {
-    const payload = { memory: { a: 1, b: 2 }, threads: [] };
+    const payload = { memory: { a: 1, b: 2 } };
     const msg = await createSystemPromptWithMemoryTemplate("base", payload);
     const text = String(msg.content);
     // pretty-printed = indented, multi-line JSON
@@ -66,7 +69,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
   });
 
   it("renders <save_memory_rule> inside <memory> when memory is present", async () => {
-    const payload = { memory: { role: "backend" }, threads: [] };
+    const payload = { memory: { role: "backend" } };
     const msg = await createSystemPromptWithMemoryTemplate("base", payload);
     const text = String(msg.content);
     expect(text).toContain("<save_memory_rule>");
@@ -81,7 +84,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
   });
 
   it("wraps {{memoryJson}} in <memory_json> tag inside <memory>", async () => {
-    const payload = { memory: { role: "backend" }, threads: [] };
+    const payload = { memory: { role: "backend" } };
     const msg = await createSystemPromptWithMemoryTemplate("base", payload);
     const text = String(msg.content);
     // <memory_json> opens right after <memory>, closes before <save_memory_rule>
@@ -104,7 +107,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
   });
 
   it("save_memory_rule points at the tool description instead of re-stating rules", async () => {
-    const payload = { memory: { role: "backend" }, threads: [] };
+    const payload = { memory: { role: "backend" } };
     const msg = await createSystemPromptWithMemoryTemplate("base", payload);
     const text = String(msg.content);
     // ponytail: the system prompt is an index, not a re-statement —
@@ -120,10 +123,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
   it("omits <save_memory_rule> when payload is empty", async () => {
     // ponytail: empty payload is normalized to null at the template
     // layer, so neither <memory> nor the rule render.
-    const msg = await createSystemPromptWithMemoryTemplate("base", {
-      memory: {},
-      threads: [],
-    });
+    const msg = await createSystemPromptWithMemoryTemplate("base", { memory: {} });
     expect(String(msg.content)).not.toContain("<save_memory_rule>");
   });
 });

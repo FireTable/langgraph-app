@@ -2,15 +2,9 @@ import { START, END, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { CapturingHandler } from "@/backend/observability/callback-collector";
-import { bulkInsertSpans } from "@/lib/observability/queries";
+import { scheduleBackgroundNode } from "@/backend/node/schedule-background-node";
+import { capturingHandler } from "@/backend/callbacks";
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
-import { afterAgentNode } from "@/backend/node/after-agent-node";
-import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
-import {
-  MEMORY_THREAD_SUMMARY_KEEP_RECENT,
-  MEMORY_THREAD_SUMMARY_THRESHOLD,
-} from "@/lib/memory/constants";
 import { weatherAgent } from "@/backend/agent/weather-agent";
 import { chatAgent } from "@/backend/agent/chat-agent";
 import { cryptoAgent } from "@/backend/agent/crypto-agent";
@@ -80,26 +74,34 @@ function buildSubgraph() {
     new StateGraph(RouterAgentState)
       .addNode("routerAgent", routerAgentNode)
       .addNode("chatAgent", chatAgent)
-      .addNode("afterAgent", afterAgentNode)
-      .addNode("renameThreadAgent", renameThreadAgentNode)
-      .addNode("threadSummarize", threadSummarizeNode)
       .addNode("weatherAgent", weatherAgent)
       .addNode("cryptoAgent", cryptoAgent)
       .addNode("codeAgent", codeAgent)
-      // Sequential: START → routerAgent → (weatherAgent | chatAgent | cryptoAgent | codeAgent) → afterAgent → threadSummarize → END.
+      .addNode("scheduleBackground", scheduleBackgroundNode)
+      .addNode("renameThreadAgent", renameThreadAgentNode)
+      // Topology:
+      //   START ──▶ routerAgent ──▶ (sub-agent) ──▶ scheduleBackground ──▶ END
+      //   START ─────────────────────────────────▶ renameThreadAgent (parallel, leaf)
+      //
       // ask_location's picker card is owned by the weather subgraph
       // (see backend/agent/weather-agent.ts + components/tool-ui/ask-location).
       // ask_crypto_intent's picker card is owned by the crypto subgraph
       // (see backend/agent/crypto-agent.ts + components/tool-ui/crypto).
       // write_code's editor card is owned by the code subgraph
       // (see backend/agent/code-agent.ts + components/tool-ui/code).
-      // renameThreadAgent is wired off START so its DB side-effect runs in
-      // parallel without touching the messages channel. The conditional
-      // edge from START routes around the node when threads.title is
-      // already set (re-invoke / interrupt-resume / regenerate), so the
-      // LLM title-generation only runs on the first turn of a new thread.
-      // threadSummarize is a pure side-effect node (no messages channel
-      // writes), self-skips when userMessageCount <= THRESHOLD.
+      //
+      // renameThreadAgent runs as a parallel leaf off the main response
+      // path (END). The graph invocation only returns after ALL active
+      // branches complete, but the chat stream ends on the END branch,
+      // so the user sees no rename latency.
+      //
+      // scheduleBackground is the chat's last node before END. It fires
+      // the `background_agent` graph (registered separately in
+      // langgraph.json) and returns `{}` immediately — that graph does
+      // `last_message_at` touch + threadSummarizeNode work on its own
+      // thread. See backend/node/schedule-background-node.ts for the
+      // fire-and-forget pattern; see backend/background-agent.ts for
+      // what the background graph runs.
       .addEdge(START, "routerAgent")
       .addConditionalEdges("routerAgent", routeToSubAgent, [
         "weatherAgent",
@@ -107,22 +109,11 @@ function buildSubgraph() {
         "cryptoAgent",
         "codeAgent",
       ])
-      .addEdge("chatAgent", "afterAgent")
-      .addEdge("weatherAgent", "afterAgent")
-      .addEdge("cryptoAgent", "afterAgent")
-      .addEdge("codeAgent", "afterAgent")
-      // ponytail: only enter threadSummarize when there's potentially a
-      // window to summarize. shouldSummarizeRouter checks the cheap
-      // necessary condition (userMessageCount > THRESHOLD) off the
-      // messages channel alone — the close-window check (endIdx <
-      // startIdx) still runs inside the node, so this avoids cluttering
-      // observability with a threadSummarize span on every turn while
-      // keeping the edge budget identical.
-      .addConditionalEdges("afterAgent", shouldSummarizeRouter, {
-        threadSummarize: "threadSummarize",
-        __end__: END,
-      })
-      .addEdge("threadSummarize", END)
+      .addEdge("chatAgent", "scheduleBackground")
+      .addEdge("weatherAgent", "scheduleBackground")
+      .addEdge("cryptoAgent", "scheduleBackground")
+      .addEdge("codeAgent", "scheduleBackground")
+      .addEdge("scheduleBackground", END)
       .addConditionalEdges(START, shouldRenameRouter, {
         renameThreadAgent: "renameThreadAgent",
         __end__: END,
@@ -172,35 +163,18 @@ const codeToolNode = new ToolNode(CODE_TOOLS);
 
 // toolsCondition only inspects the last AI message, so its return value is
 // independent of what the tool node is named — we just remap "tools" → our
-// local node and END → afterAgent.
+// local node and END → scheduleBackground.
 function weatherRoute(state: { messages: BaseMessage[] }) {
-  return toolsCondition(state) === END ? "afterAgent" : "weatherTools";
+  return toolsCondition(state) === END ? "scheduleBackground" : "weatherTools";
 }
 function chatRoute(state: { messages: BaseMessage[] }) {
-  return toolsCondition(state) === END ? "afterAgent" : "chatTools";
+  return toolsCondition(state) === END ? "scheduleBackground" : "chatTools";
 }
 function cryptoRoute(state: { messages: BaseMessage[] }) {
-  return toolsCondition(state) === END ? "afterAgent" : "cryptoTools";
+  return toolsCondition(state) === END ? "scheduleBackground" : "cryptoTools";
 }
 function codeRoute(state: { messages: BaseMessage[] }) {
-  return toolsCondition(state) === END ? "afterAgent" : "codeTools";
-}
-
-// ponytail: cheap necessary-condition gate before threadSummarizeNode.
-// Returns the registered node name when there's potentially a window
-// (userMessageCount > THRESHOLD + KEEP_RECENT), otherwise LangGraph's
-// END sentinel. The pathMap `{ threadSummarize: "threadSummarize",
-// __end__: END }` in the two builders below compares the router's
-// return via ===, so the literal "threadSummarize" string here MUST
-// match the addNode key exactly. The store-dependent close-window
-// check (endIdx < startIdx) lives inside threadSummarizeNode itself.
-export function shouldSummarizeRouter(state: {
-  messages?: Array<{ type?: string }>;
-}): "threadSummarize" | typeof END {
-  const userMessageCount = (state.messages ?? []).filter((m) => m.type === "human").length;
-  return userMessageCount > MEMORY_THREAD_SUMMARY_THRESHOLD + MEMORY_THREAD_SUMMARY_KEEP_RECENT
-    ? "threadSummarize"
-    : END;
+  return toolsCondition(state) === END ? "scheduleBackground" : "codeTools";
 }
 
 function buildInlined() {
@@ -215,15 +189,22 @@ function buildInlined() {
       .addNode("cryptoTools", cryptoToolNode)
       .addNode("codeModel", codeModelNode)
       .addNode("codeTools", codeToolNode)
-      .addNode("afterAgent", afterAgentNode)
+      .addNode("scheduleBackground", scheduleBackgroundNode)
       .addNode("renameThreadAgent", renameThreadAgentNode)
-      .addNode("threadSummarize", threadSummarizeNode)
-      // Sequential: START → routerAgent → (weatherModel | chatModel | cryptoModel | codeModel) →
-      //   (weatherTools | chatTools | cryptoTools | codeTools)* → afterAgent → threadSummarize → END.
+      // Topology (mirrors buildSubgraph's edge pattern):
+      //   START ──▶ routerAgent ──▶ (model | tools)* ──▶ scheduleBackground ──▶ END
+      //   START ─────────────────────────────────────▶ renameThreadAgent (parallel, leaf)
+      //
       // ask_location's picker card is owned by the weather model/tool loop
       // (see components/tool-ui/ask-location). ask_crypto_intent's picker
       // card is owned by the crypto loop (see components/tool-ui/crypto).
-      // write_code's editor card is owned by the code loop (see components/tool-ui/code).
+      // write_code's editor card is owned by the code loop
+      // (see components/tool-ui/code).
+      //
+      // See buildSubgraph for the scheduleBackground rationale — same
+      // node, same fire-and-forget contract, owns every turn-end side
+      // effect (last_message_at touch + windowed summarize) by handing
+      // them off to the registered background_agent graph.
       .addEdge(START, "routerAgent")
       .addConditionalEdges("routerAgent", routeToSubAgent, {
         weatherAgent: "weatherModel",
@@ -231,21 +212,15 @@ function buildInlined() {
         cryptoAgent: "cryptoModel",
         codeAgent: "codeModel",
       })
-      .addConditionalEdges("weatherModel", weatherRoute, ["weatherTools", "afterAgent"])
+      .addConditionalEdges("weatherModel", weatherRoute, ["weatherTools", "scheduleBackground"])
       .addEdge("weatherTools", "weatherModel")
-      .addConditionalEdges("chatModel", chatRoute, ["chatTools", "afterAgent"])
+      .addConditionalEdges("chatModel", chatRoute, ["chatTools", "scheduleBackground"])
       .addEdge("chatTools", "chatModel")
-      .addConditionalEdges("cryptoModel", cryptoRoute, ["cryptoTools", "afterAgent"])
+      .addConditionalEdges("cryptoModel", cryptoRoute, ["cryptoTools", "scheduleBackground"])
       .addEdge("cryptoTools", "cryptoModel")
-      .addConditionalEdges("codeModel", codeRoute, ["codeTools", "afterAgent"])
+      .addConditionalEdges("codeModel", codeRoute, ["codeTools", "scheduleBackground"])
       .addEdge("codeTools", "codeModel")
-      // ponytail: see the subgraph builder's afterAgent → threadSummarize
-      // note — same conditional routing, same trade-off.
-      .addConditionalEdges("afterAgent", shouldSummarizeRouter, {
-        threadSummarize: "threadSummarize",
-        __end__: END,
-      })
-      .addEdge("threadSummarize", END)
+      // .addEdge("scheduleBackground", END)
       .addConditionalEdges(START, shouldRenameRouter, {
         renameThreadAgent: "renameThreadAgent",
         __end__: END,
@@ -260,14 +235,15 @@ const builder = USE_SUBGRAPH ? buildSubgraph() : buildInlined();
 export { buildSubgraph, buildInlined };
 
 // ponytail: one handler per process (per module), shared across all
-// concurrent runs. Concurrent threads cross-mixing in the in-memory
-// buffer is a known ceiling — single-dev-session acceptable; revisit
-// when we move to prod checkpointing.
-const capturingHandler = new CapturingHandler({
-  bulkInsert: async (spans) => {
-    await bulkInsertSpans(spans);
-  },
-});
+// concurrent runs AND across every Pregel that wires it via withConfig.
+// The handler now lives in backend/callbacks.ts so the background_agent
+// graph (registered separately in langgraph.json) can wrap itself with
+// the same singleton — span writes from both graphs land in the same
+// in-memory Map and the same bulkInsert path.
+//
+// Concurrent threads cross-mixing in the in-memory buffer is a known
+// ceiling — single-dev-session acceptable; revisit when we move to prod
+// checkpointing.
 
 // ponytail: withConfig on CompiledStateGraph has two overloads: the
 // first expects LangGraphRunnableConfig + streamTransformers (general

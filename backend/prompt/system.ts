@@ -190,26 +190,55 @@ ON FAILURE:
 //                         what to skip, conflict resolution. Gated by
 //                         {{#memoryJson}} so the rules ship together
 //                         with the data they govern.
-// Dropped into the threadSummarize node. Compresses a slice of the
-// thread's human+ai transcript into a single structured SummaryEntry
-// that gets written to the LangGraph store under [userId, "threads"]
-// for later recall into the system prompt.
-export const THREAD_SUMMARIZE_PROMPT = `You are a thread summarizer. Given the transcript excerpt below, produce a short name + one-paragraph description that captures what the conversation was about.
+// Dropped into the threadSummarize node. Compresses one batch of
+// earlier conversation turns into a compact Q&A summary that
+// replaces the originals in the messages channel (see
+// backend/node/thread-summarize-node.ts). The LLM only produces
+// `entries[]`; the program tacks the original BaseMessage.id map
+// onto each entry so future code can rehydrate or re-summarize
+// without re-tokenizing.
+export const THREAD_SUMMARIZE_PROMPT = `You are compressing a slice of an earlier conversation between a user and an AI assistant. The slice will be replaced in-place — later turns in the thread will refer to your summary instead of seeing the raw exchanges.
 
-OUTPUT (strict JSON, no surrounding prose):
-- name: a thread title, ≤80 chars, no trailing punctuation.
-- description: a one-paragraph summary, ≤500 chars, written in the dominant language of the transcript. Cover what the user was trying to do, what the assistant did, and the outcome (open question, resolved, etc.).
-- Do not mention the assistant by name. Do not refer to "this thread" or "the conversation" — write as if summarizing a topic.
-- Preserve concrete facts the user shared (numbers, names, places, IDs) when they fit; skip filler.`;
+INPUT: a numbered transcript.
+- Each line is one turn, labeled #1, #2, ..., #N (in order).
+- The prefix tells you the role: "User" or "Assistant" (or "Tool" for tool-result turns inside a turn).
+
+OUTPUT (strict JSON, no prose before or after):
+{
+  "entries": [
+    {
+      "question": "<what was being asked or discussed>",
+      "answer":   "<the substantive answer / outcome, 1-3 sentences>",
+      "refs":     ["#1", "#2", "#4"]
+    }
+  ]
+}
+
+RULES:
+- One entry covers one topic or one resolved question.
+- Group consecutive turns on the same topic into one entry; use refs to list every turn covered.
+- For consecutive labels, abbreviate refs: ["#1", "#2", "#3"] → ["#1-#3"]. Do NOT abbreviate non-consecutive.
+- Order entries chronologically (matching the #N labels).
+- Skip turns that carry no information (greetings, "ok", empty tool errors, system chatter). Do not emit entries with empty questions or answers.
+- Preserve concrete facts the user shared — numbers, names, places, IDs, URLs, command outputs — verbatim when they fit.
+- Match the dominant language of the transcript. If the transcript mixes languages, match the language the user used most.
+- Do NOT refer to "this thread", "the conversation", "the assistant", or "the user" by name. Write each entry as a self-contained Q&A pair (the future reader sees only the entry, not the surrounding context).
+
+SELF-CHECK before emitting:
+- Each entry's refs covers a contiguous range covering every #N exactly once (or marks it as skipped).
+- All refs use the #N form, never bare numbers.
+- JSON is valid (no trailing commas, no comments).`;
 
 // ponytail: shared system-prompt skeleton — wraps the per-agent base
 // prompt (CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, etc.) with the
-// user-memory + past-thread context blocks. Renders as {{base}} +
-// conditional <memory>/<threads> sections. Mustache truthy sections
-// (`{{#var}}…{{/var}}`) drop whole blocks when var is empty so the
-// no-memory / no-thread path leaves the base prompt untouched.
+// user-memory block. Cross-thread summary injection was retired: thread
+// summaries now live inline in the messages channel for the *current*
+// thread (see threadSummarizeNode), not as a cross-thread history
+// block the model reads on every turn. The Memory tab UI still lists
+// past-thread summaries via /api/memory/threads — display only, never
+// reaches the model.
 //
-// Three layers inside <memory>:
+// Two layers inside <memory>:
 //   - <memory>          = conceptual scope (it's memory, not chat history)
 //   - <memory_json>     = syntactic scope — wraps the JSON literal so the
 //                         model treats it as opaque data, not as a sample
@@ -234,11 +263,4 @@ Follow the save_memory tool description for when to save, what to skip,
 and conflict resolution. If save_memory isn't in your current tool
 list, treat the statement as ephemeral and continue.
 </save_memory_rule>
-</memory>{{/memoryJson}}
-
-{{#threadsJson}}
-THREADS:
-About Past conversation summaries (compressed context from prior threads; reference instead of re-deriving)
-<threads>
-{{threadsJson}}
-</threads>{{/threadsJson}}`;
+</memory>{{/memoryJson}}`;
