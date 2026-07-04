@@ -494,7 +494,7 @@ export class CapturingHandler extends BaseCallbackHandler {
           name: "interrupt",
           kind: "human",
           status: "waiting",
-          started_at: Date.now(),
+          started_at: Date.now() + 100, // add 100ms to ensure it's after the tool ended
           ended_at: null,
           input: null,
           output: null,
