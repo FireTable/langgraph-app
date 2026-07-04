@@ -291,7 +291,7 @@ export class CapturingHandler extends BaseCallbackHandler {
 
   constructor(opts: { bulkInsert?: BulkInsert } = {}) {
     super();
-    this.bulkInsert = opts.bulkInsert ?? (async () => {});
+    this.bulkInsert = opts.bulkInsert ?? (async () => { });
   }
 
   // ---- Start hooks: every Start allocates a span, every End mutates it. ----
@@ -455,6 +455,28 @@ export class CapturingHandler extends BaseCallbackHandler {
 
   // ---- Errors close the span as failed. ----
   handleChainError(err: Error, runId: string) {
+    // ponytail: `interrupt()` throws a GraphInterrupt that unwinds
+    // through every wrapper in the call stack — tools RunnableSequence,
+    // inner CompiledStateGraph, outer RunnableSequence. Each one fires
+    // handleChainError here, but they're not failures; the interrupt
+    // is the intended pause. Mirror handleToolError: flip status to
+    // completed + null error, stamp ended_at so markRunningAsFailed
+    // doesn't mis-flag the wrapper on restart.
+    if (isGraphInterrupt(err)) {
+      const span = this.spans.get(runId);
+      if (span) {
+        span.status = "waiting";
+        span.error = null;
+        // ponytail: stamp ended_at = Date.now() so markRunningAsFailed
+        // doesn't mis-flag the wrapper as an aborted run on the next
+        // process restart. The value gets refined to the resume tool's
+        // started_at by backfillWaitingInterruptSpans when the user
+        // comes back with Command({ resume }).
+        span.ended_at = Date.now();
+        this.persistSpan(runId);
+      }
+      return;
+    }
     this.end(runId, { status: "failed", error: err.message });
     this.persistSpan(runId);
   }

@@ -94,18 +94,30 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
   const wrapperCandidates = collectWrapperCandidates(captured);
 
   const out: SpanData[] = [root];
-  // ponytail: SpanResource walks spans by parent_span_id. If two steps
-  // share a parent_step key OR a step's ns is its own ancestor, the depth
-  // walk recurses forever and blows the stack. Anchor each step's parent
-  // at the nearest strictly-outer step (a shorter ns), or root. We also
-  // bail at MAX_PARENT_DEPTH in case the ns game isn't enough.
+  // ponytail: SpanResource walks spans by parent_span_id. Anchor each
+  // step's parent at the nearest strictly-outer step (a shorter ns whose
+  // ns is a strict prefix of the child's ns), or root. Picking by ns
+  // prefix — not by step number — matters under USE_SUBGRAPH=true: a
+  // compiled subgraph's wrapper chain has langgraph_step higher than its
+  // inner steps (the outer RunnableSequence fires after the inner
+  // CompiledStateGraph ends, etc.), so a `candidate.step >= s.step`
+  // skip would miss the wrapper entirely and the inner step would land
+  // at "root". Tie-break by the longest matching ns so the innermost
+  // wrapper wins when the same step nests inside multiple ancestors
+  // (none of which happens today, but the comment is the cheap shape).
   const parentIdFor = (s: Step): string => {
+    let best: Step | null = null;
+    let bestLen = -1;
     for (const candidate of steps) {
       if (candidate === s) continue;
-      if (candidate.step >= s.step) continue;
       if (s.ns === candidate.ns) continue;
-      if (s.ns.startsWith(`${candidate.ns}|`)) return stepIdByStepAndName.get(stepKey(candidate))!;
+      if (!s.ns.startsWith(`${candidate.ns}|`)) continue;
+      if (candidate.ns.length > bestLen) {
+        best = candidate;
+        bestLen = candidate.ns.length;
+      }
     }
+    if (best) return stepIdByStepAndName.get(stepKey(best)) ?? "root";
     return "root";
   };
   for (const step of steps) {

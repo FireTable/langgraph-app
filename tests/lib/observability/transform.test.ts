@@ -115,4 +115,86 @@ describe("transformCapturedToSpanData", () => {
     const human = children.find((c) => c.id === "human-1");
     expect(human?.status).toBe("running");
   });
+
+  it("nests inner-subgraph steps under the wrapper step (parentIdFor uses ns prefix, not step number)", () => {
+    // ponytail: regression guard for a real production bug. With
+    // USE_SUBGRAPH=true, every wrapper chain (tools RunnableSequence,
+    // inner CompiledStateGraph, outer RunnableSequence) shares the same
+    // langgraph_node="weatherAgent" + step=2 + ns="weatherAgent:<uuid>".
+    // When `interrupt()` fires inside the subgraph, the model step's
+    // earliest raw span ends up being the ChatOpenAI whose
+    // parent_span_id resolves to the model RunnableSequence wrapper
+    // (same step). The old parentIdFor then skipped the weatherAgent
+    // wrapper because of `candidate.step >= s.step` — weatherAgent has
+    // step=2, model has step=1, so weatherAgent was filtered out. The
+    // model step landed at parent="root" and the panel showed it as a
+    // sibling of weatherAgent instead of nested under it.
+    //
+    // The IDs / timestamps below mirror a real captured batch from
+    // 2026-07-04 — RunnableSequence and ChatOpenAI share the exact
+    // same started_at so the sort is stable on original array order.
+    // We put ChatOpenAI first to reproduce the production case where
+    // the wrapped LLM's run_id sorts ahead of the wrapper Runnable.
+    const WA_NS = "weatherAgent:abc-123";
+    const MODEL_NS = `${WA_NS}|model:def-456`;
+    const out = transformCapturedToSpanData([
+      makeSpan({
+        span_id: "root",
+        kind: "chain",
+        started_at: 1000,
+        ended_at: 5000,
+        meta: {},
+      }),
+      makeSpan({
+        span_id: "wa-outer",
+        parent_span_id: "root",
+        name: "RunnableSequence",
+        kind: "chain",
+        started_at: 1100,
+        ended_at: 4500,
+        meta: { langgraph_node: "weatherAgent", langgraph_step: 2, langgraph_checkpoint_ns: WA_NS },
+      }),
+      makeSpan({
+        span_id: "wa-inner",
+        parent_span_id: "wa-outer",
+        name: "CompiledStateGraph",
+        kind: "chain",
+        started_at: 1110,
+        ended_at: 4400,
+        meta: { langgraph_node: "weatherAgent", langgraph_step: 2, langgraph_checkpoint_ns: WA_NS },
+      }),
+      // ChatOpenAI listed BEFORE RunnableSequence — same started_at.
+      // Transform's stable sort preserves this order; ChatOpenAI ends
+      // up as repRaw, and its parent_span_id (= model RunnableSequence)
+      // resolves to the SAME model step (parentStep === step). That's
+      // the exact production failure path.
+      makeSpan({
+        span_id: "model-llm",
+        parent_span_id: "model-rs",
+        name: "ChatOpenAI",
+        kind: "llm",
+        started_at: 1200,
+        ended_at: 2900,
+        meta: { langgraph_node: "model", langgraph_step: 1, langgraph_checkpoint_ns: MODEL_NS },
+      }),
+      makeSpan({
+        span_id: "model-rs",
+        parent_span_id: "wa-inner",
+        name: "RunnableSequence",
+        kind: "chain",
+        started_at: 1200,
+        ended_at: 3000,
+        meta: { langgraph_node: "model", langgraph_step: 1, langgraph_checkpoint_ns: MODEL_NS },
+      }),
+    ]);
+    const modelStep = out.find((s) => s.name === "model");
+    expect(modelStep).toBeDefined();
+    const weatherAgentStep = out.find((s) => s.name === "weatherAgent");
+    expect(weatherAgentStep).toBeDefined();
+    // model must be nested under the (deduped) weatherAgent step, NOT
+    // pinned at root. The old code returned "root" here because
+    // repRaw.parent_span_id resolved to model-rs (same step) and the
+    // step-number fallback couldn't find weatherAgent.
+    expect(modelStep?.parentSpanId).toBe(weatherAgentStep?.id);
+  });
 });

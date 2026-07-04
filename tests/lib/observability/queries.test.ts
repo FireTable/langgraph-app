@@ -542,6 +542,101 @@ describe("bulkInsertSpans — backfillWaitingInterruptSpans", () => {
     expect(row.status).toBe("waiting");
     expect(row.endedAt).toBeNull();
   });
+
+  it("closes waiting chain wrappers (status=waiting kind=chain) when a resume tool arrives", async () => {
+    // ponytail: handleChainError now flips the wrapper chains above an
+    // interrupted subgraph to status="waiting" — same as the synthetic
+    // human span, but kind="chain" instead of "human". The backfill
+    // must also close them: a fresh tool span arriving on the thread
+    // means the user resumed, so all the waiting wrappers in the
+    // interrupted stack should flip to completed with ended_at stamped
+    // to the resume tool's started_at.
+    await seedThread("t-chain-resume");
+    const base = Date.now();
+    // Prior invoke: wrapper chains got `status="waiting"` from
+    // handleChainError walking the GraphInterrupt up the stack.
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "tools-rs",
+        kind: "chain",
+        name: "RunnableSequence",
+        status: "waiting",
+        ended_at: null,
+        meta: { langgraph_thread_id: "t-chain-resume", langgraph_node: "weatherTools" },
+      }),
+      makeSpan({
+        span_id: "wa-inner",
+        kind: "chain",
+        name: "CompiledStateGraph",
+        status: "waiting",
+        ended_at: null,
+        meta: { langgraph_thread_id: "t-chain-resume", langgraph_node: "weatherAgent" },
+      }),
+      makeSpan({
+        span_id: "wa-outer",
+        kind: "chain",
+        name: "RunnableSequence",
+        status: "waiting",
+        ended_at: null,
+        meta: { langgraph_thread_id: "t-chain-resume", langgraph_node: "weatherAgent" },
+      }),
+    ]);
+    // Resume: a new tool span lands.
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "ask-location-resume",
+        kind: "tool",
+        name: "ask_location",
+        started_at: base + 10000,
+        meta: { langgraph_thread_id: "t-chain-resume", langgraph_node: "weatherTools" },
+      }),
+    ]);
+    const rows = await db
+      .select({
+        spanId: observabilitySpans.spanId,
+        status: observabilitySpans.status,
+        endedAt: observabilitySpans.endedAt,
+      })
+      .from(observabilitySpans);
+    const byId = Object.fromEntries(rows.map((r) => [r.spanId, r]));
+    expect(byId["tools-rs"]?.status).toBe("completed");
+    expect(byId["wa-inner"]?.status).toBe("completed");
+    expect(byId["wa-outer"]?.status).toBe("completed");
+    // ended_at is the resume tool's started_at so the waterfall bar
+    // closes on the resume, not now().
+    expect(byId["tools-rs"]?.endedAt).toBe(base + 10000);
+    expect(byId["wa-inner"]?.endedAt).toBe(base + 10000);
+    expect(byId["wa-outer"]?.endedAt).toBe(base + 10000);
+  });
+
+  it("does not close waiting chain wrappers on other threads", async () => {
+    await seedThread("t-mine-chain");
+    await seedThread("t-other-chain");
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "other-chain",
+        kind: "chain",
+        name: "RunnableSequence",
+        status: "waiting",
+        ended_at: null,
+        meta: { langgraph_thread_id: "t-other-chain" },
+      }),
+    ]);
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "tool-mine",
+        kind: "tool",
+        name: "ask_location",
+        meta: { langgraph_thread_id: "t-mine-chain" },
+      }),
+    ]);
+    const [row] = await db
+      .select()
+      .from(observabilitySpans)
+      .where(eq(observabilitySpans.spanId, "other-chain"));
+    expect(row.status).toBe("waiting");
+    expect(row.endedAt).toBeNull();
+  });
 });
 
 describe("deleteSpansOlderThan (retention cron helper)", () => {

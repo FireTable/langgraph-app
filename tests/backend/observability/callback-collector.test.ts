@@ -382,6 +382,58 @@ describe("CapturingHandler — interrupt / human span", () => {
   // process restart, so the field is write-only in practice. The human
   // span stays `status: "waiting"` (panel maps to `running`) until
   // something else updates it; that's the deliberate MVP trade-off.
+
+  it("treats a GraphInterrupt bubbling through handleChainError as waiting (wrapper pause, not failed)", () => {
+    // ponytail: when `interrupt()` throws, the GraphInterrupt unwinds
+    // through every wrapper chain in the call stack — tools RunnableSequence,
+    // inner CompiledStateGraph, outer RunnableSequence — each fires
+    // handleChainError. The wrappers are NOT failures and NOT
+    // completed — the graph is paused waiting for human resume. The
+    // status "waiting" matches the synthetic human span (inserted by
+    // handleToolError) so the panel renders the entire stack as a
+    // single wait gap. bulkInsertSpans' backfill closes these on resume.
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("RunnableSequence"),
+      {},
+      "tools-wrapper",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-chain-int" },
+    );
+    handler.handleChainError(interruptError(), "tools-wrapper");
+
+    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(flushed[0]?.span_id).toBe("tools-wrapper");
+    expect(flushed[0]?.status).toBe("waiting");
+    expect(flushed[0]?.error).toBeNull();
+    // ended_at must be non-null so markRunningAsFailed doesn't flag the
+    // wrapper as an aborted run on the next restart. The value gets
+    // refined to the resume tool's started_at by backfillWaitingInterruptSpans.
+    expect(flushed[0]?.ended_at).not.toBeNull();
+  });
+
+  it("still treats a non-interrupt chain error as failed", () => {
+    // ponytail: regression guard — only GraphInterrupt should bypass
+    // the failed status. A regular chain error (e.g. a downstream tool
+    // threw something other than interrupt) must still surface as failed.
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("RunnableSequence"),
+      {},
+      "chain-fail",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-chain-fail" },
+    );
+    handler.handleChainError(new Error("downstream boom"), "chain-fail");
+
+    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(flushed[0]?.status).toBe("failed");
+    expect(flushed[0]?.error).toBe("downstream boom");
+  });
 });
 
 describe("CapturingHandler — payload trims (Phase 1)", () => {
