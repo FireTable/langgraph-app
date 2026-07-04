@@ -211,9 +211,10 @@ export function Assistant() {
       return { externalId: externalId! };
     },
     // Empty messages on a fresh thread — state.values has no `messages` key yet.
-    // Return `interrupts` from the active task so a paused run (e.g. ask_location
-    // waiting for the user's location pick) survives a page refresh — the runtime
-    // restores `useLangGraphInterruptState()` from this field. Also return
+    // Return `messages` from the active subgraph task so a paused run
+    // (e.g. ask_location waiting for the user's location pick) survives a
+    // page refresh — the picker card reads the trailing ToolMessage out
+    // of those messages and re-renders in the tool-call slot. Also return
     // `uiMessages` so any persisted typedUi state is restored on reload.
     //
     // ponytail: { subgraphs: true } is required when the chat is sitting in

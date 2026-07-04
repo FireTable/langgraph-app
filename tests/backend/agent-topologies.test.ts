@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 
-import { buildInlined, buildSubgraph } from "@/backend/agent";
+import { buildSubgraph } from "@/backend/agent";
 
-// Smoke test for both graph topologies. The default (inlined) path is
-// exercised end-to-end by tests/backend/agent.test.ts; this file only
-// asserts the structural shape of both builders so the subgraph path
-// stays valid even though it's not the default runtime topology.
+// Smoke test for the parent graph topology. The default runtime is
+// the subgraph path; tests/backend/agent.test.ts exercises it
+// end-to-end. This file only asserts the structural shape so the
+// compiled subgraphs stay wired correctly.
 
 describe("buildSubgraph", () => {
   it("registers the compiled subgraphs as opaque nodes", () => {
@@ -27,30 +27,6 @@ describe("buildSubgraph", () => {
 
   it("compiles without throwing", () => {
     const builder = buildSubgraph();
-    expect(() => builder.compile()).not.toThrow();
-  });
-});
-
-describe("buildInlined", () => {
-  it("registers the inlined model/tool nodes (no chatAgent/weatherAgent wrappers)", () => {
-    const builder = buildInlined();
-    expect(Object.keys(builder.nodes).sort()).toEqual([
-      "chatModel",
-      "chatTools",
-      "codeModel",
-      "codeTools",
-      "cryptoModel",
-      "cryptoTools",
-      "renameThreadAgent",
-      "routerAgent",
-      "scheduleBackground",
-      "weatherModel",
-      "weatherTools",
-    ]);
-  });
-
-  it("compiles without throwing", () => {
-    const builder = buildInlined();
     expect(() => builder.compile()).not.toThrow();
   });
 });

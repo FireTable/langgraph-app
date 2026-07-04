@@ -258,11 +258,12 @@ export class CapturingHandler extends BaseCallbackHandler {
   // ponytail: Map, not LRU. Demo only.
   private spans = new Map<string, Partial>();
 
-  // ponytail: LangChain's parent_run_id is unreliable under USE_SUBGRAPH
-  // (chains inside compiled subgraphs report root as parent). We rebuild
-  // the call hierarchy from `langgraph_checkpoint_ns` instead — the ns
-  // encodes the wrapper stack directly, so the parent of any span is the
-  // sibling span whose ns is the current ns with its trailing
+  // ponytail: LangChain's parent_run_id is unreliable under compiled
+  // subgraphs (chains inside a subgraph report the root as parent).
+  // We rebuild the call hierarchy from `langgraph_checkpoint_ns`
+  // instead — the ns encodes the wrapper stack directly, so the parent
+  // of any span is the sibling span whose ns is the current ns with
+  // its trailing
   // "|name:uuid" segment stripped. LC's parent_run_id is ignored.
   private runIdByNs = new Map<string, string>();
   // ponytail: previously tracked the most recent open `kind: "human"`
@@ -611,7 +612,7 @@ export class CapturingHandler extends BaseCallbackHandler {
     return Array.from(this.spans.values()).map((s) => ({
       ...s,
       // ponytail: overwrite parent_span_id with the ns-derived one.
-      // LC's parent_run_id is unreliable under USE_SUBGRAPH.
+      // LC's parent_run_id is unreliable under compiled subgraphs.
       parent_span_id: this.actualParent.has(s.span_id)
         ? (this.actualParent.get(s.span_id) ?? null)
         : s.parent_span_id,

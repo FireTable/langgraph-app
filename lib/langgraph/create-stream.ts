@@ -43,12 +43,12 @@ export function createLangGraphStream({
       signal: config.abortSignal,
       onDisconnect,
       multitaskStrategy: "interrupt",
-      // Required when USE_SUBGRAPH=true. Without it, langgraph-api drops
-      // namespaced `__interrupt__` events on the floor (api/runs.mjs:85
-      // `subgraphs: run.stream_subgraphs ?? false`), and the client never
-      // sees the interrupt — useLangGraphInterruptState stays undefined
-      // and the ask_location card never appears. No effect on inlined
-      // mode; safe to leave on unconditionally.
+      // Required for namespaced `__interrupt__` events to reach the
+      // browser. Without it, langgraph-api drops subgraph events on
+      // the floor (api/runs.mjs:85
+      // `subgraphs: run.stream_subgraphs ?? false`), and the client
+      // never sees the interrupt — useLangGraphInterruptState stays
+      // undefined and picker cards never mount.
       streamSubgraphs: true,
       ...(config.command != null && { command: config.command }),
       ...(config.checkpointId != null && {

@@ -55,8 +55,6 @@ Copy `.env.example` to `.env.local` and fill in:
 - `ALCHEMY_DISABLED_NETWORKS` — optional comma-separated Alchemy network slugs the proxy will reject. Default deny-list lives in `lib/alchemy/networks.ts`.
 - `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID` — Reown projectId, required for WalletConnect-based wallets (Binance, Bitget) to expose their mobile-QR fallback; injected wallets (MetaMask, Coinbase) work without it.
 - `NEXT_PUBLIC_CRYPTO_REAL_SWAP` — feature flag for the live Uniswap V3 swap path. Unset/`false` keeps `place_crypto_order` in SIMULATED mode (Mock Coin balance, no signing, no broadcast). Set `true` to enable the real path (currently dormant).
-- `USE_SUBGRAPH` — backend graph topology toggle. `true` uses compiled `weatherAgent` / `chatAgent` / `cryptoAgent` subgraphs; unset (default) uses the inlined version that flattens them into the parent graph. The inlined default is a workaround for the `@langchain/core@1.2.1` `EventStreamCallbackHandler` "Run ID not found in run map" bug that LangGraph JS subgraphs trigger — see `memory/langgraph-subgraph-run-map-bug.md`.
-- `NEXT_PUBLIC_USE_SUBGRAPH` — frontend mirror of `USE_SUBGRAPH`. Required because Next.js only inlines `NEXT_PUBLIC_*` vars into the browser bundle; the frontend reads this to decide whether to render the interrupt-UI card (`InterruptUI`) or the inline tool-call card.
 - `DENO_DEPLOY_TOKEN` + optional `DENO_DEPLOY_ORG` — server-only. Used by the code agent's `execute_code` tool via the `@deno/sandbox` SDK to run TypeScript / JavaScript / Python in a Deno Deploy Sandbox (Firecracker microVM). TS/JS go through `deno eval`; Python goes through `python3 -c` (sandbox image ships CPython 3.13, stdlib only). An organization token (prefix `ddo_`) only needs `DENO_DEPLOY_TOKEN`; a personal token (prefix `ddp_`) also needs `DENO_DEPLOY_ORG` (the org slug from the console URL). When unset, `execute_code` is not registered — `write_code` still works, and on Run the model surfaces a graceful fallback. Create a token at https://console.deno.com/ → Sandbox tab.
 
 LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`) and pins Node 22.
@@ -65,14 +63,15 @@ LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`)
 
 ```
 backend/
-  agent.ts                LangGraph graph — two topologies gated by USE_SUBGRAPH
+  agent.ts                LangGraph graph — router + compiled subgraphs + schedule background
   state.ts                RouterAgentState (parent) + CommonAgentState (subgraphs)
   model.ts                ChatOpenAI singleton (chatModel)
   checkpointer.ts         PostgresSaver (LangGraph Postgres checkpoint tables)
   agent/
-    chat-agent.ts         chatAgent compiled subgraph (USE_SUBGRAPH=true path)
-    weather-agent.ts      weatherAgent compiled subgraph (USE_SUBGRAPH=true path)
-    crypto-agent.ts       cryptoAgent compiled subgraph (USE_SUBGRAPH=true path)
+    chat-agent.ts         chatAgent compiled subgraph (model ↔ tools loop)
+    weather-agent.ts      weatherAgent compiled subgraph (model ↔ tools loop)
+    crypto-agent.ts       cryptoAgent compiled subgraph (model ↔ tools loop)
+    code-agent.ts         codeAgent compiled subgraph (model ↔ tools loop)
   node/
     call-model-node.ts    "agent" node — calls the model, appends AI reply
     rename-thread-agent-node.ts "renameThreadAgent" node — generates + persists the title
@@ -134,18 +133,15 @@ The parent graph dispatches a router decision into one of three sub-flows, all e
 - `afterAgent` — touches `threads.last_message_at` for the current thread; no message-channel writes.
 - `renameThreadAgent` — fans out from `START` (parallel to `routerAgent`), generates the thread title on the first turn only, persists it to the `threads` row.
 
-Two topologies share the same router + rename + after nodes and are gated by `USE_SUBGRAPH` (env var, see Environment):
+`weatherAgent` / `chatAgent` / `cryptoAgent` / `codeAgent` are the compiled subgraphs from `backend/agent/*-agent.ts`, wired as opaque nodes via `addNode("weatherAgent", weatherAgent)`. PathMap is an array of allowed destinations, since the returned string already matches the node name.
 
-- **Inlined (default).** `weatherModel` / `weatherTools` / `chatModel` / `chatTools` / `cryptoModel` / `cryptoTools` are inlined as plain nodes in the parent graph. The model/tool logic is duplicated from `backend/agent/weather-agent.ts`, `chat-agent.ts`, and `crypto-agent.ts` — keep them in sync. The router's pathMap remaps `"weatherAgent"`/`"chatAgent"`/`"cryptoAgent"` (the router's string enum) to `"weatherModel"`/`"chatModel"`/`"cryptoModel"` (the inlined node names).
-- **Subgraph (`USE_SUBGRAPH=true`).** The compiled `weatherAgent`, `chatAgent`, and `cryptoAgent` from `backend/agent/*-agent.ts` are wired as opaque nodes via `addNode("weatherAgent", weatherAgent)`. PathMap is an array of allowed destinations, since the returned string already matches the node name.
-
-Both builders live in `backend/agent.ts` (`buildSubgraph()` and `buildInlined()`). When `USE_SUBGRAPH` flips, no other file needs to change — but if you add a node, prompt, or tool, update both builders.
+The graph builder lives in `backend/agent.ts` (`buildSubgraph()`). When you add a node, prompt, or tool, update that file plus the matching `backend/agent/*-agent.ts` subgraph.
 
 The chat models in `backend/model.ts` carry `modelKwargs: { reasoning_split: true }` (and `think: false` on the rename variant) — these are minimax-provider-specific, so the graph is wired for that provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set on `chatModel`. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the `backend/agent.ts:graph` export registered in `langgraph.json`.
 
 ### `WEATHER_AGENT_PROMPT` enforces one-tool-per-turn
 
-The weather prompt (in `backend/prompt/system.ts`) lists four steps in order — `ask_location` → `geocode_location` → `get_weather` → one-sentence reply — and explicitly forbids batching tools in a single turn. The frontend card (`components/tool-ui/ask-location`) keys off the `ask_location` `ToolMessage`, so any tool run alongside it would race the human input. See `docs/INTERRUPT.md` for the two runtime paths the card can take.
+The weather prompt (in `backend/prompt/system.ts`) lists four steps in order — `ask_location` → `geocode_location` → `get_weather` → one-sentence reply — and explicitly forbids batching tools in a single turn. The frontend card (`components/tool-ui/ask-location`) keys off the `ask_location` `ToolMessage`, so any tool run alongside it would race the human input. See `docs/INTERRUPT.md` for the resume contract.
 
 ### `CRYPTO_AGENT_PROMPT` enforces one-tool-per-turn + no-investment-advice
 
@@ -172,7 +168,7 @@ Consequences worth knowing:
 
 `app/api/[..._path]/route.ts` is a node-runtime catch-all (see rule #9 — edge throws on `auth.api.getSession`) that proxies every method (`GET/POST/PUT/PATCH/DELETE/OPTIONS`) to `${LANGGRAPH_API_URL}/${path}` with `x-api-key: LANGCHAIN_API_KEY`, strips hop-by-hop / content-encoding headers, and adds permissive CORS. The body of mutating requests is forwarded as text. The handler is wrapped in `withAuth` (cookie + Authorization are forwarded upstream so LangGraph can identify the calling thread).
 
-`components/assistant-ui/thread.tsx` mounts `InterruptUI` (uses `useLangGraphInterruptState` + `useLangGraphSendCommand`) inside the last assistant message. The interrupt-driven render only fires when `NEXT_PUBLIC_USE_SUBGRAPH=true`; in default (inlined) mode, the ask_location card renders in the tool-call slot instead. See `docs/INTERRUPT.md` for the full two-mode flow.
+`components/assistant-ui/thread.tsx` registers the `ask_location` and crypto picker cards via the toolkit, which mounts them in the tool-call slot of the matching `ToolMessage`. Each card uses `useLangGraphSendCommand` directly to resume the parent's `interrupt()`. See `docs/INTERRUPT.md` for the resume contract.
 
 ### Web3 providers
 

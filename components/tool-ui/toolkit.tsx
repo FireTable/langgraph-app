@@ -93,7 +93,7 @@ const cryptoToolkit = defineToolkit({
 const codeToolkit = defineToolkit({
   write_code: {
     description:
-      "Render a code editor card. Pauses for the user to review and click Run. The card sends a resume payload to the model; the model then calls execute_code with the returned code. Reused by InterruptUI in subgraph mode.",
+      "Render a code editor card. Pauses for the user to review and click Run. The card sends a resume payload to the model; the model then calls execute_code with the returned code.",
     parameters: z.object({
       code: z.string(),
       language: z.string().optional(),

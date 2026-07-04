@@ -50,21 +50,10 @@ export async function touchLastMessageNode(
   return { messages: [] };
 }
 
-export async function summarizeNode(
-  state: { messages: BaseMessage[] },
-  config: { configurable?: { userId?: unknown; thread_id?: unknown } },
-): Promise<{ messages: BaseMessage[] }> {
-  // ponytail: threadSummarizeNode's declared return type is
-  // `Promise<{ messages: never[] }>` because the contract is "no
-  // message mutation". The reducer accepts any array; cast so the
-  // StateGraph node signature aligns with CommonAgentState's
-  // `messages: BaseMessage[]` channel.
-  return threadSummarizeNode(state, config) as Promise<{ messages: BaseMessage[] }>;
-}
 
 const builder = new StateGraph(CommonAgentState)
   .addNode("touchLastMessage", touchLastMessageNode)
-  .addNode("summarize", summarizeNode)
+  .addNode("summarize", threadSummarizeNode)
   // ponytail: linear — both side-effects run every invoke. Cheap to
   // skip later if `summarize` becomes a bottleneck (e.g. add a
   // shouldSummarizeRouter conditional edge between the two nodes);

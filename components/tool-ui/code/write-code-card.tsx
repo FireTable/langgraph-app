@@ -19,13 +19,6 @@ import { SuccessBanner } from "@/components/tool-ui/primitives/banners";
 // on every render so streaming tool-call payloads land in the card without
 // a stale-state lag. On Run, the code flows back via useLangGraphSendCommand;
 // the model then calls execute_code with that code.
-//
-// Inlined mode (USE_SUBGRAPH=false): the toolkit's `render` mounts this
-// card in the tool-call slot. `addResult` overwrites the ToolMessage
-// content — same flow from the user's perspective.
-// Subgraph mode (USE_SUBGRAPH=true): the InterruptUI in thread.tsx
-// dispatches here based on the interrupt's `ui` field. The card uses
-// useLangGraphSendCommand to resume.
 
 type CodeLanguage = "typescript" | "javascript" | "python";
 type Args = { code: string; language?: string };

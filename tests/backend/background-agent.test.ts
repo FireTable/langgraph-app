@@ -1,31 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockTouchLastMessageAt, mockThreadSummarizeNode } = vi.hoisted(() => ({
+const { mockTouchLastMessageAt } = vi.hoisted(() => ({
   mockTouchLastMessageAt: vi.fn(),
-  mockThreadSummarizeNode: vi.fn(),
 }));
 
 vi.mock("@/lib/threads/queries", () => ({
   touchLastMessageAt: mockTouchLastMessageAt,
 }));
 
-vi.mock("@/backend/node/thread-summarize-node", () => ({
-  threadSummarizeNode: mockThreadSummarizeNode,
-}));
-
-import {
-  summarizeNode,
-  touchLastMessageNode,
-  graph as backgroundGraph,
-} from "@/backend/background-agent";
+import { touchLastMessageNode, graph as backgroundGraph } from "@/backend/background-agent";
 
 beforeEach(() => {
   mockTouchLastMessageAt.mockReset();
-  mockThreadSummarizeNode.mockReset();
-  // ponytail: threadSummarizeNode returns the empty state update shape —
-  // that's its contract. mockThreadSummarizeNode returns the shape so
-  // summarizeNode has something to forward through its own return.
-  mockThreadSummarizeNode.mockResolvedValue({ messages: [] });
 });
 
 afterEach(() => {
@@ -60,23 +46,6 @@ describe("touchLastMessageNode", () => {
     // any other field is read.
     await touchLastMessageNode({ messages: [] }, { configurable: { thread_id: "" } });
     expect(mockTouchLastMessageAt).not.toHaveBeenCalled();
-  });
-});
-
-describe("summarizeNode", () => {
-  it("delegates to threadSummarizeNode with the messages and config forwarded", async () => {
-    const messages = [{ type: "ai", content: "hi" }] as never;
-    await summarizeNode({ messages }, CONFIG_OK);
-
-    expect(mockThreadSummarizeNode).toHaveBeenCalledTimes(1);
-    const [state, config] = mockThreadSummarizeNode.mock.calls[0];
-    expect(state).toMatchObject({ messages });
-    expect(config).toMatchObject(CONFIG_OK);
-  });
-
-  it("returns the same empty state update produced by threadSummarizeNode (no message mutation)", async () => {
-    const out = await summarizeNode({ messages: [] }, CONFIG_OK);
-    expect(out).toEqual({ messages: [] });
   });
 });
 

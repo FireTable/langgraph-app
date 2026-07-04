@@ -12,9 +12,10 @@ import { unwrapToolResult } from "@/components/tool-ui/tool-result";
 import { useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
 
 // Tool result the user picks from the card. The backend tool pauses via
-// interrupt({ ui: 'ask_location' }); this card renders in the InterruptUI
-// slot and resumes through `addResult`, which LangGraph forwards as the
-// ToolMessage content for the LLM's next pass.
+// interrupt({ ui: 'ask_location' }); this card is mounted in the matching
+// tool-call slot by the toolkit and resumes through
+// `useLangGraphSendCommand({ resume })`, which the parent graph forwards to
+// the weather subgraph on the next pass.
 //   { lat, lon, label } — user picked coords
 //   { error }           — geolocation denied or geocode failed
 export type AskLocationResult = { lat: number; lon: number; label: string } | { error: string };
