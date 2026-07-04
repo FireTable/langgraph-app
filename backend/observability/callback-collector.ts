@@ -291,7 +291,7 @@ export class CapturingHandler extends BaseCallbackHandler {
 
   constructor(opts: { bulkInsert?: BulkInsert } = {}) {
     super();
-    this.bulkInsert = opts.bulkInsert ?? (async () => { });
+    this.bulkInsert = opts.bulkInsert ?? (async () => {});
   }
 
   // ---- Start hooks: every Start allocates a span, every End mutates it. ----
@@ -467,12 +467,8 @@ export class CapturingHandler extends BaseCallbackHandler {
       if (span) {
         span.status = "waiting";
         span.error = null;
-        // ponytail: stamp ended_at = Date.now() so markRunningAsFailed
-        // doesn't mis-flag the wrapper as an aborted run on the next
-        // process restart. The value gets refined to the resume tool's
-        // started_at by backfillWaitingInterruptSpans when the user
-        // comes back with Command({ resume }).
-        span.ended_at = Date.now();
+        // ponytail: waiting ended_at can't be inferred yet, will be backfilled later.
+        span.ended_at = null;
         this.persistSpan(runId);
       }
       return;

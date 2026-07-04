@@ -216,6 +216,42 @@ async function backfillWaitingInterruptSpans(rows: NewObservabilitySpanRow[]): P
         ),
       );
   }
+
+  // ponytail: chain wrappers stuck at status="waiting" / ended_at=null
+  // (set by handleChainError when GraphInterrupt bubbled up) are
+  // backfilled the moment a chain wrapper carrying
+  // `output.output = "__end__"` lands for the same thread. The
+  // `__end__` marker is the LangGraph signal that the branch exited,
+  // so the parent wrapper is finally done — handleChainEnd never fires
+  // for the prior turn's wrappers because their handleChainError
+  // already finalized them. The lookup walks up the ns tree by one
+  // `|tail` to find the parent wrapper: the outer subgraph shares its
+  // ns suffix across interrupt + resume turns, but inner steps don't
+  // (different uuid per turn), so exact-ns match would miss.
+  for (const r of rows) {
+    if (r.kind !== "chain") continue;
+    const output = r.output as { output?: unknown } | null;
+    if (!output || output.output !== "__end__") continue;
+    const meta = r.meta as Record<string, unknown> | null | undefined;
+    const ns = meta?.langgraph_checkpoint_ns;
+    if (typeof ns !== "string") continue;
+    const lastPipe = ns.lastIndexOf("|");
+    if (lastPipe <= 0) continue;
+    const parentNs = ns.slice(0, lastPipe);
+    const endAt = r.endedAt ?? r.startedAt;
+    if (endAt <= 0) continue;
+    await db
+      .update(observabilitySpans)
+      .set({ status: "completed", endedAt: endAt })
+      .where(
+        and(
+          eq(observabilitySpans.threadId, r.threadId),
+          eq(observabilitySpans.kind, "chain"),
+          eq(observabilitySpans.status, "waiting"),
+          eq(sql`${observabilitySpans.meta}->>'langgraph_checkpoint_ns'`, parentNs),
+        ),
+      );
+  }
 }
 
 export async function getSpansByThreadId(
