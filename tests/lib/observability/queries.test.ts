@@ -543,25 +543,25 @@ describe("bulkInsertSpans — backfillWaitingInterruptSpans", () => {
     expect(row.endedAt).toBeNull();
   });
 
-  it("closes waiting chain wrappers (status=waiting kind=chain) when a resume tool arrives", async () => {
-    // ponytail: handleChainError now flips the wrapper chains above an
-    // interrupted subgraph to status="waiting" — same as the synthetic
-    // human span, but kind="chain" instead of "human". The backfill
-    // must also close them: a fresh tool span arriving on the thread
-    // means the user resumed, so all the waiting wrappers in the
-    // interrupted stack should flip to completed with ended_at stamped
-    // to the resume tool's started_at.
+  it("leaves waiting chain wrappers alone on resume — only human spans are backfilled", async () => {
+    // ponytail: handleChainError flips the wrapper chains above an
+    // interrupted subgraph to status="waiting" — but their `ended_at`
+    // was already stamped at interrupt time. transform.ts renders the
+    // step as "completed" via bucket.ended (the raw span status field
+    // doesn't drive the panel's step display). Backfilling the chain
+    // wrapper's status here would overstate its progress — it could
+    // still be processing the resume payload — so the backfill only
+    // touches the synthetic human span (kind="human"), which has no
+    // chain end of its own.
     await seedThread("t-chain-resume");
     const base = Date.now();
-    // Prior invoke: wrapper chains got `status="waiting"` from
-    // handleChainError walking the GraphInterrupt up the stack.
     await bulkInsertSpans([
       makeSpan({
         span_id: "tools-rs",
         kind: "chain",
         name: "RunnableSequence",
         status: "waiting",
-        ended_at: null,
+        ended_at: base,
         meta: { langgraph_thread_id: "t-chain-resume", langgraph_node: "weatherTools" },
       }),
       makeSpan({
@@ -569,15 +569,7 @@ describe("bulkInsertSpans — backfillWaitingInterruptSpans", () => {
         kind: "chain",
         name: "CompiledStateGraph",
         status: "waiting",
-        ended_at: null,
-        meta: { langgraph_thread_id: "t-chain-resume", langgraph_node: "weatherAgent" },
-      }),
-      makeSpan({
-        span_id: "wa-outer",
-        kind: "chain",
-        name: "RunnableSequence",
-        status: "waiting",
-        ended_at: null,
+        ended_at: base,
         meta: { langgraph_thread_id: "t-chain-resume", langgraph_node: "weatherAgent" },
       }),
     ]);
@@ -599,44 +591,20 @@ describe("bulkInsertSpans — backfillWaitingInterruptSpans", () => {
       })
       .from(observabilitySpans);
     const byId = Object.fromEntries(rows.map((r) => [r.spanId, r]));
-    expect(byId["tools-rs"]?.status).toBe("completed");
-    expect(byId["wa-inner"]?.status).toBe("completed");
-    expect(byId["wa-outer"]?.status).toBe("completed");
-    // ended_at is the resume tool's started_at so the waterfall bar
-    // closes on the resume, not now().
-    expect(byId["tools-rs"]?.endedAt).toBe(base + 10000);
-    expect(byId["wa-inner"]?.endedAt).toBe(base + 10000);
-    expect(byId["wa-outer"]?.endedAt).toBe(base + 10000);
+    // Chain wrappers stay at status="waiting" — only the human-span
+    // backfill runs. transform.ts renders them as completed visually
+    // because their ended_at is set (bucket.ended truthy).
+    expect(byId["tools-rs"]?.status).toBe("waiting");
+    expect(byId["wa-inner"]?.status).toBe("waiting");
+    // ended_at is preserved as the interrupt stamp.
+    expect(byId["tools-rs"]?.endedAt).toBe(base);
+    expect(byId["wa-inner"]?.endedAt).toBe(base);
   });
 
-  it("does not close waiting chain wrappers on other threads", async () => {
-    await seedThread("t-mine-chain");
-    await seedThread("t-other-chain");
-    await bulkInsertSpans([
-      makeSpan({
-        span_id: "other-chain",
-        kind: "chain",
-        name: "RunnableSequence",
-        status: "waiting",
-        ended_at: null,
-        meta: { langgraph_thread_id: "t-other-chain" },
-      }),
-    ]);
-    await bulkInsertSpans([
-      makeSpan({
-        span_id: "tool-mine",
-        kind: "tool",
-        name: "ask_location",
-        meta: { langgraph_thread_id: "t-mine-chain" },
-      }),
-    ]);
-    const [row] = await db
-      .select()
-      .from(observabilitySpans)
-      .where(eq(observabilitySpans.spanId, "other-chain"));
-    expect(row.status).toBe("waiting");
-    expect(row.endedAt).toBeNull();
-  });
+  // ponytail: removed the previous "does not close waiting chain wrappers
+// on other threads" test — with the chain-wrapper backfill gone, the
+// remaining (human-only) backfill already filters by thread, so the
+// test was duplicating existing coverage.
 });
 
 describe("deleteSpansOlderThan (retention cron helper)", () => {

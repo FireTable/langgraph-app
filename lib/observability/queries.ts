@@ -183,15 +183,15 @@ async function backfillParentMessageIds(rows: NewObservabilitySpanRow[]): Promis
 // span's `interrupt_tool`; ended_at is set to the resume tool's
 // started_at so the waterfall shows the gap as closed.
 //
-// ponytail: when `interrupt()` fires inside a compiled subgraph, the
-// GraphInterrupt unwinds through every wrapper chain (tools
-// RunnableSequence, inner CompiledStateGraph, outer RunnableSequence).
-// handleChainError now flips them to status="waiting" too. Those
-// wrappers don't carry meta.interrupt_tool (they wrap multiple nodes),
-// so the second UPDATE here closes ALL waiting chain wrappers on the
-// thread unconditionally — there's at most one active interrupt per
-// thread in practice, and a stale waiting wrapper past resume is
-// strictly worse UX than an early close.
+// ponytail: waiting CHAIN wrappers are NOT backfilled here. Their
+// `ended_at` was stamped by handleChainError at interrupt time, and
+// transform.ts renders the step as "completed" via bucket.ended
+// (the raw span status field doesn't drive the panel's step display).
+// Flipping the chain wrapper to "completed" on tool arrival would
+// overstate the chain's progress — it could still be processing the
+// resume payload. Leave it at status="waiting"; the wrapper's own
+// record lives in the panel as a closed bar (ended_at is set) at
+// the interrupt moment, and any post-resume work shows as new bars.
 async function backfillWaitingInterruptSpans(rows: NewObservabilitySpanRow[]): Promise<void> {
   const resumePairs = new Map<string, { toolName: string; resumeAt: number }>();
   for (const r of rows) {
@@ -213,18 +213,6 @@ async function backfillWaitingInterruptSpans(rows: NewObservabilitySpanRow[]): P
           eq(observabilitySpans.kind, "human"),
           eq(observabilitySpans.status, "waiting"),
           eq(sql`${observabilitySpans.meta}->>'interrupt_tool'`, pair.toolName),
-        ),
-      );
-    // ponytail: close waiting chain wrappers from the same interrupt
-    // unwind. No tool-name match — see comment above.
-    await db
-      .update(observabilitySpans)
-      .set({ status: "completed", endedAt: pair.resumeAt })
-      .where(
-        and(
-          eq(observabilitySpans.threadId, tid),
-          eq(observabilitySpans.kind, "chain"),
-          eq(observabilitySpans.status, "waiting"),
         ),
       );
   }

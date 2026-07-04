@@ -391,7 +391,10 @@ describe("CapturingHandler — interrupt / human span", () => {
     // completed — the graph is paused waiting for human resume. The
     // status "waiting" matches the synthetic human span (inserted by
     // handleToolError) so the panel renders the entire stack as a
-    // single wait gap. bulkInsertSpans' backfill closes these on resume.
+    // single wait gap. The wrapper stays waiting until its OWN
+    // handleChainEnd fires (after the user resumes and the chain
+    // actually finishes); bulkInsertSpans' backfill only handles the
+    // synthetic human span — chains wait for their own end.
     const bulkInsert = vi.fn(async () => {});
     const handler = makeHandler(bulkInsert);
     handler.handleChainStart(
@@ -409,8 +412,9 @@ describe("CapturingHandler — interrupt / human span", () => {
     expect(flushed[0]?.status).toBe("waiting");
     expect(flushed[0]?.error).toBeNull();
     // ended_at must be non-null so markRunningAsFailed doesn't flag the
-    // wrapper as an aborted run on the next restart. The value gets
-    // refined to the resume tool's started_at by backfillWaitingInterruptSpans.
+    // wrapper as an aborted run on the next restart. transform.ts
+    // renders the wrapper step as "completed" via bucket.ended — the
+    // raw span's status="waiting" never reaches the panel.
     expect(flushed[0]?.ended_at).not.toBeNull();
   });
 
