@@ -1,4 +1,3 @@
-import toolkit from "@/components/tool-ui/toolkit";
 import {
   ComposerAddAttachment,
   ComposerAttachments,
@@ -61,7 +60,6 @@ import {
   type FC,
   type PropsWithChildren,
 } from "react";
-import { useLangGraphInterruptState, useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -103,60 +101,6 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
         <ObservabilitySheet />
       </ObservabilitySheetProvider>
     </ThreadComponentsContext.Provider>
-  );
-};
-
-// Exported for tests/frontend/interrupt-ui.test.tsx. Not part of the
-// public surface — render via <Thread /> instead in app code.
-export const InterruptUI = () => {
-  const interrupt = useLangGraphInterruptState();
-  const sendCommand = useLangGraphSendCommand();
-
-  const USE_SUBGRAPH =
-    process.env.NEXT_PUBLIC_USE_SUBGRAPH === "true" || process.env.NEXT_PUBLIC_USE_SUBGRAPH === "1";
-
-  if (!interrupt) return null;
-
-  // Dispatch by `ui` to the matching toolkit renderer; one registry feeds
-  // both tool-call parts and interrupt UIs. Toolkit renderers have
-  // heterogeneous prop shapes (each tool's card accepts its own typed
-  // args), so the JSX spread below uses `any` at the boundary — the
-  // narrowing happens inside each renderer.
-  const value = interrupt.value as
-    | { ui?: string; data?: Record<string, unknown>; message?: string }
-    | undefined;
-  const ui = value?.ui;
-  const data = value?.data ?? {};
-  const message = value?.message;
-  const entry = ui
-    ? (toolkit as Record<string, { render?: ComponentType<any>; label?: string }>)[ui]
-    : undefined;
-  const Render = entry?.render;
-  if (!Render || !ui) return null;
-
-  // Resolved state never renders here — resume clears the interrupt.
-  // `resume` is typed string; we forward the structured pick as-is into
-  // Command(resume=...) — LangGraph parses it on resume. The `as never`
-  // is the SDK's gap: LangGraphCommand.resume is `string` but we know
-  // the runtime accepts a JSON payload.
-  return (
-    <>
-      <WorkingIndicator text={message} />
-      {/* {USE_SUBGRAPH && (
-        <ToolFallback.Root open>
-          <ToolFallback.Trigger toolName={ui} />
-          <ToolFallback.Content>
-            <Render
-              args={{ ...data }}
-              result={undefined}
-              addResult={(payload: unknown) => {
-                void sendCommand({ resume: payload as never });
-              }}
-            />
-          </ToolFallback.Content>
-        </ToolFallback.Root>
-      )} */}
-    </>
   );
 };
 
@@ -380,15 +324,6 @@ const AssistantMessage: FC = () => {
     ReasoningGroup,
   } = useContext(ThreadComponentsContext);
 
-  // Interrupt is global (one per thread), not per-message — gate to last
-  // assistant message so the card doesn't render N times down the thread.
-  const isLast = useAuiState((s) => {
-    const list = s.thread.messages;
-    return list.length > 0 && list[list.length - 1]?.id === s.message.id;
-  });
-
-  const interrupt = useLangGraphInterruptState();
-
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)
   // for pt-[n] use -mb-[n + 6] & min-h-[n + 6] to preserve compensation
@@ -467,14 +402,12 @@ const AssistantMessage: FC = () => {
               case "data":
                 return part.dataRendererUI;
               case "indicator":
-                return !interrupt && <WorkingIndicator text={"Connecting"} />;
+                return <WorkingIndicator text={"Connecting"} />;
               default:
                 return null;
             }
           }}
         </MessagePrimitive.GroupedParts>
-
-        {isLast && <InterruptUI />}
 
         <MessageError />
       </div>
