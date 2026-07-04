@@ -28,7 +28,10 @@ export async function createSystemPromptWithMemoryTemplate(
   // ponytail: mustache keeps the `\n\n` after `{{base}}` even when the
   // section is empty, so the no-memory path would render an extra blank
   // line. trimEnd strips it.
-  const content = (await promptTemplate.format({ base, memoryJson })).trimEnd();
+  const content = (await promptTemplate.format({
+    base,
+    // memoryJson
+  })).trimEnd();
 
   return new SystemMessage(content);
 }

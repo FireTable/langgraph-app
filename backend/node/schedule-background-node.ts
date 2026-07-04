@@ -32,8 +32,8 @@
 // wrapped with the shared capturingHandler singleton from
 // backend/callbacks.ts. Their LLM/DB spans land in the same
 // observability row set as the chat invoke.
-import { Client } from "@langchain/langgraph-sdk";
 import { graph as backgroundAgentGraph } from "@/backend/background-agent";
+import { langGraphClient } from "@/lib/langgraph/client"
 
 type ScheduleConfig = {
   configurable?: {
@@ -86,11 +86,7 @@ function readBackgroundCall(state: ScheduleState, config: ScheduleConfig): Prepa
 }
 
 async function dispatchViaCreate(input: PreparedCall): Promise<void> {
-  const client = new Client({
-    apiUrl: process.env.LANGGRAPH_API_URL ?? "http://localhost:2024",
-    apiKey: process.env.LANGCHAIN_API_KEY || undefined,
-  });
-  await client.runs.create(input.threadId, "background_agent", {
+  await langGraphClient.runs.create(input.threadId, "background_agent", {
     multitaskStrategy: "enqueue",
     afterSeconds:
       Number.isFinite(BACKGROUND_AFTER_SECONDS) && BACKGROUND_AFTER_SECONDS >= 0

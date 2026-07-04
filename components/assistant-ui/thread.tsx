@@ -142,7 +142,7 @@ export const InterruptUI = () => {
   return (
     <>
       <WorkingIndicator text={message} />
-      {USE_SUBGRAPH && (
+      {/* {USE_SUBGRAPH && (
         <ToolFallback.Root open>
           <ToolFallback.Trigger toolName={ui} />
           <ToolFallback.Content>
@@ -155,7 +155,7 @@ export const InterruptUI = () => {
             />
           </ToolFallback.Content>
         </ToolFallback.Root>
-      )}
+      )} */}
     </>
   );
 };

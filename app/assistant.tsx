@@ -17,6 +17,7 @@ import { BrandMark } from "@/components/brand-mark";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
+import { mergeSubgraphMessages } from "@/lib/langgraph/merge-subgraph-messages";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { UserButton } from "@/components/auth/user/user-button";
 import weatherToolkit from "@/components/tool-ui/toolkit";
@@ -212,13 +213,23 @@ export function Assistant() {
     // waiting for the user's location pick) survives a page refresh — the runtime
     // restores `useLangGraphInterruptState()` from this field. Also return
     // `uiMessages` so any persisted typedUi state is restored on reload.
+    //
+    // ponytail: { subgraphs: true } is required when the chat is sitting in
+    // a paused subgraph (ask_location etc.). Without it the SDK never asks
+    // the server for the subgraph's in-flight state, so the AI message +
+    // tool_call emitted inside the subgraph never reach the assistant-ui
+    // runtime on reload — see mergeSubgraphMessages for the dedupe rule.
     load: async (externalId) => {
-      const state = await client.threads.getState(externalId);
+      const state = await client.threads.getState(externalId, undefined, { subgraphs: true });
       const values = state.values as { messages?: unknown; ui?: unknown };
-      const interrupts = state.tasks?.[0]?.interrupts;
+      const interrupts = state.tasks?.at(-1)?.interrupts;
+      const messages = mergeSubgraphMessages(
+        (values.messages ?? []) as Array<{ id?: string }>,
+        state.tasks as ReadonlyArray<unknown>,
+      ) as never;
 
       return {
-        messages: (values.messages ?? []) as never,
+        messages,
         uiMessages: (values.ui ?? []) as never,
         ...(interrupts?.length ? { interrupts } : {}),
       };

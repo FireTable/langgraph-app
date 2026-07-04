@@ -8,6 +8,7 @@ import { getAllUserSummaries, writeSummary } from "@/lib/memory/queries";
 import { chatModel } from "@/backend/model";
 import { THREAD_SUMMARIZE_PROMPT } from "@/backend/prompt/system";
 
+
 type ExcerptMessage = {
   id?: string;
   type?: string;
