@@ -397,13 +397,8 @@ const WaterfallRow: FC = () => {
         <AuiIf
           condition={(s) => (s as unknown as { span: { hasChildren: boolean } }).span.hasChildren}
         >
-          <SpanPrimitive.CollapseToggle className="text-muted-foreground hover:text-foreground flex shrink-0 items-center justify-center rounded p-0.5">
-            <svg
-              aria-hidden
-              className="data-[collapsed=true]:-rotate-90 size-3.5 transition-transform"
-              viewBox="0 0 16 16"
-              fill="currentColor"
-            >
+          <SpanPrimitive.CollapseToggle className="text-muted-foreground hover:text-foreground data-[collapsed=true]:-rotate-90 flex shrink-0 items-center justify-center rounded p-0.5 transition-transform">
+            <svg aria-hidden className="size-3.5" viewBox="0 0 16 16" fill="currentColor">
               <path d="M4 6l4 4 4-4H4z" />
             </svg>
           </SpanPrimitive.CollapseToggle>
