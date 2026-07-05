@@ -69,17 +69,27 @@ DB rows are cleared automatically by `ON DELETE CASCADE` when the parent `thread
 
 ### `GET /api/threads/[id]/observability`
 
-Returns the thread's captured spans in `started_at` ascending order. The handler is `app/api/threads/[id]/observability/route.ts`. Side effect: preflight `markRunningAsFailed(id)` flips any still-`running` rows to `failed` so the client doesn't see stale running states when the chain crashed mid-flight. This is the un-filtered variant — for spans scoped to a single turn, see `GET /api/threads/[id]/observability/[parentMessageId]` below.
+Returns the thread's waterfall data + pre-computed aggregate for the panel header. The handler is `app/api/threads/[id]/observability/route.ts`. Side effect: preflight `markRunningAsFailed(id)` flips any still-`running` rows to `failed` so the client doesn't see stale running states when the chain crashed mid-flight. This is the un-filtered variant — for spans scoped to a single turn, see `GET /api/threads/[id]/observability/[parentMessageId]` below.
 
-Response (200):
+**Wire shape (200)** — server-transformed:
 
 ```ts
 {
   thread_id: string;
   retention_days: number; // obs: from OBSERVABILITY_RETENTION_DAYS, default 30
-  spans: CapturedSpan[];   // ordered by started_at ASC
+  // ponytail: SpanData[] (not raw CapturedSpan[]) — the route runs
+  // transformCapturedToSpanData server-side so the panel never sees the
+  // collector's internal payload (input/output/usage/meta are stripped).
+  // To inspect those on a single row, hit /spans/[spanId] below.
+  spans: SpanData[];                  // ordered by startedAt ASC
+  aggregate: AggregateDTO | null;     // pre-computed stat-card row; null when no spans
+  in_flight_runs: InFlightRun[];      // always present, empty for the un-filtered route
+  step_id_to_raw_span_id: Record<string, string>;  // synthetic step-wrapper id → raw span_id
 }
 ```
+
+- `SpanData` is the `@assistant-ui/react-o11y` waterfall input — `{ id, parentSpanId, name, type, status, startedAt, endedAt, latencyMs }`. Status is `"running" | "completed" | "failed" | "skipped"`. Extended on the wire with `parentMessageId?: string` (the turn this row belongs to) so the panel can build the per-turn detail URL without re-deriving from the waterfall tree.
+- `AggregateDTO` mirrors `RootAggregate` in `lib/observability/aggregate.ts` — token totals (`totalInput` / `totalOutput` / `totalTokens` / `totalCacheRead` / `totalReasoning`), TTFT (`ttftAvgMs` / `ttftMaxMs`, both nullable), span counts by kind (`llmSpanCount` / `toolSpanCount` / `humanCount` / `failedCount`), and `totalDurationMs`.
 
 Status codes:
 
@@ -93,40 +103,30 @@ Status codes:
 
 Filtered variant of the GET above — returns only the spans tagged with `meta.parent_message_id === <parentMessageId>`. The id is the assistant-ui human-message id (`message.parentId`) that triggered the turn; the backend tags every span for that turn with the same value via `CapturingHandler.currentParentMessageId`. Implementation lives at `app/api/threads/[id]/observability/[parentMessageId]/route.ts`. Served by the btree index `observability_spans_thread_parent_started_idx (thread_id, parent_message_id, started_at)` so the planner can satisfy `WHERE thread_id = ? AND parent_message_id = ? ORDER BY started_at` from the index alone.
 
-The `parent_message_id` column is populated from `meta.parent_message_id` on insert (`toRow` projection in `lib/observability/queries.ts`); on read, `toCapturedSpan` rehydrates the meta key from the column so downstream consumers see one source.
-
-Response (200):
+Same wire shape as the un-filtered route, with two additions:
 
 ```ts
 {
-  thread_id: string;
-  retention_days: number;
+  // ...same as above, plus:
   parent_message_id: string;
-  spans: CapturedSpan[];   // ordered by started_at ASC, filtered
-  // ponytail: langGraphClient.runs.list(threadId, { status: "running"|"pending" })
-  // filtered by metadata.parent_message_id === parent_message_id. Covers
-  // bg-agent dispatches from triggerBackgroundAgentNode (which stamps
-  // metadata on every runs.create) BEFORE the SDK has fired any callback
-  // — i.e. the persisted spans may be empty for an enqueued-but-not-yet-
-  // started run. The two SDK calls (one per status) are because
-  // `list({status})` is single-valued; status values are documented in
-  // @langchain/langgraph-sdk's `RunStatus` type.
   in_flight_runs: Array<{
     run_id: string;
     thread_id: string;
     assistant_id: string;
     status: "pending" | "running";
-    created_at: string;        // ISO timestamp
-    updated_at: string;        // ISO timestamp
+    created_at: string; // ISO timestamp
+    updated_at: string; // ISO timestamp
     metadata: {
       parent_message_id: string | null;
-      [extra: string]: unknown;   // passthrough — additional keys preserved
+      [extra: string]: unknown; // passthrough — additional keys preserved
     };
   }>;
 }
 ```
 
-`in_flight_runs` is always an array (empty when no bg runs are pending/running on this turn). The panel renders an "in progress" placeholder per entry while waiting for the persisted spans to catch up. Main-agent runs are NOT in this list today — only `triggerBackgroundAgentNode` stamps `metadata.parent_message_id` on its `runs.create` payload, because the chat runtime (`useLangGraphRuntime` → `unstable_createLangGraphStream`) controls main-agent invocations and doesn't accept caller-supplied metadata. Main-agent in-flight state is observable via the `spans` array (CapturingHandler now persists on `handleChainStart`, so the outer chain row lands in DB before End fires — see backend/observability/callback-collector.ts).
+`in_flight_runs` is filtered by `metadata.parent_message_id === <parentMessageId>` to scope it to the current turn. The two SDK calls (`status: "running"` + `status: "pending"`) are because `list({status})` is single-valued; status values are documented in `@langchain/langgraph-sdk`'s `RunStatus` type. Main-agent runs are NOT in this list today — only `triggerBackgroundAgentNode` stamps `metadata.parent_message_id` on its `runs.create` payload. Main-agent in-flight state is observable via the `spans` array (CapturingHandler now persists on `handleChainStart`).
+
+`step_id_to_raw_span_id` maps synthetic step-wrapper ids (e.g. `step-3-routerAgent-...`) to their representative raw `span_id`. The panel reads this to translate a clicked wrapper row into the raw span id the detail endpoint expects. Empty when the thread has no step wrappers.
 
 Status codes:
 
@@ -141,6 +141,31 @@ Status codes:
 Clears all spans for the thread. Returns `{ cleared: number }` (the row count). Same auth + ownership contract as GET.
 
 Status codes: 200 / 401 / 404 (same triggers as GET).
+
+### `GET /api/threads/[id]/observability/[parentMessageId]/spans/[spanId]`
+
+Returns the full `CapturedSpan` for a single span. Called from the panel when the user clicks a waterfall row — the waterfall renders from the server-transformed `SpanData[]`, but `SpanDetails` (and the row's hover tooltip fields like model name / TTFT / tokens) need the raw payload.
+
+`spanId` is the raw `span_id`, NOT a synthetic step-wrapper id. The panel translates wrapper ids via the `step_id_to_raw_span_id` map from the parent route before issuing this fetch.
+
+`parentMessageId` is the turn this row belongs to. The transform layer stamps it on every SpanData (root + step wrapper + leaf), so the panel can pluck it from the clicked row without re-deriving from the waterfall tree. The DB lookup is `(thread_id, parent_message_id, span_id)` — uses the existing `observability_spans_thread_parent_started_idx` btree. If the row's span isn't found in DB (e.g. retention evicted it between the parent fetch and the click), the route falls back to `langGraphClient.runs.list(threadId, { status: "running"|"pending" })` filtered by `metadata.parent_message_id === parentMessageId`, so an active bg-agent run still surfaces a details card. Missing in both → 404.
+
+Response (200):
+
+```ts
+{
+  thread_id: string;
+  span: CapturedSpan; // full collector payload — input / output / usage / meta / error
+}
+```
+
+Status codes:
+
+| Status | Trigger                                                                                | Body                       |
+| ------ | -------------------------------------------------------------------------------------- | -------------------------- |
+| 200    | span exists for `(parent_message_id, span_id)` in DB or SDK                            | the payload above          |
+| 401    | no session                                                                             | `{ code: "UNAUTHORIZED" }` |
+| 404    | thread missing or owned by another, OR span not in this turn, OR span not found at all | `{ code: "NOT_FOUND" }`    |
 
 ## Memory
 

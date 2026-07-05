@@ -8,6 +8,8 @@ import {
   deleteSpansByThreadId,
 } from "@/lib/observability/queries";
 import { getRetentionDays } from "@/lib/observability/config";
+import { transformCapturedToSpanData, buildStepIdToRawSpanId } from "@/lib/observability/transform";
+import { aggregateRoot } from "@/lib/observability/aggregate";
 
 type IdParams = { id: string };
 
@@ -17,18 +19,26 @@ type IdParams = { id: string };
 // the thread (no parent_message_id filter); the filtered variant is
 // served from the sibling route file at
 // app/api/threads/[id]/observability/[parentMessageId]/route.ts.
+//
+// ponytail: data shape — server-side only. Same shape as the filtered
+// route but aggregate is computed across the whole thread (panel uses
+// this as the "no specific turn" view, e.g. when the user opens the
+// sheet from a message whose id isn't captured in any span).
 export const GET = withAuth<IdParams>(async (_req, { user, params }) => {
   const thread = await getThreadForUser(params.id, user.id);
   if (!thread) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
-  // ponytail: preflight flip — interrupted invokes leave Start-only
-  // spans running forever; the panel would render "running" with no
-  // end. Mark them failed before the client sees them.
   await markRunningAsFailed(params.id);
-  const spans = await getSpansByThreadId(params.id);
+  const capturedSpans = await getSpansByThreadId(params.id);
+  const spans = transformCapturedToSpanData(capturedSpans);
+  const aggregate = aggregateRoot(capturedSpans);
+  const stepIdToRawSpanId = buildStepIdToRawSpanId(capturedSpans);
   return NextResponse.json({
     thread_id: params.id,
     retention_days: getRetentionDays(),
     spans,
+    aggregate,
+    in_flight_runs: [],
+    step_id_to_raw_span_id: stepIdToRawSpanId,
   });
 });
 

@@ -96,11 +96,12 @@ app/                      Next.js App Router
   globals.css             Tailwind v4 entry
 components/
   assistant-ui/           Chat primitives (thread, attachment, markdown, reasoning, tool-fallback, tool-group, tooltip-icon-button)
-observability/                          UI components (button / sheet / sheet-context / panel) — moved out of assistant-ui/ so the feature owns its own folder
+observability/                          UI components (button / sheet / sheet-context / panel / llm-messages) — moved out of assistant-ui/ so the feature owns its own folder
   observability/button.tsx                stateless icon (rule #8 exception) — opens the Sheet via context
-  observability/sheet.tsx                 Sheet wrapper (singleton, at ThreadRoot) — derives threadId via useAuiState
+  observability/sheet.tsx                 Sheet wrapper (singleton, at ThreadRoot) — fetches list + drives 10s in-flight poll; passes threadId / aggregate / stepIdToRawSpanId / parentMessageId as props to the panel
   observability/sheet-context.tsx         Provider + useOpenObservabilitySheet() so per-message buttons share one Sheet
-  observability/panel.tsx                 Waterfall renderer (SpanResource from @assistant-ui/react-o11y)
+  observability/panel.tsx                 Waterfall renderer (SpanResource from @assistant-ui/react-o11y); lazy-fetches row detail via /spans/[spanId]; hover tooltips + glassy refresh overlay
+  observability/llm-messages.ts           buildLlmMessages — parses LLM span input/output into `[{role, body, isNew}]` entries for the detail Messages section (cumulative isNew: every input entry from the last human onward, plus every output entry, in order)
   ui/                     shadcn/ui primitives (avatar, button, collapsible, dialog, tooltip) — new-york style, lucide icons
   ui/address-or-hash.tsx  Truncated address/hash with copy-to-clipboard
   tool-ui/ask-location/   Interrupt-driven or addResult-driven location picker card
@@ -110,7 +111,7 @@ lib/utils.ts              cn() = twMerge(clsx(...))
 lib/threads/              Threads module (schema, queries, adapter, validators)
 lib/wagmi.ts              wagmi/RainbowKit config (chains, connectors, WalletConnect projectId)
 lib/alchemy/              networks.ts (slug → Alchemy URL + disabled list) + portfolio.ts (RPC helpers)
-lib/observability/        schema (Drizzle table) · queries (bulkInsert / get / markFailed / delete — with FORBIDDEN regex) · validators (Zod) · config (retention days) · transform (CapturedSpan → SpanData)
+lib/observability/        schema (Drizzle table) · queries (bulkInsert / get / markFailed / delete — with FORBIDDEN regex) · validators (Zod, list + detail + AggregateDTO) · config (retention days) · transform (CapturedSpan → SpanData, server-side; also buildStepIdToRawSpanId) · aggregate (RootAggregate: pre-compute stat-card row from raw spans)
 lib/prices/coingecko.ts   CoinGecko free-tier price client (60s in-memory cache)
 lib/decimal.ts            Decimal-based amount math for crypto (no native float)
 lib/memory/               Memory queries (getProfileDoc / putProfileDoc / getSocialAccounts / getRecentThreadSummaries) + validators (RFC 6902 patch schema) + constants (env-tuned limits)
@@ -180,13 +181,24 @@ Consequences worth knowing:
 
 `bulkInsert` is constructor-injected so the handler stays DB-free and the unit tests run with `vi.fn()`. Wire-up is a one-line `bulkInsert: async (spans) => { await bulkInsertSpans(spans); }` in `getCapturingHandler()`.
 
-Front-end: `<ObservabilityButton>` is icon-only (rule #8 exception) and mounts inside `<AssistantActionBar>` of `components/assistant-ui/thread.tsx` — alongside Copy / Refresh / More on every assistant message. Click opens an `<ObservabilitySheet>` that fetches `GET /api/threads/<threadId>/observability` and renders the waterfall with a retention banner.
+Front-end: `<ObservabilityButton>` is icon-only (rule #8 exception) and mounts inside `<AssistantActionBar>` of `components/assistant-ui/thread.tsx` — alongside Copy / Refresh / More on every assistant message. Click opens an `<ObservabilitySheet>` that fetches `GET /api/threads/<threadId>/observability[/parentMessageId]` and renders the waterfall with a retention banner.
 
-The Sheet itself is rendered once at `<ThreadRoot>` (not co-mounted per message — that would pile on dialog backdrops). Per-message buttons talk to the Sheet through `ObservabilitySheetProvider` / `useOpenObservabilitySheet()` from `components/observability/sheet-context.tsx`; the Sheet derives its `threadId` from `useAuiState(... mainThreadId.externalId)` so it follows whichever thread the user is on.
+The Sheet itself is rendered once at `<ThreadRoot>` (not co-mounted per message — that would pile on dialog backdrops). Per-message buttons talk to the Sheet through `ObservabilitySheetProvider` / `useOpenObservabilitySheet()` from `components/observability/sheet-context.tsx`; the Sheet derives its `threadId` from the sheet-context (set by the button click) and passes it down to the panel as a prop. While at least one in-flight LangGraph run is reported by the API, the Sheet polls every 10s and renders an `<Activity/>` + countdown badge in the header.
 
-Endpoints live in `app/api/threads/[id]/observability/route.ts` and are wrapped in `withAuth` (rule #9). Ownership → 404 (no existence leak, spec FR-008). Both GET and DELETE shape the response via `lib/observability/validators.ts` Zod schemas.
+The panel (`components/observability/panel.tsx`) receives a **server-transformed** `WireSpanData[]` + a pre-computed `AggregateDTO` + a `stepIdToRawSpanId` map. The panel never touches raw `CapturedSpan` — `transformCapturedToSpanData()` (in `lib/observability/transform.ts`) + `aggregateRoot()` (`lib/observability/aggregate.ts`) run inside the route handler, so wire bytes are minimized and the client doesn't import the collector payload. Click a row → lazy-fetch `GET /api/threads/<id>/observability/<parentMessageId>/spans/<spanId>` for the full payload. Refreshes paint a glassy `<DetailRefreshOverlay>` over the existing card instead of unmounting to a skeleton. LLM-kind leaves render with `meta.ls_model_name` as the row name (`gpt-4o-mini` over `ChatOpenAI`). Hover tooltips use SpanData fields only — no extra fetch.
 
-DB table `observability_spans` in `lib/observability/schema.ts`, FK to `threads(id) ON DELETE CASCADE` (delete the thread row, spans drop with it — no separate cleanup). The `FORBIDDEN` regex in `bulkInsertSpans` rejects any row whose `JSON.stringify` matches `api[_-]?key | _password | ^password$ | _secret$ | ^secret$ | baseURL | organization | bearer <token>` (FR-009 / SC-003). The regex throws — the API is fail-closed: any new provider kwarg that contains a forbidden token stops the write until it's whitelisted.
+Subgraph correctness: under `streamSubgraphs: true` the LC inner `CompiledStateGraph` wrapper shares the outer wrapper's `meta.run_id` and `span_id === meta.run_id`. `collectRootChains` keys by `run_id` (not by `parent_span_id`) to drop the duplicate; the outer wrapper wins and the inner one is suppressed. `parent_span_id` is reconstructed from `langgraph_checkpoint_ns` (LC's `parent_run_id` lies inside subgraphs), so nested wrappers render at the right depth. Two main invokes on the same turn (regenerate + follow-up) keep their separate trees because their `run_id`s differ.
+
+Endpoints:
+
+- `GET /api/threads/[id]/observability` — all turns merged
+- `GET /api/threads/[id]/observability/[parentMessageId]` — single-turn filter
+- `GET /api/threads/[id]/observability/[parentMessageId]/spans/[spanId]` — single span full payload; SDK fallback (`langGraphClient.runs.list`) covers bg-agent runs in flight that haven't landed in the DB yet (filtered by `metadata.parent_message_id === parentMessageId` so concurrent runs from a different turn can't impersonate)
+- `DELETE /api/threads/[id]/observability` — wipe the thread's spans
+
+All wrapped in `withAuth` (rule #9). Ownership → 404 (no existence leak, spec FR-008). Responses shaped via `lib/observability/validators.ts` Zod schemas; `SpanData` carries an optional `parentMessageId` extension so the panel can build the per-turn detail URL without re-deriving from the waterfall tree.
+
+DB table `observability_spans` in `lib/observability/schema.ts`, FK to `threads(id) ON DELETE CASCADE` (delete the thread row, spans drop with it — no separate cleanup). The `FORBIDDEN` regex in `bulkInsertSpans` rejects any row whose `JSON.stringify` matches `api[_-]?key | _password | ^password$ | _secret$ | ^secret$ | baseURL | organization | bearer <token>` (FR-009 / SC-003). The regex throws — the API is fail-closed: any new provider kwarg that contains a forbidden token stops the write until it's whitelisted. The `parent_message_id` column (nullable, indexed under `(thread_id, parent_message_id, started_at)`) is the per-turn filter index — `bulkInsertSpans` backfills from `meta.parent_message_id` on read so most rows have it set; interrupt-resume / cold-start / pre-backfill rows keep the column NULL and intentionally 404 against the per-turn detail endpoint.
 
 Retention: env `OBSERVABILITY_RETENTION_DAYS` (default 30, positive int). Physical delete runs via `pnpm exec tsx scripts/cleanup-observability.ts` — system cron is the operator's responsibility (no MVP+scheduling, see `docs/OBSERVABILITY.md` trade-offs).
 

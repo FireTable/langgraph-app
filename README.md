@@ -13,7 +13,7 @@ A self-hostable chat app (this repo: `langgraph-app`) that streams tokens from a
 - **User accounts**: email + password (with email verification), GitHub and Google sign-in, 7-day persistent sessions, and per-user thread isolation. See [docs/AUTH.md](docs/AUTH.md) for the operator guide.
 - **Tool-using agent**: the `agent` node is bound to `search_web` (Jina Search) and `fetch_url` (Jina Reader) — the model can research topics and read pages mid-conversation. Tools run unconditionally; write-side tools added later will hang their own `interruptBefore` hook. See [docs/APIS.md](docs/APIS.md) for the contract.
 - **Crypto sub-agent**: price, NFT holdings (5-chain gallery via Alchemy Portfolio), and a simulated swap flow against an auto-funded Mock Coin balance — see [docs/TOOLS.md](docs/TOOLS.md) and [docs/INTERRUPT.md](docs/INTERRUPT.md) for the per-card contract.
-- **Observability panel**: every LLM / Tool / Chain / Node span is captured by a `BaseCallbackHandler` and persisted to a `observability_spans` Postgres table. Each assistant message shows an icon button that opens a per-turn waterfall — duration, token usage, nested parent/child spans. See [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
+- **Observability panel**: every LLM / Tool / Chain / Node span is captured by a `BaseCallbackHandler` and persisted to a `observability_spans` Postgres table. Each assistant message shows an icon button that opens a per-turn waterfall — duration, token usage, nested parent/child spans. The list endpoint is server-transformed (panel never carries the raw collector payload); per-row click lazy-loads the full span via a dedicated detail endpoint. See [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
 
 ## Tech stack
 
@@ -128,7 +128,7 @@ backend/
 
 components/
   assistant-ui/               Chat primitives (thread, markdown, reasoning, …)
-  observability/              Observability UI (button, sheet, sheet-context, panel)
+  observability/              Observability UI (button, sheet, sheet-context, panel, llm-messages renderer)
   ui/                         shadcn/ui primitives
 
 lib/
@@ -143,9 +143,10 @@ lib/
   observability/              Observability module
     schema.ts                 Drizzle table (observability_spans)
     queries.ts                bulkInsertSpans / getSpansByThreadId / markRunningAsFailed / deleteSpansByThreadId
-    transform.ts              CapturedSpan → SpanData (for @assistant-ui/react-o11y)
+    transform.ts              CapturedSpan → SpanData (for @assistant-ui/react-o11y); buildStepIdToRawSpanId
+    aggregate.ts              aggregateRoot — pre-compute stat-card row server-side
     config.ts                 getRetentionDays() — reads OBSERVABILITY_RETENTION_DAYS
-    validators.ts             Zod schemas for GET / DELETE responses
+    validators.ts             Zod schemas for list / detail / DELETE responses + AggregateDTO
 
 db/                           Database root
   schema.ts                   Aggregate re-export of all module schemas
@@ -244,7 +245,7 @@ Test database stays isolated from dev — never put production-like data in `lan
 ## Documentation
 
 - [`docs/APIS.md`](docs/APIS.md) — HTTP endpoint reference. Update whenever a route under `app/api/` changes.
-- [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — observability panel design: callback handler wiring, `observability_spans` schema, security/redaction, retention config, and curl examples.
+- [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — observability panel design: callback handler wiring, `observability_spans` schema, server-side transform + aggregate, lazy-loaded row detail, security/redaction, retention config, and curl examples.
 - [`docs/TOOLS.md`](docs/TOOLS.md) — LangGraph tool inventory and frontend card wiring. Update whenever a tool or card is added/removed/rerouted.
 - [`docs/INTERRUPT.md`](docs/INTERRUPT.md) — interrupt-driven tool flows (ask_location, connect_wallet, place_crypto_order, get_order_status) — the two runtime paths the cards can take.
 - [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, troubleshooting.

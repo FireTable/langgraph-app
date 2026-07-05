@@ -5,6 +5,8 @@ import { getThreadForUser } from "@/lib/threads/queries";
 import { getSpansByThreadId, markRunningAsFailed } from "@/lib/observability/queries";
 import { getRetentionDays } from "@/lib/observability/config";
 import { langGraphClient } from "@/lib/langgraph/client";
+import { transformCapturedToSpanData, buildStepIdToRawSpanId } from "@/lib/observability/transform";
+import { aggregateRoot } from "@/lib/observability/aggregate";
 
 type Params = { id: string; parentMessageId: string };
 
@@ -14,15 +16,16 @@ type Params = { id: string; parentMessageId: string };
 // carries the assistant-ui human-message id so the panel renders only
 // the spans produced for THAT turn (see backend/observability/
 // callback-collector.ts `currentParentMessageId`).
+//
+// ponytail: data shape — server-side only. transformCapturedToSpanData +
+// aggregateRoot run here so the panel receives SpanData[] + a pre-computed
+// aggregate, never raw CapturedSpan[]. Raw payload is reachable via the
+// sibling /spans/[spanId] detail endpoint when the user clicks a row.
 export const GET = withAuth<Params>(async (_req, { user, params }) => {
   const thread = await getThreadForUser(params.id, user.id);
   if (!thread) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   await markRunningAsFailed(params.id);
-  // ponytail: the path is double-encoded upstream via Next.js route
-  // params — no extra decoding needed, the value is already a clean
-  // string when it reaches us. The btree index
-  // observability_spans_thread_parent_started_idx serves this path.
-  const [spans, inFlightRuns] = await Promise.all([
+  const [capturedSpans, inFlightRuns] = await Promise.all([
     getSpansByThreadId(params.id, {
       parentMessageId: params.parentMessageId,
     }),
@@ -36,12 +39,20 @@ export const GET = withAuth<Params>(async (_req, { user, params }) => {
     // pending set is empty most of the time.
     fetchInFlightRuns(params.id, params.parentMessageId),
   ]);
+  // ponytail: server-side transform. CapturedSpan → SpanData runs here
+  // so the panel never has to import transformCapturedToSpanData and
+  // the wire carries only what the waterfall needs.
+  const spans = transformCapturedToSpanData(capturedSpans);
+  const aggregate = aggregateRoot(capturedSpans);
+  const stepIdToRawSpanId = buildStepIdToRawSpanId(capturedSpans);
   return NextResponse.json({
     thread_id: params.id,
     retention_days: getRetentionDays(),
     parent_message_id: params.parentMessageId,
     spans,
+    aggregate,
     in_flight_runs: inFlightRuns,
+    step_id_to_raw_span_id: stepIdToRawSpanId,
   });
 });
 

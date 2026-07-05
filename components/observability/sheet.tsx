@@ -10,19 +10,18 @@ import { useAuiState } from "@assistant-ui/react";
 import type { SpanData } from "@assistant-ui/react-o11y";
 import { Activity } from "lucide-react";
 import { ObservabilityPanel, ObservabilityPanelSkeleton } from "@/components/observability/panel";
-import { transformCapturedToSpanData } from "@/lib/observability/transform";
 import { useObservabilitySheetState } from "@/components/observability/sheet-context";
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { AggregateDTO, InFlightRun, SpanDataDTO } from "@/lib/observability/validators";
 
 const LOCAL_THREAD_PREFIX = "__LOCAL_";
 
-// ponytail: 5s poll while a bg agent is in flight. Once the API reports
+// ponytail: 10s poll while a bg agent is in flight. Once the API reports
 // in_flight_runs is empty, onRefresh resolves false and the polling +
 // countdown both tear down together.
 const REFRESH_INTERVAL_MS = 10 * 1000;
 
 // ponytail: owns the polling + countdown lifecycle in one place. The
-// 1s tick that drives the countdown label, and the 5s tick that
+// 1s tick that drives the countdown label, and the 10s tick that
 // re-fetches spans, both live here — so the parent sheet's render tree
 // is untouched while time passes. Activity icon rides with the
 // countdown so they appear/disappear as a unit.
@@ -34,23 +33,21 @@ type RefreshCountdownProps = {
 
 const RefreshCountdown: FC<RefreshCountdownProps> = ({ enabled, refreshIntervalMs, onRefresh }) => {
   // ponytail: epoch-ms timestamp of the next scheduled poll, or null
-  // when polling is inactive. Drives the "refreshing in Ns" countdown.
+  // when polling is inactive. Drives the "still running, tracing Xs" countdown.
   const [targetEpochMs, setTargetEpochMs] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
-  // ponytail: 5s poll. Calls onRefresh each tick — true keeps polling,
-  // false stops. Stops automatically when enabled flips false.
   useEffect(() => {
     if (!enabled) {
       setTargetEpochMs(null);
       return;
     }
     // ponytail: paint the countdown immediately on enable, otherwise
-    // the first tick lands 5s later and the user sees the indicator
+    // the first tick lands 10s later and the user sees the indicator
     // pop in a full cycle late. Reset `now` to the same Date.now() so
     // the initial (targetEpochMs - now) is exactly refreshIntervalMs —
     // Math.ceil would otherwise read a few ms past the boundary as the
-    // next integer (e.g. 5005ms → "6s" instead of "5s").
+    // next integer (e.g. 10005ms → "11s" instead of "10s").
     const t = Date.now();
     setTargetEpochMs(t + refreshIntervalMs);
     setNow(t);
@@ -95,8 +92,9 @@ const RefreshCountdown: FC<RefreshCountdownProps> = ({ enabled, refreshIntervalM
 
 export const ObservabilitySheet: FC = () => {
   const { open, threadId, parentMessageId, setOpen } = useObservabilitySheetState();
-  const [spans, setSpans] = useState<CapturedSpan[]>([]);
-  const [spanData, setSpanData] = useState<SpanData[]>([]);
+  const [spans, setSpans] = useState<SpanDataDTO[]>([]);
+  const [aggregate, setAggregate] = useState<AggregateDTO | null>(null);
+  const [stepIdToRawSpanId, setStepIdToRawSpanId] = useState<Record<string, string>>({});
   const [retentionDays, setRetentionDays] = useState<number | null>(null);
   const [stillRunning, setStillRunning] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -114,16 +112,14 @@ export const ObservabilitySheet: FC = () => {
 
   // ponytail: monotonic fetch id — every loadSpans() bumps it, and
   // older in-flight responses early-return when they no longer own
-  // the latest id. Without this, the 5s poll racing with the initial
+  // the latest id. Without this, the 10s poll racing with the initial
   // load (or two consecutive polls) would clobber state with stale
   // spans when the slower response lands second.
   const fetchIdRef = useRef(0);
   // ponytail: track whether the first response has landed. Until then,
   // show the skeleton; after that, polls patch the new spans in place
   // without flipping loading=true (which would re-mount the panel and
-  // flicker through <ObservabilityPanelSkeleton /> on every tick). A
-  // ref, not state — reading it inside loadSpans must be synchronous
-  // and not depend on closure freshness.
+  // flicker through <ObservabilityPanelSkeleton /> on every tick).
   const hasLoadedOnceRef = useRef(false);
 
   // ponytail: returns true when the response reports at least one
@@ -132,18 +128,10 @@ export const ObservabilitySheet: FC = () => {
     if (!open || !threadId) return false;
     const myId = ++fetchIdRef.current;
     // ponytail: only flash the skeleton on the first load — subsequent
-    // 5s polls keep the existing data on screen and patch the new spans
-    // in place. setLoading(true) without a guard would flicker the
-    // panel through <ObservabilityPanelSkeleton /> on every poll tick.
+    // 10s polls keep the existing data on screen and patch the new spans
+    // in place.
     setLoading(!hasLoadedOnceRef.current);
     setError(null);
-    // ponytail: filtered route takes the path segment
-    // `/api/threads/<id>/observability/<parentMessageId>` so the btree
-    // index observability_spans_thread_parent_started_idx serves it.
-    // When the user clicks an older message whose id isn't captured
-    // in any span (no currentParentMessageId on the outer chain),
-    // parentMessageId is null and we fall back to the un-filtered
-    // route — the panel still renders, just with the merged history.
     const path = parentMessageId
       ? `/api/threads/${threadId}/observability/${encodeURIComponent(parentMessageId)}`
       : `/api/threads/${threadId}/observability`;
@@ -158,23 +146,16 @@ export const ObservabilitySheet: FC = () => {
         thread_id: string;
         retention_days: number;
         parent_message_id?: string;
-        spans: CapturedSpan[];
-        in_flight_runs?: unknown[];
+        spans: SpanData[];
+        aggregate: AggregateDTO | null;
+        in_flight_runs?: InFlightRun[];
+        step_id_to_raw_span_id?: Record<string, string>;
       };
       setSpans(body.spans);
-      setSpanData(transformCapturedToSpanData(body.spans));
+      setAggregate(body.aggregate ?? null);
+      setStepIdToRawSpanId(body.step_id_to_raw_span_id ?? {});
       setRetentionDays(body.retention_days);
-      // ponytail: mark "first response landed" so subsequent 5s polls
-      // patch in place instead of re-flashing the skeleton. Reset to
-      // false when the user navigates to a different thread / parent
-      // message (loadSpans identity changes → effect re-runs → first
-      // poll is treated as initial load again).
       hasLoadedOnceRef.current = true;
-      // ponytail: in_flight_runs covers bg runs enqueued via runs.create
-      // whose Start callback hasn't fired yet (or whose End is pending).
-      // Surface to the panel so it can render a "still running" row at
-      // the bottom of the waterfall — transform.ts doesn't see these
-      // runs at all (the SDK Run has no persisted CapturedSpan yet).
       const inFlight = (body.in_flight_runs ?? []).length > 0;
       setStillRunning(inFlight);
       return inFlight;
@@ -188,17 +169,14 @@ export const ObservabilitySheet: FC = () => {
   }, [open, threadId, parentMessageId]);
 
   // ponytail: initial / context-switch load. Re-runs whenever the
-  // sheet opens or the active thread / parent message changes. The
-  // return value primes stillRunning so RefreshCountdown starts
-  // polling on the very first render where in-flight runs are present.
+  // sheet opens or the active thread / parent message changes.
   useEffect(() => {
     void loadSpans();
   }, [loadSpans]);
 
   // ponytail: switching to a different thread / parent message resets
   // the "has loaded" flag so the new target's first fetch flashes the
-  // skeleton again. Without this, opening a second thread would patch
-  // in silently on top of an empty panel (no skeleton).
+  // skeleton again.
   useEffect(() => {
     hasLoadedOnceRef.current = false;
   }, [open, threadId, parentMessageId]);
@@ -207,10 +185,6 @@ export const ObservabilitySheet: FC = () => {
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetContent
         side="right"
-        // ponytail: the right-side variant hard-codes sm:max-w-sm
-        // (~24rem), which clamps width before our responsive utilities
-        // can take over. !max-w-none cancels that clamp so w-full (mobile)
-        // and lg:w-3/4 (≥1024px) are the only constraints left.
         className="!max-w-none flex w-full flex-col gap-4 overflow-hidden p-6 md:w-3/4"
       >
         <SheetHeader>
@@ -239,10 +213,12 @@ export const ObservabilitySheet: FC = () => {
           <div className="text-muted-foreground text-sm">No thread selected.</div>
         ) : (
           <ObservabilityPanel
-            spans={spanData}
-            rawSpans={spans}
+            spans={spans}
+            aggregate={aggregate}
+            stepIdToRawSpanId={stepIdToRawSpanId}
             retentionDays={retentionDays}
             stillRunning={stillRunning}
+            threadId={threadId}
           />
         )}
       </SheetContent>

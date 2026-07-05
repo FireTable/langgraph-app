@@ -8,6 +8,30 @@
 import type { SpanData } from "@assistant-ui/react-o11y";
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
 
+// ponytail: extend the @assistant-ui/react-o11y SpanData with our
+// per-turn id. The upstream type is strict (no extra fields), so we
+// type-extend here rather than passing a separate map from the API.
+// The panel reads `parentMessageId` off the row it clicked to build
+// the per-turn detail URL.
+export type WireSpanData = SpanData & { parentMessageId?: string };
+
+// ponytail: read the turn id from a span's meta. The callback handler
+// stamps `meta.parent_message_id`; queries.ts also projects it into a
+// column and re-hydrates on read, so the meta is the canonical source.
+function readPmid(span: CapturedSpan | undefined): string | undefined {
+  if (!span) return undefined;
+  const raw = (span.meta as Record<string, unknown> | null | undefined)?.parent_message_id;
+  return typeof raw === "string" && raw.length > 0 ? raw : undefined;
+}
+
+function readPmidFromLeaves(leaves: CapturedSpan[]): string | undefined {
+  for (const l of leaves) {
+    const v = readPmid(l);
+    if (v) return v;
+  }
+  return undefined;
+}
+
 type Step = {
   step: number;
   node: string;
@@ -76,7 +100,7 @@ function rootIdFromSpanId(spanId: string, roots: RootChain[]): string | null {
   return roots.find((r) => r.span.span_id === spanId)?.id ?? null;
 }
 
-export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[] {
+export function transformCapturedToSpanData(captured: CapturedSpan[]): WireSpanData[] {
   const stepMap = new Map<string, Step>();
   for (const s of captured) {
     const node = s.meta?.langgraph_node;
@@ -146,7 +170,7 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
   // ponytail: build the top-level SpanData list. One entry per real root
   // chain (main + each background dispatch). No synthetic fallback —
   // steps whose run_id has no matching root are dropped from the panel.
-  const rootEntries: SpanData[] = rootChains.map<SpanData>((r) => ({
+  const rootEntries: WireSpanData[] = rootChains.map<WireSpanData>((r) => ({
     id: r.id,
     parentSpanId: null,
     // ponytail: span.name comes from the LC outer RunnableSequence
@@ -167,6 +191,10 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
     startedAt: r.span.started_at,
     endedAt: r.span.ended_at,
     latencyMs: r.span.ended_at != null ? r.span.ended_at - r.span.started_at : null,
+    // ponytail: turn id on every SpanData so the panel can build the
+    // per-turn detail URL. Reads from the root chain's own meta
+    // (re-hydrated from the column in queries.ts).
+    parentMessageId: readPmid(r.span),
   }));
 
   const stepIdByStepAndName = new Map<string, string>();
@@ -177,7 +205,7 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
 
   const wrapperCandidates = collectWrapperCandidates(captured);
 
-  const out: SpanData[] = [...rootEntries];
+  const out: WireSpanData[] = [...rootEntries];
   // ponytail: SpanResource walks spans by parent_span_id. Anchor each
   // step's parent at the nearest strictly-outer step (a shorter ns whose
   // ns is a strict prefix of the child's ns), or root. Picking by ns
@@ -248,6 +276,11 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
     // dangle under a synthetic "root" entry.
     if (parentId === null) continue;
     const type = stepHasInner(step, wrapperCandidates) ? "chain" : "node";
+    // ponytail: surface the turn id on every SpanData so the panel can
+    // build the per-turn detail URL without re-deriving from the
+    // waterfall tree. Prefer the repRaw (earliest) span's meta; fall
+    // back to any leaf if the repRaw didn't carry it.
+    const stepPmid = readPmid(repRaw) ?? readPmidFromLeaves(step.leaves);
     out.push({
       id,
       parentSpanId: parentId,
@@ -257,12 +290,22 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
       startedAt: step.started,
       endedAt: step.ended,
       latencyMs: step.ended ? step.ended - step.started : null,
+      parentMessageId: stepPmid,
     });
     for (const leaf of step.leaves) {
+      // ponytail: LLM leaves surface the model name in the waterfall
+      // (`gpt-4o-mini` reads better than the LangChain class name
+      // `ChatOpenAI` — especially when a thread hops between
+      // providers). Pull from meta.ls_model_name; fall back to the
+      // span name when the provider didn't stamp it.
+      const leafMeta = (leaf.meta ?? null) as Record<string, unknown> | null;
+      const modelName = leaf.kind === "llm" ? leafMeta?.ls_model_name : null;
+      const leafName =
+        typeof modelName === "string" && modelName.length > 0 ? modelName : leaf.name;
       out.push({
         id: leaf.span_id,
         parentSpanId: id,
-        name: leaf.name,
+        name: leafName,
         type: leaf.kind === "llm" ? "llm" : leaf.kind === "tool" ? "tool" : leaf.kind,
         // ponytail: SpanData.status from @assistant-ui/react-o11y only
         // accepts "running" | "completed" | "failed" | "skipped" — no
@@ -274,11 +317,51 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
         startedAt: leaf.started_at,
         endedAt: leaf.ended_at,
         latencyMs: leaf.ended_at ? leaf.ended_at - leaf.started_at : null,
+        parentMessageId: readPmid(leaf) ?? stepPmid,
       });
     }
   }
 
   return clampCycles(out);
+}
+
+// ponytail: synthetic step-wrapper id → representative raw span_id.
+// Used by the panel to translate a clicked waterfall row into the
+// raw span id the detail endpoint expects. The wrapper id is built
+// in transformCapturedToSpanData with the same `step-${step}-${node}-${safeNs}`
+// template (safeNs = ns.replace(/[^a-z0-9]/gi, "")); the repRaw
+// selection mirrors the same filter (node + step + ns + run_id) and
+// picks the earliest span — matching the panel's prior rawById logic.
+export function buildStepIdToRawSpanId(captured: CapturedSpan[]): Record<string, string> {
+  const stepMap = new Map<string, { step: number; node: string; ns: string; run_id: string }>();
+  for (const s of captured) {
+    const node = s.meta?.langgraph_node;
+    const step = s.meta?.langgraph_step;
+    const ns =
+      typeof s.meta?.langgraph_checkpoint_ns === "string" ? s.meta.langgraph_checkpoint_ns : "";
+    const runId = typeof s.meta?.run_id === "string" ? s.meta.run_id : "";
+    if (typeof node !== "string" || typeof step !== "number" || !runId) continue;
+    const key = `${runId}::${ns}::${step}::${node}`;
+    if (!stepMap.has(key)) stepMap.set(key, { step, node, ns, run_id: runId });
+  }
+  const out: Record<string, string> = {};
+  for (const step of stepMap.values()) {
+    const safeNs = step.ns.replace(/[^a-z0-9]/gi, "");
+    const wrapperId = `step-${step.step}-${step.node}-${safeNs}`;
+    const repRaw = [...captured]
+      .filter(
+        (s) =>
+          s.meta?.langgraph_node === step.node &&
+          s.meta?.langgraph_step === step.step &&
+          (typeof s.meta?.langgraph_checkpoint_ns === "string"
+            ? s.meta.langgraph_checkpoint_ns
+            : "") === step.ns &&
+          s.meta?.run_id === step.run_id,
+      )
+      .sort((a, b) => a.started_at - b.started_at)[0];
+    if (repRaw) out[wrapperId] = repRaw.span_id;
+  }
+  return out;
 }
 
 // ponytail: a step's ns has at least one "|name:uuid" tail for every

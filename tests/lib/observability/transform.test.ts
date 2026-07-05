@@ -41,6 +41,7 @@ describe("transformCapturedToSpanData", () => {
     const out = transformCapturedToSpanData([
       makeSpan({
         span_id: "invoke-1",
+        parent_span_id: "",
         name: "graph.invoke",
         kind: "chain",
         started_at: 1000,
@@ -80,6 +81,7 @@ describe("transformCapturedToSpanData", () => {
     const out = transformCapturedToSpanData([
       makeSpan({
         span_id: "invoke-1",
+        parent_span_id: "",
         kind: "chain",
         started_at: 50,
         ended_at: 1500,
@@ -137,6 +139,7 @@ describe("transformCapturedToSpanData", () => {
     const out = transformCapturedToSpanData([
       makeSpan({
         span_id: "invoke-1",
+        parent_span_id: "",
         kind: "chain",
         started_at: 50,
         ended_at: 1500,
@@ -203,6 +206,7 @@ describe("transformCapturedToSpanData", () => {
     const out = transformCapturedToSpanData([
       makeSpan({
         span_id: "root",
+        parent_span_id: "",
         kind: "chain",
         started_at: 1000,
         ended_at: 5000,
@@ -275,6 +279,7 @@ describe("transformCapturedToSpanData", () => {
       // main invoke root + its step wrappers
       makeSpan({
         span_id: MAIN_ROOT,
+        parent_span_id: "pregel",
         kind: "chain",
         started_at: 1000,
         ended_at: 5000,
@@ -295,6 +300,7 @@ describe("transformCapturedToSpanData", () => {
       // background invoke root (3s later — matches afterSeconds: 3)
       makeSpan({
         span_id: BG_ROOT,
+        parent_span_id: "pregel-bg",
         kind: "chain",
         started_at: 8000,
         ended_at: 8100,
@@ -338,8 +344,8 @@ describe("transformCapturedToSpanData", () => {
     // mirrors logic that should live in the callback handler when it
     // learns to stamp runName. Test fixtures here don't set name, so
     // expect the default `chain` from makeSpan.
-    expect(mainRoot?.name).toBe("chain");
-    expect(bgRoot?.name).toBe("chain");
+    expect(mainRoot?.name).toBe("pregel");
+    expect(bgRoot?.name).toBe("pregel-bg");
     // both top-level, no synthetic fallback
     expect(out.filter((s) => s.parentSpanId === null)).toHaveLength(2);
     const chatAgent = out.find((s) => s.name === "chatAgent");
@@ -367,6 +373,7 @@ describe("transformCapturedToSpanData", () => {
       // invoke A — root + __start__ + routerAgent
       makeSpan({
         span_id: INVOKE_A,
+        parent_span_id: "pregel-A",
         kind: "chain",
         started_at: 1000,
         ended_at: 5000,
@@ -401,6 +408,7 @@ describe("transformCapturedToSpanData", () => {
       // invoke B — root + __start__ + routerAgent (same nodes, different uuids)
       makeSpan({
         span_id: INVOKE_B,
+        parent_span_id: "pregel-B",
         kind: "chain",
         started_at: 10000,
         ended_at: 14000,
@@ -441,7 +449,7 @@ describe("transformCapturedToSpanData", () => {
     // labelling `agent.invoke` vs `backgroundAgent.invoke` is the
     // callback handler's job once handleChainStart's param order is
     // fixed and meta.run_name gets stamped.
-    expect(roots.map((r) => r.name).sort()).toEqual(["chain", "chain"]);
+    expect(roots.map((r) => r.name).sort()).toEqual(["pregel-A", "pregel-B"]);
     // ponytail: 2 invokes × 2 steps (__start__ + routerAgent) = 4 step
     // rows. Without run_id in the key, both __start__ spans collapse
     // into one merged step and we see only 2 step rows — which is the
@@ -482,6 +490,7 @@ describe("transformCapturedToSpanData", () => {
     const out = transformCapturedToSpanData([
       makeSpan({
         span_id: MAIN_ROOT,
+        parent_span_id: "pregel",
         kind: "chain",
         started_at: 1783228501654,
         ended_at: 1783228526458,
@@ -502,6 +511,7 @@ describe("transformCapturedToSpanData", () => {
       }),
       makeSpan({
         span_id: BG_ROOT,
+        parent_span_id: "pregel-bg",
         kind: "chain",
         started_at: 1783228529600,
         ended_at: 1783228529616,
@@ -540,6 +550,7 @@ describe("transformCapturedToSpanData", () => {
     const out = transformCapturedToSpanData([
       makeSpan({
         span_id: "root-main",
+        parent_span_id: "",
         kind: "chain",
         started_at: 1000,
         ended_at: 5000,

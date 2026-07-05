@@ -11,9 +11,20 @@ Each assistant message renders an icon-only `<ObservabilityButton>` inside its `
 - The Sheet is a **singleton** rendered once inside `<ThreadPrimitive.Root>` — adding more assistant messages does NOT add more dialog backdrops
 - Per-message buttons reach the Sheet through `ObservabilitySheetProvider` / `useOpenObservabilitySheet()` from `components/observability/sheet-context.tsx`, so prop-drilling is avoided and only one `open` boolean exists thread-wide
 - The Sheet derives its `threadId` via `useAuiState((s) => ... mainThreadId.externalId)` so it tracks whichever thread the user is on, and skips the dialog affordance entirely when the value is the `__LOCAL_*` placeholder
+- The Sheet receives `threadId` as a prop (not derived from `useAuiState`) — `useAuiState` for `mainThreadId.externalId` can lag on first render after the thread is registered, while the sheet-context already has the active id from the button click. The panel uses the prop for `detail` fetch URLs
 - The button passes `{ threadId, parentMessageId: message.parentId }` to the context. The Sheet fetches the per-turn filtered route (`/api/threads/<id>/observability/<parentMessageId>`) when `parentMessageId` is available, falling back to the unfiltered route for older messages without a captured id
 
 The Sheet header shows the `retention_days` config as a banner ("spans 保留 X 天, 超过 X 天的数据将在下次 retention 清理时删除"). The body is a waterfall: a Span column on the left, a 0ms → Nms axis on the right, kind tags (`llm / node / tool / chain / human`), and indented rows for parent/child relationships. Header strip shows totals — duration, tokens, LLM count.
+
+### Wire shape (server-side transformed)
+
+The list payload is intentionally lean: `transformCapturedToSpanData()` runs in the route handler (`lib/observability/transform.ts`) so the panel never carries the raw collector payload (`input / output / usage / meta / error` are stripped). The 8-tile stat-card row is pre-computed by `aggregateRoot()` (`lib/observability/aggregate.ts`) against the same raw spans — the client does no per-render derivation. Per-row click lazy-loads the raw `CapturedSpan` via `GET /spans/[spanId]` so a thread with 100 spans only ships the bytes the waterfall UI actually consumes.
+
+`parentMessageId` is stamped onto every SpanData (root chain + step wrapper + leaf), so the panel reads it from the clicked row to build the per-turn detail URL — no tree walk needed.
+
+### LLM leaf display
+
+LLM-kind leaves render with `meta.ls_model_name` as the row name (`gpt-4o-mini` reads better than the LangChain class name `ChatOpenAI`). Falls back to `span.name` when the provider didn't stamp the model name.
 
 ## Data source
 
@@ -77,11 +88,12 @@ Indexes:
 
 Full request/response/status-code semantics are in [`docs/APIS.md`](./APIS.md) § Observability.
 
-| Method   | Path                                                | Purpose                                                          |
-| -------- | --------------------------------------------------- | ---------------------------------------------------------------- |
-| `GET`    | `/api/threads/[id]/observability`                   | All spans for the thread (all turns merged)                      |
-| `GET`    | `/api/threads/[id]/observability/[parentMessageId]` | Spans for a single turn (filtered by `parent_message_id` column) |
-| `DELETE` | `/api/threads/[id]/observability`                   | Clear all spans for the thread                                   |
+| Method   | Path                                                               | Purpose                                                                                    |
+| -------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `GET`    | `/api/threads/[id]/observability`                                  | All spans for the thread (all turns merged). Server-transformed `SpanData[]` + `aggregate` |
+| `GET`    | `/api/threads/[id]/observability/[parentMessageId]`                | Spans for a single turn (filtered by `parent_message_id` column). Same wire shape, scoped  |
+| `GET`    | `/api/threads/[id]/observability/[parentMessageId]/spans/[spanId]` | Single span's full `CapturedSpan` (input/output/usage/meta). Lazy-loaded on row click      |
+| `DELETE` | `/api/threads/[id]/observability`                                  | Clear all spans for the thread                                                             |
 
 ### curl examples
 
@@ -95,6 +107,11 @@ curl -s -b cookies.txt \
 curl -s -b cookies.txt \
   "http://localhost:3000/api/threads/THREAD_ID/observability/PARENT_MSG_ID" \
   | jq '[.spans[] | {name, kind, status, duration: (.ended_at - .started_at)}]'
+
+# Fetch a single span's full payload (input / output / usage / meta)
+curl -s -b cookies.txt \
+  "http://localhost:3000/api/threads/THREAD_ID/observability/PARENT_MSG_ID/spans/SPAN_ID" \
+  | jq '.span | {name, kind, usage, meta}'
 
 # Delete all spans for a thread
 curl -s -b cookies.txt -X DELETE \
@@ -119,8 +136,11 @@ curl -s -b cookies.txt -X DELETE \
 ## Known trade-offs
 
 - **No turn boundary in panel UI (MVP+1, partially addressed)** — the unfiltered `/observability` route merges all turns. The per-turn `/observability/[parentMessageId]` route filters spans by `parent_message_id`; the Sheet uses this route when the button carries a valid `parentMessageId`. Full multi-turn split in the panel UI (e.g. collapsible turn groups) remains MVP+1.
+- **List payload omits raw collector fields** — `transformCapturedToSpanData` strips `input / output / usage / meta / error` to keep wire bytes low. Per-row click lazy-loads those fields via `/spans/[spanId]`. Trade-off: an extra round trip per click vs. shipping the full collector payload on every list fetch.
 - **bulkInsert on every End hook** — writes `N + 1` rows per invoke (innermost first, outermost last) and lets `ON CONFLICT` dedupe. Trade-off: streaming visibility vs. write amplification. Debounce (e.g. 500ms) is a future option if write rate becomes a concern.
 - **`kind` includes `node` and `human`** — `node`: LangGraph's outer node-wrapper chain, distinct from LC `"chain"` wrappers. `human`: synthetic interrupt-wait gap; the transform layer maps `waiting` → `running` for the panel (which has no waiting state), while the DB keeps the precise value.
 - **`parent_span_id` is reconstructed from ns, not LC** — LC's `parent_run_id` reports root inside subgraphs, so the handler derives parents from `langgraph_checkpoint_ns` and rewrites `parent_span_id` before bulkInsert.
+- **Root chains are deduplicated by `meta.run_id`, not by `parent_span_id`** — under `streamSubgraphs: true` the LC inner `CompiledStateGraph` wrapper shares the outer wrapper's `meta.run_id` and `span_id === meta.run_id`, so `collectRootChains` keys by `run_id` to drop the duplicate. Two main invokes (regenerate + follow-up) emit two roots because their `run_id`s differ.
+- **`parent_message_id` column backfill is in `bulkInsertSpans`** — interrupt-resume captures + cold-start threads (no `messages` in outermost inputs) leave `meta.parent_message_id` unset on the first span of the run. The next non-null pm id in the same thread backfills via the column. Pre-backfill or partially captured rows keep `parent_message_id IS NULL` and intentionally 404 on the per-turn detail endpoint (the wire's SpanData omits `parentMessageId` and the panel surfaces a "missing parent_message_id" error rather than sending a loose query).
 - **Redact instead of throw on forbidden fields** — avoids false-positive drops when user messages contain innocuous phrases like "api key". Auditable via `console.warn`. If zero-tolerance is required, change `redactForbidden` to throw.
 - **404 on cross-user thread access (not 401/403)** — deliberate, prevents enumeration. Implies ownership checks live at the route layer; the Sheet confirms by checking `useAuiState` threadId is real (not a `__LOCAL_*` placeholder) before mounting.

@@ -53,10 +53,10 @@ export const builder = new StateGraph(RouterAgentState)
   .addNode("weatherAgent", weatherAgent)
   .addNode("cryptoAgent", cryptoAgent)
   .addNode("codeAgent", codeAgent)
-  .addNode("triggerBackgroundAgentNode", triggerBackgroundAgentNode)
+  .addNode("triggerBackgroundAgent", triggerBackgroundAgentNode)
   .addNode("renameThreadAgent", renameThreadAgentNode)
   // Topology:
-  //   START ──▶ routerAgent ──▶ (sub-agent) ──▶ triggerBackgroundAgentNode ──▶ END
+  //   START ──▶ routerAgent ──▶ (sub-agent) ──▶ triggerBackgroundAgent ──▶ END
   //   START ─────────────────────────────────▶ renameThreadAgent (parallel, leaf)
   //
   // ask_location's picker card is owned by the weather subgraph
@@ -71,7 +71,7 @@ export const builder = new StateGraph(RouterAgentState)
   // branches complete, but the chat stream ends on the END branch,
   // so the user sees no rename latency.
   //
-  // triggerBackgroundAgentNode is the chat's last node before END. It fires
+  // triggerBackgroundAgent is the chat's last node before END. It fires
   // the `background_agent` graph (registered separately in
   // langgraph.json) and returns `{}` immediately — that graph does
   // `last_message_at` touch + threadSummarizeNode work on its own
@@ -85,11 +85,11 @@ export const builder = new StateGraph(RouterAgentState)
     "cryptoAgent",
     "codeAgent",
   ])
-  .addEdge("chatAgent", "triggerBackgroundAgentNode")
-  .addEdge("weatherAgent", "triggerBackgroundAgentNode")
-  .addEdge("cryptoAgent", "triggerBackgroundAgentNode")
-  .addEdge("codeAgent", "triggerBackgroundAgentNode")
-  .addEdge("triggerBackgroundAgentNode", END)
+  .addEdge("chatAgent", "triggerBackgroundAgent")
+  .addEdge("weatherAgent", "triggerBackgroundAgent")
+  .addEdge("cryptoAgent", "triggerBackgroundAgent")
+  .addEdge("codeAgent", "triggerBackgroundAgent")
+  .addEdge("triggerBackgroundAgent", END)
   .addConditionalEdges(START, shouldRenameRouter, {
     renameThreadAgent: "renameThreadAgent",
     __end__: END,
