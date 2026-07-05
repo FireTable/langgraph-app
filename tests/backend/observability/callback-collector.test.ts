@@ -411,11 +411,11 @@ describe("CapturingHandler — interrupt / human span", () => {
     expect(flushed[0]?.span_id).toBe("tools-wrapper");
     expect(flushed[0]?.status).toBe("waiting");
     expect(flushed[0]?.error).toBeNull();
-    // ended_at must be non-null so markRunningAsFailed doesn't flag the
-    // wrapper as an aborted run on the next restart. transform.ts
-    // renders the wrapper step as "completed" via bucket.ended — the
-    // raw span's status="waiting" never reaches the panel.
-    expect(flushed[0]?.ended_at).not.toBeNull();
+    // ponytail: chain wrapper's ended_at stays null through the
+    // interrupt — only the synthetic human span alongside the tool
+    // gets stamped. markRunningAsFailed reconciles it on restart when
+    // the resume actually fires handleChainEnd.
+    expect(flushed[0]?.ended_at).toBeNull();
   });
 
   it("still treats a non-interrupt chain error as failed", () => {

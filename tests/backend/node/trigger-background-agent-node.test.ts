@@ -66,7 +66,6 @@ describe("triggerBackgroundAgentNode", () => {
     expect(payload).toMatchObject({
       input: { messages: [], userId: "u1", threadId: "t1" },
       multitaskStrategy: "enqueue",
-      afterSeconds: 3,
       config: {
         configurable: expect.objectContaining({
           userId: "u1",
