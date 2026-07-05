@@ -291,7 +291,7 @@ export class CapturingHandler extends BaseCallbackHandler {
 
   constructor(opts: { bulkInsert?: BulkInsert } = {}) {
     super();
-    this.bulkInsert = opts.bulkInsert ?? (async () => {});
+    this.bulkInsert = opts.bulkInsert ?? (async () => { });
   }
 
   // ---- Start hooks: every Start allocates a span, every End mutates it. ----
@@ -319,6 +319,7 @@ export class CapturingHandler extends BaseCallbackHandler {
       input: deepUnwrapLC(inputs),
       meta: { ...metadata, ...(tags?.length ? { tags } : {}) },
     });
+
   }
 
   handleLLMStart(

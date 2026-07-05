@@ -59,13 +59,15 @@ function collectRootChains(captured: CapturedSpan[]): RootChain[] {
     if (
       s.kind !== "chain" ||
       s.span_id !== s.meta?.run_id ||
+      s.parent_span_id == null ||
       typeof s.meta?.langgraph_node === "string" ||
       typeof s.meta?.langgraph_step === "number"
     )
       continue;
-    const runId = s.meta.run_id;
-    if (roots.has(runId)) continue;
-    roots.set(runId, { span: s, id: s.span_id });
+    const parentSpanId = s.parent_span_id as string;
+
+    if (roots.has(parentSpanId)) continue;
+    roots.set(parentSpanId, { span: s, id: s.span_id });
   }
   return [...roots.values()].sort((a, b) => a.span.started_at - b.span.started_at);
 }
