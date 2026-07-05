@@ -58,5 +58,13 @@ async function fetchInFlightRuns(threadId: string, parentMessageId: string): Pro
 
   const all = [...running, ...pending];
 
-  return all.filter((r) => r.metadata?.parent_message_id === parentMessageId);
+  return all
+    .filter((r) => r.metadata?.parent_message_id === parentMessageId)
+    .map(({ created_at, assistant_id, run_id, status, updated_at }) => ({
+      created_at,
+      assistant_id,
+      run_id,
+      status,
+      updated_at,
+    }));
 }

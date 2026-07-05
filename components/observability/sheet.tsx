@@ -87,7 +87,7 @@ const RefreshCountdown: FC<RefreshCountdownProps> = ({ enabled, refreshIntervalM
     <>
       <Activity className="size-4 animate-pulse" />
       <span className="text-muted-foreground text-xs font-normal">
-        Still running, tracing {secondsLeft}s
+        Still running, tracing after {secondsLeft}s
       </span>
     </>
   );
