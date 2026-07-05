@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HumanMessage } from "@langchain/core/messages";
 
 // SDK client mock — single dispatch path is via runs.create.
 type RunPayload = unknown;
@@ -77,13 +78,41 @@ describe("triggerBackgroundAgentNode", () => {
 
   it("forwards messages from the chat graph to the background input payload", async () => {
     const messages = [
-      { type: "human", content: "hello" },
+      new HumanMessage({ content: "hello", id: "h-1" }),
       { type: "ai", content: "hi" },
     ];
     await triggerBackgroundAgentNode({ messages }, CONFIG_OK);
     const [, , payload] = mockRunsCreate.mock.calls[0];
     expect(payload).toMatchObject({
       input: { messages, userId: "u1", threadId: "t1" },
+    });
+  });
+
+  it("stamps parent_message_id from the last HumanMessage so the per-turn panel can scope the in-flight run", async () => {
+    // ponytail: the bg invoke runs on the same thread as the chat invoke,
+    // so without parent_message_id the observability API's runs.list
+    // filter can't tell bg-of-turn-N apart from bg-of-turn-N+1.
+    const messages = [
+      new HumanMessage({ content: "first turn", id: "h-1" }),
+      { type: "ai", content: "ack", id: "a-1" },
+      new HumanMessage({ content: "second turn", id: "h-2" }),
+    ];
+    await triggerBackgroundAgentNode({ messages }, CONFIG_OK);
+    const [, , payload] = mockRunsCreate.mock.calls[0];
+    expect(payload).toMatchObject({
+      metadata: { parent_message_id: "h-2" },
+    });
+  });
+
+  it("passes null parent_message_id when no HumanMessage has an id", async () => {
+    // ponytail: API filter `r.metadata?.parent_message_id === params.parentMessageId`
+    // treats null on both sides as a match, so a turn without ids still
+    // surfaces — we just can't disambiguate it from other id-less turns.
+    const messages = [new HumanMessage({ content: "no id here" })];
+    await triggerBackgroundAgentNode({ messages }, CONFIG_OK);
+    const [, , payload] = mockRunsCreate.mock.calls[0];
+    expect(payload).toMatchObject({
+      metadata: { parent_message_id: null },
     });
   });
 

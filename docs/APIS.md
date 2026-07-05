@@ -103,8 +103,30 @@ Response (200):
   retention_days: number;
   parent_message_id: string;
   spans: CapturedSpan[];   // ordered by started_at ASC, filtered
+  // ponytail: langGraphClient.runs.list(threadId, { status: "running"|"pending" })
+  // filtered by metadata.parent_message_id === parent_message_id. Covers
+  // bg-agent dispatches from triggerBackgroundAgentNode (which stamps
+  // metadata on every runs.create) BEFORE the SDK has fired any callback
+  // — i.e. the persisted spans may be empty for an enqueued-but-not-yet-
+  // started run. The two SDK calls (one per status) are because
+  // `list({status})` is single-valued; status values are documented in
+  // @langchain/langgraph-sdk's `RunStatus` type.
+  in_flight_runs: Array<{
+    run_id: string;
+    thread_id: string;
+    assistant_id: string;
+    status: "pending" | "running";
+    created_at: string;        // ISO timestamp
+    updated_at: string;        // ISO timestamp
+    metadata: {
+      parent_message_id: string | null;
+      [extra: string]: unknown;   // passthrough — additional keys preserved
+    };
+  }>;
 }
 ```
+
+`in_flight_runs` is always an array (empty when no bg runs are pending/running on this turn). The panel renders an "in progress" placeholder per entry while waiting for the persisted spans to catch up. Main-agent runs are NOT in this list today — only `triggerBackgroundAgentNode` stamps `metadata.parent_message_id` on its `runs.create` payload, because the chat runtime (`useLangGraphRuntime` → `unstable_createLangGraphStream`) controls main-agent invocations and doesn't accept caller-supplied metadata. Main-agent in-flight state is observable via the `spans` array (CapturingHandler now persists on `handleChainStart`, so the outer chain row lands in DB before End fires — see backend/observability/callback-collector.ts).
 
 Status codes:
 

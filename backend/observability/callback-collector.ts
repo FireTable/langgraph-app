@@ -5,6 +5,7 @@ import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { Serialized } from "@langchain/core/load/serializable";
 import type { LLMResult } from "@langchain/core/outputs";
 import { isGraphInterrupt } from "@langchain/langgraph";
+import { lastHumanMessageId } from "@/lib/langgraph/last-human-message-id";
 
 // Subset of §9.1 columns that a callback handler can populate. Some
 // (thread_id, user_id, turn_no) are fill-in fields — the handler leaves
@@ -179,53 +180,10 @@ function unwrapMessage(v: unknown): MessageFields | null {
 // on the user message; the assistant message rendered in the thread
 // carries the same id as its `parentId`, so the Sheet can later filter
 // spans by clicking the icon on a specific assistant message.
-function lastHumanMessageId(inputs: Record<string, unknown>): string | null {
-  const messages = (inputs as { messages?: unknown }).messages;
-  if (!Array.isArray(messages)) return null;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (!m || typeof m !== "object") continue;
-    const { role, id } = extractMessageRoleAndId(m as Record<string, unknown>);
-    if (role !== "human" && role !== "user") continue;
-    if (typeof id === "string" && id.length > 0) return id;
-  }
-  return null;
-}
-
-// ponytail: V1 envelopes put "constructor" at the top-level `type` (the
-// envelope kind, not the message kind) — the real type lives in
-// `kwargs.type`. V2 envelopes lack a top-level `type`; the real type
-// lives in `lc_kwargs.type`. readMessageField prefers top-level and
-// therefore returns "constructor" for V1, so we can't reuse it here.
-// This helper skips top-level when an envelope marker is present and
-// looks at kwargs / lc_kwargs instead. Live instances + flat dicts
-// fall through to the top-level path.
-function extractMessageRoleAndId(m: Record<string, unknown>): {
-  role: string | null;
-  id: string | null;
-} {
-  const isEnvelope = m.lc === 1 || "lc_serializable" in m;
-  if (isEnvelope) {
-    const k = m.kwargs as Record<string, unknown> | undefined;
-    const lk = m.lc_kwargs as Record<string, unknown> | undefined;
-    return {
-      role: pickString(k?.type, lk?.type, k?.role, lk?.role),
-      id: pickString(k?.id, lk?.id),
-    };
-  }
-  return {
-    role: pickString(m.type, m.role),
-    id: pickString(m.id),
-  };
-}
-
-function pickString(...vals: unknown[]): string | null {
-  for (const v of vals) {
-    if (typeof v === "string" && v.length > 0) return v;
-  }
-  return null;
-}
-
+//
+// Implementation moved to lib/langgraph/last-human-message-id so
+// triggerBackgroundAgentNode can share it (also needs the parent
+// message id for runs.create metadata).
 function isLCMessageEnvelope(v: unknown): v is Record<string, unknown> {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown> & { [MESSAGE_SYMBOL]?: boolean };
@@ -291,7 +249,7 @@ export class CapturingHandler extends BaseCallbackHandler {
 
   constructor(opts: { bulkInsert?: BulkInsert } = {}) {
     super();
-    this.bulkInsert = opts.bulkInsert ?? (async () => { });
+    this.bulkInsert = opts.bulkInsert ?? (async () => {});
   }
 
   // ---- Start hooks: every Start allocates a span, every End mutates it. ----
@@ -310,7 +268,7 @@ export class CapturingHandler extends BaseCallbackHandler {
     // for resume / regen / cold-start turns — bulkInsertSpans backfills
     // from DB before INSERT.
     if (!runType) {
-      this.currentParentMessageId = lastHumanMessageId(inputs);
+      this.currentParentMessageId = lastHumanMessageId((inputs as { messages?: unknown }).messages);
     }
 
     this.start(runId, parentRunId ?? null, {
@@ -319,7 +277,6 @@ export class CapturingHandler extends BaseCallbackHandler {
       input: deepUnwrapLC(inputs),
       meta: { ...metadata, ...(tags?.length ? { tags } : {}) },
     });
-
   }
 
   handleLLMStart(

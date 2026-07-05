@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { Serialized } from "@langchain/core/load/serializable";
+import { HumanMessage } from "@langchain/core/messages";
 import { CapturingHandler } from "@/backend/observability/callback-collector";
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
 
@@ -122,9 +123,8 @@ describe("CapturingHandler — parent_message_id extraction", () => {
       fakeSerialized("CompiledStateGraph"),
       {
         messages: [
-          { id: "h-1", type: "human", content: "first" },
-          { id: "a-1", type: "ai", content: "first-reply" },
-          { id: "h-2", type: "human", content: "second" },
+          new HumanMessage({ content: "first", id: "h-1" }),
+          new HumanMessage({ content: "second", id: "h-2" }),
         ],
       },
       "outer",
@@ -156,10 +156,15 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     expect(chainCall[0]?.meta.parent_message_id).toBe("h-2");
   });
 
-  it("peels V1 envelope to find the human message id", async () => {
+  it("returns null parent_message_id when inputs.messages has no HumanMessage (just V1 envelopes)", async () => {
+    // ponytail: the helper relies on `instanceof HumanMessage` — V1
+    // envelopes that arrive before the reducer ran are NOT instances
+    // and are intentionally missed here. bulkInsertSpans backfills
+    // the parent_message_id column from DB on INSERT, so the eventual
+    // span row still tags correctly. See lib/langgraph/last-human-
+    // message-id.ts docstring for the trade-off.
     const bulkInsert = vi.fn(async () => {});
     const handler = makeHandler(bulkInsert);
-    // V1 envelope: {lc:1, type:"constructor", id:[...], kwargs:{type, id, content}}
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
       {
@@ -180,7 +185,7 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     handler.handleChainEnd({ ok: true }, "outer-2");
 
     const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
-    expect(flushed[0]?.meta.parent_message_id).toBe("h-envelope");
+    expect(flushed[0]?.meta.parent_message_id).toBeNull();
   });
 
   it("sets parent_message_id to null when the outermost chain has no human messages", async () => {
@@ -205,7 +210,7 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     // First invoke: human message h-A
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
-      { messages: [{ id: "h-A", type: "human", content: "a" }] },
+      { messages: [new HumanMessage({ content: "a", id: "h-A" })] },
       "run-A",
       undefined,
       undefined,
@@ -215,7 +220,7 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     // Second invoke: human message h-B
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
-      { messages: [{ id: "h-B", type: "human", content: "b" }] },
+      { messages: [new HumanMessage({ content: "b", id: "h-B" })] },
       "run-B",
       undefined,
       undefined,

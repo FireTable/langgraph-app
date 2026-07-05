@@ -51,6 +51,13 @@ export type ObservabilityPanelProps = {
   // Rendered as a small footer under the legend so the sheet header
   // stays compact. Null = unknown (don't render).
   retentionDays?: number | null;
+  // ponytail: true when the API reports one or more in-flight LangGraph
+  // runs for this turn (bg agent dispatched via runs.create, first
+  // Start hook hasn't fired yet, or End is still pending). transform.ts
+  // doesn't see these — the SDK Run has no CapturedSpan to project —
+  // so the panel renders a synthetic "still running" row at the bottom
+  // of the waterfall from this flag alone.
+  stillRunning?: boolean;
 };
 
 const LABEL_WIDTH = 240;
@@ -222,7 +229,10 @@ const WaterfallBar: FC = () => {
 
 type SelectionContextValue = {
   selectedId: string | null;
-  select: (id: string) => void;
+  // ponytail: pass null to clear — clicking the already-selected row
+  // toggles selection off so the details pane collapses (see WaterfallRow
+  // onClick).
+  select: (id: string | null) => void;
   rawById: Map<string, CapturedSpan>;
 };
 
@@ -381,7 +391,7 @@ const WaterfallRow: FC = () => {
   const onLeave = () => setTooltip(null);
   return (
     <SpanPrimitive.Root
-      onClick={() => select(id)}
+      onClick={() => select(selectedId === id ? null : id)}
       onMouseEnter={onEnter}
       onMouseMove={onMove}
       onMouseLeave={onLeave}
@@ -422,6 +432,36 @@ const WaterfallRow: FC = () => {
         </svg>
       </div>
     </SpanPrimitive.Root>
+  );
+};
+
+// ponytail: synthetic row painted at the tail of the waterfall while
+// a background agent is in flight. Pure skeleton placeholder — no
+// icon, chip, or text — so the panel reads "more work, still going"
+// without competing with the real row labels above. Same placeholder
+// box style as ObservabilityPanelSkeleton so the visual language is
+// one. animate-pulse on the outer row matches the skeleton's whole-
+// panel pulse rhythm.
+const RunningSkeletonRow: FC = () => {
+  const { contentWidth } = useWaterfallLayout();
+  return (
+    <div
+      className="flex animate-pulse items-center"
+      style={{ width: contentWidth, height: BAR_HEIGHT }}
+      aria-label="Background agent still running"
+    >
+      <div
+        className="border-border flex shrink-0 items-center gap-1.5 border-r px-2"
+        style={{ width: LABEL_WIDTH, height: BAR_HEIGHT }}
+      >
+        <div className="bg-muted/60 size-6 shrink-0 rounded-sm" />
+        <div className="bg-muted/70 h-6 w-14 shrink-0 rounded-sm" />
+        <div className="bg-muted/70 h-6 w-full rounded-sm" />
+      </div>
+      <div className="flex flex-1 items-center px-2" style={{ height: BAR_HEIGHT }}>
+        <div className="bg-muted/70 h-6 w-full rounded-sm" />
+      </div>
+    </div>
   );
 };
 
@@ -517,7 +557,10 @@ const RowPreview: FC<{ row: ResolvedRow }> = ({ row }) => {
   return null;
 };
 
-const WaterfallTimeline: FC<{ retentionDays: number | null }> = ({ retentionDays }) => {
+const WaterfallTimeline: FC<{ retentionDays: number | null; stillRunning: boolean }> = ({
+  retentionDays,
+  stillRunning,
+}) => {
   const outerRef = useRef<HTMLDivElement>(null);
   const [barWidth, setBarWidth] = useState(400);
   const [tooltip, setTooltip] = useState<TooltipState>(null);
@@ -590,6 +633,7 @@ const WaterfallTimeline: FC<{ retentionDays: number | null }> = ({ retentionDays
         <WaterfallLayoutContext.Provider value={layout}>
           <div className="py-1.5" style={{ width: contentWidth }}>
             <SpanPrimitive.Children>{() => <WaterfallRow />}</SpanPrimitive.Children>
+            {stillRunning ? <RunningSkeletonRow /> : null}
           </div>
         </WaterfallLayoutContext.Provider>
 
@@ -1901,6 +1945,7 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
   spans,
   rawSpans,
   retentionDays,
+  stillRunning,
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -2016,7 +2061,10 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
                   actually clips instead of pushing the parent taller. */}
               <div className="flex min-h-0 flex-col lg:h-full lg:flex-row">
                 <div className="min-h-0 flex-1 lg:overflow-auto">
-                  <WaterfallTimeline retentionDays={retentionDays ?? null} />
+                  <WaterfallTimeline
+                    retentionDays={retentionDays ?? null}
+                    stillRunning={stillRunning ?? false}
+                  />
                 </div>
                 <div
                   className={cn(
