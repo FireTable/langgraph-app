@@ -160,7 +160,7 @@ CONSTRAINTS (DO NOT):
 - DO NOT save sensitive content the user wouldn't want surfaced later (passwords, financial details, medical info, intimate relationships) — use judgment.
 - DO NOT save external data returned by tools (weather, prices, balances, fetched URLs) — only the user's input portion.
 - DO NOT call more than once per turn (group multiple updates into one patch set).
-- DO NOT maintain the same or similar content under two keys (e.g. use "primaryEmail" instead of both "primaryEmail" and "email").
+- DO NOT save the same or similar content under two keys (e.g. use "ask_location_cache" instead of both "ask_location_cache" and "ask_location_result").
 
 CONFLICT RESOLUTION:
 If the same key already exists with a different value, ask a brief clarifying question before overwriting. Facts evolve — don't silently rewrite the user's history.

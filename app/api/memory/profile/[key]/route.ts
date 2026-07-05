@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { withAuth } from "@/lib/auth/with-auth";
+import { invalidateMemory } from "@/backend/memory/recall";
 import { deleteMemoryField } from "@/lib/memory/queries";
 
 type KeyParams = { key: string };
@@ -21,5 +22,6 @@ export const DELETE = withAuth<KeyParams>(async (_req, { user, params }) => {
   if (deleted === null) {
     return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   }
+  invalidateMemory(user.id);
   return NextResponse.json({ ok: true, deletedKey: deleted });
 });
