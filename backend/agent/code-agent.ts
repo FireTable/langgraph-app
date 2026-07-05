@@ -7,6 +7,8 @@ import { CODE_TOOLS } from "@/backend/tool";
 import { CODE_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
 import { buildSystemMessageWithMemory } from "@/backend/memory/template";
+import { subgraphCheckpointerConfig } from "@/backend/checkpointer"
+
 
 // Code sub-agent: model ↔ tools loop. write_code proposes code that
 // the user reviews in an editor; execute_code runs it in a Deno
@@ -37,4 +39,6 @@ const builder = new StateGraph(CommonAgentState)
   .addConditionalEdges("model", toolsCondition, ["tools", END])
   .addEdge("tools", "model");
 
-export const codeAgent = builder.compile();
+export const codeAgent = builder.compile({
+  ...subgraphCheckpointerConfig
+});

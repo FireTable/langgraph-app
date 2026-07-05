@@ -9,3 +9,8 @@ const databaseUrl = process.env.DATABASE_URL;
 export const checkpointer = databaseUrl ? PostgresSaver.fromConnString(databaseUrl) : undefined;
 
 if (checkpointer) await checkpointer.setup();
+
+
+export const subgraphCheckpointerConfig = {
+    checkpointer: true
+}
