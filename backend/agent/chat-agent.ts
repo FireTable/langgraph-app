@@ -7,8 +7,7 @@ import { ALL_TOOLS } from "@/backend/tool";
 import { CHAT_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
 import { buildSystemMessageWithMemory } from "@/backend/memory/template";
-import { subgraphCheckpointerConfig } from "@/backend/checkpointer"
-
+import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 
 // Chat agent gets every tool — the router already decided whether this
 // turn is weather, so chatAgent never sees a weather question. Weather
@@ -45,5 +44,5 @@ const builder = new StateGraph(CommonAgentState)
   .addEdge("tools", "model");
 
 export const chatAgent = builder.compile({
-  ...subgraphCheckpointerConfig
+  ...subgraphCheckpointerConfig,
 });

@@ -7,7 +7,7 @@ import { WEATHER_TOOLS } from "@/backend/tool";
 import { WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
 import { buildSystemMessageWithMemory } from "@/backend/memory/template";
-import { subgraphCheckpointerConfig } from "@/backend/checkpointer"
+import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 
 // Weather agent: a focused sub-agent that owns the RAG-style weather
 // flow (resolve place → fetch forecast → answer). The whole flow
@@ -43,5 +43,5 @@ const builder = new StateGraph(CommonAgentState)
   .addEdge("tools", "model");
 
 export const weatherAgent = builder.compile({
-  ...subgraphCheckpointerConfig
+  ...subgraphCheckpointerConfig,
 });

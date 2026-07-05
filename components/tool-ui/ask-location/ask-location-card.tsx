@@ -54,7 +54,7 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
 
   const addResult = async (payload: AskLocationResult) => {
     sendCommand({
-      resume: JSON.stringify(payload)
+      resume: JSON.stringify(payload),
     });
   };
 

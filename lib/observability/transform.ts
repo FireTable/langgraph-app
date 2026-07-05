@@ -12,16 +12,67 @@ type Step = {
   step: number;
   node: string;
   ns: string;
+  // ponytail: the LC run id the step belongs to. CapturingHandler
+  // stamps meta.run_id on every span — main invokes and the
+  // background_agent dispatch each get their own UUID, so a step's
+  // run_id is the unambiguous identifier of "which invoke does this
+  // step belong to". Two invokes triggered in the same thread + same
+  // parent_message_id (regenerate, follow-up) share langgraph_node /
+  // step / ns — without run_id in the key they collapse into one
+  // merged step, which is what made the panel flatten multiple
+  // invoke trees into a single waterfall row.
+  run_id: string;
   started: number;
   ended: number | null;
   leaves: CapturedSpan[];
 };
 
 function stepKey(s: Step): string {
-  return `${s.ns}::${s.step}::${s.node}`;
+  return `${s.run_id}::${s.ns}::${s.step}::${s.node}`;
 }
 
 const LANGSMITH_NOISE = new Set(["RunnableSequence", "RunnableLambda", "parser"]);
+
+// ponytail: a root chain span is a kind=chain callback with no
+// langgraph_node / langgraph_step (it's the outermost compiled graph
+// wrapper, fired before any step's START). One per invoke — main chat
+// graph fires one, the background_agent graph fires another when
+// `runs.create` triggers it. Identifying them lets the panel render
+// sibling invoke trees (`graph.invoke` + `backgroundGraph.invoke`) at
+// the top level instead of flattening both into one synthetic root.
+//
+// IDs use the full span_id — UUIDv7 shares a timestamp prefix across
+// invokes fired within ~seconds of each other, so any slice(0, N)
+// collides. The full UUID is the only unique guarantee.
+type RootChain = { span: CapturedSpan; id: string };
+
+function collectRootChains(captured: CapturedSpan[]): RootChain[] {
+  // ponytail: dedupe by meta.run_id. Under subgraphs:true LC can fire
+  // an inner CompiledStateGraph wrapper chain whose meta has been
+  // re-stamped so span_id === meta.run_id holds for it too — same
+  // shape as the real root. The outer wrapper fires first and wins;
+  // subsequent duplicates for the same run_id are dropped. Two main
+  // invokes both having parent_span_id "agent" (the compile name) are
+  // NOT collapsed here because their meta.run_id differs.
+  const roots = new Map<string, RootChain>();
+  for (const s of captured) {
+    if (
+      s.kind !== "chain" ||
+      s.span_id !== s.meta?.run_id ||
+      typeof s.meta?.langgraph_node === "string" ||
+      typeof s.meta?.langgraph_step === "number"
+    )
+      continue;
+    const runId = s.meta.run_id;
+    if (roots.has(runId)) continue;
+    roots.set(runId, { span: s, id: s.span_id });
+  }
+  return [...roots.values()].sort((a, b) => a.span.started_at - b.span.started_at);
+}
+
+function rootIdFromSpanId(spanId: string, roots: RootChain[]): string | null {
+  return roots.find((r) => r.span.span_id === spanId)?.id ?? null;
+}
 
 export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[] {
   const stepMap = new Map<string, Step>();
@@ -31,14 +82,17 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
     if (typeof node !== "string" || typeof step !== "number") continue;
     const ns =
       typeof s.meta?.langgraph_checkpoint_ns === "string" ? s.meta.langgraph_checkpoint_ns : "";
-    const key = stepKey({ step, node, ns, started: 0, ended: null, leaves: [] });
+    const runId = typeof s.meta?.run_id === "string" ? s.meta.run_id : "";
+    if (!runId) continue;
+    const key = stepKey({ step, node, ns, run_id: runId, started: 0, ended: null, leaves: [] });
     const bucket = stepMap.get(key) ?? {
       step,
       node,
       ns,
+      run_id: runId,
       started: s.started_at,
       ended: s.ended_at,
-      leaves: [],
+      leaves: [] as CapturedSpan[],
     };
     if (s.started_at < bucket.started) bucket.started = s.started_at;
     if (s.ended_at && (!bucket.ended || s.ended_at > bucket.ended)) bucket.ended = s.ended_at;
@@ -54,9 +108,21 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
   const steps = [...stepMap.values()].sort((a, b) => a.started - b.started || a.step - b.step);
   if (steps.length === 0) return [];
 
-  const rootStart = steps.reduce((m, s) => Math.min(m, s.started), Infinity);
-  const rootEnd = steps.reduce((m, s) => Math.max(m, s.ended ?? 0), 0);
-  const rootLatency = rootEnd > rootStart ? rootEnd - rootStart : null;
+  // ponytail: real root chains (one per invoke — main chat + any background
+  // dispatches via runs.create) become their own top-level SpanData. No
+  // synthetic fallback when none exist — the panel just shows the roots
+  // that are there and drops orphaned steps.
+  const rootChains = collectRootChains(captured);
+
+  // ponytail: every step's meta.run_id matches the run_id of its invoke's
+  // outermost chain — and collectRootChains keyed each root by that same
+  // span_id. Returns null when no root chain matches the step's invoke:
+  // partial / fixture captures without an outermost wrapper shouldn't
+  // synthesize a "graph.invoke" root and shouldn't fall back to the first
+  // root either (that flattened cross-invoke steps under main).
+  const rootIdByRunId = new Map<string, string>();
+  for (const r of rootChains) rootIdByRunId.set(r.span.span_id, r.id);
+  const rootForStep = (s: Step): string | null => rootIdByRunId.get(s.run_id) ?? null;
 
   // ponytail: build a lookup from span_id (raw) to its Step. The backend
   // sets parent_span_id to the runId of the parent Step — but the same Step
@@ -68,22 +134,38 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
     const step = s.meta?.langgraph_step;
     const ns =
       typeof s.meta?.langgraph_checkpoint_ns === "string" ? s.meta.langgraph_checkpoint_ns : "";
-    if (typeof node !== "string" || typeof step !== "number") continue;
-    const k = stepKey({ step, node, ns, started: 0, ended: null, leaves: [] });
+    const runId = typeof s.meta?.run_id === "string" ? s.meta.run_id : "";
+    if (typeof node !== "string" || typeof step !== "number" || !runId) continue;
+    const k = stepKey({ step, node, ns, run_id: runId, started: 0, ended: null, leaves: [] });
     const bucket = stepMap.get(k);
     if (bucket) stepBySpanId.set(s.span_id, bucket);
   }
 
-  const root: SpanData = {
-    id: "root",
+  // ponytail: build the top-level SpanData list. One entry per real root
+  // chain (main + each background dispatch). No synthetic fallback —
+  // steps whose run_id has no matching root are dropped from the panel.
+  const rootEntries: SpanData[] = rootChains.map<SpanData>((r) => ({
+    id: r.id,
     parentSpanId: null,
-    name: "graph.invoke",
+    // ponytail: span.name comes from the LC outer RunnableSequence
+    // wrapper langgraph-api fires around our Pregel call. The
+    // `runName` arg of handleChainStart is what we'd ideally use
+    // (compile({ name: "agent" }) sets Pregel.this.name upstream),
+    // but the wrapper doesn't carry it through yet — CapturingHandler
+    // (see backend/observability/callback-collector.ts) needs to
+    // stamp meta.run_name when the param order is fixed. Until then
+    // we render whatever LC gave us, with `graph.invoke` as the
+    // last-resort label for dev fixtures / partial captures.
+    name: r.span.parent_span_id || r.span.name || "graph.invoke",
     type: "chain",
-    status: "completed",
-    startedAt: rootStart,
-    endedAt: rootEnd || null,
-    latencyMs: rootLatency,
-  };
+    // ponytail: same status normalization as the leaf loop below —
+    // SpanData's union has no "waiting" so DB-side waiting (interrupted
+    // background run) renders as "running" for the panel.
+    status: r.span.status === "waiting" ? "running" : r.span.status,
+    startedAt: r.span.started_at,
+    endedAt: r.span.ended_at,
+    latencyMs: r.span.ended_at != null ? r.span.ended_at - r.span.started_at : null,
+  }));
 
   const stepIdByStepAndName = new Map<string, string>();
   for (const step of steps) {
@@ -93,7 +175,7 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
 
   const wrapperCandidates = collectWrapperCandidates(captured);
 
-  const out: SpanData[] = [root];
+  const out: SpanData[] = [...rootEntries];
   // ponytail: SpanResource walks spans by parent_span_id. Anchor each
   // step's parent at the nearest strictly-outer step (a shorter ns whose
   // ns is a strict prefix of the child's ns), or root. Picking by ns
@@ -105,7 +187,7 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
   // at "root". Tie-break by the longest matching ns so the innermost
   // wrapper wins when the same step nests inside multiple ancestors
   // (none of which happens today, but the comment is the cheap shape).
-  const parentIdFor = (s: Step): string => {
+  const parentIdFor = (s: Step): string | null => {
     let best: Step | null = null;
     let bestLen = -1;
     for (const candidate of steps) {
@@ -117,8 +199,8 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
         bestLen = candidate.ns.length;
       }
     }
-    if (best) return stepIdByStepAndName.get(stepKey(best)) ?? "root";
-    return "root";
+    if (best) return stepIdByStepAndName.get(stepKey(best)) ?? rootForStep(s);
+    return rootForStep(s);
   };
   for (const step of steps) {
     const id = stepIdByStepAndName.get(stepKey(step))!;
@@ -128,20 +210,41 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): SpanData[
         const st = s.meta?.langgraph_step;
         const sn =
           typeof s.meta?.langgraph_checkpoint_ns === "string" ? s.meta.langgraph_checkpoint_ns : "";
-        return n === step.node && st === step.step && sn === step.ns;
+        const sr = typeof s.meta?.run_id === "string" ? s.meta.run_id : "";
+        // ponytail: pin repRaw to THIS invoke's run_id. Without it, a
+        // step shared across two main invokes (same node / step / ns)
+        // would grab the first invoke's earliest span as its repRaw,
+        // and that span's parent_span_id would point at the FIRST
+        // root chain — every later invoke's step would get parented
+        // to the wrong root.
+        return n === step.node && st === step.step && sn === step.ns && sr === step.run_id;
       })
       .sort((a, b) => a.started_at - b.started_at)[0];
-    let parentId: string = "root";
+    let parentId: string | null = rootForStep(step);
     if (repRaw?.parent_span_id) {
-      const parentStep = stepBySpanId.get(repRaw.parent_span_id);
-      if (parentStep && parentStep !== step) {
-        parentId = stepIdByStepAndName.get(stepKey(parentStep)) ?? "root";
+      // ponytail: if the step's parent in callback-land is a real root
+      // chain (different invoke — e.g. background_agent triggered via
+      // runs.create), anchor it under THAT root, not under the synthetic
+      // default. Without this, every cross-invoke step falls to the
+      // fallback and the panel flattens two trees into one.
+      const rootAnchor = rootIdFromSpanId(repRaw.parent_span_id, rootChains);
+      if (rootAnchor) {
+        parentId = rootAnchor;
       } else {
-        parentId = parentIdFor(step);
+        const parentStep = stepBySpanId.get(repRaw.parent_span_id);
+        if (parentStep && parentStep !== step) {
+          parentId = stepIdByStepAndName.get(stepKey(parentStep)) ?? rootForStep(step);
+        } else {
+          parentId = parentIdFor(step);
+        }
       }
     } else {
       parentId = parentIdFor(step);
     }
+    // ponytail: no matching root chain → drop the step entirely. Partial
+    // captures / dev fixtures without an outermost wrapper shouldn't
+    // dangle under a synthetic "root" entry.
+    if (parentId === null) continue;
     const type = stepHasInner(step, wrapperCandidates) ? "chain" : "node";
     out.push({
       id,

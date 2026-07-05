@@ -1,5 +1,5 @@
 import { START, END, StateGraph } from "@langchain/langgraph";
-import { scheduleBackgroundNode } from "@/backend/node/schedule-background-node";
+import { triggerBackgroundAgentNode } from "@/backend/node/trigger-background-agent-node";
 import { capturingHandler } from "@/backend/callbacks";
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 import { weatherAgent } from "@/backend/agent/weather-agent";
@@ -53,10 +53,10 @@ export const builder = new StateGraph(RouterAgentState)
   .addNode("weatherAgent", weatherAgent)
   .addNode("cryptoAgent", cryptoAgent)
   .addNode("codeAgent", codeAgent)
-  .addNode("scheduleBackground", scheduleBackgroundNode)
+  .addNode("triggerBackgroundAgentNode", triggerBackgroundAgentNode)
   .addNode("renameThreadAgent", renameThreadAgentNode)
   // Topology:
-  //   START ──▶ routerAgent ──▶ (sub-agent) ──▶ scheduleBackground ──▶ END
+  //   START ──▶ routerAgent ──▶ (sub-agent) ──▶ triggerBackgroundAgentNode ──▶ END
   //   START ─────────────────────────────────▶ renameThreadAgent (parallel, leaf)
   //
   // ask_location's picker card is owned by the weather subgraph
@@ -71,11 +71,11 @@ export const builder = new StateGraph(RouterAgentState)
   // branches complete, but the chat stream ends on the END branch,
   // so the user sees no rename latency.
   //
-  // scheduleBackground is the chat's last node before END. It fires
+  // triggerBackgroundAgentNode is the chat's last node before END. It fires
   // the `background_agent` graph (registered separately in
   // langgraph.json) and returns `{}` immediately — that graph does
   // `last_message_at` touch + threadSummarizeNode work on its own
-  // thread. See backend/node/schedule-background-node.ts for the
+  // thread. See backend/node/trigger-background-agent-node.ts for the
   // fire-and-forget pattern; see backend/background-agent.ts for
   // what the background graph runs.
   .addEdge(START, "routerAgent")
@@ -85,16 +85,15 @@ export const builder = new StateGraph(RouterAgentState)
     "cryptoAgent",
     "codeAgent",
   ])
-  .addEdge("chatAgent", "scheduleBackground")
-  .addEdge("weatherAgent", "scheduleBackground")
-  .addEdge("cryptoAgent", "scheduleBackground")
-  .addEdge("codeAgent", "scheduleBackground")
-  .addEdge("scheduleBackground", END)
+  .addEdge("chatAgent", "triggerBackgroundAgentNode")
+  .addEdge("weatherAgent", "triggerBackgroundAgentNode")
+  .addEdge("cryptoAgent", "triggerBackgroundAgentNode")
+  .addEdge("codeAgent", "triggerBackgroundAgentNode")
+  .addEdge("triggerBackgroundAgentNode", END)
   .addConditionalEdges(START, shouldRenameRouter, {
     renameThreadAgent: "renameThreadAgent",
     __end__: END,
-  })
-
+  });
 
 // ponytail: one handler per process (per module), shared across all
 // concurrent runs AND across every Pregel that wires it via withConfig.
@@ -112,8 +111,9 @@ export const builder = new StateGraph(RouterAgentState)
 // LC use), the second expects PregelOptions (LangGraph-flavored —
 // accepts `callbacks` directly). TS can't pick for a bare callbacks
 // object — cast to the Pregel-options overload at the call site.
-const compiled = builder.compile({ checkpointer, store });
+const compiled = builder.compile({ checkpointer, store, name: "mainAgent" });
 type WithConfigPregel = (config: Record<string, unknown>) => typeof compiled;
 export const graph = (compiled.withConfig as unknown as WithConfigPregel)({
   callbacks: [capturingHandler],
+  subgraphs: true,
 });

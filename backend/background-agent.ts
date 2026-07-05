@@ -21,7 +21,7 @@
 // on state — same convention as the chat graph. Each node pulls them
 // off config.configurable; the chat graph forwards them via
 // `backgroundGraph.invoke(input, { configurable })` from
-// backend/node/schedule-background-node.ts.
+// backend/node/trigger-background-agent-node.ts.
 import { START, END, StateGraph } from "@langchain/langgraph";
 import type { BaseMessage } from "@langchain/core/messages";
 
@@ -50,7 +50,6 @@ export async function touchLastMessageNode(
   return { messages: [] };
 }
 
-
 const builder = new StateGraph(CommonAgentState)
   .addNode("touchLastMessage", touchLastMessageNode)
   .addNode("summarize", threadSummarizeNode)
@@ -68,7 +67,7 @@ const builder = new StateGraph(CommonAgentState)
 // store wiring local to this graph — the chat graph has its own
 // compile({...}) call. Both compile into their own Pregel instance;
 // langgraphjs dev loads both from langgraph.json.
-const compiled = builder.compile({ checkpointer, store });
+const compiled = builder.compile({ checkpointer, store, name: "backgroundAgent" });
 
 // ponytail: same withConfig cast pattern as backend/agent.ts — Pregel's
 // `withConfig` has two overloads (Runnable vs PregelOptions) and TS

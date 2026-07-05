@@ -16,7 +16,9 @@ describe("mergeSubgraphMessages", () => {
     expect(mergeSubgraphMessages(parent, undefined)).toEqual(parent);
     expect(mergeSubgraphMessages(parent, [{ state: undefined }])).toEqual(parent);
     expect(mergeSubgraphMessages(parent, [{ state: { values: {} } }])).toEqual(parent);
-    expect(mergeSubgraphMessages(parent, [{ state: { values: { messages: [] } } }])).toEqual(parent);
+    expect(mergeSubgraphMessages(parent, [{ state: { values: { messages: [] } } }])).toEqual(
+      parent,
+    );
   });
 
   it("appends subgraph-only messages to the parent list in chronological order", () => {
@@ -104,9 +106,7 @@ describe("mergeSubgraphMessages", () => {
   });
 
   it("returns the subgraph slice when parent is empty but subgraph has rows", () => {
-    const tasks: TaskLike[] = [
-      { state: { values: { messages: [{ id: "u1" }, { id: "a1" }] } } },
-    ];
+    const tasks: TaskLike[] = [{ state: { values: { messages: [{ id: "u1" }, { id: "a1" }] } } }];
     expect(mergeSubgraphMessages([], tasks)).toEqual([{ id: "u1" }, { id: "a1" }]);
   });
 });

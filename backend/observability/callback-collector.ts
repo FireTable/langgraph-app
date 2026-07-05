@@ -299,18 +299,20 @@ export class CapturingHandler extends BaseCallbackHandler {
     chain: Serialized,
     inputs: Record<string, unknown>,
     runId: string,
-    parentRunId?: string,
+    runType?: string,
     tags?: string[],
     metadata?: Record<string, unknown>,
     runName?: string,
+    parentRunId?: string,
   ) {
     // ponytail: outermost call only — overwrite `currentParentMessageId`
     // with the last HumanMessage id from `inputs.messages`. Null is OK
     // for resume / regen / cold-start turns — bulkInsertSpans backfills
     // from DB before INSERT.
-    if (!parentRunId) {
+    if (!runType) {
       this.currentParentMessageId = lastHumanMessageId(inputs);
     }
+
     this.start(runId, parentRunId ?? null, {
       kind: "chain",
       name: runName ?? chain.id?.[chain.id.length - 1] ?? "chain",

@@ -7,8 +7,7 @@ import { CRYPTO_TOOLS } from "@/backend/tool";
 import { CRYPTO_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
 import { buildSystemMessageWithMemory } from "@/backend/memory/template";
-import { subgraphCheckpointerConfig } from "@/backend/checkpointer"
-
+import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 
 // Crypto sub-agent: mirrors the weather subgraph. The model ↔ tools
 // loop runs end-to-end inside the subgraph so the parent graph doesn't
@@ -36,5 +35,5 @@ const builder = new StateGraph(CommonAgentState)
   .addEdge("tools", "model");
 
 export const cryptoAgent = builder.compile({
-  ...subgraphCheckpointerConfig
+  ...subgraphCheckpointerConfig,
 });
