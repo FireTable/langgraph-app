@@ -18,6 +18,7 @@
 // capturingHandler singleton from backend/callbacks.ts. Its LLM/DB
 // spans land in the same observability row set as the chat invoke.
 import { langGraphClient } from "@/lib/langgraph/client";
+import { lastHumanMessageId } from "@/lib/langgraph/last-human-message-id";
 
 type ScheduleConfig = {
   configurable?: {
@@ -34,6 +35,11 @@ type PreparedCall = {
   userId: string;
   threadId: string;
   messages: unknown[];
+  // ponytail: last HumanMessage id from the chat invoke — the same
+  // id assistant-ui stamps on the user message. The observability
+  // API uses it to scope in-flight runs to the current turn (the
+  // chat invoke and any background dispatch share thread_id).
+  parentMessageId: string | null;
 };
 
 function readBackgroundCall(state: ScheduleState, config: ScheduleConfig): PreparedCall | null {
@@ -41,10 +47,12 @@ function readBackgroundCall(state: ScheduleState, config: ScheduleConfig): Prepa
   const threadId = config.configurable?.thread_id;
   if (typeof userId !== "string" || userId.length === 0) return null;
   if (typeof threadId !== "string" || threadId.length === 0) return null;
+
   return {
     userId,
     threadId,
     messages: state.messages ?? [],
+    parentMessageId: lastHumanMessageId(state.messages),
   };
 }
 
@@ -62,6 +70,12 @@ async function dispatchViaCreate(input: PreparedCall): Promise<void> {
         thread_id: input.threadId,
       },
     },
+    // ponytail: stamp parent_message_id so the observability per-turn
+    // GET can scope langGraphClient.runs.list(threadId, { status: "running" })
+    // to the current chat turn. Same key the CapturingHandler stamps on
+    // span rows — the API uses one filter to match both DB rows and
+    // in-flight runs to a single human turn.
+    metadata: { parent_message_id: input.parentMessageId },
   });
 }
 
