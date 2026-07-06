@@ -8,8 +8,4 @@ export {
   WRITE_CODE_TOOL_NAME,
   type WriteCodeResume,
 } from "@/backend/tool/code/write-code";
-export {
-  executeCodeTool,
-  EXECUTE_CODE_TOOL_NAME,
-  getCodeTools,
-} from "@/backend/tool/code/execute-code";
+export { executeCodeTool, EXECUTE_CODE_TOOL_NAME } from "@/backend/tool/code/execute-code";

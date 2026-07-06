@@ -69,17 +69,27 @@ DB rows are cleared automatically by `ON DELETE CASCADE` when the parent `thread
 
 ### `GET /api/threads/[id]/observability`
 
-Returns the thread's captured spans in `started_at` ascending order. The handler is `app/api/threads/[id]/observability/route.ts`. Side effect: preflight `markRunningAsFailed(id)` flips any still-`running` rows to `failed` so the client doesn't see stale running states when the chain crashed mid-flight. This is the un-filtered variant — for spans scoped to a single turn, see `GET /api/threads/[id]/observability/[parentMessageId]` below.
+Returns the thread's waterfall data + pre-computed aggregate for the panel header. The handler is `app/api/threads/[id]/observability/route.ts`. Side effect: preflight `markRunningAsFailed(id)` flips any still-`running` rows to `failed` so the client doesn't see stale running states when the chain crashed mid-flight. This is the un-filtered variant — for spans scoped to a single turn, see `GET /api/threads/[id]/observability/[parentMessageId]` below.
 
-Response (200):
+**Wire shape (200)** — server-transformed:
 
 ```ts
 {
   thread_id: string;
   retention_days: number; // obs: from OBSERVABILITY_RETENTION_DAYS, default 30
-  spans: CapturedSpan[];   // ordered by started_at ASC
+  // ponytail: SpanData[] (not raw CapturedSpan[]) — the route runs
+  // transformCapturedToSpanData server-side so the panel never sees the
+  // collector's internal payload (input/output/usage/meta are stripped).
+  // To inspect those on a single row, hit /spans/[spanId] below.
+  spans: SpanData[];                  // ordered by startedAt ASC
+  aggregate: AggregateDTO | null;     // pre-computed stat-card row; null when no spans
+  in_flight_runs: InFlightRun[];      // always present, empty for the un-filtered route
+  step_id_to_raw_span_id: Record<string, string>;  // synthetic step-wrapper id → raw span_id
 }
 ```
+
+- `SpanData` is the `@assistant-ui/react-o11y` waterfall input — `{ id, parentSpanId, name, type, status, startedAt, endedAt, latencyMs }`. Status is `"running" | "completed" | "failed" | "skipped"`. Extended on the wire with `parentMessageId?: string` (the turn this row belongs to) so the panel can build the per-turn detail URL without re-deriving from the waterfall tree.
+- `AggregateDTO` mirrors `RootAggregate` in `lib/observability/aggregate.ts` — token totals (`totalInput` / `totalOutput` / `totalTokens` / `totalCacheRead` / `totalReasoning`), TTFT (`ttftAvgMs` / `ttftMaxMs`, both nullable), span counts by kind (`llmSpanCount` / `toolSpanCount` / `humanCount` / `failedCount`), and `totalDurationMs`.
 
 Status codes:
 
@@ -93,18 +103,30 @@ Status codes:
 
 Filtered variant of the GET above — returns only the spans tagged with `meta.parent_message_id === <parentMessageId>`. The id is the assistant-ui human-message id (`message.parentId`) that triggered the turn; the backend tags every span for that turn with the same value via `CapturingHandler.currentParentMessageId`. Implementation lives at `app/api/threads/[id]/observability/[parentMessageId]/route.ts`. Served by the btree index `observability_spans_thread_parent_started_idx (thread_id, parent_message_id, started_at)` so the planner can satisfy `WHERE thread_id = ? AND parent_message_id = ? ORDER BY started_at` from the index alone.
 
-The `parent_message_id` column is populated from `meta.parent_message_id` on insert (`toRow` projection in `lib/observability/queries.ts`); on read, `toCapturedSpan` rehydrates the meta key from the column so downstream consumers see one source.
-
-Response (200):
+Same wire shape as the un-filtered route, with two additions:
 
 ```ts
 {
-  thread_id: string;
-  retention_days: number;
+  // ...same as above, plus:
   parent_message_id: string;
-  spans: CapturedSpan[];   // ordered by started_at ASC, filtered
+  in_flight_runs: Array<{
+    run_id: string;
+    thread_id: string;
+    assistant_id: string;
+    status: "pending" | "running";
+    created_at: string; // ISO timestamp
+    updated_at: string; // ISO timestamp
+    metadata: {
+      parent_message_id: string | null;
+      [extra: string]: unknown; // passthrough — additional keys preserved
+    };
+  }>;
 }
 ```
+
+`in_flight_runs` is filtered by `metadata.parent_message_id === <parentMessageId>` to scope it to the current turn. The two SDK calls (`status: "running"` + `status: "pending"`) are because `list({status})` is single-valued; status values are documented in `@langchain/langgraph-sdk`'s `RunStatus` type. Main-agent runs are NOT in this list today — only `triggerBackgroundAgentNode` stamps `metadata.parent_message_id` on its `runs.create` payload. Main-agent in-flight state is observable via the `spans` array (CapturingHandler now persists on `handleChainStart`).
+
+`step_id_to_raw_span_id` maps synthetic step-wrapper ids (e.g. `step-3-routerAgent-...`) to their representative raw `span_id`. The panel reads this to translate a clicked wrapper row into the raw span id the detail endpoint expects. Empty when the thread has no step wrappers.
 
 Status codes:
 
@@ -119,6 +141,80 @@ Status codes:
 Clears all spans for the thread. Returns `{ cleared: number }` (the row count). Same auth + ownership contract as GET.
 
 Status codes: 200 / 401 / 404 (same triggers as GET).
+
+### `GET /api/threads/[id]/observability/[parentMessageId]/spans/[spanId]`
+
+Returns the full `CapturedSpan` for a single span. Called from the panel when the user clicks a waterfall row — the waterfall renders from the server-transformed `SpanData[]`, but `SpanDetails` (and the row's hover tooltip fields like model name / TTFT / tokens) need the raw payload.
+
+`spanId` is the raw `span_id`, NOT a synthetic step-wrapper id. The panel translates wrapper ids via the `step_id_to_raw_span_id` map from the parent route before issuing this fetch.
+
+`parentMessageId` is the turn this row belongs to. The transform layer stamps it on every SpanData (root + step wrapper + leaf), so the panel can pluck it from the clicked row without re-deriving from the waterfall tree. The DB lookup is `(thread_id, parent_message_id, span_id)` — uses the existing `observability_spans_thread_parent_started_idx` btree. If the row's span isn't found in DB (e.g. retention evicted it between the parent fetch and the click), the route falls back to `langGraphClient.runs.list(threadId, { status: "running"|"pending" })` filtered by `metadata.parent_message_id === parentMessageId`, so an active bg-agent run still surfaces a details card. Missing in both → 404.
+
+Response (200):
+
+```ts
+{
+  thread_id: string;
+  span: CapturedSpan; // full collector payload — input / output / usage / meta / error
+}
+```
+
+Status codes:
+
+| Status | Trigger                                                                                | Body                       |
+| ------ | -------------------------------------------------------------------------------------- | -------------------------- |
+| 200    | span exists for `(parent_message_id, span_id)` in DB or SDK                            | the payload above          |
+| 401    | no session                                                                             | `{ code: "UNAUTHORIZED" }` |
+| 404    | thread missing or owned by another, OR span not in this turn, OR span not found at all | `{ code: "NOT_FOUND" }`    |
+
+## Memory
+
+Backed by the LangGraph `PostgresStore` (per-user, cross-thread long-term memory). Every route is `withAuth`-wrapped and isolation is by namespace prefix `[userId, ...]`. Storage detail: `lib/memory/queries.ts`; schema (RFC 6902 patches, store): `lib/memory/validators.ts`; size guard: `backend/memory/profile-size.ts`. Read counterpart of `save_memory` (see "Graph tools").
+
+### `GET /api/memory/profile`
+
+Returns the user's profile doc plus read-only better-auth fields that the agent already sees via the recall middleware, plus a flat list of thread summaries enriched with the corresponding chat title. The store + auth fields are kept separate on purpose so the UI can classify each merged field as "summarized by AI" (store) vs "from account" (auth overlay) using store-keys membership — the same classification the model's `<memory>` block applies.
+
+|              |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body | (none)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Output       | `{ store: Record<string, unknown>, auth: { name, email, image, socials: Array<{ provider: string }> }, threads: Array<{ key, value: SummaryEntry, threadTitle: string \| null }> }`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Status codes | 200 / 401 / 500 (store throws). 401 is returned by the shared `withAuth` wrapper, not the handler body.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Field notes  | `auth.socials[].provider` is the better-auth `providerId` for each linked OAuth account (`github`, `google`, ...). `accountId` / tokens are deliberately NOT exposed (FR-020). The "credential" provider is filtered out so email+password accounts don't show as a misleading "linked account". `threads[]` is `createdAt`-asc (oldest-first); the Memory tab groups by threadId client-side using insertion order — do not sort on the client (FR-passthrough). `threadTitle` is the row from the `threads` table set by `renameThreadAgent`; `null` when the rename path hasn't run, in which case the UI falls back to the raw `threadId`. Storage detail: `lib/memory/queries.ts`; Zod shape: `lib/memory/validators.ts` `MemoryResponseSchema`. |
+
+### `DELETE /api/memory/profile/[key]`
+
+Removes a single profile key. Modeled as a one-shot RFC 6902 remove patch against `[userId,"profile"] main`. There is no separate "forget" tool — the Memory tab is the only path to forgetting.
+
+|               |                                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | (none)                                                                                                                                                       |
+| Output        | `{ ok: true, deletedKey }` on success                                                                                                                        |
+| Status codes  | 200 / 400 / 401 / 404                                                                                                                                        |
+| Path regex    | `:key` MUST match `^[A-Za-z0-9_-]{1,64}$`. Decoded via `decodeURIComponent` first — `%2F` becomes `/` and is rejected. Empty string after decode also → 400. |
+| Failure modes | 404 when the profile doc does not exist OR when `key` is not a top-level property of the doc. 400 when the regex fails.                                      |
+
+### `GET /api/memory/threads`
+
+Lists thread summaries the user has generated. Grouped by `threadId`, sorted by sequence desc within a group and by `updatedAt` desc across groups. Corrupt Zod-failing summaries are skipped server-side.
+
+|              |                                                                                                                                                                                              |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body | (none)                                                                                                                                                                                       |
+| Output       | `{ threads: Array<{ threadId: string, summaries: Summary[] }> }`. `Summary` shape: `{ threadId, sequence, name, description, startMessageIndex, endMessageIndex, messageCount, updatedAt }`. |
+| Status codes | 200 / 401 / 500                                                                                                                                                                              |
+| Field notes  | `startMessageIndex` / `endMessageIndex` are inclusive bounds on the user-message window (FR-010 closed interval); `messageCount === end - start + 1`.                                        |
+
+### `DELETE /api/memory/threads/[threadId]`
+
+Collapses all summary docs whose key starts with `${threadId}:` under the user's `[userId,"threads"]` namespace.
+
+|               |                                                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------------- |
+| Request body  | (none)                                                                                            |
+| Output        | `{ ok: true, deletedCount }` on success                                                           |
+| Status codes  | 200 / 401 / 404                                                                                   |
+| Failure modes | 404 when no summary doc exists for `threadId` for the current user (a no-op for an empty thread). |
 
 ## Proxy
 
@@ -183,6 +279,20 @@ Read a public web page and return it as markdown via Jina Reader (`r.jina.ai`).
 ### Key pool semantics
 
 `JINA_API_KEYS` is parsed once at module load into an in-memory pool. Each request picks a key at random. On `401` or `403`, the key is removed from the pool and the request retries with another random key. Up to N retries are attempted where N is the pool size at call start; once every key has rejected the same request, the tool throws. The pool is process-local and resets on LangGraph dev-server restart.
+
+### `save_memory(patches)`
+
+Persist structured facts to the user's long-term profile via RFC 6902 JSON Patch operations against `[userId,"profile"] main`. Implementation: `backend/tool/memory/save-memory-tool.ts`. Read counterpart (better-auth session / social accounts / thread summaries that the model already sees) is prepended to every model call by `withMemoryRecall` at `backend/middleware/with-memory-recall.ts`.
+
+|                |                                                                                                                                                                                                                              |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Input          | `{ patches: Array<MemoryPatch> }`. `MemoryPatch` discriminated union of `{op:"add", path, value}`, `{op:"replace", path, value}`, `{op:"remove", path}`. `move`/`copy`/`test` are rejected at the schema layer.              |
+| Path shape     | RFC 6901. The profile is a flat k-v bag, so paths are constrained to `/[A-Za-z_][A-Za-z0-9_-]*` (object property names, NOT array indices).                                                                                  |
+| Output         | `{ ok: true, bytes, keyCount }` (JSON string)                                                                                                                                                                                |
+| Auth           | The `config.configurable.userId` arg passed to LangGraph — injected by the Next.js `/api/[..._path]` proxy after `withAuth`. Missing / empty userId **fails-fast**: throws `MissingUserIdError` (`code: "MISSING_USER_ID"`). |
+| Size guard     | `MEMORY_PROFILE_MAX_BYTES` (default 8192) — measured post-patch against the serialized JSON. Failure throws `MemorySizeError` (`code: "MEMORY_SIZE_EXCEEDED"`) before any `store.put`.                                       |
+| Patch validity | `replace` and `remove` ops on a path not present in the current profile throw `MemoryPatchError` (`code: "PATCH_FAILED"`) — silent no-op on a non-existent path is the failure mode this rule exists to avoid.               |
+| Deletion UX    | No separate `forget_memory` tool — to forget a fact, the user removes it from the Memory settings tab (which calls `DELETE /api/memory/profile/[key]`).                                                                      |
 
 ## Crypto tools
 

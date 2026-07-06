@@ -41,6 +41,14 @@ declare module "@better-auth-ui/core" {
     view?: "signIn" | "signUp";
   };
   type PluginUserMenuItemProps = Record<string, unknown>;
+  // ponytail: <Settings> renders plugin.settingsTabs as TabsTriggers +
+  // TabsContents, but the type isn't in AuthPluginBase. Mirror its runtime
+  // shape so `plugins: [{ id, settingsTabs: [...] }]` typechecks.
+  type PluginSettingsTab = {
+    view: string;
+    label: ReactNode;
+    component: ComponentType;
+  };
   interface AuthPluginBase {
     views?: {
       auth?: Record<string, ComponentType<PluginViewComponentProps>>;
@@ -51,6 +59,13 @@ declare module "@better-auth-ui/core" {
     captchaComponent?: ComponentType<{ localization: unknown }>;
     authButtons?: ComponentType<PluginAuthButtonComponentProps>[];
     userMenuItems?: ComponentType<PluginUserMenuItemProps>[];
+    settingsTabs?: PluginSettingsTab[];
+    // ponytail: shadcn-installed <AccountSettings> / <SecuritySettings>
+    // render `plugins.flatMap(p => p.accountCards?.map(Card => <Card />))`
+    // — the runtime shape is ComponentType[]. Declare it so TS stops
+    // pretending the field doesn't exist.
+    accountCards?: ComponentType[];
+    securityCards?: ComponentType[];
   }
 }
 

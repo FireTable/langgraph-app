@@ -5,14 +5,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AuthProvider as BetterAuthUIProvider } from "@/components/auth/auth-provider";
 import { authClient } from "@/lib/auth/client";
+import { memorySettingsPlugin } from "@/components/auth/settings/memory-tab";
 
 export function AuthShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   return (
     <BetterAuthUIProvider
       authClient={authClient}
-      basePaths={{ auth: "/login" }}
+      basePaths={{ auth: "/login", settings: "/settings" }}
       socialProviders={["github", "google"]}
+      plugins={[memorySettingsPlugin]}
       emailAndPassword={{
         minPasswordLength: 8,
         confirmPassword: true,

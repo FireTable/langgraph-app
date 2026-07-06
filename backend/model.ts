@@ -9,21 +9,17 @@ const commonOptions = {
   streaming: true,
 };
 
-// ponytail: callbacks are injected by the graph compile step (see
-// backend/agent.ts) so the handler fires on every LangGraph node,
-// including ToolNode — model.withConfig({callbacks}) only attaches
-// to the chatModel.invoke boundary and tool nodes stay blind to it.
-export const chatModel = new ChatOpenAI({
+// ponytail: memory injection lives in each model node via
+// buildSystemMessageWithMemory (backend/memory/template.ts) — the node
+// reads userId from its RunnableConfig and prepends a <memory> block
+// to the system message before invoking the model. The model export
+// is intentionally un-wrapped: the CapturingHandler callback is wired
+// at the graph level in backend/agent.ts so spans aren't double-fired
+// for nested model calls.
+export const chatModel: ChatOpenAI = new ChatOpenAI({
   ...commonOptions,
   modelKwargs: {
     // only minimax will use this param
-    reasoning_split: true,
-  },
-});
-
-export const chatModelWithoutThink = new ChatOpenAI({
-  ...commonOptions,
-  modelKwargs: {
     reasoning_split: true,
   },
 });

@@ -25,7 +25,10 @@ function getCorsHeaders() {
   };
 }
 
-async function proxyRequest(req: NextRequest | Request): Promise<Response> {
+async function proxyRequest(
+  req: NextRequest | Request,
+  ctx: { user: { id: string } },
+): Promise<Response> {
   // Next.js always passes a NextRequest here, but withAuth's generic
   // typing widens it to Request — narrow at the call site so we keep
   // nextUrl access in this function.
@@ -55,7 +58,32 @@ async function proxyRequest(req: NextRequest | Request): Promise<Response> {
   };
 
   if (["POST", "PUT", "PATCH"].includes(nextReq.method)) {
-    options.body = await nextReq.text();
+    // ponytail: withMemoryRecall middleware reads userId from
+    // `config.configurable.userId` on the LangGraph SDK side. The SDK
+    // builds that config from the POST body, so we inject it here as a
+    // pass-through — without this, userId is missing on every proxied
+    // run and the model sees no memory context (FR-007). Same path for
+    // the original request headers so the middleware can resolve the
+    // better-auth session via cookie (US4).
+    const raw = await nextReq.text();
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          const config = (parsed.config ?? {}) as Record<string, unknown>;
+          const configurable = (config.configurable ?? {}) as Record<string, unknown>;
+          // append userId to the langgraph context
+          configurable.userId = ctx.user.id;
+          config.configurable = configurable;
+          parsed.config = config;
+          options.body = JSON.stringify(parsed);
+        } else {
+          options.body = raw;
+        }
+      } catch {
+        options.body = raw;
+      }
+    }
   }
 
   const res = await fetch(`${process.env.LANGGRAPH_API_URL}/${path}${queryString}`, options);
@@ -79,7 +107,7 @@ async function proxyRequest(req: NextRequest | Request): Promise<Response> {
 // (the folder is `[..._path]`), so the generated validator expects `_path`. The
 // proxy itself never reads the catch-all — it forwards the request URL — so the
 // generic is purely for type alignment with the generated RouteHandlerConfig.
-const authedProxy = withAuth<{ _path: string[] }>(async (req) => proxyRequest(req));
+const authedProxy = withAuth<{ _path: string[] }>(async (req, ctx) => proxyRequest(req, ctx));
 
 export const GET = authedProxy;
 export const POST = authedProxy;

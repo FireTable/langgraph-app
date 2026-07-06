@@ -8,7 +8,6 @@ import { tool, type StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 
 import { denoRun } from "@/backend/tool/code/deno-run";
-import { writeCodeTool } from "@/backend/tool/code/write-code";
 
 export const EXECUTE_CODE_TOOL_NAME = "execute_code";
 
@@ -61,8 +60,5 @@ export const executeCodeTool: StructuredTool | null = process.env.DENO_DEPLOY_TO
     )
   : null;
 
-// ponytail: keep the array form for callers that just want the set.
-// Reads the env once at module load — same lazy semantics as the tool.
-export function getCodeTools(): StructuredTool[] {
-  return [writeCodeTool, ...(executeCodeTool ? [executeCodeTool] : [])];
-}
+// ponytail: CODE_TOOLS aggregation moved to backend/tool/index.ts so all
+// conditional tool registration lives in one place.

@@ -1,6 +1,6 @@
 import { BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { renameThread } from "@/lib/threads/queries";
-import { chatModelWithoutThink } from "@/backend/model";
+import { chatModel } from "@/backend/model";
 import { RENAME_THREAD_PROMPT } from "@/backend/prompt/system";
 
 export async function renameThreadAgentNode(
@@ -10,7 +10,7 @@ export async function renameThreadAgentNode(
   const firstUserMessage = state.messages.find((m): m is HumanMessage => m instanceof HumanMessage);
   if (!firstUserMessage) return undefined;
 
-  const response = await chatModelWithoutThink.invoke(
+  const response = await chatModel.invoke(
     [new SystemMessage(RENAME_THREAD_PROMPT), firstUserMessage],
     { tags: ["nostream"] },
   );

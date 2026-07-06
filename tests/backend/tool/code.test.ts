@@ -316,21 +316,25 @@ describe("executeCodeTool (lazy)", () => {
   });
 });
 
-describe("getCodeTools", () => {
-  it("returns only writeCodeTool when DENO_DEPLOY_TOKEN is unset", async () => {
+describe("CODE_TOOLS", () => {
+  // ponytail: aggregation lives in backend/tool/index.ts (CLAUDE.md rule
+  // #10) — this test guards the conditional spread on executeCodeTool
+  // (writeCodeTool + saveMemoryTool are unconditional). We assert by
+  // membership rather than length so future unconditional additions
+  // don't break the test.
+  it("omits executeCodeTool when DENO_DEPLOY_TOKEN is unset", async () => {
     delete process.env.DENO_DEPLOY_TOKEN;
-    const { getCodeTools, writeCodeTool } = await import("@/backend/tool/code");
-    const tools = getCodeTools();
-    expect(tools).toHaveLength(1);
-    expect(tools[0]).toBe(writeCodeTool);
+    const { CODE_TOOLS } = await import("@/backend/tool");
+    const { writeCodeTool, executeCodeTool } = await import("@/backend/tool/code");
+    expect(CODE_TOOLS).toContain(writeCodeTool);
+    expect(CODE_TOOLS).not.toContain(executeCodeTool);
   });
 
-  it("returns both tools when DENO_DEPLOY_TOKEN is set", async () => {
+  it("includes executeCodeTool when DENO_DEPLOY_TOKEN is set", async () => {
     process.env.DENO_DEPLOY_TOKEN = "test-token";
-    const { getCodeTools, writeCodeTool, executeCodeTool } = await import("@/backend/tool/code");
-    const tools = getCodeTools();
-    expect(tools).toHaveLength(2);
-    expect(tools[0]).toBe(writeCodeTool);
-    expect(tools[1]).toBe(executeCodeTool);
+    const { CODE_TOOLS } = await import("@/backend/tool");
+    const { writeCodeTool, executeCodeTool } = await import("@/backend/tool/code");
+    expect(CODE_TOOLS).toContain(writeCodeTool);
+    expect(CODE_TOOLS).toContain(executeCodeTool);
   });
 });

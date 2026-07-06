@@ -5,6 +5,7 @@ import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { Serialized } from "@langchain/core/load/serializable";
 import type { LLMResult } from "@langchain/core/outputs";
 import { isGraphInterrupt } from "@langchain/langgraph";
+import { lastHumanMessageId } from "@/lib/langgraph/last-human-message-id";
 
 // Subset of §9.1 columns that a callback handler can populate. Some
 // (thread_id, user_id, turn_no) are fill-in fields — the handler leaves
@@ -179,53 +180,10 @@ function unwrapMessage(v: unknown): MessageFields | null {
 // on the user message; the assistant message rendered in the thread
 // carries the same id as its `parentId`, so the Sheet can later filter
 // spans by clicking the icon on a specific assistant message.
-function lastHumanMessageId(inputs: Record<string, unknown>): string | null {
-  const messages = (inputs as { messages?: unknown }).messages;
-  if (!Array.isArray(messages)) return null;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (!m || typeof m !== "object") continue;
-    const { role, id } = extractMessageRoleAndId(m as Record<string, unknown>);
-    if (role !== "human" && role !== "user") continue;
-    if (typeof id === "string" && id.length > 0) return id;
-  }
-  return null;
-}
-
-// ponytail: V1 envelopes put "constructor" at the top-level `type` (the
-// envelope kind, not the message kind) — the real type lives in
-// `kwargs.type`. V2 envelopes lack a top-level `type`; the real type
-// lives in `lc_kwargs.type`. readMessageField prefers top-level and
-// therefore returns "constructor" for V1, so we can't reuse it here.
-// This helper skips top-level when an envelope marker is present and
-// looks at kwargs / lc_kwargs instead. Live instances + flat dicts
-// fall through to the top-level path.
-function extractMessageRoleAndId(m: Record<string, unknown>): {
-  role: string | null;
-  id: string | null;
-} {
-  const isEnvelope = m.lc === 1 || "lc_serializable" in m;
-  if (isEnvelope) {
-    const k = m.kwargs as Record<string, unknown> | undefined;
-    const lk = m.lc_kwargs as Record<string, unknown> | undefined;
-    return {
-      role: pickString(k?.type, lk?.type, k?.role, lk?.role),
-      id: pickString(k?.id, lk?.id),
-    };
-  }
-  return {
-    role: pickString(m.type, m.role),
-    id: pickString(m.id),
-  };
-}
-
-function pickString(...vals: unknown[]): string | null {
-  for (const v of vals) {
-    if (typeof v === "string" && v.length > 0) return v;
-  }
-  return null;
-}
-
+//
+// Implementation moved to lib/langgraph/last-human-message-id so
+// triggerBackgroundAgentNode can share it (also needs the parent
+// message id for runs.create metadata).
 function isLCMessageEnvelope(v: unknown): v is Record<string, unknown> {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown> & { [MESSAGE_SYMBOL]?: boolean };
@@ -258,11 +216,12 @@ export class CapturingHandler extends BaseCallbackHandler {
   // ponytail: Map, not LRU. Demo only.
   private spans = new Map<string, Partial>();
 
-  // ponytail: LangChain's parent_run_id is unreliable under USE_SUBGRAPH
-  // (chains inside compiled subgraphs report root as parent). We rebuild
-  // the call hierarchy from `langgraph_checkpoint_ns` instead — the ns
-  // encodes the wrapper stack directly, so the parent of any span is the
-  // sibling span whose ns is the current ns with its trailing
+  // ponytail: LangChain's parent_run_id is unreliable under compiled
+  // subgraphs (chains inside a subgraph report the root as parent).
+  // We rebuild the call hierarchy from `langgraph_checkpoint_ns`
+  // instead — the ns encodes the wrapper stack directly, so the parent
+  // of any span is the sibling span whose ns is the current ns with
+  // its trailing
   // "|name:uuid" segment stripped. LC's parent_run_id is ignored.
   private runIdByNs = new Map<string, string>();
   // ponytail: previously tracked the most recent open `kind: "human"`
@@ -298,18 +257,20 @@ export class CapturingHandler extends BaseCallbackHandler {
     chain: Serialized,
     inputs: Record<string, unknown>,
     runId: string,
-    parentRunId?: string,
+    runType?: string,
     tags?: string[],
     metadata?: Record<string, unknown>,
     runName?: string,
+    parentRunId?: string,
   ) {
     // ponytail: outermost call only — overwrite `currentParentMessageId`
     // with the last HumanMessage id from `inputs.messages`. Null is OK
     // for resume / regen / cold-start turns — bulkInsertSpans backfills
     // from DB before INSERT.
-    if (!parentRunId) {
-      this.currentParentMessageId = lastHumanMessageId(inputs);
+    if (!runType) {
+      this.currentParentMessageId = lastHumanMessageId((inputs as { messages?: unknown }).messages);
     }
+
     this.start(runId, parentRunId ?? null, {
       kind: "chain",
       name: runName ?? chain.id?.[chain.id.length - 1] ?? "chain",
@@ -454,6 +415,24 @@ export class CapturingHandler extends BaseCallbackHandler {
 
   // ---- Errors close the span as failed. ----
   handleChainError(err: Error, runId: string) {
+    // ponytail: `interrupt()` throws a GraphInterrupt that unwinds
+    // through every wrapper in the call stack — tools RunnableSequence,
+    // inner CompiledStateGraph, outer RunnableSequence. Each one fires
+    // handleChainError here, but they're not failures; the interrupt
+    // is the intended pause. Mirror handleToolError: flip status to
+    // completed + null error, stamp ended_at so markRunningAsFailed
+    // doesn't mis-flag the wrapper on restart.
+    if (isGraphInterrupt(err)) {
+      const span = this.spans.get(runId);
+      if (span) {
+        span.status = "waiting";
+        span.error = null;
+        // ponytail: waiting ended_at can't be inferred yet, will be backfilled later.
+        span.ended_at = null;
+        this.persistSpan(runId);
+      }
+      return;
+    }
     this.end(runId, { status: "failed", error: err.message });
     this.persistSpan(runId);
   }
@@ -494,7 +473,7 @@ export class CapturingHandler extends BaseCallbackHandler {
           name: "interrupt",
           kind: "human",
           status: "waiting",
-          started_at: Date.now(),
+          started_at: Date.now() + 100, // add 100ms to ensure it's after the tool ended
           ended_at: null,
           input: null,
           output: null,
@@ -611,7 +590,7 @@ export class CapturingHandler extends BaseCallbackHandler {
     return Array.from(this.spans.values()).map((s) => ({
       ...s,
       // ponytail: overwrite parent_span_id with the ns-derived one.
-      // LC's parent_run_id is unreliable under USE_SUBGRAPH.
+      // LC's parent_run_id is unreliable under compiled subgraphs.
       parent_span_id: this.actualParent.has(s.span_id)
         ? (this.actualParent.get(s.span_id) ?? null)
         : s.parent_span_id,
@@ -715,6 +694,10 @@ function trimToolOutput(output: unknown): unknown {
 
 // ponytail: one helper, one place. Prompts are what the provider sees — keep
 // them as the model sees them, don't down-cast to structured messages.
+//
+// AIMessage with tool_calls has empty content (the model emitted no prose,
+// just a function call). Without the tool_call fallback the panel renders a
+// blank <pre> for that message.
 function stringifyMessages(msgs: BaseMessage[]): string {
   return msgs
     .map((m) => {
@@ -723,7 +706,15 @@ function stringifyMessages(msgs: BaseMessage[]): string {
       const role = (m as unknown as { getType: () => string }).getType();
       const content =
         typeof m.content === "string" ? m.content : JSON.stringify(m.content, null, 0);
-      return `${role}: ${content}`;
+      // ponytail: tool_calls lives on AIMessage; ToolMessage has tool_call_id
+      // instead. Cast mirrors LangChain's own serialize() shape.
+      const toolCalls = (m as unknown as { tool_calls?: Array<{ name: string; args: unknown }> })
+        .tool_calls;
+      const toolCallBody =
+        toolCalls && toolCalls.length > 0
+          ? toolCalls.map((tc) => `[tool_call ${tc.name}(${JSON.stringify(tc.args)})]`).join("\n")
+          : "";
+      return `${role}: ${content || toolCallBody}`;
     })
     .join("\n");
 }

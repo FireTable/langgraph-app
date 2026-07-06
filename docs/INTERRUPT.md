@@ -3,8 +3,7 @@
 LangGraph's `interrupt()` halts the current run and surfaces a payload to the
 runtime. The frontend reads that payload, renders UI, and resumes the run by
 sending back a value. This doc covers the contract from both sides — server
-(caller) and frontend (consumer) — and the topology split that currently
-gives interrupts two runtime paths.
+(caller) and frontend (consumer).
 
 ## Contract
 
@@ -27,22 +26,19 @@ returned value as untrusted (validate it).
 
 ### Frontend side — `components/assistant-ui/thread.tsx`
 
-`InterruptUI` reads `useLangGraphInterruptState()` and dispatches on
-`interrupt.value.ui`. The `toolkit` registry (`components/tool-ui/toolkit.tsx`)
-maps `ui` → React renderer. The renderer's `addResult` (or its own
-`useLangGraphSendCommand` hook) is the resume path:
+The `toolkit` registry (`components/tool-ui/toolkit.tsx`) maps each tool's
+`ui` discriminator to a React card. The card is mounted by the toolkit's
+`render` in the tool-call slot of the matching `ToolMessage`. The card itself
+owns the resume path — it calls `useLangGraphSendCommand` directly with
+`{ resume: payload }`:
 
 ```tsx
-<Render
-  args={{ ...interrupt.value.data }}
-  result={undefined}
-  addResult={(payload) => sendCommand({ resume: payload })}
-/>
+const sendCommand = useLangGraphSendCommand();
+sendCommand({ resume: JSON.stringify(payload) });
 ```
 
-Only one interrupt can be active per thread. `InterruptUI` is mounted inside
-the **last** assistant message (`isLast` gate) so it doesn't render once per
-older message.
+Only one interrupt can be active per thread (the active subgraph's task
+holds the slot until the resume lands).
 
 ### Resume shape
 
@@ -50,23 +46,13 @@ Whatever the frontend sends via `sendCommand({ resume })` is what
 `interrupt()` returns on the next pass. Pick a stable JSON shape and document
 it on both sides. Keep payload small — it's serialized into the SSE stream.
 
-## Runtime paths — depends on `USE_SUBGRAPH`
+## Resume mechanism
 
-Subgraph mode preserves `interrupt()` semantics. Inlined mode routes the
-pause through the `ToolNode`'s `ToolMessage` channel — the user-facing flow is
-the same (UI mounts, user picks, run resumes) but the mechanism under the
-hood differs:
-
-| Mode                               | Pause mechanism                                                                      | Card mount                                                             | Resume mechanism                                          |
-| ---------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | --------------------------------------------------------- |
-| **`USE_SUBGRAPH=true`**            | `interrupt()` is honored across the parent ↔ subgraph boundary                       | `InterruptUI` in `thread.tsx` (driven by `useLangGraphInterruptState`) | `sendCommand({ resume })` from the card                   |
-| **`USE_SUBGRAPH=false`** (default) | `interrupt()` is caught by the inlined flow and surfaced as a `ToolMessage` sentinel | Tool-call slot in the message part list                                | `addResult(payload)` overwrites the `ToolMessage` content |
-
-The card itself is the same React component in both paths; only where it
-mounts and how it resumes change. In inlined mode the card uses the
-`addResult` prop; in subgraph mode it defines its own resume via
-`useLangGraphSendCommand` (the `addResult` prop never carries a useful
-value).
+Each picker card uses `useLangGraphSendCommand` directly and ships a
+`{ resume }` payload shaped to the matching tool. The parent graph routes the
+resume via the subgraph that originally raised the interrupt — namespace
+matching is server-side (`__pregel_resume_map[ns]`), so the card doesn't need
+to know which sub-agent paused.
 
 ## Examples
 
@@ -156,31 +142,20 @@ type WriteCodeResume =
 1. **Server.** Add a tool under `backend/tool/`. Call `interrupt({ ui, data, message })` and validate the resumed value before using it. Keep the `ui` string stable — it becomes the toolkit registry key.
 2. **Payload.** Pick a JSON shape. Define a `Result` type on the frontend card so the two sides stay in sync.
 3. **Toolkit registry.** Add an entry in `components/tool-ui/toolkit.tsx` keyed by `ui`. Reuse an existing card or write a new one.
-4. **Card.** Mount via the toolkit renderer. Use the `addResult` prop in inlined mode, or `useLangGraphSendCommand` in subgraph mode (the same card supports both — see `ask-location-card.tsx`).
+4. **Card.** Mount via the toolkit renderer. Use `useLangGraphSendCommand` to send the `{ resume }` payload — see `ask-location-card.tsx` for the canonical shape.
 5. **Prompt.** Tell the model to call the tool exactly once per turn and not to batch it with other tool calls (the human input races any parallel tool result).
 6. **Docs.** Update this file with the new tool's `ui` name and payload shape.
 
 ## Debugging
 
-- **Card never mounts (subgraph mode).** Check `NEXT_PUBLIC_USE_SUBGRAPH` is
-  set in `.env.local`. Restart `pnpm dev:frontend` after changing
-  `NEXT_PUBLIC_*` vars — Next.js inlines them at build time.
-- **Card never mounts (inlined mode).** The model didn't emit the tool's
-  `tool_call` (check the LLM trace), or the card's render path isn't keyed
-  on the `ToolMessage` content.
+- **Card never mounts.** The model didn't emit the tool's `tool_call` (check
+  the LLM trace), or the card's render path isn't keyed on the `ToolMessage`
+  content. If the model emitted `tool_calls` but no card shows up,
+  `streamSubgraphs: true` may be missing from `lib/langgraph/create-stream.ts`
+  — required for namespaced `__interrupt__` events to surface in the browser.
 - **Multiple cards stacked.** The model emitted the same `tool_call` more
   than once in a turn. Tighten the prompt or filter duplicates in the card.
-- **Resume does nothing.** Verify the frontend payload matches the
-  tool's expected shape. In inlined mode, `addResult` requires the
-  `ToolMessage` to already exist — if the card is in the wrong slot, it
-  has nothing to overwrite.
-
-## Why two paths exist
-
-LangGraph JS subgraphs trigger the "Run ID not found in run map" bug under
-`@langchain/core@1.2.1`. The inlined topology is the workaround — it removes
-the subgraph boundary, so `interrupt()` never crosses into a child run. The
-downside is duplicated model/tool code (the inlined nodes mirror
-`backend/agent/weather-agent.ts` + `chat-agent.ts`). When core ships a fix,
-flip the default and delete the inlined builder — see
-`memory/langgraph-subgraph-run-map-bug.md`.
+- **Resume does nothing.** Verify the frontend payload matches the tool's
+  expected JSON shape, and that the card calls `useLangGraphSendCommand` with
+  `{ resume: payload }` (not with `addResult`, which only overwrites the
+  visible `ToolMessage`).

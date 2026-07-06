@@ -11,10 +11,13 @@ import {
 import { useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
-import { MenuIcon, MessageSquareTextIcon, PanelLeftIcon, PlusIcon, ShareIcon } from "lucide-react";
+import { Brain, MenuIcon, PanelLeftIcon, PlusIcon, ShareIcon } from "lucide-react";
+
+import { BrandMark } from "@/components/brand-mark";
 
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
+import { mergeSubgraphMessages } from "@/lib/langgraph/merge-subgraph-messages";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { UserButton } from "@/components/auth/user/user-button";
 import weatherToolkit from "@/components/tool-ui/toolkit";
@@ -22,7 +25,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
 import { cn } from "@/lib/utils";
-import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID, APP_NAME } from "@/lib/constants";
+import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID } from "@/lib/constants";
 import { createLangGraphStream } from "@/lib/langgraph/create-stream";
 
 // Provider-scoped values (api, mainThreadId) bridged into a ref so the
@@ -33,14 +36,18 @@ type RuntimeBridge = {
   mainThreadId: string | null;
 };
 
-const Logo: FC = () => {
-  return (
-    <div className="flex items-center gap-2 px-2 text-sm font-medium">
-      <MessageSquareTextIcon className="text-foreground/90 size-5" />
-      <span className="text-foreground/90">{APP_NAME}</span>
-    </div>
-  );
-};
+// ponytail: UserButton's `links` slot is the lowest-friction way to
+// surface the Memory tab without rebuilding better-auth-ui's settings
+// surface — and at the version installed here, `settingsTabs` has types
+// but no render site. `MemoryView` lives at /settings/memory.
+const memoryLink = [
+  {
+    label: "Memory",
+    href: "/settings/memory",
+    icon: <Brain className="text-muted-foreground" />,
+    visibility: "authenticated" as const,
+  },
+];
 
 const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
   return (
@@ -56,15 +63,7 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
           collapsed ? "px-3.5" : "px-6",
         )}
       >
-        <MessageSquareTextIcon className="text-foreground/90 size-5 shrink-0" />
-        <span
-          className={cn(
-            "text-foreground/90 ml-2 text-sm font-medium whitespace-nowrap transition-opacity duration-200",
-            collapsed && "opacity-0",
-          )}
-        >
-          {APP_NAME}
-        </span>
+        <BrandMark collapsed={collapsed} />
       </div>
       {collapsed ? (
         <ThreadListPrimitive.New asChild>
@@ -85,9 +84,9 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
       )}
       <div className={cn("shrink-0 p-2", collapsed ? "flex justify-center" : "")}>
         {collapsed ? (
-          <UserButton size="icon" className="border-border bg-card border" />
+          <UserButton size="icon" className="border-border bg-card border" links={memoryLink} />
         ) : (
-          <UserButton className="border-border bg-card w-full border" hideSettings />
+          <UserButton className="border-border bg-card w-full border" links={memoryLink} />
         )}
       </div>
     </aside>
@@ -105,13 +104,17 @@ const MobileSidebar: FC = () => {
       </SheetTrigger>
       <SheetContent side="left" className="flex w-70 flex-col p-0">
         <div className="flex h-12 shrink-0 items-center px-4">
-          <Logo />
+          <BrandMark />
         </div>
         <div className="relative flex-1 overflow-y-auto p-3">
           <ThreadList />
         </div>
         <div className="shrink-0 p-2">
-          <UserButton className="border-border bg-card w-full border" hideSettings />
+          <UserButton
+            className="border-border bg-card w-full border"
+            hideSettings
+            links={memoryLink}
+          />
         </div>
       </SheetContent>
     </Sheet>
@@ -198,6 +201,8 @@ export function Assistant() {
   const eventHandlers = useMemo(() => ({}), []);
 
   const runtime = useLangGraphRuntime({
+    unstable_allowCancellation: true,
+    unstable_enableMessageQueue: true,
     unstable_threadListAdapter: threadListAdapter,
     stream,
     eventHandlers,
@@ -206,17 +211,28 @@ export function Assistant() {
       return { externalId: externalId! };
     },
     // Empty messages on a fresh thread — state.values has no `messages` key yet.
-    // Return `interrupts` from the active task so a paused run (e.g. ask_location
-    // waiting for the user's location pick) survives a page refresh — the runtime
-    // restores `useLangGraphInterruptState()` from this field. Also return
+    // Return `messages` from the active subgraph task so a paused run
+    // (e.g. ask_location waiting for the user's location pick) survives a
+    // page refresh — the picker card reads the trailing ToolMessage out
+    // of those messages and re-renders in the tool-call slot. Also return
     // `uiMessages` so any persisted typedUi state is restored on reload.
+    //
+    // ponytail: { subgraphs: true } is required when the chat is sitting in
+    // a paused subgraph (ask_location etc.). Without it the SDK never asks
+    // the server for the subgraph's in-flight state, so the AI message +
+    // tool_call emitted inside the subgraph never reach the assistant-ui
+    // runtime on reload — see mergeSubgraphMessages for the dedupe rule.
     load: async (externalId) => {
-      const state = await client.threads.getState(externalId);
+      const state = await client.threads.getState(externalId, undefined, { subgraphs: true });
       const values = state.values as { messages?: unknown; ui?: unknown };
-      const interrupts = state.tasks?.[0]?.interrupts;
+      const interrupts = state.tasks?.at(-1)?.interrupts;
+      const messages = mergeSubgraphMessages(
+        (values.messages ?? []) as Array<{ id?: string }>,
+        state.tasks as ReadonlyArray<unknown>,
+      ) as never;
 
       return {
-        messages: (values.messages ?? []) as never,
+        messages,
         uiMessages: (values.ui ?? []) as never,
         ...(interrupts?.length ? { interrupts } : {}),
       };
@@ -253,9 +269,9 @@ export function Assistant() {
         prompt: "Please analyze the website https://firetable.tech",
       },
       {
-        title: "What’s the weather like at today?",
+        title: "What’s the weather like today?",
         label: "",
-        prompt: "What’s the weather like at today?",
+        prompt: "What’s the weather like today?",
       },
       {
         title: "I want to buy 2 ETH",
@@ -268,9 +284,9 @@ export function Assistant() {
         prompt: "Show me my NFTs",
       },
       {
-        title: "Write a Typescript function to solve `Two Sum` leetcode problem",
+        title: "Write a Typescript function about `Two Sum`",
         label: "",
-        prompt: "Write a Typescript function to solve `Two Sum` leetcode problem",
+        prompt: "Write a Typescript function about `Two Sum`, include the test cases.",
       },
     ]),
   });

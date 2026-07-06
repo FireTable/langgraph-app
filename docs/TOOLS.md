@@ -10,12 +10,13 @@ card — same rule as `docs/APIS.md`.
 
 ## Tool groups
 
-| Group   | Backend path           | Card path                     |
-| ------- | ---------------------- | ----------------------------- |
-| Weather | `backend/tool/` (root) | `components/tool-ui/weather/` |
-| Crypto  | `backend/tool/crypto/` | `components/tool-ui/crypto/`  |
-| Code    | `backend/tool/code/`   | `components/tool-ui/code/`    |
-| Web     | `backend/tool/` (root) | — (plain tool messages)       |
+| Group   | Backend path           | Card path                                                                         |
+| ------- | ---------------------- | --------------------------------------------------------------------------------- |
+| Weather | `backend/tool/` (root) | `components/tool-ui/weather/`                                                     |
+| Crypto  | `backend/tool/crypto/` | `components/tool-ui/crypto/`                                                      |
+| Code    | `backend/tool/code/`   | `components/tool-ui/code/`                                                        |
+| Web     | `backend/tool/` (root) | — (plain tool messages)                                                           |
+| Memory  | `backend/tool/memory/` | `components/tool-ui/memory/` (SaveMemoryCard diff + the settings/memory-view tab) |
 
 ## Weather
 
@@ -62,6 +63,27 @@ way as before. When `DENO_DEPLOY_TOKEN` is unset, `execute_code` is not
 registered — the model will surface a graceful
 fallback (inline compute or "I can't execute right now") after a Run
 instead of silently failing.
+
+## Memory
+
+| Tool          | Backend file                 | Frontend card                 | Notes                                                                                                                                                                                                               |
+| ------------- | ---------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `save_memory` | `memory/save-memory-tool.ts` | `memory/save-memory-card.tsx` | RFC 6902 patches against the user's profile at `[userId, "memory"] main`. Diff card reads the matching `ToolMessage`. Wired into every sub-agent's tool list (no separate group — always-on). See `docs/MEMORY.md`. |
+
+`save_memory` operates on the **merged view** (store + auth overlay),
+not just the store, so `replace /name "X"` succeeds when the model is
+reacting to a name field that came from OAuth. Path regex
+`^\/[A-Za-z_][A-Za-z0-9_-]*$` rejects array indices; `replace` /
+`remove` on a path not in the merged view throws `MemoryPatchError`
+(`code: "PATCH_FAILED"`) instead of silently no-op'ing. The size
+guard runs before the store write (`MEMORY_PROFILE_MAX_BYTES`,
+default 8192); exceeding it throws `MemorySizeError` with
+`attemptedBytes` + `maxBytes` so the model can retry with a smaller
+patch.
+
+No `forget_memory` tool — the Memory settings tab is the only path
+to deletion. Tool result carries a `before` / `after` / `patches[]`
+payload the `SaveMemoryCard` renders as a per-row diff.
 
 ## Web
 

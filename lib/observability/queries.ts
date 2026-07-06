@@ -182,6 +182,16 @@ async function backfillParentMessageIds(rows: NewObservabilitySpanRow[]): Promis
 // span in the incoming batch whose `name` matches a waiting human
 // span's `interrupt_tool`; ended_at is set to the resume tool's
 // started_at so the waterfall shows the gap as closed.
+//
+// ponytail: waiting CHAIN wrappers are NOT backfilled here. Their
+// `ended_at` was stamped by handleChainError at interrupt time, and
+// transform.ts renders the step as "completed" via bucket.ended
+// (the raw span status field doesn't drive the panel's step display).
+// Flipping the chain wrapper to "completed" on tool arrival would
+// overstate the chain's progress — it could still be processing the
+// resume payload. Leave it at status="waiting"; the wrapper's own
+// record lives in the panel as a closed bar (ended_at is set) at
+// the interrupt moment, and any post-resume work shows as new bars.
 async function backfillWaitingInterruptSpans(rows: NewObservabilitySpanRow[]): Promise<void> {
   const resumePairs = new Map<string, { toolName: string; resumeAt: number }>();
   for (const r of rows) {
@@ -203,6 +213,42 @@ async function backfillWaitingInterruptSpans(rows: NewObservabilitySpanRow[]): P
           eq(observabilitySpans.kind, "human"),
           eq(observabilitySpans.status, "waiting"),
           eq(sql`${observabilitySpans.meta}->>'interrupt_tool'`, pair.toolName),
+        ),
+      );
+  }
+
+  // ponytail: chain wrappers stuck at status="waiting" / ended_at=null
+  // (set by handleChainError when GraphInterrupt bubbled up) are
+  // backfilled the moment a chain wrapper carrying
+  // `output.output = "__end__"` lands for the same thread. The
+  // `__end__` marker is the LangGraph signal that the branch exited,
+  // so the parent wrapper is finally done — handleChainEnd never fires
+  // for the prior turn's wrappers because their handleChainError
+  // already finalized them. The lookup walks up the ns tree by one
+  // `|tail` to find the parent wrapper: the outer subgraph shares its
+  // ns suffix across interrupt + resume turns, but inner steps don't
+  // (different uuid per turn), so exact-ns match would miss.
+  for (const r of rows) {
+    if (r.kind !== "chain") continue;
+    const output = r.output as { output?: unknown } | null;
+    if (!output || output.output !== "__end__") continue;
+    const meta = r.meta as Record<string, unknown> | null | undefined;
+    const ns = meta?.langgraph_checkpoint_ns;
+    if (typeof ns !== "string") continue;
+    const lastPipe = ns.lastIndexOf("|");
+    if (lastPipe <= 0) continue;
+    const parentNs = ns.slice(0, lastPipe);
+    const endAt = r.endedAt ?? r.startedAt;
+    if (endAt <= 0) continue;
+    await db
+      .update(observabilitySpans)
+      .set({ status: "completed", endedAt: endAt })
+      .where(
+        and(
+          eq(observabilitySpans.threadId, r.threadId),
+          eq(observabilitySpans.kind, "chain"),
+          eq(observabilitySpans.status, "waiting"),
+          eq(sql`${observabilitySpans.meta}->>'langgraph_checkpoint_ns'`, parentNs),
         ),
       );
   }

@@ -542,6 +542,217 @@ describe("bulkInsertSpans — backfillWaitingInterruptSpans", () => {
     expect(row.status).toBe("waiting");
     expect(row.endedAt).toBeNull();
   });
+
+  it("leaves waiting chain wrappers alone on resume — only human spans are backfilled", async () => {
+    // ponytail: handleChainError flips the wrapper chains above an
+    // interrupted subgraph to status="waiting" — but their `ended_at`
+    // was already stamped at interrupt time. transform.ts renders the
+    // step as "completed" via bucket.ended (the raw span status field
+    // doesn't drive the panel's step display). Backfilling the chain
+    // wrapper's status here would overstate its progress — it could
+    // still be processing the resume payload — so the backfill only
+    // touches the synthetic human span (kind="human"), which has no
+    // chain end of its own.
+    await seedThread("t-chain-resume");
+    const base = Date.now();
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "tools-rs",
+        kind: "chain",
+        name: "RunnableSequence",
+        status: "waiting",
+        ended_at: base,
+        meta: { langgraph_thread_id: "t-chain-resume", langgraph_node: "weatherTools" },
+      }),
+      makeSpan({
+        span_id: "wa-inner",
+        kind: "chain",
+        name: "CompiledStateGraph",
+        status: "waiting",
+        ended_at: base,
+        meta: { langgraph_thread_id: "t-chain-resume", langgraph_node: "weatherAgent" },
+      }),
+    ]);
+    // Resume: a new tool span lands.
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "ask-location-resume",
+        kind: "tool",
+        name: "ask_location",
+        started_at: base + 10000,
+        meta: { langgraph_thread_id: "t-chain-resume", langgraph_node: "weatherTools" },
+      }),
+    ]);
+    const rows = await db
+      .select({
+        spanId: observabilitySpans.spanId,
+        status: observabilitySpans.status,
+        endedAt: observabilitySpans.endedAt,
+      })
+      .from(observabilitySpans);
+    const byId = Object.fromEntries(rows.map((r) => [r.spanId, r]));
+    // Chain wrappers stay at status="waiting" — only the human-span
+    // backfill runs. transform.ts renders them as completed visually
+    // because their ended_at is set (bucket.ended truthy).
+    expect(byId["tools-rs"]?.status).toBe("waiting");
+    expect(byId["wa-inner"]?.status).toBe("waiting");
+    // ended_at is preserved as the interrupt stamp.
+    expect(byId["tools-rs"]?.endedAt).toBe(base);
+    expect(byId["wa-inner"]?.endedAt).toBe(base);
+  });
+
+  it("closes waiting chain wrappers at the parent ns when a __end__ chain wrapper arrives", async () => {
+    // ponytail: the model RunnableLambda at the end of a weather branch
+    // emits `output.output = "__end__"` — that's the precise signal that
+    // the branch finished. Any chain wrapper stuck at status="waiting"
+    // because of an earlier interrupt should now be flipped: status to
+    // "completed" and ended_at to the __end__ chain's ended_at (its
+    // handler fired handleChainEnd normally). The lookup walks up the
+    // ns tree by one `|tail` to find the parent wrapper — same ns
+    // suffix across the interrupt + resume turns for the outer
+    // subgraph, different suffixes for inner steps, so exact-ns match
+    // would miss the row.
+    await seedThread("t-end-trigger");
+    const interruptBase = Date.now();
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "outer-waiting",
+        kind: "chain",
+        name: "RunnableSequence",
+        status: "waiting",
+        ended_at: null,
+        started_at: interruptBase,
+        meta: {
+          langgraph_thread_id: "t-end-trigger",
+          langgraph_node: "weatherAgent",
+          langgraph_checkpoint_ns: "weatherAgent:f7f5b9cb-e2e9-5e71-81c7-c7caa71aaada",
+        },
+      }),
+      makeSpan({
+        span_id: "tools-waiting",
+        kind: "chain",
+        name: "RunnableSequence",
+        status: "waiting",
+        ended_at: null,
+        started_at: interruptBase + 1,
+        meta: {
+          langgraph_thread_id: "t-end-trigger",
+          langgraph_node: "tools",
+          langgraph_checkpoint_ns:
+            "weatherAgent:f7f5b9cb-e2e9-5e71-81c7-c7caa71aaada|tools:b2bce1c5-268e-54dc-ae62-2ac9d3478e18",
+        },
+      }),
+    ]);
+    // Resume turn: the model wrapper emits __end__.
+    const endAt = interruptBase + 20000;
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "end-lambda",
+        kind: "chain",
+        name: "RunnableLambda",
+        status: "completed",
+        started_at: endAt,
+        ended_at: endAt,
+        output: { output: "__end__" },
+        meta: {
+          langgraph_thread_id: "t-end-trigger",
+          langgraph_node: "model",
+          langgraph_checkpoint_ns:
+            "weatherAgent:f7f5b9cb-e2e9-5e71-81c7-c7caa71aaada|model:9cf9f7e7-7201-5226-8ed3-881023badd38",
+        },
+      }),
+    ]);
+    const rows = await db
+      .select({
+        spanId: observabilitySpans.spanId,
+        status: observabilitySpans.status,
+        endedAt: observabilitySpans.endedAt,
+      })
+      .from(observabilitySpans);
+    const byId = Object.fromEntries(rows.map((r) => [r.spanId, r]));
+    // Outer wrapper at parent ns ("weatherAgent:..."): flipped.
+    expect(byId["outer-waiting"]?.status).toBe("completed");
+    expect(byId["outer-waiting"]?.endedAt).toBe(endAt);
+    // Tools wrapper at the deeper ns ("weatherAgent:...|tools:..."):
+    // NOT a parent of the __end__ chain, stays waiting.
+    expect(byId["tools-waiting"]?.status).toBe("waiting");
+    expect(byId["tools-waiting"]?.endedAt).toBeNull();
+  });
+
+  it("does not flip chain wrappers when the __end__ chain is on a different thread", async () => {
+    await seedThread("t-end-isolation");
+    await seedThread("t-other-thread");
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "isolated-waiting",
+        kind: "chain",
+        name: "RunnableSequence",
+        status: "waiting",
+        ended_at: null,
+        meta: {
+          langgraph_thread_id: "t-end-isolation",
+          langgraph_node: "weatherAgent",
+          langgraph_checkpoint_ns: "weatherAgent:abc",
+        },
+      }),
+    ]);
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "other-thread-end",
+        kind: "chain",
+        name: "RunnableLambda",
+        status: "completed",
+        output: { output: "__end__" },
+        meta: {
+          langgraph_thread_id: "t-other-thread",
+          langgraph_node: "model",
+          langgraph_checkpoint_ns: "weatherAgent:abc|model:xyz",
+        },
+      }),
+    ]);
+    const row = await db
+      .select({ status: observabilitySpans.status })
+      .from(observabilitySpans)
+      .where(eq(observabilitySpans.spanId, "isolated-waiting"));
+    expect(row[0]?.status).toBe("waiting");
+  });
+
+  it("does not flip chain wrappers when the row's output is not __end__", async () => {
+    await seedThread("t-not-end");
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "not-end-waiting",
+        kind: "chain",
+        name: "RunnableSequence",
+        status: "waiting",
+        ended_at: null,
+        meta: {
+          langgraph_thread_id: "t-not-end",
+          langgraph_node: "weatherAgent",
+          langgraph_checkpoint_ns: "weatherAgent:def",
+        },
+      }),
+    ]);
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "normal-chain",
+        kind: "chain",
+        name: "RunnableSequence",
+        status: "completed",
+        output: { messages: [{ role: "ai", content: "ok" }] },
+        meta: {
+          langgraph_thread_id: "t-not-end",
+          langgraph_node: "model",
+          langgraph_checkpoint_ns: "weatherAgent:def|model:ghi",
+        },
+      }),
+    ]);
+    const row = await db
+      .select({ status: observabilitySpans.status })
+      .from(observabilitySpans)
+      .where(eq(observabilitySpans.spanId, "not-end-waiting"));
+    expect(row[0]?.status).toBe("waiting");
+  });
 });
 
 describe("deleteSpansOlderThan (retention cron helper)", () => {

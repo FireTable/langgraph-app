@@ -9,7 +9,8 @@ import { connectWalletTool } from "@/backend/tool/crypto/connect-wallet";
 import { placeCryptoOrderTool } from "@/backend/tool/crypto/place-crypto-order";
 import { getOrderStatusTool } from "@/backend/tool/crypto/get-order-status";
 import { getNftHoldingsTool } from "@/backend/tool/crypto/get-nft-holdings";
-import { getCodeTools } from "@/backend/tool/code";
+import { saveMemoryTool } from "@/backend/tool/memory/save-memory-tool";
+import { executeCodeTool, writeCodeTool } from "@/backend/tool/code";
 
 // ponytail: keep the tool list in one place so the graph binds it from a
 // single source. Adding a tool = drop a file + add one line here.
@@ -27,7 +28,7 @@ import { getCodeTools } from "@/backend/tool/code";
 // is unconditional because r.jina.ai accepts unauthenticated requests
 // on the free tier (lower rate limit, no key needed).
 
-export const WEATHER_TOOLS = [askLocationTool, geocodeLocationTool, getWeatherTool];
+export const WEATHER_TOOLS = [askLocationTool, geocodeLocationTool, getWeatherTool, saveMemoryTool];
 
 export const CRYPTO_TOOLS = [
   getCryptoPriceTool,
@@ -36,14 +37,15 @@ export const CRYPTO_TOOLS = [
   placeCryptoOrderTool,
   getOrderStatusTool,
   ...(getNftHoldingsTool ? [getNftHoldingsTool] : []),
+  saveMemoryTool,
 ];
 
 // Code agent owns write_code (Step 1 — propose) and execute_code (Step 2 — run).
 // execute_code is gated on DENO_DEPLOY_TOKEN via the lazy register in
-// backend/tool/code/execute-code.ts; getCodeTools() reads the env once at
-// module load so a missing token just drops the runner, the model keeps
-// proposing code, and a friendly prose fallback runs at click-time.
-export const CODE_TOOLS = getCodeTools();
+// backend/tool/code/execute-code.ts — a missing token drops the runner
+// from this list, the model keeps proposing code, and a friendly prose
+// fallback runs at click-time.
+export const CODE_TOOLS = [writeCodeTool, ...(executeCodeTool ? [executeCodeTool] : [])];
 
 export const ALL_TOOLS = [
   fetchUrl,
@@ -57,6 +59,7 @@ export const ALL_TOOLS = [
   placeCryptoOrderTool,
   getOrderStatusTool,
   ...(getNftHoldingsTool ? [getNftHoldingsTool] : []),
+  saveMemoryTool,
 ];
 
 export {

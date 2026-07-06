@@ -7,7 +7,6 @@ vi.mock("@/lib/threads/queries", () => ({
 }));
 vi.mock("@/backend/model", () => ({
   chatModel: { invoke: (...args: unknown[]) => mockInvoke(...args) },
-  chatModelWithoutThink: { invoke: (...args: unknown[]) => mockInvoke(...args) },
 }));
 
 import { AIMessage, HumanMessage } from "@langchain/core/messages";

@@ -2,7 +2,7 @@
 
 import { useState, type FC, type ReactNode } from "react";
 import { AlertCircleIcon, CheckIcon, Loader2Icon, MapPinIcon, SearchIcon } from "lucide-react";
-import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
+import { type ToolCallMessagePartComponent } from "@assistant-ui/react";
 
 import { Button } from "@/components/ui/button";
 import { CardHeader, CardShell } from "@/components/tool-ui/primitives/card";
@@ -12,9 +12,10 @@ import { unwrapToolResult } from "@/components/tool-ui/tool-result";
 import { useLangGraphSendCommand } from "@assistant-ui/react-langgraph";
 
 // Tool result the user picks from the card. The backend tool pauses via
-// interrupt({ ui: 'ask_location' }); this card renders in the InterruptUI
-// slot and resumes through `addResult`, which LangGraph forwards as the
-// ToolMessage content for the LLM's next pass.
+// interrupt({ ui: 'ask_location' }); this card is mounted in the matching
+// tool-call slot by the toolkit and resumes through
+// `useLangGraphSendCommand({ resume })`, which the parent graph forwards to
+// the weather subgraph on the next pass.
 //   { lat, lon, label } — user picked coords
 //   { error }           — geolocation denied or geocode failed
 export type AskLocationResult = { lat: number; lon: number; label: string } | { error: string };
@@ -52,8 +53,11 @@ export const AskLocationCard: ToolCallMessagePartComponent<Record<string, never>
   const parsed = parseResult(result);
 
   const addResult = async (payload: AskLocationResult) => {
-    sendCommand({ resume: JSON.stringify(payload) });
+    sendCommand({
+      resume: JSON.stringify(payload),
+    });
   };
+
   const handleUseDeviceLocation = async () => {
     setMode({ kind: "requesting_permission" });
     try {

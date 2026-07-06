@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { Serialized } from "@langchain/core/load/serializable";
+import { HumanMessage } from "@langchain/core/messages";
 import { CapturingHandler } from "@/backend/observability/callback-collector";
 import type { CapturedSpan } from "@/backend/observability/callback-collector";
 
@@ -122,9 +123,8 @@ describe("CapturingHandler — parent_message_id extraction", () => {
       fakeSerialized("CompiledStateGraph"),
       {
         messages: [
-          { id: "h-1", type: "human", content: "first" },
-          { id: "a-1", type: "ai", content: "first-reply" },
-          { id: "h-2", type: "human", content: "second" },
+          new HumanMessage({ content: "first", id: "h-1" }),
+          new HumanMessage({ content: "second", id: "h-2" }),
         ],
       },
       "outer",
@@ -156,10 +156,15 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     expect(chainCall[0]?.meta.parent_message_id).toBe("h-2");
   });
 
-  it("peels V1 envelope to find the human message id", async () => {
+  it("returns null parent_message_id when inputs.messages has no HumanMessage (just V1 envelopes)", async () => {
+    // ponytail: the helper relies on `instanceof HumanMessage` — V1
+    // envelopes that arrive before the reducer ran are NOT instances
+    // and are intentionally missed here. bulkInsertSpans backfills
+    // the parent_message_id column from DB on INSERT, so the eventual
+    // span row still tags correctly. See lib/langgraph/last-human-
+    // message-id.ts docstring for the trade-off.
     const bulkInsert = vi.fn(async () => {});
     const handler = makeHandler(bulkInsert);
-    // V1 envelope: {lc:1, type:"constructor", id:[...], kwargs:{type, id, content}}
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
       {
@@ -180,7 +185,7 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     handler.handleChainEnd({ ok: true }, "outer-2");
 
     const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
-    expect(flushed[0]?.meta.parent_message_id).toBe("h-envelope");
+    expect(flushed[0]?.meta.parent_message_id).toBeNull();
   });
 
   it("sets parent_message_id to null when the outermost chain has no human messages", async () => {
@@ -205,7 +210,7 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     // First invoke: human message h-A
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
-      { messages: [{ id: "h-A", type: "human", content: "a" }] },
+      { messages: [new HumanMessage({ content: "a", id: "h-A" })] },
       "run-A",
       undefined,
       undefined,
@@ -215,7 +220,7 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     // Second invoke: human message h-B
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
-      { messages: [{ id: "h-B", type: "human", content: "b" }] },
+      { messages: [new HumanMessage({ content: "b", id: "h-B" })] },
       "run-B",
       undefined,
       undefined,
@@ -382,6 +387,62 @@ describe("CapturingHandler — interrupt / human span", () => {
   // process restart, so the field is write-only in practice. The human
   // span stays `status: "waiting"` (panel maps to `running`) until
   // something else updates it; that's the deliberate MVP trade-off.
+
+  it("treats a GraphInterrupt bubbling through handleChainError as waiting (wrapper pause, not failed)", () => {
+    // ponytail: when `interrupt()` throws, the GraphInterrupt unwinds
+    // through every wrapper chain in the call stack — tools RunnableSequence,
+    // inner CompiledStateGraph, outer RunnableSequence — each fires
+    // handleChainError. The wrappers are NOT failures and NOT
+    // completed — the graph is paused waiting for human resume. The
+    // status "waiting" matches the synthetic human span (inserted by
+    // handleToolError) so the panel renders the entire stack as a
+    // single wait gap. The wrapper stays waiting until its OWN
+    // handleChainEnd fires (after the user resumes and the chain
+    // actually finishes); bulkInsertSpans' backfill only handles the
+    // synthetic human span — chains wait for their own end.
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("RunnableSequence"),
+      {},
+      "tools-wrapper",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-chain-int" },
+    );
+    handler.handleChainError(interruptError(), "tools-wrapper");
+
+    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(flushed[0]?.span_id).toBe("tools-wrapper");
+    expect(flushed[0]?.status).toBe("waiting");
+    expect(flushed[0]?.error).toBeNull();
+    // ponytail: chain wrapper's ended_at stays null through the
+    // interrupt — only the synthetic human span alongside the tool
+    // gets stamped. markRunningAsFailed reconciles it on restart when
+    // the resume actually fires handleChainEnd.
+    expect(flushed[0]?.ended_at).toBeNull();
+  });
+
+  it("still treats a non-interrupt chain error as failed", () => {
+    // ponytail: regression guard — only GraphInterrupt should bypass
+    // the failed status. A regular chain error (e.g. a downstream tool
+    // threw something other than interrupt) must still surface as failed.
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChainStart(
+      fakeSerialized("RunnableSequence"),
+      {},
+      "chain-fail",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-chain-fail" },
+    );
+    handler.handleChainError(new Error("downstream boom"), "chain-fail");
+
+    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(flushed[0]?.status).toBe("failed");
+    expect(flushed[0]?.error).toBe("downstream boom");
+  });
 });
 
 describe("CapturingHandler — payload trims (Phase 1)", () => {
@@ -480,5 +541,52 @@ describe("CapturingHandler — payload trims (Phase 1)", () => {
     expect(genInfo).not.toHaveProperty("prompt");
     expect(genInfo).not.toHaveProperty("completion");
     expect(genInfo).not.toHaveProperty("system_fingerprint");
+  });
+});
+
+describe("CapturingHandler — AIMessage with tool_calls renders body", () => {
+  // ponytail: handleChatModelStart records the LLM span on a Start hook
+  // and the matching handleLLMEnd flushes it through bulkInsert. Going
+  // through both hooks is the only way to inspect the captured input.
+  function capturePrompt(messages: Array<Record<string, unknown>>, runId: string) {
+    const bulkInsert = vi.fn(async () => {});
+    const handler = makeHandler(bulkInsert);
+    handler.handleChatModelStart(fakeSerialized("ChatOpenAI"), [messages] as never, runId);
+    handler.handleLLMEnd({ generations: [] } as never, runId);
+    const [spans] = bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]];
+    return (spans[0].input as { prompts: string[] }).prompts[0];
+  }
+
+  it("serializes tool_call name + args when content is empty", () => {
+    const prompt = capturePrompt(
+      [
+        {
+          getType: () => "ai",
+          content: "",
+          tool_calls: [{ name: "geocode_location", args: { location: "LongJiang" } }],
+        },
+      ],
+      "run-tc",
+    );
+    expect(prompt).toBe('ai: [tool_call geocode_location({"location":"LongJiang"})]');
+  });
+
+  it("prefers content over tool_calls when both are present", () => {
+    const prompt = capturePrompt(
+      [
+        {
+          getType: () => "ai",
+          content: "let me look that up",
+          tool_calls: [{ name: "get_weather", args: { lat: 22.8, lon: 113.1 } }],
+        },
+      ],
+      "run-both",
+    );
+    expect(prompt).toBe("ai: let me look that up");
+  });
+
+  it("renders content as-is for plain AI text replies (no tool_calls)", () => {
+    const prompt = capturePrompt([{ getType: () => "ai", content: "hello there" }], "run-text");
+    expect(prompt).toBe("ai: hello there");
   });
 });

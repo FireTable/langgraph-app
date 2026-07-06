@@ -14,7 +14,10 @@ export const askLocationTool = tool(
   },
   {
     name: ASK_LOCATION_TOOL_NAME,
-    description: `Render a location picker card so the user can share a place. Use this whenever the agent needs a geographic location to proceed — typically because the request implies a place (weather, nearby search, directions, distance, "around here", etc.) but no place was named. Do NOT batch other tool calls in the same turn; the picker pauses the turn until the user replies. Call this at most once per turn.`,
+    description: `Render a location picker card so the user can share a place. 
+Use this whenever the agent needs a geographic location to proceed — typically because the request implies a place (weather, nearby search, directions, distance, "around here", etc.) but no place was named. 
+Do NOT batch other tool calls in the same turn; the picker pauses the turn until the user replies. Call this at most once per turn.
+`,
     schema: z.object({
       message: z.string().describe("Short prompt shown above the picker; one sentence."),
     }),

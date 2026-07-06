@@ -26,7 +26,12 @@ export function createLangGraphStream({
   client,
   assistantId,
   streamMode = ["messages", "updates", "custom"],
-  onDisconnect = "cancel",
+  // "continue" keeps the stream alive across an interrupt — the subgraph
+  // task that raised the interrupt keeps a heartbeat, and the next turn
+  // (which carries Command(resume)) reconnects to the same run. "cancel"
+  // would close the stream on disconnect and the resume would land on a
+  // fresh run with no in-flight task.
+  onDisconnect = "continue",
 }: CreateLangGraphStreamOptions): LangGraphStreamCallback<LangChainMessage> {
   return async (messages, config) => {
     const { externalId } = await config.initialize();
@@ -37,6 +42,14 @@ export function createLangGraphStream({
       streamMode,
       signal: config.abortSignal,
       onDisconnect,
+      multitaskStrategy: "interrupt",
+      // Required for namespaced `__interrupt__` events to reach the
+      // browser. Without it, langgraph-api drops subgraph events on
+      // the floor (api/runs.mjs:85
+      // `subgraphs: run.stream_subgraphs ?? false`), and the client
+      // never sees the interrupt — useLangGraphInterruptState stays
+      // undefined and picker cards never mount.
+      streamSubgraphs: true,
       ...(config.command != null && { command: config.command }),
       ...(config.checkpointId != null && {
         checkpoint: { checkpoint_id: config.checkpointId },
