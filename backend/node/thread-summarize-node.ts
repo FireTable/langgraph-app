@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { MEMORY_THREAD_SUMMARY_KEEP_RECENT } from "@/lib/memory/constants";
 import { getAllUserSummaries, writeSummary } from "@/lib/memory/queries";
+import { formatSummaryText } from "@/lib/langgraph/format-summary";
+import { summaryOutputSchema } from "@/lib/langgraph/summary-schema";
 import { chatModel } from "@/backend/model";
 import { THREAD_SUMMARIZE_PROMPT } from "@/backend/prompt/system";
 import { HumanMessage, BaseMessage } from "@langchain/core/messages";
@@ -23,18 +25,9 @@ type Config = { configurable?: { userId?: unknown; thread_id?: unknown } };
 // #N labels we generated in the prompt. ref strings are the labels
 // (e.g. "#1", "#2-#4") — the original BaseMessage.id values are
 // resolved programmatically by the node (the messageIds field on
-// the SummaryEntry) and never reach the LLM.
-const summaryOutputSchema = z.object({
-  entries: z
-    .array(
-      z.object({
-        question: z.string().min(1),
-        answer: z.string().min(1),
-        refs: z.array(z.string().min(1)).min(1),
-      }),
-    )
-    .min(1),
-});
+// the SummaryEntry) and never reach the LLM. The schema lives in
+// lib/langgraph/summary-schema.ts so SummaryEntrySchema can reuse
+// the exact same shape (storage = LLM output, no field renaming).
 
 const KEEPABLE_TYPES = new Set(["human", "ai", "assistant", "tool", "function"]);
 
@@ -67,18 +60,6 @@ function estimateTokensFromExcerpt(excerpt: Array<ExcerptMessage>): number {
   let total = 0;
   for (const m of excerpt) total += estimateTokens(stringifyContent(m.content));
   return total;
-}
-
-function formatSummaryText(
-  entries: Array<{ refs: string[]; question: string; answer: string }>,
-): string {
-  const body = entries
-    .map((e) => {
-      const refs = e.refs.join(", ");
-      return `${refs}\n Q: ${e.question}\n   A: ${e.answer}`;
-    })
-    .join("\n\n");
-  return body;
 }
 
 // ponytail: "#N" labels are GLOBAL humanIndex (0-indexed), not
@@ -337,6 +318,11 @@ export async function threadSummarizeNode(
   // nothing to persist. Empty state update, no SummaryEntry written.
   if (!out.entries || out.entries.length === 0) return { messages: [] };
 
+  // ponytail: store the structured LLM output (out) verbatim —
+  // SummaryEntrySchema.summary IS summaryOutputSchema, so the
+  // round-trip is field-identical. tokenCountAfter is measured on
+  // the formatted display text (what the model/UI actually reads),
+  // not the structured JSON.
   const summaryText = formatSummaryText(out.entries);
   const tokenCountAfter = estimateTokens(summaryText);
 
@@ -357,7 +343,7 @@ export async function threadSummarizeNode(
     endMessageIndex: endIdx,
     messageCount: endIdx - startIdx + 1,
     messageIds: humanMessageIds,
-    summary: summaryText,
+    summary: out,
     triggerReason: "turn_based",
     tokenCountBefore,
     tokenCountAfter,

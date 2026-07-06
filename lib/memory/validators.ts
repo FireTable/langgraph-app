@@ -35,6 +35,8 @@ export const SaveMemoryInputSchema = z.object({
   patches: z.array(MemoryPatchSchema).min(0).max(50),
 });
 
+import { summaryOutputSchema } from "@/lib/langgraph/summary-schema";
+
 // ponytail: SummaryEntry = metadata for ONE in-thread compression pass.
 //   - threadId + sequence        = identity / ordering inside the thread.
 //   - startMessageIndex..endMessageIndex + messageCount = closed-interval
@@ -43,18 +45,20 @@ export const SaveMemoryInputSchema = z.object({
 //     values the compression replaced; required so a future tool can
 //     rehydrate the original messages by id (or re-summarize differently
 //     without re-tokenizing). Program-resolved (the LLM never sees it).
-//   - summary                    = the formatted Q&A text the LLM
-//     produced (e.g. "#1-#4 Q: … A: …\n#5-#6 Q: … A: …"). What the
-//     model sees at invoke time via the <threads> system block; what
-//     the user sees in the Memory tab list.
+//   - summary                    = the structured Q&A the LLM produced
+//     via withStructuredOutput(summaryOutputSchema) — verbatim
+//     `{ entries: [{ question, answer, refs }] }`. Stored structured
+//     (not flattened to text) so later passes can compare / merge /
+//     dedupe across re-runs. Display sites (the <threads> system block
+//     in the chat prompt, the Memory tab UI) call
+//     formatSummaryText(s.summary.entries) to render it as text.
 //   - triggerReason              = WHY this pass fired. "turn_based" today
 //     (KEEP_RECENT cadence); future "token_based" once a max-tokens
 //     secondary trim lands. Closed enum keeps analytics strict.
 //   - tokenCountBefore/After     = bookkeeping — tokens in the compressed
-//     excerpt vs tokens in the summary, measured via
-//     @langchain/core/messages/utils.countTokensApproximately. Lets a
-//     future UI render compression stats and stops the trigger from
-//     drifting silently.
+//     excerpt vs tokens in the formatted summary, measured via the
+//     char-based estimate. Lets a future UI render compression stats
+//     and stops the trigger from drifting silently.
 //   - createdAt                  = when this batch was generated.
 //     Renamed from updatedAt because summaries are immutable once written.
 const summaryMessageCount = z.number().int().positive();
@@ -68,7 +72,7 @@ export const SummaryEntrySchema = z
     endMessageIndex: summaryMinIndex,
     messageCount: summaryMessageCount,
     messageIds: z.array(z.string().min(1)).nonempty(),
-    summary: z.string().min(1),
+    summary: summaryOutputSchema,
     triggerReason: z.enum(["turn_based", "token_based"]),
     tokenCountBefore: z.number().int().nonnegative(),
     tokenCountAfter: z.number().int().nonnegative(),

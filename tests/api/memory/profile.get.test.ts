@@ -50,7 +50,7 @@ describe("GET /api/memory/profile", () => {
           endMessageIndex: 6,
           messageCount: 7,
           messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
-          summary: "#1-#4 Q: ... A: ...",
+          summary: { entries: [{ question: "...", answer: "...", refs: ["#1-#4"] }] },
           createdAt: "2026-07-02T00:00:00.000Z",
         },
       },

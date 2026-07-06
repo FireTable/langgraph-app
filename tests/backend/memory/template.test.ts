@@ -25,7 +25,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
       summaries: [
         {
           sequence: 1,
-          summary: "#1 Q: hello A: world",
+          summary: { entries: [{ question: "hello", answer: "world", refs: ["#1"] }] },
           startMessageIndex: 0,
           endMessageIndex: 9,
           triggerReason: "turn_based" as const,

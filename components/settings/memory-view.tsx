@@ -21,6 +21,7 @@ import { mergeMemory, type AuthInfo, type MemoryDoc } from "@/lib/memory/merge";
 import { AUTH_OVERLAY_KEYS, type AuthOverlayKey } from "@/lib/memory/constants";
 import { prettifyKey } from "@/lib/memory/format";
 import type { SummaryEntry } from "@/lib/memory/validators";
+import { formatSummaryText } from "@/lib/langgraph/format-summary";
 import { cn } from "@/lib/utils";
 
 // ponytail: the API returns {store, auth, threads} as separate
@@ -367,7 +368,7 @@ export function MemoryView({ className }: { className?: string }) {
                               <time dateTime={s.createdAt}>{formatTimestamp(s.createdAt)}</time>
                             </div>
                             <pre className="text-foreground whitespace-pre-wrap text-sm">
-                              {s.summary}
+                              {formatSummaryText(s.summary.entries)}
                             </pre>
                           </li>
                         ))}

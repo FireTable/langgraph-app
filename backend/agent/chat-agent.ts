@@ -64,7 +64,11 @@ async function loadThreadSummariesForPrompt(
         .map(
           (s: {
             sequence: number;
-            summary: string;
+            // ponytail: store keeps structured entries; the prompt
+            // consumer (LLM) reads the JSON dump from the <threads>
+            // block, so we pass the structured form through. The
+            // Memory tab UI calls formatSummaryText at display time.
+            summary: { entries: Array<{ question: string; answer: string; refs: string[] }> };
             startMessageIndex: number;
             endMessageIndex: number;
             triggerReason: "turn_based" | "token_based";
