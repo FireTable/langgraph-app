@@ -188,6 +188,9 @@ describe("lib/memory/queries", () => {
         messageCount: 7,
         messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
         summary: "#1-#4 Q: ... A: ...",
+        triggerReason: "turn_based",
+        tokenCountBefore: 420,
+        tokenCountAfter: 80,
       });
       expect(written.threadId).toBe("t1");
       expect(written.sequence).toBe(1);
@@ -231,6 +234,9 @@ describe("lib/memory/queries", () => {
             messageCount: 7,
             messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
             summary: "#1-#4 Q: ... A: ...",
+            triggerReason: "turn_based",
+            tokenCountBefore: 0,
+            tokenCountAfter: 0,
             createdAt: "2026-07-02T00:00:00.000Z",
           },
           createdAt: "2026-07-02T00:00:00.000Z",
@@ -259,6 +265,9 @@ describe("lib/memory/queries", () => {
             messageCount: 1,
             messageIds: ["m0"],
             summary: "#1 Q: ... A: ...",
+            triggerReason: "turn_based",
+            tokenCountBefore: 0,
+            tokenCountAfter: 0,
             createdAt: "2026-07-02T00:00:00.000Z",
           },
         },
@@ -270,14 +279,18 @@ describe("lib/memory/queries", () => {
   });
 
   describe("getRecentThreadSummaries", () => {
-    it("orders by createdAt desc and returns top-K", async () => {
+    // ponytail: RECALL_LIMIT retired — the function now returns the
+    // full list, ordered oldest-first. The Memory tab renders the list
+    // in backend order as a strict passthrough; reintroduce a cap if
+    // usage data shows the unbounded read growing out of budget.
+    it("orders by createdAt asc and returns the full list", async () => {
       mockStore.search.mockResolvedValueOnce([
         { key: "t1:1", value: makeSummary("t1", 1, "2026-07-01T00:00:00.000Z") },
         { key: "t2:1", value: makeSummary("t2", 1, "2026-07-02T00:00:00.000Z") },
         { key: "t3:1", value: makeSummary("t3", 1, "2026-06-30T00:00:00.000Z") },
       ]);
-      const top = await getRecentThreadSummaries(USER, 2);
-      expect(top.map((s) => s.key)).toEqual(["t2:1", "t1:1"]);
+      const top = await getRecentThreadSummaries(USER);
+      expect(top.map((s) => s.key)).toEqual(["t3:1", "t1:1", "t2:1"]);
     });
   });
 
@@ -315,6 +328,9 @@ function makeSummary(threadId: string, sequence: number, createdAt: string) {
     messageCount: 1,
     messageIds: ["m0"],
     summary: "#1 Q: ... A: ...",
+    triggerReason: "turn_based" as const,
+    tokenCountBefore: 0,
+    tokenCountAfter: 0,
     createdAt,
   };
 }

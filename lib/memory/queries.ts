@@ -62,14 +62,22 @@ export async function getAllUserSummaries(
   return out;
 }
 
+// ponytail: RECALL_LIMIT was retired — the Memory tab now displays
+// every persisted summary for the user. Thread summaries are small
+// (a few KB each), so the unbounded read stays well under any
+// realistic budget; reintroduce a cap if usage data shows otherwise.
+//
+// Sort: createdAt ASC (oldest first). The Memory tab's outer thread
+// order is driven by the first summary each thread contributes to
+// this list — first-seen wins. The frontend useMemo groups by
+// threadId and preserves Map insertion order, so a thread whose
+// earliest summary is the oldest in the list lands at the top of
+// the Memory tab.
 export async function getRecentThreadSummaries(
   userId: string,
-  limit: number,
 ): Promise<Array<{ key: string; value: SummaryEntry }>> {
   const all = await getAllUserSummaries(userId);
-  return [...all]
-    .sort((a, b) => b.value.createdAt.localeCompare(a.value.createdAt))
-    .slice(0, limit);
+  return [...all].sort((a, b) => a.value.createdAt.localeCompare(b.value.createdAt));
 }
 
 export async function deleteThreadSummaries(userId: string, threadId: string): Promise<number> {
@@ -88,6 +96,22 @@ export async function deleteThreadSummaries(userId: string, threadId: string): P
     await store!.delete(threadsNs(userId), s.key);
   }
   return toDelete.length;
+}
+
+// ponytail: thread-scoped read for the chat agent's <threads> block.
+// Filters by threadId so cross-thread bleed can't impersonate the
+// current chat's compressed history. Sorted oldest-first so the
+// model reads them in conversation order (matching how `<memory>`
+// surfaces profile + identity).
+export async function getThreadSummaries(
+  userId: string,
+  threadId: string,
+): Promise<SummaryEntry[]> {
+  const all = await getAllUserSummaries(userId);
+  return all
+    .filter((s) => s.value.threadId === threadId)
+    .sort((a, b) => a.value.sequence - b.value.sequence)
+    .map((s) => s.value);
 }
 
 // ponytail: writeSummary persists the SummaryEntry bookkeeping row for

@@ -82,9 +82,9 @@ const RefreshCountdown: FC<RefreshCountdownProps> = ({ enabled, refreshIntervalM
   const secondsLeft = Math.max(0, Math.ceil((targetEpochMs - now) / 1000));
   return (
     <>
-      <Activity className="size-4 animate-pulse" />
+      <Activity className="size-3 animate-pulse" />
       <span className="text-muted-foreground text-xs font-normal">
-        Still running, tracing after {secondsLeft}s
+        Still running, will trace after {secondsLeft}s
       </span>
     </>
   );

@@ -36,6 +36,17 @@ export function extractUserId(
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
+// ponytail: parallel of extractUserId for thread_id. Used by the
+// system-prompt template to scope thread-summary injection to the
+// current chat. Both fields ride on the same config.configurable
+// envelope the LangGraph proxy sets in app/api/[..._path]/route.ts.
+export function extractThreadId(
+  config?: { configurable?: { thread_id?: unknown } } | RunnableConfig,
+): string | null {
+  const raw = config?.configurable?.thread_id;
+  return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
 export async function loadMemory(userId: string): Promise<LoadedMemory> {
   const [doc, auth] = await Promise.all([
     getMemoryDoc(userId).catch(() => ({})),

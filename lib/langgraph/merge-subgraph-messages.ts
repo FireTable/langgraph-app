@@ -42,8 +42,8 @@ export function mergeSubgraphMessages<T extends { id?: string }>(
   for (const m of parentMessages) {
     if (typeof m?.id === "string") seen.add(m.id);
   }
-  const merged = [...parentMessages];
-  for (const m of subgraphMessages) {
+  const merged = structuredClone(parentMessages);
+  for (const m of structuredClone(subgraphMessages)) {
     if (typeof m?.id === "string") {
       if (seen.has(m.id)) continue;
       seen.add(m.id);

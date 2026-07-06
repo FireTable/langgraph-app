@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import { withAuth } from "@/lib/auth/with-auth";
 import { getAuthInfo, getMemoryDoc, getRecentThreadSummaries } from "@/lib/memory/queries";
-import { MEMORY_THREAD_RECALL_LIMIT } from "@/lib/memory/constants";
 
 // ponytail: rule #9 — withAuth wraps every handler. The handler
 // returns store and auth as separate fields so the frontend can
@@ -26,7 +25,7 @@ export const GET = withAuth(async (_req, { user }) => {
         image: null,
         socials: [] as Array<{ provider: string }>,
       })),
-      getRecentThreadSummaries(user.id, MEMORY_THREAD_RECALL_LIMIT).catch(() => []),
+      getRecentThreadSummaries(user.id).catch(() => []),
     ]);
     return NextResponse.json({ store, auth, threads });
   } catch (err) {

@@ -5,20 +5,20 @@
 // the env var is missing / empty / non-numeric / out of valid range.
 
 const DEFAULTS = {
-  // ponytail: BATCH_SIZE = how many human turns ONE LLM summarize call
-  // covers. KEEP_RECENT = how many recent human turns we leave alone
-  // (never summarized). THRESHOLD is kept as a safety floor — if
-  // userMessageCount falls below it, the gateway skips the summarize
-  // call entirely (avoids edge-case work for tiny threads).
-  threshold: 10,
-  keepRecent: 4,
-  batchSize: 6,
+  // ponytail: KEEP_RECENT is the single knob for thread summarization.
+  // It controls THREE things at once:
+  //   - BATCH SIZE  — every compress pass covers KEEP_RECENT consecutive
+  //                   human turns (e.g. turn 1..10, then turn 11..20).
+  //   - TRIGGER CADENCE — trigger fires every KEEP_RECENT new turns;
+  //                       humanCount at trigger = 4k+1 (k≥1).
+  //   - RECENT FLOOR — the most recent KEEP_RECENT turns are never
+  //                    compressed, so the model always sees fresh
+  //                    context.
+  // Larger KEEP_RECENT → fewer LLM calls but more context per call.
+  // Smaller → more calls but bounded per-call work. Defaults to 10
+  // (matches the worked example in our docs).
+  keepRecent: 10,
   profileMaxBytes: 8192,
-  // ponytail: RECALL_LIMIT caps the cross-thread list shown in the
-  // Memory tab UI — it no longer feeds the model prompt (that path
-  // was retired: single-thread summaries live inline in the
-  // messages channel; cross-thread history was leaky and is gone).
-  threadRecallLimit: 3,
 } as const;
 
 function positiveInt(raw: string | undefined, fallback: number): number {
@@ -35,35 +35,17 @@ function nonNegativeInt(raw: string | undefined, fallback: number): number {
   return n;
 }
 
-export const MEMORY_THREAD_SUMMARY_THRESHOLD = positiveInt(
-  process.env.MEMORY_THREAD_SUMMARY_THRESHOLD,
-  DEFAULTS.threshold,
-);
-
+// ponytail: single env var for the thread summarize trigger window.
+// The router + node both gate on this constant; values < 1 collapse to
+// a no-op (defensive — nonNegativeInt clamps negatives to 0).
 export const MEMORY_THREAD_SUMMARY_KEEP_RECENT = nonNegativeInt(
   process.env.MEMORY_THREAD_SUMMARY_KEEP_RECENT,
   DEFAULTS.keepRecent,
 );
 
-// ponytail: BATCH_SIZE is the ONLY knob the user controls here.
-// Larger → fewer LLM calls but more context per call (and the per-
-// call Q&A summary may need truncation). Smaller → more LLM calls
-// but bounded per-call work. The router compares userMessageCount to
-// KEEP_RECENT + BATCH_SIZE before entering the summarize node, so
-// values < 1 collapse to a no-op.
-export const MEMORY_THREAD_SUMMARY_BATCH_SIZE = positiveInt(
-  process.env.MEMORY_THREAD_SUMMARY_BATCH_SIZE,
-  DEFAULTS.batchSize,
-);
-
 export const MEMORY_PROFILE_MAX_BYTES = positiveInt(
   process.env.MEMORY_PROFILE_MAX_BYTES,
   DEFAULTS.profileMaxBytes,
-);
-
-export const MEMORY_THREAD_RECALL_LIMIT = nonNegativeInt(
-  process.env.MEMORY_THREAD_RECALL_LIMIT,
-  DEFAULTS.threadRecallLimit,
 );
 
 // ponytail: keys that may be filled from the auth record (OAuth /

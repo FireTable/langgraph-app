@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bot, User, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -174,6 +174,32 @@ export function MemoryView({ className }: { className?: string }) {
     return () => clearTimeout(t);
   }, [pendingThreadId]);
 
+  // ponytail: /api/memory/profile returns summaries as a flat list ordered
+  // by createdAt asc server-side. Group by threadId here so one thread with
+  // N summaries renders as one block, not N.
+  //
+  // No client-side sort, neither on the outer thread list nor on the inner
+  // summaries within a thread. Memory tab is a strict passthrough — the
+  // backend's flat order is the render order:
+  //   - Outer: first threadId seen in the flat list = first thread block.
+  //   - Inner: insertion order into the per-thread array = backend order.
+  //
+  // Hooks must run before any early return — calling useMemo after the
+  // error/!memory guards throws "Rendered more hooks than during the
+  // previous render".
+  const threadGroups = useMemo(() => {
+    const groups = new Map<string, SummaryEntry[]>();
+    for (const entry of memory?.threads ?? []) {
+      const list = groups.get(entry.value.threadId) ?? [];
+      list.push(entry.value);
+      groups.set(entry.value.threadId, list);
+    }
+    return [...groups.entries()].map(([threadId, summaries]) => ({
+      threadId,
+      summaries,
+    }));
+  }, [memory]);
+
   if (error) {
     return (
       <div className={cn("text-destructive p-6 text-sm", className)} role="alert">
@@ -188,13 +214,6 @@ export function MemoryView({ className }: { className?: string }) {
   }
 
   const rows = buildRows(memory.store, memory.auth);
-  // The /api/memory/threads endpoint groups summaries by thread.
-  // We pass-through the threads array here; the Thread summaries
-  // card below uses its own fetch so this kept wire-level identical.
-  const threadGroups = memory.threads.map((entry) => ({
-    threadId: entry.value.threadId,
-    summaries: [entry.value],
-  }));
 
   const openProfileDialog = (key: string) => {
     setDisplayTargetProfile(key);
