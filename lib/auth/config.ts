@@ -50,10 +50,13 @@ export const auth =
       // ponytail: better-auth's list-sessions (and other sensitive-session
       // endpoints) reject sessions older than `freshAge` with 403
       // SESSION_NOT_FRESH. Default is 24h — fine in production where users
-      // sign in daily, but dev fixtures keep a single session for days
-      // and break the Security tab's "Active sessions" card. Setting to 0
-      // disables the fresh check; session expiry (7d) still bounds exposure.
-      freshAge: 0,
+      // sign in daily. Dev fixtures keep a single session for days and break
+      // the Security tab's "Active sessions" card, so we drop to 0 ONLY in
+      // non-production environments. Session expiry (7d) still bounds
+      // exposure in dev — the trade-off is "sensitive ops don't prompt for
+      // re-auth" vs "dev fixtures stop breaking", and production keeps the
+      // strict default.
+      ...(process.env.NODE_ENV !== "production" ? { freshAge: 0 } : {}),
     },
     socialProviders: {
       github: {
