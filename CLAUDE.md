@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-assistant-ui starter for LangGraph. A minimal chat app that streams tokens from a LangGraph `StateGraph` agent into an [assistant-ui](https://github.com/assistant-ui/assistant-ui) React thread.
+A self-hostable chat app that streams tokens from a LangGraph `StateGraph` agent into an [assistant-ui](https://github.com/assistant-ui/assistant-ui) React thread, with persistent threads, cross-conversation memory (`save_memory` + auth overlay), and in-thread compression (`threadSummarizeNode`) so long chats stay readable. Runs two graphs side-by-side: a chat graph (`agent`) and a turn-end side-effect graph (`background_agent`) that HTTP-dispatches via the SDK and runs `touchLastMessage` + `summarize` without blocking the chat stream.
 
 ## assistant-ui
 
@@ -63,10 +63,12 @@ LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`)
 
 ```
 backend/
-  agent.ts                LangGraph graph — router + compiled subgraphs + schedule background
+  agent.ts                Chat graph — router + compiled subgraphs + trigger background dispatch (HTTP)
+  background-agent.ts     Background graph — touchLastMessage → summarize (own compile)
   state.ts                RouterAgentState (parent) + CommonAgentState (subgraphs)
   model.ts                ChatOpenAI singleton (chatModel)
   checkpointer.ts         PostgresSaver (LangGraph Postgres checkpoint tables)
+  store.ts                Shared PostgresStore for memory + thread summaries
   agent/
     chat-agent.ts         chatAgent compiled subgraph (model ↔ tools loop)
     weather-agent.ts      weatherAgent compiled subgraph (model ↔ tools loop)
@@ -75,14 +77,21 @@ backend/
   node/
     call-model-node.ts    "agent" node — calls the model, appends AI reply
     rename-thread-agent-node.ts "renameThreadAgent" node — generates + persists the title
-    router-agent-node.ts  "routerAgent" — picks weatherAgent / chatAgent / cryptoAgent per turn
-    after-agent-node.ts   "afterAgent" — touches threads.last_message_at
-  prompt/system.ts        CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, CRYPTO_AGENT_PROMPT, ROUTER_AGENT_PROMPT, RENAME_THREAD_PROMPT
-  tool/                   ask_location, geocode_location, get_weather, search_web, fetch_url
+    router-agent-node.ts  "routerAgent" — picks weatherAgent / chatAgent / cryptoAgent / codeAgent per turn
+    trigger-background-agent-node.ts "triggerBackgroundAgent" — SDK `runs.create` to background_agent graph
+    thread-summarize-node.ts "summarize" — compresses a K-turn window into a SummaryEntry
+  prompt/system.ts        CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, CRYPTO_AGENT_PROMPT, CODE_AGENT_PROMPT, ROUTER_AGENT_PROMPT, RENAME_THREAD_PROMPT, MEMORY_AUGMENTED_PROMPT_TEMPLATE, THREAD_SUMMARIZE_PROMPT
+  tool/                   ask_location, geocode_location, get_weather, search_web, fetch_url, save_memory
+  tool/memory/            save-memory-tool (RFC 6902 patches against the user's profile)
   tool/crypto/            get_crypto_price, get_fx_rate, get_token_balances, get_NFT_holdings, connect_wallet, place_crypto_order, get_order_status
+  memory/
+    recall.ts             loadMemory / getCachedMemory (LRU max 1000, 60s TTL); extractUserId / extractThreadId
+    template.ts           buildSystemMessageWithMemory (mustache template) + loadThreadSummariesForPrompt + trimMessagesForInvoke
+    profile-size.ts       assertProfileSize — guard before the store write (NFR-003)
+  callbacks.ts            Singleton CapturingHandler shared by both compiled graphs (so bg-agent spans land in the same in-memory buffer)
   observability/
     callback-collector.ts CapturingHandler — BaseCallbackHandler that buffers in-flight spans per runId, persists on chainEnd via injected bulkInsert
-langgraph.json            CLI config: graph id, node version, env file
+langgraph.json            CLI config: registers BOTH graphs (agent + background_agent), node version, env file
 app/                      Next.js App Router
   layout.tsx              Root layout, fonts, TooltipProvider
   page.tsx                Renders <Assistant /> in a full-viewport <main>
@@ -114,31 +123,46 @@ lib/alchemy/              networks.ts (slug → Alchemy URL + disabled list) + p
 lib/observability/        schema (Drizzle table) · queries (bulkInsert / get / markFailed / delete — with FORBIDDEN regex) · validators (Zod, list + detail + AggregateDTO) · config (retention days) · transform (CapturedSpan → SpanData, server-side; also buildStepIdToRawSpanId) · aggregate (RootAggregate: pre-compute stat-card row from raw spans)
 lib/prices/coingecko.ts   CoinGecko free-tier price client (60s in-memory cache)
 lib/decimal.ts            Decimal-based amount math for crypto (no native float)
-lib/memory/               Memory queries (getProfileDoc / putProfileDoc / getSocialAccounts / getRecentThreadSummaries) + validators (RFC 6902 patch schema) + constants (env-tuned limits)
+lib/memory/               Memory module — queries (getMemoryDoc / putMemoryDoc / getAuthInfo / getAllUserSummaries / getThreadSummaries / getRecentThreadSummaries / writeSummary / deleteThreadSummaries) + validators (RFC 6902 patch schema, SummaryEntry, MemoryResponse) + merge (pure mergeMemory + getStoreKeys) + constants (env-tuned limits, AUTH_OVERLAY_KEYS) + format (prettifyKey)
 backend/memory/
-  recall.ts                buildAugmentedSystemMessage — loads + caches memory per userId, returns the merged SystemMessage; selective sources via opts; LRU cache (max 1000, 60s TTL)
-  template.ts              createSystemPromptTemplate — mustache `{{base}} {{#memoryJson}}<memory>...</memory>{{/memoryJson}}` so the no-memory path skips the section
+  recall.ts                loadMemory / getCachedMemory — loads + caches memory per userId, returns the merged MemoryDoc; LRU cache (max 1000, 60s TTL); extractUserId / extractThreadId parse config.configurable
+  template.ts              buildSystemMessageWithMemory — mustache `{{base}} {{#memoryJson}}<memory>...</memory>{{/memoryJson}} {{#threadsJson}}<earlier_conversation>...</earlier_conversation>{{/threadsJson}}` so the no-memory / no-summaries path skips both sections; trimMessagesForInvoke drops older turns covered by summaries; formatThreadsForPrompt renders Q&A prose
   profile-size.ts          assertProfileSize — guard before the store write (NFR-003)
 scripts/
   cleanup-observability.ts  Physical-delete older spans: `pnpm exec tsx scripts/cleanup-observability.ts` (cron entry; not yet scheduled — see `docs/OBSERVABILITY.md`)
 docs/
   OBSERVABILITY.md        Design doc — UI flow, storage schema, FORBIDDEN regex, retention policy, trade-offs. HTTP endpoints are in `docs/APIS.md` § Observability (rule #1).
+  MEMORY.md               Design doc — dual-graph topology (mainAgent + background_agent), `<memory>` + `<threads>` recall, save_memory RFC 6902 patches, thread-summarize trigger + window math, Memory tab UI, security stance. HTTP endpoints are in `docs/APIS.md` § Memory (rule #1).
 ```
 
 ### Backend graph (`backend/agent.ts`)
 
-The parent graph dispatches a router decision into one of three sub-flows, all ending in `afterAgent`:
+The agent runtime runs **two compiled graphs** (both registered in `langgraph.json`):
 
-- `routerAgent` — calls `chatModel.withStructuredOutput(RouteDecisionSchema, { method: "jsonSchema" })` (tagged `nostream` so partial tokens don't leak into the chat) and returns `{ routerDecision: { next: "weatherAgent" | "chatAgent" | "cryptoAgent" } }` for the conditional edge to read.
-- `weatherAgent` / `chatAgent` / `cryptoAgent` — a model → tools loop driven by `toolsCondition`. Exits to `afterAgent` when the model emits no `tool_calls`.
-- `afterAgent` — touches `threads.last_message_at` for the current thread; no message-channel writes.
-- `renameThreadAgent` — fans out from `START` (parallel to `routerAgent`), generates the thread title on the first turn only, persists it to the `threads` row.
+- `agent` (`backend/agent.ts:graph`, `name: "mainAgent"`) — the chat graph. Topology:
+  - `START ──▶ routerAgent ──▶ (sub-agent) ──▶ triggerBackgroundAgent ──▶ END`
+  - `START ───────────────────▶ renameThreadAgent` (parallel leaf; `shouldRenameRouter` skips it once `threads.title !== DEFAULT_THREAD_TITLE`)
+- `background_agent` (`backend/background-agent.ts:graph`, `name: "backgroundAgent"`) — the turn-end side-effect graph. Linear: `START ──▶ touchLastMessage ──▶ summarize ──▶ END`. HTTP-dispatched by `triggerBackgroundAgentNode` via `langGraphClient.runs.create(threadId, "background_agent", { input, config, metadata: { parent_message_id } })`. In-process `graph.invoke(...)` is intentionally avoided — the parent chat invoke's composed `AbortSignal` would kill it the moment the chat stream ends.
 
-`weatherAgent` / `chatAgent` / `cryptoAgent` / `codeAgent` are the compiled subgraphs from `backend/agent/*-agent.ts`, wired as opaque nodes via `addNode("weatherAgent", weatherAgent)`. PathMap is an array of allowed destinations, since the returned string already matches the node name.
+Main graph nodes:
 
-The graph builder lives in `backend/agent.ts` (`buildSubgraph()`). When you add a node, prompt, or tool, update that file plus the matching `backend/agent/*-agent.ts` subgraph.
+- `routerAgent` — calls `chatModel.withStructuredOutput(RouteDecisionSchema, { method: "jsonSchema" })` (tagged `nostream` so partial tokens don't leak into the chat) and returns `{ routerDecision: { next: "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" } }` for the conditional edge to read.
+- `weatherAgent` / `chatAgent` / `cryptoAgent` / `codeAgent` — compiled subgraphs from `backend/agent/*-agent.ts`, wired as opaque nodes via `addNode("weatherAgent", weatherAgent)`. PathMap is an array of allowed destinations, since the returned string already matches the node name. Each one runs the same memory prefix at every invoke: `loadThreadSummariesForPrompt(config)` → `trimMessagesForInvoke(messages, summaries)` → `buildSystemMessageWithMemory(BASE_PROMPT, config, threads)`.
+- `triggerBackgroundAgent` — fires `client.runs.create` and returns `{}` immediately. Bounded by one HTTP round-trip (SDK `runs.create` returns once enqueued, doesn't wait for the background graph to complete). Stamps `metadata.parent_message_id` so the observability per-turn GET can scope `runs.list(threadId, { status: "running" })` to the current chat turn.
+- `renameThreadAgent` — fans out from `START` (parallel to `routerAgent`), generates the thread title on the first turn only, persists it to the `threads` row. Subsequent turns skip it via `shouldRenameRouter`.
 
-The chat models in `backend/model.ts` carry `modelKwargs: { reasoning_split: true }` (and `think: false` on the rename variant) — these are minimax-provider-specific, so the graph is wired for that provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set on `chatModel`. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the `backend/agent.ts:graph` export registered in `langgraph.json`.
+Background graph nodes:
+
+- `touchLastMessage` — bumps `threads.last_message_at` for the current thread. Was `afterAgent`'s job in the pre-dual-graph design.
+- `summarize` (`threadSummarizeNode`) — store-anchored trigger (reads back `max(endMessageIndex)` across this thread's `SummaryEntry`s). When ≥ `MEMORY_THREAD_SUMMARY_KEEP_RECENT` new human turns have accumulated, renders the JSONL transcript and runs `chatModel.withStructuredOutput(summaryOutputSchema, { method: "jsonSchema" })` under the `nostream` tag. Side-effect-only: writes `SummaryEntry` to `[userId, "threads"]` and returns `{ messages: [] }` — `state.messages` is NEVER touched (would erase user-visible history). Failures are swallowed with `console.warn`; the next turn re-fires the same window.
+
+The graph builder lives in `backend/agent.ts`. When you add a node, prompt, or tool, update that file plus the matching `backend/agent/*-agent.ts` subgraph. Both graphs share the singleton `capturingHandler` from `backend/callbacks.ts`, so their span writes land in the same in-memory buffer and `bulkInsert` path — observability sees one continuous per-turn waterfall even though the spans were produced by two separate Pregel instances.
+
+The chat models in `backend/model.ts` carry `modelKwargs: { reasoning_split: true }` (and `think: false` on the rename variant) — these are minimax-provider-specific, so the graph is wired for that provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set on `chatModel`. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the exports registered in `langgraph.json`.
+
+### Memory & thread summarize
+
+See [`docs/MEMORY.md`](./docs/MEMORY.md) for the full design — dual-graph topology, `<memory>` + `<threads>` recall blocks, `save_memory` RFC 6902 patches + size guard, store-anchored trigger window math, the Memory tab UI, and the security stance. The short version: every sub-agent's model node prepends `<memory>` (merged profile doc + auth overlay) and `<threads>` (this thread's compressed Q&A history) to the SystemMessage on every invoke; the chat stream dispatches a fire-and-forget background run after every turn that bumps `last_message_at` and, when the trigger fires, compresses a K-turn window of humans into one `SummaryEntry` in the store.
 
 ### `WEATHER_AGENT_PROMPT` enforces one-tool-per-turn
 
@@ -160,7 +184,7 @@ This split is upstream design — see langchain-ai/langgraph#5790, #5360, #5661.
 Consequences worth knowing:
 
 - `POST /api/threads` calls `langGraphClient.threads.create(...)` to register the new id with the dev server's in-process STORE; in prod the call hits a LangGraph Deployment that knows the id from the compiled `PostgresSaver` directly, so it's effectively a no-op there. Don't remove it without checking dev.
-- `last_message_at` is `now()` written by `afterAgentNode`, not a derived value from any checkpoint table.
+- `last_message_at` is `now()` written by `touchLastMessageNode` on the background graph (HTTP-dispatched via SDK from `triggerBackgroundAgentNode` after every chat turn), not a derived value from any checkpoint table.
 - `DELETE /api/threads/[id]` removes only the metadata row; the dev JSON file or prod checkpoint tables are cleaned up by the runner's own ops layer (not by us).
 
 ### Frontend runtime

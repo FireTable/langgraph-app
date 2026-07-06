@@ -5,14 +5,15 @@ A self-hostable chat app (this repo: `langgraph-app`) that streams tokens from a
 ## Features
 
 - **Streaming chat UI** powered by assistant-ui's `Thread` component.
-- **LangGraph backend** with a parallel `MessagesAnnotation` graph (`agent` + `renameThread` fanned out from `START`) and `ChatOpenAI` model. Title is generated once on the first turn and persisted to Postgres.
+- **LangGraph backend** running **two compiled graphs** side-by-side: a chat graph (`agent` — router + sub-agents + `triggerBackgroundAgent`) and a turn-end side-effect graph (`background_agent` — `touchLastMessage` + `summarize`). The chat stream doesn't block on background work; `triggerBackgroundAgentNode` HTTP-dispatches via the SDK and returns immediately.
 - **Persistent threads and checkpoints** in Postgres — closing the tab doesn't lose context.
+- **Cross-conversation memory**: the model calls `save_memory` to persist durable user facts (RFC 6902 patches against `[userId, "memory"] main`); a recall middleware prepends `<memory>` (profile + auth overlay) and `<threads>` (compressed Q&A history) blocks to the SystemMessage on every invoke. Long threads stay readable via a store-anchored `threadSummarizeNode` trigger that compresses K-turn windows into `SummaryEntry` rows. The Memory settings tab lets users review and delete. See [docs/MEMORY.md](docs/MEMORY.md).
 - **Self-hosted**: runs on a single VPS with Docker Compose, no SaaS lock-in.
 - **Type-safe DB layer**: Drizzle ORM + Zod validators, derived from the same schema source.
 - **TDD-tested**: Vitest with a separate test database.
 - **User accounts**: email + password (with email verification), GitHub and Google sign-in, 7-day persistent sessions, and per-user thread isolation. See [docs/AUTH.md](docs/AUTH.md) for the operator guide.
-- **Tool-using agent**: the `agent` node is bound to `search_web` (Jina Search) and `fetch_url` (Jina Reader) — the model can research topics and read pages mid-conversation. Tools run unconditionally; write-side tools added later will hang their own `interruptBefore` hook. See [docs/APIS.md](docs/APIS.md) for the contract.
-- **Crypto sub-agent**: price, NFT holdings (5-chain gallery via Alchemy Portfolio), and a simulated swap flow against an auto-funded Mock Coin balance — see [docs/TOOLS.md](docs/TOOLS.md) and [docs/INTERRUPT.md](docs/INTERRUPT.md) for the per-card contract.
+- **Tool-using agent**: every sub-agent is bound to `search_web` (Jina Search), `fetch_url` (Jina Reader), `save_memory`, and the domain-specific tools (weather / crypto / code). See [docs/TOOLS.md](docs/TOOLS.md) and [docs/INTERRUPT.md](docs/INTERRUPT.md) for the per-card contract.
+- **Crypto sub-agent**: price, NFT holdings (5-chain gallery via Alchemy Portfolio), and a simulated swap flow against an auto-funded Mock Coin balance.
 - **Observability panel**: every LLM / Tool / Chain / Node span is captured by a `BaseCallbackHandler` and persisted to a `observability_spans` Postgres table. Each assistant message shows an icon button that opens a per-turn waterfall — duration, token usage, nested parent/child spans. The list endpoint is server-transformed (panel never carries the raw collector payload); per-row click lazy-loads the full span via a dedicated detail endpoint. See [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
 
 ## Tech stack
@@ -109,27 +110,47 @@ app/                          Next.js App Router
   page.tsx                    Full-viewport entry, renders <Assistant />
   assistant.tsx               useLangGraphRuntime + thread list adapter wiring
   api/                        HTTP routes (see docs/APIS.md)
-    [..._path]/route.ts       Edge catch-all proxy to LANGGRAPH_API_URL
-    threads/                  Thread metadata CRUD
+    [..._path]/route.ts       Node catch-all proxy to LANGGRAPH_API_URL (withAuth-gated)
+    threads/                  Thread metadata CRUD + observability sub-routes
+    memory/                   Profile + thread-summaries delete endpoints
+    alchemy/                  Alchemy JSON-RPC proxy + key-status endpoint
 
 backend/
-  agent.ts                    LangGraph graph (parallel agent + renameThread + tools loop); callback handler wired here
+  agent.ts                    Chat graph (router + sub-agents + triggerBackgroundAgent)
+  background-agent.ts         Background graph (touchLastMessage + summarize)
+  state.ts                    RouterAgentState + CommonAgentState
   model.ts                    ChatOpenAI singletons (with / without thinking)
-  checkpointer.ts             PostgresSaver (Postgres checkpoint tables)
-  observability/
-    callback-collector.ts     CapturingHandler — BaseCallbackHandler that buffers spans per runId, persists to Postgres on every End hook
+  checkpointer.ts             PostgresSaver (LangGraph Postgres checkpoint tables)
+  store.ts                    Shared PostgresStore for memory + thread summaries
+  callbacks.ts                Singleton CapturingHandler shared by both compiled graphs
+  agent/
+    chat-agent.ts             chatAgent compiled subgraph (model ↔ tools loop)
+    weather-agent.ts          weatherAgent compiled subgraph
+    crypto-agent.ts           cryptoAgent compiled subgraph
+    code-agent.ts             codeAgent compiled subgraph
+  node/
+    call-model-node.ts        "agent" node — calls the model, appends AI reply
+    rename-thread-agent-node.ts "renameThreadAgent" — generates + persists the title
+    router-agent-node.ts      "routerAgent" — picks weatherAgent / chatAgent / cryptoAgent / codeAgent
+    trigger-background-agent-node.ts "triggerBackgroundAgent" — SDK runs.create to background_agent
+    thread-summarize-node.ts  "summarize" — compresses K-turn window into a SummaryEntry
   tool/                       LangChain tools bound to the agent
     web-search.ts             search_web — Jina Search (s.jina.ai/{query})
     web-fetch.ts              fetch_url — Jina Reader (r.jina.ai/{url})
-  node/
-    call-model-node.ts        "agent" node — appends AI reply
-    rename-thread-node.ts     "renameThread" node — generates + persists title
-    after-agent-node.ts       "afterAgent" node — bumps last_message_at
+    memory/save-memory-tool.ts save_memory — RFC 6902 patches against the user profile
+  memory/
+    recall.ts                 loadMemory / getCachedMemory (LRU max 1000, 60s TTL); extractUserId / extractThreadId
+    template.ts               buildSystemMessageWithMemory (mustache <memory> + <threads>) + trimMessagesForInvoke
+    profile-size.ts           assertProfileSize — guard before the store write (NFR-003)
+  observability/
+    callback-collector.ts     CapturingHandler — buffers spans per runId, persists on End hook
 
 components/
   assistant-ui/               Chat primitives (thread, markdown, reasoning, …)
   observability/              Observability UI (button, sheet, sheet-context, panel, llm-messages renderer)
+  tool-ui/                    Tool-call cards (weather / crypto / code / memory)
   ui/                         shadcn/ui primitives
+  settings/                   Memory settings tab (memory-view)
 
 lib/
   utils.ts                    cn() = twMerge(clsx(...))
@@ -137,9 +158,10 @@ lib/
   jina.ts                     In-memory Jina API key pool + jinaFetch wrapper (401/403 failover)
   threads/                    Threads module
     schema.ts                 Drizzle table + drizzle-zod derived Zod schemas
-    queries.ts                CRUD (rename, archive, unarchive, delete, fetch, list)
+    queries.ts                CRUD (rename, archive, unarchive, delete, fetch, list, getThreadTitlesForUser)
     adapter.ts                RemoteThreadListAdapter for assistant-ui
     validators.ts             Zod API body schemas
+  memory/                     Memory module — queries (getMemoryDoc / putMemoryDoc / getAuthInfo / writeSummary / getThreadSummaries / getRecentThreadSummaries / deleteThreadSummaries) + validators (RFC 6902 patches, SummaryEntry) + merge (mergeMemory + getStoreKeys) + constants + format
   observability/              Observability module
     schema.ts                 Drizzle table (observability_spans)
     queries.ts                bulkInsertSpans / getSpansByThreadId / markRunningAsFailed / deleteSpansByThreadId
@@ -158,11 +180,12 @@ tests/                        Vitest (NODE_ENV=test → reads .env.test)
   api/                        Route handler tests
   backend/                    Graph + node tests
   db/                         Migration sanity tests
+  frontend/                   Component tests (Memory tab, observability sheet, …)
   threads/                    queries + adapter + validators tests
 
 drizzle.config.ts             Drizzle-kit config (uses @next/env to load .env)
 vitest.config.ts              Vitest config (NODE_ENV=test → reads .env.test)
-langgraph.json                LangGraph CLI config
+langgraph.json                LangGraph CLI config (registers BOTH graphs: agent + background_agent)
 .env.example                  Template (committed)
 .env.local                    Local dev secrets (gitignored)
 .env.test                     Test secrets (gitignored)
@@ -216,27 +239,29 @@ Test database stays isolated from dev — never put production-like data in `lan
 
 ## Environment variables
 
-| Var                                  | Used by                   | Required?                                           |
-| ------------------------------------ | ------------------------- | --------------------------------------------------- |
-| `OPENAI_API_KEY`                     | backend agent             | yes                                                 |
-| `OPENAI_MODEL`                       | backend agent             | optional (default `gpt-4o-mini`)                    |
-| `OPENAI_BASE_URL`                    | backend agent             | optional (OpenAI-compatible gateway)                |
-| `JINA_API_KEYS`                      | web-search + web-fetch    | yes (comma-separated; one per Jina account)         |
-| `ALCHEMY_API_KEY`                    | NFT gallery + portfolio   | yes (server-only; powers `get_NFT_holdings`)        |
-| `LANGGRAPH_API_URL`                  | Next.js proxy             | optional (default `http://localhost:2024`)          |
-| `LANGCHAIN_API_KEY`                  | Next.js proxy → LangGraph | optional (leave blank locally)                      |
-| `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` | browser runtime           | optional (default `agent`)                          |
-| `NEXT_PUBLIC_LANGGRAPH_API_URL`      | browser runtime           | optional (uses proxy if unset)                      |
-| `DATABASE_URL`                       | drizzle-kit + backend     | yes                                                 |
-| `DATABASE_URL_TEST`                  | vitest                    | yes                                                 |
-| `BETTER_AUTH_SECRET`                 | session cookie signing    | yes (see [docs/AUTH.md](docs/AUTH.md))              |
-| `BETTER_AUTH_URL`                    | OAuth callback base       | yes (default `http://localhost:3000`)               |
-| `RESEND_API_KEY`                     | verification emails       | yes                                                 |
-| `RESEND_FROM_EMAIL`                  | verification email sender | optional (`onboarding@resend.dev` default)          |
-| `GITHUB_CLIENT_ID` / `_SECRET`       | GitHub OAuth              | optional                                            |
-| `GOOGLE_CLIENT_ID` / `_SECRET`       | Google OAuth              | optional                                            |
-| `LANGSMITH_*`                        | tracing                   | optional                                            |
-| `OBSERVABILITY_RETENTION_DAYS`       | observability spans       | optional (default `30`; must be a positive integer) |
+| Var                                  | Used by                   | Required?                                                                         |
+| ------------------------------------ | ------------------------- | --------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`                     | backend agent             | yes                                                                               |
+| `OPENAI_MODEL`                       | backend agent             | optional (default `gpt-4o-mini`)                                                  |
+| `OPENAI_BASE_URL`                    | backend agent             | optional (OpenAI-compatible gateway)                                              |
+| `JINA_API_KEYS`                      | web-search + web-fetch    | yes (comma-separated; one per Jina account)                                       |
+| `ALCHEMY_API_KEY`                    | NFT gallery + portfolio   | yes (server-only; powers `get_NFT_holdings`)                                      |
+| `LANGGRAPH_API_URL`                  | Next.js proxy             | optional (default `http://localhost:2024`)                                        |
+| `LANGCHAIN_API_KEY`                  | Next.js proxy → LangGraph | optional (leave blank locally)                                                    |
+| `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` | browser runtime           | optional (default `agent`)                                                        |
+| `NEXT_PUBLIC_LANGGRAPH_API_URL`      | browser runtime           | optional (uses proxy if unset)                                                    |
+| `DATABASE_URL`                       | drizzle-kit + backend     | yes                                                                               |
+| `DATABASE_URL_TEST`                  | vitest                    | yes                                                                               |
+| `BETTER_AUTH_SECRET`                 | session cookie signing    | yes (see [docs/AUTH.md](docs/AUTH.md))                                            |
+| `BETTER_AUTH_URL`                    | OAuth callback base       | yes (default `http://localhost:3000`)                                             |
+| `RESEND_API_KEY`                     | verification emails       | yes                                                                               |
+| `RESEND_FROM_EMAIL`                  | verification email sender | optional (`onboarding@resend.dev` default)                                        |
+| `GITHUB_CLIENT_ID` / `_SECRET`       | GitHub OAuth              | optional                                                                          |
+| `GOOGLE_CLIENT_ID` / `_SECRET`       | Google OAuth              | optional                                                                          |
+| `LANGSMITH_*`                        | tracing                   | optional                                                                          |
+| `OBSERVABILITY_RETENTION_DAYS`       | observability spans       | optional (default `30`; must be a positive integer)                               |
+| `MEMORY_THREAD_SUMMARY_KEEP_RECENT`  | thread summarization      | optional (default `10`; trigger cadence + recent floor for `threadSummarizeNode`) |
+| `MEMORY_PROFILE_MAX_BYTES`           | `save_memory` size guard  | optional (default `8192`; profile-doc size cap before store write)                |
 
 ## Patches
 
@@ -245,6 +270,7 @@ Test database stays isolated from dev — never put production-like data in `lan
 ## Documentation
 
 - [`docs/APIS.md`](docs/APIS.md) — HTTP endpoint reference. Update whenever a route under `app/api/` changes.
+- [`docs/MEMORY.md`](docs/MEMORY.md) — memory + thread-summarize design: dual-graph topology, `<memory>` + `<threads>` recall, `save_memory` RFC 6902 patches, store-anchored trigger window math, Memory tab UI, security stance.
 - [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — observability panel design: callback handler wiring, `observability_spans` schema, server-side transform + aggregate, lazy-loaded row detail, security/redaction, retention config, and curl examples.
 - [`docs/TOOLS.md`](docs/TOOLS.md) — LangGraph tool inventory and frontend card wiring. Update whenever a tool or card is added/removed/rerouted.
 - [`docs/INTERRUPT.md`](docs/INTERRUPT.md) — interrupt-driven tool flows (ask_location, connect_wallet, place_crypto_order, get_order_status) — the two runtime paths the cards can take.
