@@ -185,13 +185,22 @@ async function lastCompressedEndIdx(userId: string, threadId: string): Promise<n
   return maxEnd;
 }
 
-// ponytail: one-K-sized chunk at the next anchor. Window length is
-// fixed at KEEP_RECENT — the previous "cumulative to all of
-// lastEnd..humanCount-K-1" variant overshot in early rounds (round
-// 4 with K=3 wrote a 1-human window, round 9 wrote 6 humans,
-// variable) and forced an LLM call every single turn. Fixed-size
-// keeps the transcript predictable for the compression LLM and
-// amortizes the cost across K turns.
+// ponytail: window length = largest K-multiple ≤ uncompressedCount
+// (round-down). Math: endIdx = uncompressedCount - (uncompressedCount % K) - 1.
+// Examples with K=3: uncompressedCount=4 → window [0..2] (3 humans);
+// uncompressedCount=7 → window [0..5] (6 humans); uncompressedCount=10 →
+// window [0..8] (9 humans).
+//
+// Why round-down, not "fixed K exactly": a single LLM call covers up to K
+// humans of transcript anyway, and the cost scales with input size, not
+// count of calls. Round-down means each store write is the maximum
+// summarizable window that fits in one prompt — fewer total passes than
+// fixed-K (which would write [0..2], then [0..5] on round 9 with no progress
+// until lastEnd moves). The "doesn't advance until lastEnd moves" rule
+// applies BETWEEN writes, not within a single write.
+//
+// Gate: uncompressedCount must be ≥ K to fire at all. Below K we return
+// null and let the next turn accumulate.
 export function computeCumulativeWindow(
   humanCount: number,
   keepRecent: number,
