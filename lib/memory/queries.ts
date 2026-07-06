@@ -4,6 +4,7 @@ import { store } from "@/backend/store";
 import { db } from "@/db/client";
 import { account, user } from "@/lib/auth/schema";
 import { SummaryEntrySchema, type SummaryEntry } from "@/lib/memory/validators";
+import { getThreadTitlesForUser } from "@/lib/threads/queries";
 
 const MEMORY_KEY = "main";
 const THREADS_NAMESPACE = "threads";
@@ -73,11 +74,24 @@ export async function getAllUserSummaries(
 // threadId and preserves Map insertion order, so a thread whose
 // earliest summary is the oldest in the list lands at the top of
 // the Memory tab.
+//
+// Enrichment: each entry carries `threadTitle` (the row from the
+// `threads` table — set by renameThreadAgent on the first turn, the
+// DEFAULT_THREAD_TITLE "New chat" beforehand). Missing row → null →
+// the UI falls back to the raw threadId. Title fetch is deduped per
+// distinct threadId so a long thread with N summaries triggers one
+// lookup, not N.
 export async function getRecentThreadSummaries(
   userId: string,
-): Promise<Array<{ key: string; value: SummaryEntry }>> {
+): Promise<Array<{ key: string; value: SummaryEntry; threadTitle: string | null }>> {
   const all = await getAllUserSummaries(userId);
-  return [...all].sort((a, b) => a.value.createdAt.localeCompare(b.value.createdAt));
+  const ordered = [...all].sort((a, b) => a.value.createdAt.localeCompare(b.value.createdAt));
+  const distinctIds = [...new Set(ordered.map((row) => row.value.threadId))];
+  const titles = await getThreadTitlesForUser(userId, distinctIds);
+  return ordered.map((row) => ({
+    ...row,
+    threadTitle: titles.get(row.value.threadId) ?? null,
+  }));
 }
 
 export async function deleteThreadSummaries(userId: string, threadId: string): Promise<number> {

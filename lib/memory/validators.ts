@@ -108,6 +108,12 @@ export const MemoryResponseSchema = z.object({
     z.object({
       key: z.string(),
       value: SummaryEntrySchema,
+      // ponytail: title from the `threads` table — set by
+      // renameThreadAgent on the first turn. null when the row is
+      // missing (e.g. summaries pre-date the thread rename path) so
+      // the UI can show the raw threadId as fallback instead of a
+      // generic "Untitled".
+      threadTitle: z.string().nullable(),
     }),
   ),
 });

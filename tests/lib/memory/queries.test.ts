@@ -289,8 +289,27 @@ describe("lib/memory/queries", () => {
         { key: "t2:1", value: makeSummary("t2", 1, "2026-07-02T00:00:00.000Z") },
         { key: "t3:1", value: makeSummary("t3", 1, "2026-06-30T00:00:00.000Z") },
       ]);
+      // ponytail: getRecentThreadSummaries now joins against the threads
+      // table to fetch titles. mockSelectAll resolves the chain for that
+      // join — empty rows means every thread's title falls back to null.
+      mockSelectAll.mockResolvedValueOnce([]);
       const top = await getRecentThreadSummaries(USER);
       expect(top.map((s) => s.key)).toEqual(["t3:1", "t1:1", "t2:1"]);
+    });
+
+    it("attaches threadTitle from the threads table lookup; null when missing", async () => {
+      mockStore.search.mockResolvedValueOnce([
+        { key: "t1:1", value: makeSummary("t1", 1, "2026-07-01T00:00:00.000Z") },
+        { key: "t2:1", value: makeSummary("t2", 1, "2026-07-02T00:00:00.000Z") },
+      ]);
+      // ponytail: t1 has a title (renameThreadAgent ran), t2 doesn't
+      // (rename path hasn't fired yet, or the row pre-dates it).
+      mockSelectAll.mockResolvedValueOnce([{ id: "t1", title: "Weather chat" }]);
+      const top = await getRecentThreadSummaries(USER);
+      const t1 = top.find((s) => s.value.threadId === "t1");
+      const t2 = top.find((s) => s.value.threadId === "t2");
+      expect(t1?.threadTitle).toBe("Weather chat");
+      expect(t2?.threadTitle).toBeNull();
     });
   });
 

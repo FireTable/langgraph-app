@@ -53,6 +53,9 @@ describe("GET /api/memory/profile", () => {
           summary: { entries: [{ question: "...", answer: "...", refs: ["#1-#4"] }] },
           createdAt: "2026-07-02T00:00:00.000Z",
         },
+        // ponytail: enrich the wire shape — null when the rename
+        // path hasn't run, fallback to the raw threadId in the UI.
+        threadTitle: "Weather chat",
       },
     ]);
   });
@@ -74,6 +77,10 @@ describe("GET /api/memory/profile", () => {
       email: "y@example.com",
     });
     expect(body.threads).toHaveLength(1);
+    // ponytail: each thread summary entry carries threadTitle so the UI
+    // can render the chat name (set by renameThreadAgent) instead of the
+    // raw UUID. Null is the expected fallback when rename hasn't run.
+    expect(body.threads[0].threadTitle).toBe("Weather chat");
     // ponytail: the API MUST NOT return a merged `memory` field — that
     // would hide provenance and force the UI to guess source.
     expect(body).not.toHaveProperty("memory");

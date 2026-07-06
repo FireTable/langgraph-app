@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot, User, Trash2 } from "lucide-react";
+import { Bot, Loader2, ScrollText, Trash2, User } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { JsonBlock } from "@/components/tool-ui/primitives/json-block";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -30,10 +31,14 @@ import { cn } from "@/lib/utils";
 // "summarized by AI" (key present in store) vs "from account" (key
 // filled only by the auth overlay). Single source of truth for
 // merge logic across backend / frontend.
+//
+// `threadTitle` is the row from the threads table (set by
+// renameThreadAgent on the first turn). Null when the rename path
+// hasn't run yet — UI falls back to the raw threadId.
 type MemoryResponse = {
   store: MemoryDoc;
   auth: AuthInfo;
-  threads: Array<{ key: string; value: SummaryEntry }>;
+  threads: Array<{ key: string; value: SummaryEntry; threadTitle: string | null }>;
 };
 
 type Row = { kind: "store" | "account"; key: string; value: string };
@@ -143,6 +148,12 @@ export function MemoryView({ className }: { className?: string }) {
   const [pendingThreadId, setPendingThreadId] = useState<string | null>(null);
   const [displayTargetProfile, setDisplayTargetProfile] = useState<string | null>(null);
   const [displayTargetThread, setDisplayTargetThread] = useState<string | null>(null);
+  // ponytail: single flag covers BOTH dialogs — the per-row button
+  // click and the dialog confirm can race (profile delete in flight
+  // while the thread dialog opens), so a shared "is a destructive
+  // op in progress?" flag prevents the user from queuing a second
+  // delete while the first is still settling.
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -185,19 +196,31 @@ export function MemoryView({ className }: { className?: string }) {
   //   - Outer: first threadId seen in the flat list = first thread block.
   //   - Inner: insertion order into the per-thread array = backend order.
   //
+  // threadTitle rides on the first entry that creates the group. Every
+  // entry in the same thread carries the same title (renameThreadAgent
+  // sets it once on the first turn), so first-wins is identical to
+  // last-wins — using the first avoids a re-assignment loop.
+  //
   // Hooks must run before any early return — calling useMemo after the
   // error/!memory guards throws "Rendered more hooks than during the
   // previous render".
   const threadGroups = useMemo(() => {
-    const groups = new Map<string, SummaryEntry[]>();
+    const groups = new Map<string, { threadTitle: string | null; summaries: SummaryEntry[] }>();
     for (const entry of memory?.threads ?? []) {
-      const list = groups.get(entry.value.threadId) ?? [];
-      list.push(entry.value);
-      groups.set(entry.value.threadId, list);
+      const existing = groups.get(entry.value.threadId);
+      if (existing) {
+        existing.summaries.push(entry.value);
+      } else {
+        groups.set(entry.value.threadId, {
+          threadTitle: entry.threadTitle,
+          summaries: [entry.value],
+        });
+      }
     }
-    return [...groups.entries()].map(([threadId, summaries]) => ({
+    return [...groups.entries()].map(([threadId, data]) => ({
       threadId,
-      summaries,
+      threadTitle: data.threadTitle,
+      summaries: data.summaries,
     }));
   }, [memory]);
 
@@ -209,8 +232,62 @@ export function MemoryView({ className }: { className?: string }) {
     );
   }
   if (!memory) {
+    // ponytail: mirror the real layout (About you + Thread summaries)
+    // so the page doesn't jump when content arrives — the user sees
+    // the shape of what they're waiting for, not a plain text blob.
     return (
-      <div className={cn("text-muted-foreground p-6 text-sm", className)}>Loading memory…</div>
+      <div className={cn("flex w-full flex-col gap-4 md:gap-6", className)}>
+        <section>
+          <Skeleton className="mb-1 h-4 w-24" />
+          <Skeleton className="mb-3 h-3 w-96 max-w-full" />
+          <Card className="p-0">
+            <CardContent className="p-0">
+              {[0, 1, 2].map((i) => (
+                <div key={i}>
+                  {i > 0 && <Separator />}
+                  <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-2 px-4 py-3">
+                    <Skeleton className="size-7 rounded-md" />
+                    <div className="min-w-0 space-y-2">
+                      <Skeleton className="h-3 w-16" />
+                      <Skeleton className="h-4 w-40" />
+                    </div>
+                    <Skeleton className="h-8 w-16 rounded-md" />
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </section>
+
+        <section>
+          <Skeleton className="mb-3 h-4 w-32" />
+          <Card className="p-0">
+            <CardContent className="p-0">
+              <div>
+                <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-2 px-4 py-3">
+                  <Skeleton className="size-7 rounded-md" />
+                  <div className="min-w-0 space-y-2">
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-3 w-20" />
+                  </div>
+                  <Skeleton className="h-8 w-16 rounded-md" />
+                </div>
+                <div className="space-y-3 px-4 pb-4 ps-[calc(theme(spacing.7)+theme(spacing.3)+theme(spacing.4))]">
+                  {[0, 1].map((i) => (
+                    <div key={i} className="space-y-1.5">
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        <Skeleton className="h-3 w-20" />
+                        <Skeleton className="h-3 w-24" />
+                      </div>
+                      <Skeleton className="h-20 w-full rounded-md" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+      </div>
     );
   }
 
@@ -226,24 +303,36 @@ export function MemoryView({ className }: { className?: string }) {
   };
   const confirmRemoveRow = async () => {
     const key = pendingProfileKey;
-    setPendingProfileKey(null);
     if (!key) return;
+    // ponytail: dialog stays open while the request is in flight so
+    // the spinner on the destructive button is actually visible —
+    // closing first would hide the loading state on the button the
+    // user just clicked.
+    setDeleting(true);
     try {
       await deleteProfile(key);
+      setPendingProfileKey(null);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setPendingProfileKey(null);
+    } finally {
+      setDeleting(false);
     }
   };
   const confirmRemoveThread = async () => {
     const threadId = pendingThreadId;
-    setPendingThreadId(null);
     if (!threadId) return;
+    setDeleting(true);
     try {
       await deleteThread(threadId);
+      setPendingThreadId(null);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setPendingThreadId(null);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -334,48 +423,106 @@ export function MemoryView({ className }: { className?: string }) {
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold mb-3">Thread summaries</h2>
+          <h2 className="text-sm font-semibold mb-1">Thread summaries</h2>
+          <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
+            Compressed recaps of past conversations, fed back into context so the assistant
+            doesn&apos;t lose the thread over time.
+          </p>
           {threadGroups.length === 0 ? (
             <p className="text-muted-foreground text-sm">No thread summaries yet.</p>
           ) : (
             <Card className="p-0">
               <CardContent className="p-0">
-                {threadGroups.map((group, index) => (
-                  <div key={group.threadId}>
-                    {index > 0 && <Separator />}
-                    <div className="space-y-2 p-4">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="text-muted-foreground text-xs">{group.threadId}</div>
+                {threadGroups.map((group, index) => {
+                  // ponytail: title preferred, raw threadId is the
+                  // pre-rename fallback (renameThreadAgent runs once
+                  // on the first turn — threads that predate that path
+                  // never had a title written). When title IS present,
+                  // the threadId still shows in muted meta under the
+                  // title so a user can paste the id into a bug report
+                  // without fishing it out of the URL.
+                  const title = group.threadTitle ?? group.threadId;
+                  const hasTitle = group.threadTitle !== null;
+                  return (
+                    <div key={group.threadId}>
+                      {index > 0 && <Separator />}
+                      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-2 px-4 py-3">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label="Summarized by AI — written by your assistant during a past conversation"
+                              // ponytail: distinct hint from "summarized-by-ai"
+                              // so selectors that count profile rows only
+                              // (e.g. /tests/frontend/settings FR-018) keep
+                              // working when this thread row is added.
+                              className="text-muted-foreground hover:text-foreground inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-muted"
+                              data-hint="summarized-thread"
+                            >
+                              <ScrollText className="size-5" aria-hidden />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            Summarized by AI — written by your assistant during a past conversation.
+                            You can delete this.
+                          </TooltipContent>
+                        </Tooltip>
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium">{title}</div>
+                          <div className="text-muted-foreground mt-0.5 text-xs">
+                            {hasTitle ? group.threadId : null}
+                          </div>
+                        </div>
                         <Button
                           type="button"
+                          className="ml-auto shrink-0"
                           variant="outline"
                           size="sm"
                           onClick={() => openThreadDialog(group.threadId)}
-                          aria-label={`Delete all summaries for ${group.threadId}`}
+                          aria-label={`Delete this thread summaries for ${title}`}
                         >
                           <Trash2 aria-hidden />
-                          Delete all
+                          Delete
                         </Button>
                       </div>
-                      <ul className="space-y-2.5 text-sm">
+                      {/* ponytail: each compression is its own row under
+                          the thread header, indented to the content
+                          column so the Q&A reads as belonging to the
+                          pass above it. Header reads "Summary · N"
+                          (not "Compression #N" — "summary" reads as a
+                          noun to a non-engineer, the middot matches
+                          the timestamp separator that follows). The
+                          sequence + timestamp together tell the user
+                          which pass produced what without exposing
+                          the internal counter. */}
+                      <div className="space-y-3 px-4 pb-4 ps-[calc(theme(spacing.7)+theme(spacing.3)+theme(spacing.4))]">
                         {group.summaries.map((s) => (
-                          <li key={`${s.threadId}:${s.sequence}`} className="space-y-1">
-                            <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
-                              <span>#{s.sequence}</span>
-                              <span>
-                                messages [{s.startMessageIndex}..{s.endMessageIndex}]
+                          <div key={`${s.threadId}:${s.sequence}`} className="space-y-1.5">
+                            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                              <span className="text-muted-foreground text-xs font-medium capitalize tracking-wide">
+                                Summary · {s.sequence}
                               </span>
-                              <time dateTime={s.createdAt}>{formatTimestamp(s.createdAt)}</time>
+                              <time
+                                dateTime={s.createdAt}
+                                className="text-muted-foreground text-xs tabular-nums"
+                              >
+                                · {formatTimestamp(s.createdAt)}
+                              </time>
                             </div>
-                            <pre className="text-foreground whitespace-pre-wrap text-sm">
+                            {/* ponytail: cap height so a deep summary
+                                (many Q&A pairs in one compression) can't
+                                push the rest of the card off-screen —
+                                overflow scrolls inside the block, same
+                                pattern as the JSON block in About-you. */}
+                            <pre className="bg-muted/50 text-foreground overflow-auto rounded-md p-2.5 text-foreground max-h-30 overflow-y-auto whitespace-pre-wrap font-sans text-sm">
                               {formatSummaryText(s.summary.entries)}
                             </pre>
-                          </li>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </CardContent>
             </Card>
           )}
@@ -398,11 +545,27 @@ export function MemoryView({ className }: { className?: string }) {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingProfileKey(null)}>
+            <Button
+              variant="outline"
+              onClick={() => setPendingProfileKey(null)}
+              disabled={deleting}
+            >
               Cancel
             </Button>
-            <Button variant="destructive" onClick={() => void confirmRemoveRow()}>
-              Delete
+            <Button
+              variant="destructive"
+              onClick={() => void confirmRemoveRow()}
+              disabled={deleting}
+              aria-busy={deleting}
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden />
+                  Deleting…
+                </>
+              ) : (
+                "Delete"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -416,7 +579,7 @@ export function MemoryView({ className }: { className?: string }) {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete all thread summaries?</DialogTitle>
+            <DialogTitle>Delete this thread summaries?</DialogTitle>
             <DialogDescription>
               {displayTargetThread
                 ? `All summaries in thread ${displayTargetThread} will be removed. This cannot be undone.`
@@ -424,11 +587,23 @@ export function MemoryView({ className }: { className?: string }) {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingThreadId(null)}>
+            <Button variant="outline" onClick={() => setPendingThreadId(null)} disabled={deleting}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={() => void confirmRemoveThread()}>
-              Delete all
+            <Button
+              variant="destructive"
+              onClick={() => void confirmRemoveThread()}
+              disabled={deleting}
+              aria-busy={deleting}
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden />
+                  Deleting…
+                </>
+              ) : (
+                "Delete"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

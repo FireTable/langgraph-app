@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { db } from "@/db/client";
 import { threads, type Thread, type ThreadCustom } from "./schema";
@@ -82,6 +82,26 @@ export async function getThreadTitle(id: string): Promise<string | null> {
     .where(eq(threads.id, id))
     .limit(1);
   return row?.title ?? null;
+}
+
+// ponytail: bulk title read for callers that already have a list of
+// threadIds (the Memory tab's summary reader — joins summaries → threads
+// without an N+1 select). Returns Map<threadId, title>; missing rows are
+// absent (caller renders the bare threadId as fallback).
+//
+// Ownership: the rows are filtered to (userId, id IN threadIds) so a
+// crafted threadId can't leak another user's title — same shape as
+// getThreadForUser but batched. Empty input → empty map, no round trip.
+export async function getThreadTitlesForUser(
+  userId: string,
+  threadIds: readonly string[],
+): Promise<Map<string, string>> {
+  if (threadIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: threads.id, title: threads.title })
+    .from(threads)
+    .where(and(eq(threads.userId, userId), inArray(threads.id, threadIds as string[])));
+  return new Map(rows.map((r) => [r.id, r.title]));
 }
 
 export type { Thread, ThreadCustom };

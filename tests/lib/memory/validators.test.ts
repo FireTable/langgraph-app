@@ -124,6 +124,36 @@ describe("lib/memory/validators", () => {
               tokenCountAfter: 0,
               createdAt: "2026-07-02T00:00:00.000Z",
             },
+            // ponytail: threadTitle rides on each summary entry —
+            // renameThreadAgent populates the row on the first turn;
+            // null is the documented fallback for unrenamed threads.
+            threadTitle: "Weather chat",
+          },
+        ],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("accepts a thread entry with threadTitle=null (rename path not run)", () => {
+      const r = MemoryResponseSchema.safeParse({
+        memory: {},
+        threads: [
+          {
+            key: "t1:1",
+            value: {
+              threadId: "t1",
+              sequence: 1,
+              startMessageIndex: 0,
+              endMessageIndex: 0,
+              messageCount: 1,
+              messageIds: ["m0"],
+              summary: { entries: [{ question: "...", answer: "...", refs: ["#1"] }] },
+              triggerReason: "turn_based",
+              tokenCountBefore: 0,
+              tokenCountAfter: 0,
+              createdAt: "2026-07-02T00:00:00.000Z",
+            },
+            threadTitle: null,
           },
         ],
       });
