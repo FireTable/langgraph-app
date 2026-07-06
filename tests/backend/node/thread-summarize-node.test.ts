@@ -117,10 +117,33 @@ describe("threadSummarizeNode", () => {
     expect(mockWriteSummary).not.toHaveBeenCalled();
   });
 
-  it("returns no state mutation when userMessageCount ≤ KEEP_RECENT", async () => {
-    const out = await threadSummarizeNode({ messages: makeMessages(KEEP_RECENT) }, CONFIG_OK);
+  it("returns no state mutation when userMessageCount < KEEP_RECENT", async () => {
+    const out = await threadSummarizeNode({ messages: makeMessages(KEEP_RECENT - 1) }, CONFIG_OK);
     expect(out.messages).toEqual([]);
     expect(mockWriteSummary).not.toHaveBeenCalled();
+    expect(mockGetAllUserSummaries).not.toHaveBeenCalled();
+  });
+
+  it("fires the first chunk at humanCount == KEEP_RECENT on a fresh thread (gate is < K, not <= K)", async () => {
+    // ponytail: gate uses < K (not <= K). With KEEP_RECENT humans on a
+    // fresh store, the first trigger fires at humanCount==K, not K+1 —
+    // waiting for K+1 stranded users who never send another message,
+    // and the round-down formula writes the same [0..K-1] window either
+    // way.
+    mockGetAllUserSummaries.mockResolvedValue([]);
+    mockInvoke.mockResolvedValueOnce({
+      entries: [{ question: "Q?", answer: "A.", refs: ["#1-#10"] }],
+    });
+    mockWriteSummary.mockResolvedValueOnce({});
+
+    const messages = makeMessages(KEEP_RECENT);
+
+    await threadSummarizeNode({ messages }, CONFIG_OK);
+
+    expect(mockWriteSummary).toHaveBeenCalledTimes(1);
+    const [, entry] = mockWriteSummary.mock.calls[0];
+    expect(entry.endMessageIndex).toBe(KEEP_RECENT - 1);
+    expect(entry.messageCount).toBe(KEEP_RECENT);
   });
 
   it("compresses the first KEEP_RECENT-batch on the first trigger (humanCount = 11)", async () => {

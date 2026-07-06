@@ -148,8 +148,8 @@ function renderTranscript(excerpt: Array<ExcerptMessage>, startHumanIdx: number)
 // Multiple triggers stack if the user keeps deleting.
 //
 // Patterns (KEEP_RECENT=3):
-//   Fresh:     round  4 → [0..2], then quiet until round  6 → [3..5],
-//              round 9 → [6..8], ... (4, 6, 9, 12, ... = every 3 after K+1)
+//   Fresh:     round  3 → [0..2], then quiet until round  6 → [3..5],
+//              round 9 → [6..8], ... (3, 6, 9, 12, ... = every K after K)
 //   Deletion:  user empties Memory tab → lastEnd=-1, next trigger
 //              re-writes [0..2], then continues with [3..5], [6..8].
 //
@@ -228,7 +228,7 @@ export async function threadSummarizeNode(
   // have already gated, but a turn can land between router and node —
   // re-deriving here is the safety belt AND avoids a needless store
   // scan when the thread hasn't crossed KEEP_RECENT yet.
-  if (humanIndices.length <= MEMORY_THREAD_SUMMARY_KEEP_RECENT) return { messages: [] };
+  if (humanIndices.length < MEMORY_THREAD_SUMMARY_KEEP_RECENT) return { messages: [] };
 
   const lastEnd = await lastCompressedEndIdx(userId, threadId);
 

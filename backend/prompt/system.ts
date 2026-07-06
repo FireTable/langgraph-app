@@ -263,7 +263,7 @@ OUTPUT (strict JSON, no prose before or after)
 {
   "entries": [
     {
-      "question": "<topic of one chunk>",
+      "question": "<the user question>",
       "answer": "<the answer itself, as if directly answering the Q — 1-3 sentences, no narration of who did what>",
       "refs": ["#1"]
     }
