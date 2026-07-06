@@ -86,6 +86,22 @@ function setupFetchOnce() {
   });
 }
 
+// ponytail: thread rows default to collapsed. Tests that need to
+// read Q&A text inside a thread first call this helper to flip the
+// toggle, then await the first Q&A line. Targets the toggle by
+// data-hint (not aria-label) because the aria-label embeds the
+// thread title, which differs across fixtures (real title vs raw
+// threadId fallback).
+async function expandFirstThread() {
+  const toggle = await waitFor(() => {
+    const el = document.querySelector('[data-hint="thread-collapse"]');
+    if (!el || !(el instanceof HTMLButtonElement)) throw new Error("no thread-collapse toggle");
+    return el;
+  });
+  fireEvent.click(toggle);
+  await screen.findByText(/intro question/);
+}
+
 beforeEach(() => {
   setupFetchOnce();
 });
@@ -160,27 +176,21 @@ describe("MemoryView", () => {
 
   it("renders Thread Summaries grouped by threadId (FR-018)", async () => {
     render(<MemoryView />);
-    // Wait for the threads section to render before asserting on it.
-    // The Memory tab now renders the `summary` text inline per row
-    // (was `name` + `description` in the old schema).
-    expect(await screen.findByText(/intro question/)).toBeInTheDocument();
-    // ponytail: title (`Weather chat`) shows as the thread header label
-    // — `t1` still appears underneath as muted meta so a user can paste
-    // the id without fishing it out of the URL.
-    expect(screen.getByText("Weather chat")).toBeInTheDocument();
+    expect(await screen.findByText("Weather chat")).toBeInTheDocument();
     expect(screen.getAllByText("t1").length).toBeGreaterThan(0);
+    // ponytail: rows default to collapsed. Expand to verify the Q&A
+    // body renders under the thread header (not the meta line).
+    await expandFirstThread();
+    expect(screen.getByText(/intro question/)).toBeInTheDocument();
   });
 
   it("renders each compression as its own sub-row with iteration label + timestamp", async () => {
     render(<MemoryView />);
-    // ponytail: each SummaryEntry renders as `Summary · N · <iso>`,
-    // not the prior `messages [0..2]` raw range (which was meaningless
-    // to a reader who'd never seen the thread). Sequence 1 + 2 of the
-    // same thread render as two sub-rows under one thread header.
-    expect(await screen.findByText(/Summary · 1/)).toBeInTheDocument();
+    // ponytail: rows default to collapsed. Expand first, then the
+    // Summary · N labels + per-summary Q&A both render.
+    await expandFirstThread();
+    expect(screen.getByText(/Summary · 1/)).toBeInTheDocument();
     expect(screen.getByText(/Summary · 2/)).toBeInTheDocument();
-    // Ponytail: the Q&A text follows each compression label — both
-    // fixtures' answer text is present.
     expect(screen.getByText(/intro question/)).toBeInTheDocument();
     expect(screen.getByText(/follow-up/)).toBeInTheDocument();
   });
@@ -201,7 +211,8 @@ describe("MemoryView", () => {
         }),
     });
     render(<MemoryView />);
-    expect(await screen.findByText(/Summary · 1/)).toBeInTheDocument();
+    await expandFirstThread();
+    expect(screen.getByText(/Summary · 1/)).toBeInTheDocument();
     // ponytail: with no title, `t1` shows once as the header fallback
     // and the meta line under it is suppressed (no duplicate id).
     // When title IS present (the other tests) it shows twice — once as
@@ -259,7 +270,7 @@ describe("MemoryView", () => {
 
   it("calls DELETE /api/memory/threads/:threadId only after the dialog is confirmed", async () => {
     render(<MemoryView />);
-    await screen.findByText(/intro question/);
+    await expandFirstThread();
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -342,7 +353,7 @@ describe("MemoryView", () => {
     });
 
     render(<MemoryView />);
-    await screen.findByText(/intro question/);
+    await expandFirstThread();
     fireEvent.click(screen.getByRole("button", { name: /^Delete this thread summaries for/ }));
     await screen.findByText(/Delete this thread summaries/i);
 
@@ -400,5 +411,97 @@ describe("MemoryView", () => {
     expect(pre).not.toBeNull();
     expect(pre?.textContent ?? "").toContain("provider");
     expect(pre?.textContent ?? "").toContain("github");
+  });
+
+  // ponytail: per-thread collapse — each thread header owns its own
+  // chevron toggle. Defaults to COLLAPSED so a long list of
+  // past threads renders as scannable single-line headers; clicking
+  // expands the thread to its Q&A blocks.
+  it("renders each thread header with a collapse toggle (default collapsed)", async () => {
+    render(<MemoryView />);
+    const expandToggle = await screen.findByRole("button", {
+      name: /Expand Weather chat/i,
+    });
+    expect(expandToggle).toHaveAttribute("aria-expanded", "false");
+    // ponytail: while collapsed, the Q&A bodies are hidden but the
+    // header line still renders.
+    expect(screen.queryByText(/intro question/)).toBeNull();
+    expect(screen.queryByText(/follow-up/)).toBeNull();
+    expect(screen.getByText("Weather chat")).toBeInTheDocument();
+  });
+
+  it("expands the thread to show its Q&A summaries when clicked", async () => {
+    render(<MemoryView />);
+    const toggle = await screen.findByRole("button", {
+      name: /Expand Weather chat/i,
+    });
+    fireEvent.click(toggle);
+
+    // ponytail: the thread's Q&A bodies appear, but the header
+    // (title + threadId meta + Delete) stays as it was.
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/intro question/)).toBeInTheDocument();
+    expect(screen.getByText(/follow-up/)).toBeInTheDocument();
+
+    // ponytail: the toggle's aria-label flips to "Collapse …" so the
+    // screen-reader announcement describes the next-click action.
+    expect(screen.getByRole("button", { name: /Collapse Weather chat/i })).toBeInTheDocument();
+  });
+
+  it("collapses an expanded thread when its toggle is clicked again", async () => {
+    render(<MemoryView />);
+    const expandToggle = await screen.findByRole("button", {
+      name: /Expand Weather chat/i,
+    });
+    fireEvent.click(expandToggle);
+    expect(screen.getByText(/intro question/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Collapse Weather chat/i }));
+    expect(expandToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/intro question/)).toBeNull();
+  });
+
+  it("does not render thread-collapse toggles when there are no thread summaries", async () => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ ...PROFILE_PAYLOAD, threads: [] }),
+    });
+    render(<MemoryView />);
+    expect(await screen.findByText(/No thread summaries yet/i)).toBeInTheDocument();
+    // ponytail: empty state owns the section — no rows to toggle.
+    expect(screen.queryAllByRole("button", { name: /Expand /i })).toHaveLength(0);
+  });
+
+  // ponytail: expand/collapse is animated, not a hard show/hide.
+  // Radix Collapsible marks the body with data-state so CSS
+  // transitions can interpolate height from 0 to auto.
+  it("animates the thread body on expand and collapse", async () => {
+    render(<MemoryView />);
+    const toggle = await waitFor(() => {
+      const el = document.querySelector('[data-hint="thread-collapse"]');
+      if (!el || !(el instanceof HTMLButtonElement)) throw new Error("no thread-collapse toggle");
+      return el;
+    });
+    // ponytail: Radix Collapsible renders the body with data-state
+    // so the user sees a smooth height transition instead of a
+    // jarring pop. Closed by default.
+    const body = await waitFor(() => {
+      const el = document.querySelector('[data-slot="thread-body"]');
+      if (!el) throw new Error("no thread body");
+      return el;
+    });
+    expect(body.getAttribute("data-state")).toBe("closed");
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(body.getAttribute("data-state")).toBe("open");
+    });
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(body.getAttribute("data-state")).toBe("closed");
+    });
   });
 });

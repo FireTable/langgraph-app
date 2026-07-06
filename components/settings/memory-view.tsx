@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot, Loader2, ScrollText, Trash2, User } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@radix-ui/react-collapsible";
+import { Bot, ChevronRight, Loader2, ScrollText, Trash2, User } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -134,9 +135,52 @@ async function deleteThread(threadId: string) {
   return res;
 }
 
+// ponytail: pure helper for the thread-groups useMemo. Lifted out of
+// the component so unit tests can pin every branch (grouping, sort
+// order, null title) without a React render. Pure function — input
+// array in, output array out, no side effects.
+//
+// Sort order is most-recently-active first: max(createdAt) across
+// the group's summaries (summaries are append-only, so the latest
+// trigger time drives the position). Matches the chat list's
+// recency ordering so the Memory tab reads in the same direction.
+export function groupThreadsByThreadId(
+  threads: MemoryResponse["threads"],
+): Array<{ threadId: string; threadTitle: string | null; summaries: SummaryEntry[] }> {
+  const groups = new Map<string, { threadTitle: string | null; summaries: SummaryEntry[] }>();
+  for (const entry of threads) {
+    const existing = groups.get(entry.value.threadId);
+    if (existing) {
+      existing.summaries.push(entry.value);
+    } else {
+      groups.set(entry.value.threadId, {
+        threadTitle: entry.threadTitle,
+        summaries: [entry.value],
+      });
+    }
+  }
+  return [...groups.entries()]
+    .map(([threadId, data]) => ({
+      threadId,
+      threadTitle: data.threadTitle,
+      summaries: data.summaries,
+    }))
+    .sort((a, b) => {
+      const aMax = Math.max(...a.summaries.map((s) => Date.parse(s.createdAt)));
+      const bMax = Math.max(...b.summaries.map((s) => Date.parse(s.createdAt)));
+      return bMax - aMax;
+    });
+}
+
 export function MemoryView({ className }: { className?: string }) {
   const [memory, setMemory] = useState<MemoryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // ponytail: per-thread collapse — Set of EXPLICITLY EXPANDED
+  // threadIds. Default for absent ids is collapsed; the Set only
+  // tracks threads the user has opened. Toggle flips membership
+  // (no separate "expanded" flag) so re-clicking restores the
+  // default-collapsed row with no extra ceremony.
+  const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
 
   // ponytail: dialog content reads `displayTarget*` so the description
   // stays stable across the close animation. `pendingProfileKey` flips
@@ -204,25 +248,7 @@ export function MemoryView({ className }: { className?: string }) {
   // Hooks must run before any early return — calling useMemo after the
   // error/!memory guards throws "Rendered more hooks than during the
   // previous render".
-  const threadGroups = useMemo(() => {
-    const groups = new Map<string, { threadTitle: string | null; summaries: SummaryEntry[] }>();
-    for (const entry of memory?.threads ?? []) {
-      const existing = groups.get(entry.value.threadId);
-      if (existing) {
-        existing.summaries.push(entry.value);
-      } else {
-        groups.set(entry.value.threadId, {
-          threadTitle: entry.threadTitle,
-          summaries: [entry.value],
-        });
-      }
-    }
-    return [...groups.entries()].map(([threadId, data]) => ({
-      threadId,
-      threadTitle: data.threadTitle,
-      summaries: data.summaries,
-    }));
-  }, [memory]);
+  const threadGroups = useMemo(() => groupThreadsByThreadId(memory?.threads ?? []), [memory]);
 
   if (error) {
     return (
@@ -466,84 +492,143 @@ export function MemoryView({ className }: { className?: string }) {
                   // without fishing it out of the URL.
                   const title = group.threadTitle ?? group.threadId;
                   const hasTitle = group.threadTitle !== null;
+                  const isThreadCollapsed = !expandedThreads.has(group.threadId);
                   return (
-                    <div key={group.threadId}>
-                      {index > 0 && <Separator />}
-                      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-2 px-4 py-3">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              aria-label="Summarized by AI — written by your assistant during a past conversation"
-                              // ponytail: distinct hint from "summarized-by-ai"
-                              // so selectors that count profile rows only
-                              // (e.g. /tests/frontend/settings FR-018) keep
-                              // working when this thread row is added.
-                              className="text-muted-foreground hover:text-foreground inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-muted"
-                              data-hint="summarized-thread"
-                            >
-                              <ScrollText className="size-5" aria-hidden />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="top">
-                            Summarized by AI — written by your assistant during a past conversation.
-                            You can delete this.
-                          </TooltipContent>
-                        </Tooltip>
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-medium">{title}</div>
-                          <div className="text-muted-foreground mt-0.5 text-xs">
-                            {hasTitle ? group.threadId : null}
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          className="ml-auto shrink-0"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openThreadDialog(group.threadId)}
-                          aria-label={`Delete this thread summaries for ${title}`}
-                        >
-                          <Trash2 aria-hidden />
-                          Delete
-                        </Button>
-                      </div>
-                      {/* ponytail: each compression is its own row under
-                          the thread header, indented to the content
-                          column so the Q&A reads as belonging to the
-                          pass above it. Header reads "Summary · N"
-                          (not "Compression #N" — "summary" reads as a
-                          noun to a non-engineer, the middot matches
-                          the timestamp separator that follows). The
-                          sequence + timestamp together tell the user
-                          which pass produced what without exposing
-                          the internal counter. */}
-                      <div className="space-y-3 px-4 pb-4 ps-[calc(theme(spacing.7)+theme(spacing.3)+theme(spacing.4))]">
-                        {group.summaries.map((s) => (
-                          <div key={`${s.threadId}:${s.sequence}`} className="space-y-1.5">
-                            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                              <span className="text-muted-foreground text-xs font-medium capitalize tracking-wide">
-                                Summary · {s.sequence}
-                              </span>
-                              <time
-                                dateTime={s.createdAt}
-                                className="text-muted-foreground text-xs tabular-nums"
+                    <Collapsible
+                      key={group.threadId}
+                      // ponytail: Radix Collapsible owns the open/close
+                      // animation — it transitions height from 0 to the
+                      // measured content height instead of pop-in/out.
+                      // data-state="open|closed" lands on the body for
+                      // CSS hooks; aria-expanded/controls land on the
+                      // trigger automatically.
+                      open={!isThreadCollapsed}
+                      onOpenChange={(open) =>
+                        setExpandedThreads((prev) => {
+                          const next = new Set(prev);
+                          if (open) next.add(group.threadId);
+                          else next.delete(group.threadId);
+                          return next;
+                        })
+                      }
+                    >
+                      <div>
+                        {index > 0 && <Separator />}
+                        <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-x-3 gap-y-2 px-4 py-3">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                aria-label="Summarized by AI — written by your assistant during a past conversation"
+                                // ponytail: distinct hint from "summarized-by-ai"
+                                // so selectors that count profile rows only
+                                // (e.g. /tests/frontend/settings FR-018) keep
+                                // working when this thread row is added.
+                                className="text-muted-foreground hover:text-foreground inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-muted"
+                                data-hint="summarized-thread"
                               >
-                                · {formatTimestamp(s.createdAt)}
-                              </time>
+                                <ScrollText className="size-5" aria-hidden />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              Summarized by AI — written by your assistant during a past
+                              conversation. You can delete this.
+                            </TooltipContent>
+                          </Tooltip>
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium">{title}</div>
+                            <div className="text-muted-foreground mt-0.5 text-xs">
+                              {hasTitle ? group.threadId : null}
                             </div>
-                            {/* ponytail: cap height so a deep summary
-                                (many Q&A pairs in one compression) can't
-                                push the rest of the card off-screen —
-                                overflow scrolls inside the block, same
-                                pattern as the JSON block in About-you. */}
-                            <pre className="bg-muted/50 text-foreground overflow-auto rounded-md p-2.5 text-foreground max-h-30 overflow-y-auto whitespace-pre-wrap font-sans text-sm">
-                              {formatSummaryText(s.summary.entries)}
-                            </pre>
                           </div>
-                        ))}
+                          <CollapsibleTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              // ponytail: aria-label flips with state so a
+                              // screen reader announces the action that
+                              // will fire on next click ("Collapse" when
+                              // expanded, "Expand" when collapsed).
+                              aria-label={
+                                isThreadCollapsed ? `Expand ${title}` : `Collapse ${title}`
+                              }
+                              className="shrink-0"
+                              data-hint="thread-collapse"
+                            >
+                              {/* ponytail: chevron points right when
+                                  collapsed (▶ → "open me, content is to
+                                  the right / below") and left when expanded
+                                  (◀ → "close me, content has moved left /
+                                  up"). Mirrors the Delete button style:
+                                  outline variant + size sm + label. */}
+                              <ChevronRight
+                                aria-hidden
+                                className={cn(
+                                  "size-4 transition-transform duration-200",
+                                  !isThreadCollapsed && "rotate-180",
+                                )}
+                              />
+                              {isThreadCollapsed ? "Expand" : "Collapse"}
+                            </Button>
+                          </CollapsibleTrigger>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openThreadDialog(group.threadId)}
+                            aria-label={`Delete this thread summaries for ${title}`}
+                          >
+                            <Trash2 aria-hidden />
+                            Delete
+                          </Button>
+                        </div>
+                        <CollapsibleContent
+                          // ponytail: each compression is its own row under
+                          // the thread header, indented to the content
+                          // column so the Q&A reads as belonging to the
+                          // pass above it. Header reads "Summary · N"
+                          // (not "Compression #N" — "summary" reads as a
+                          // noun to a non-engineer, the middot matches
+                          // the timestamp separator that follows). The
+                          // sequence + timestamp together tell the user
+                          // which pass produced what without exposing
+                          // the internal counter.
+                          //
+                          // data-state (open|closed) and the CSS variables
+                          // Radix writes (`--radix-collapsible-content-height`)
+                          // drive the height animation. data-slot
+                          // pinpoints the body for tests without coupling
+                          // to class churn.
+                          data-slot="thread-body"
+                          className="space-y-3 overflow-hidden px-4 pb-4 ps-[calc(theme(spacing.7)+theme(spacing.3)+theme(spacing.4))] data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up"
+                        >
+                          {group.summaries.map((s) => (
+                            <div key={`${s.threadId}:${s.sequence}`} className="space-y-1.5">
+                              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                <span className="text-muted-foreground text-xs font-medium capitalize tracking-wide">
+                                  Summary · {s.sequence}
+                                </span>
+                                <time
+                                  dateTime={s.createdAt}
+                                  className="text-muted-foreground text-xs tabular-nums"
+                                >
+                                  · {formatTimestamp(s.createdAt)}
+                                </time>
+                              </div>
+                              {/* ponytail: cap height so a deep summary
+                                  (many Q&A pairs in one compression) can't
+                                  push the rest of the card off-screen —
+                                  overflow scrolls inside the block, same
+                                  pattern as the JSON block in About-you. */}
+                              <pre className="bg-muted/50 text-foreground overflow-auto rounded-md p-2.5 text-foreground max-h-30 overflow-y-auto whitespace-pre-wrap font-sans text-sm">
+                                {formatSummaryText(s.summary.entries)}
+                              </pre>
+                            </div>
+                          ))}
+                        </CollapsibleContent>
                       </div>
-                    </div>
+                    </Collapsible>
                   );
                 })}
               </CardContent>
