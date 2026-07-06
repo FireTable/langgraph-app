@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { mockInvokeStructured, mockInvoke, mockWithStructuredArgs } = vi.hoisted(() => ({
   mockInvokeStructured: vi.fn(),
@@ -21,6 +21,14 @@ vi.mock("@/backend/model", () => ({
 
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { routerAgentNode } from "@/backend/node/router-agent-node";
+
+beforeEach(() => {
+  // ponytail: vi.hoisted() mocks persist across tests — clear before
+  // each so call order / counts don't bleed between cases.
+  mockInvokeStructured.mockReset();
+  mockInvoke.mockReset();
+  mockWithStructuredArgs.mockReset();
+});
 
 describe("routerAgentNode", () => {
   it("returns the structured-output object as routerDecision", async () => {
@@ -92,5 +100,66 @@ describe("routerAgentNode", () => {
     expect(schemaArg?.safeParse({ next: "cryptoAgent" }).success).toBe(true);
     expect(schemaArg?.safeParse({ next: "bogus" }).success).toBe(false);
     expect(optionsArg).toEqual({ name: "route_decision", method: "jsonSchema" });
+  });
+
+  // ponytail: router is a yes/no classifier on the CURRENT turn. Full
+  // history is a token-cost move AND can distract the classifier into
+  // routing off a stale topic. Only the trailing HumanMessage goes in.
+  it("passes only the last user message to the model when history is long", async () => {
+    mockInvokeStructured.mockResolvedValueOnce({ next: "weatherAgent" });
+
+    await routerAgentNode({
+      messages: [
+        new SystemMessage("stale system"),
+        new HumanMessage("earlier question"),
+        new SystemMessage("another stale system"),
+        new HumanMessage("今天北京天气怎么样?"),
+        new SystemMessage("trailing stale"),
+      ],
+    });
+
+    const callArgs = mockInvokeStructured.mock.calls[0]?.[0] as Array<{
+      type: string;
+      content: string;
+    }>;
+    expect(callArgs).toHaveLength(2);
+    expect(callArgs?.map((m) => m.type)).toEqual(["system", "human"]);
+    expect(callArgs?.[1]?.content).toBe("今天北京天气怎么样?");
+  });
+
+  it("routes based on the most recent user message, not earlier turns", async () => {
+    mockInvokeStructured.mockResolvedValueOnce({ next: "cryptoAgent" });
+
+    await routerAgentNode({
+      messages: [
+        new HumanMessage("weather in Tokyo"), // earlier turn — ignored
+        new HumanMessage("BTC price now"), // current turn — drives decision
+      ],
+    });
+
+    const callArgs = mockInvokeStructured.mock.calls[0]?.[0] as Array<{
+      type: string;
+      content: string;
+    }>;
+    expect(callArgs?.map((m) => m.content)).toEqual([
+      expect.stringMatching(/router/i),
+      "BTC price now",
+    ]);
+  });
+
+  it("still invokes the model when the last message is human (no fallback when present)", async () => {
+    mockInvokeStructured.mockResolvedValueOnce({ next: "chatAgent" });
+
+    await routerAgentNode({
+      messages: [new SystemMessage("stray"), new HumanMessage("hi")],
+    });
+
+    expect(mockInvokeStructured).toHaveBeenCalledTimes(1);
+    const callArgs = mockInvokeStructured.mock.calls[0]?.[0] as Array<{
+      type: string;
+    }>;
+    // [system, human] — no extra system messages, no extra humans.
+    expect(callArgs).toHaveLength(2);
+    expect(callArgs?.map((m) => m.type)).toEqual(["system", "human"]);
   });
 });

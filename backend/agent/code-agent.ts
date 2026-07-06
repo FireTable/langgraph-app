@@ -1,12 +1,16 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
-import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import type { BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { chatModel } from "@/backend/model";
 import { CODE_TOOLS } from "@/backend/tool";
 import { CODE_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
-import { buildSystemMessageWithMemory } from "@/backend/memory/template";
+import {
+  buildSystemMessageWithMemory,
+  loadThreadSummariesForPrompt,
+  trimMessagesForInvoke,
+} from "@/backend/memory/template";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 
 // Code sub-agent: model ↔ tools loop. write_code proposes code that
@@ -21,11 +25,14 @@ import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 // (components/tool-ui/code) is the user-side approval point.
 
 async function codeModelNode({ messages }: { messages: BaseMessage[] }, config?: RunnableConfig) {
-  const messagesWithoutSystem = messages.filter((m) => !(m instanceof SystemMessage));
-  const sysMsg = await buildSystemMessageWithMemory(CODE_AGENT_PROMPT, config);
-  const response = await chatModel
-    .bindTools(CODE_TOOLS)
-    .invoke([sysMsg, ...messagesWithoutSystem], config);
+  // ponytail: same load+trim pattern as chatAgent — read the
+  // thread's compressed history, inject as <earlier_conversation>,
+  // and drop the original turns from the input array. state.messages
+  // is NEVER touched.
+  const threads = await loadThreadSummariesForPrompt(config);
+  const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
+  const sysMsg = await buildSystemMessageWithMemory(CODE_AGENT_PROMPT, config, threads);
+  const response = await chatModel.bindTools(CODE_TOOLS).invoke([sysMsg, ...history], config);
   return { messages: [response] };
 }
 

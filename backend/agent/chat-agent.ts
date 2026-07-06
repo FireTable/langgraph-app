@@ -1,6 +1,6 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
-import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import type { BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { chatModel } from "@/backend/model";
 import { ALL_TOOLS } from "@/backend/tool";
@@ -8,10 +8,9 @@ import { CHAT_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
 import {
   buildSystemMessageWithMemory,
-  type ThreadSummariesPayload,
+  loadThreadSummariesForPrompt,
+  trimMessagesForInvoke,
 } from "@/backend/memory/template";
-import { extractThreadId, extractUserId } from "@/backend/memory/recall";
-import { getThreadSummaries } from "@/lib/memory/queries";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 
 // Chat agent gets every tool — the router already decided whether this
@@ -31,67 +30,23 @@ import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 // at invoke time. Surface this every turn so the model has continuity
 // even when state.messages only shows the most recent few turns.
 async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?: RunnableConfig) {
-  // Strip any stale system messages — bindTools runnables share
-  // invocation context, so a previous prompt would leak through.
-  const history = messages.filter((m) => !(m instanceof SystemMessage));
-
+  // ponytail: summaries must be loaded BEFORE trimming — the trim
+  // depends on max(endMessageIndex). The model reads older turns via
+  // the <earlier_conversation> block in its SystemMessage, so cutting
+  // them out of the input array is a token-cost move (not a
+  // context-loss one). state.messages is NEVER touched — UI +
+  // checkpointer read from it directly.
   const threads = await loadThreadSummariesForPrompt(config);
+  const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
+
   const sysMsg = await buildSystemMessageWithMemory(CHAT_AGENT_PROMPT, config, threads);
   const response = await chatModel.bindTools(ALL_TOOLS).invoke([sysMsg, ...history], config);
 
   return { messages: [response] };
 }
 
-// ponytail: lift the store read for the current thread's compressed
-// history into a tiny helper so the node function reads as the clean
-// intent ("build the prompt, then invoke"), not "build the prompt
-// with three Promise.all args and a ternary". Failures are swallowed
-// (empty payload) — a degraded prompt that loses compressed history
-// is better than a chat that 500s on store flake.
-async function loadThreadSummariesForPrompt(
-  config?: RunnableConfig,
-): Promise<ThreadSummariesPayload | null> {
-  const userId = extractUserId(config);
-  const threadId = extractThreadId(config);
-  if (!userId || !threadId) return null;
-  try {
-    const all = await getThreadSummaries(userId, threadId);
-    if (all.length === 0) return null;
-    return {
-      threadId,
-      summaries: all
-        .sort((a: { sequence: number }, b: { sequence: number }) => a.sequence - b.sequence)
-        .map(
-          (s: {
-            sequence: number;
-            // ponytail: store keeps structured entries; the prompt
-            // consumer (LLM) reads the JSON dump from the <threads>
-            // block, so we pass the structured form through. The
-            // Memory tab UI calls formatSummaryText at display time.
-            summary: { entries: Array<{ question: string; answer: string; refs: string[] }> };
-            startMessageIndex: number;
-            endMessageIndex: number;
-            triggerReason: "turn_based" | "token_based";
-            tokenCountBefore: number;
-            tokenCountAfter: number;
-            createdAt: string;
-          }) => ({
-            sequence: s.sequence,
-            summary: s.summary,
-            startMessageIndex: s.startMessageIndex,
-            endMessageIndex: s.endMessageIndex,
-            triggerReason: s.triggerReason,
-            tokenCountBefore: s.tokenCountBefore,
-            tokenCountAfter: s.tokenCountAfter,
-            createdAt: s.createdAt,
-          }),
-        ),
-    };
-  } catch {
-    return null;
-  }
-}
-
+// ponytail: loadThreadSummariesForPrompt lives in backend/memory/template.ts
+// so weatherAgent / cryptoAgent / codeAgent share the same helper.
 // toolsCondition returns END for the no-tool path; that END becomes the
 // subgraph's exit point and the parent routes chatAgent → afterAgent.
 function chatModelRoute(state: { messages: BaseMessage[] }) {

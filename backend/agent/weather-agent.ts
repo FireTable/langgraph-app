@@ -1,12 +1,16 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
-import { SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import type { BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { chatModel } from "@/backend/model";
 import { WEATHER_TOOLS } from "@/backend/tool";
 import { WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
-import { buildSystemMessageWithMemory } from "@/backend/memory/template";
+import {
+  buildSystemMessageWithMemory,
+  loadThreadSummariesForPrompt,
+  trimMessagesForInvoke,
+} from "@/backend/memory/template";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 
 // Weather agent: a focused sub-agent that owns the RAG-style weather
@@ -23,12 +27,15 @@ async function weatherModelNode(
   { messages }: { messages: BaseMessage[] },
   config?: RunnableConfig,
 ) {
-  const messagesWithoutSystem = messages.filter((m) => !(m instanceof SystemMessage));
-  const sysMsg = await buildSystemMessageWithMemory(WEATHER_AGENT_PROMPT, config);
+  // ponytail: same load+trim pattern as chatAgent — read the
+  // thread's compressed history, inject as <earlier_conversation>,
+  // and drop the original turns from the input array. state.messages
+  // is NEVER touched.
+  const threads = await loadThreadSummariesForPrompt(config);
+  const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
+  const sysMsg = await buildSystemMessageWithMemory(WEATHER_AGENT_PROMPT, config, threads);
 
-  const response = await chatModel
-    .bindTools(WEATHER_TOOLS)
-    .invoke([sysMsg, ...messagesWithoutSystem], config);
+  const response = await chatModel.bindTools(WEATHER_TOOLS).invoke([sysMsg, ...history], config);
 
   return { messages: [response] };
 }

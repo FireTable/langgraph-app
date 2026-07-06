@@ -286,7 +286,7 @@ export function Assistant() {
       {
         title: "Write a Typescript function about `Two Sum`",
         label: "",
-        prompt: "Write a Typescript function about `Two Sum`",
+        prompt: "Write a Typescript function about `Two Sum`, include the test cases.",
       },
     ]),
   });

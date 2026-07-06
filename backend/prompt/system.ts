@@ -213,18 +213,16 @@ About User Memory (stable facts the user has shared + their account identity; us
 </memory_json>
 
 <save_memory_rule>
-Follow the save_memory tool description for when to save, what to skip,
-and conflict resolution. If save_memory isn't in your current tool
-list, treat the statement as ephemeral and continue.
+Follow the save_memory tool description for when to save, what to skip, and conflict resolution. 
+If save_memory isn't in your current tool list, treat the statement as ephemeral and continue.
 </save_memory_rule>
 </memory>{{/memoryJson}}
 
 {{#threadsJson}}
-EARLIER CONVERSATION (compressed):
-Earlier turns in THIS chat were compressed into Q&A summaries below. Refer to them as "earlier in this conversation" — they are part of the same thread, not a previous session.
-<thread>
+Earlier in this conversation (compressed):
+<earlier_conversation>
 {{threadsJson}}
-</thread>{{/threadsJson}}`;
+</earlier_conversation>{{/threadsJson}}`;
 
 // Dropped into the threadSummarize node. Compresses one batch of
 // earlier conversation turns into a durable Q&A summary that lives
@@ -263,7 +261,7 @@ OUTPUT (strict JSON, no prose before or after)
 {
   "entries": [
     {
-      "question": "<the user question>",
+      "question": "<the user's ask>",
       "answer": "<the answer itself, as if directly answering the Q — 1-3 sentences, no narration of who did what>",
       "refs": ["#1"]
     }
