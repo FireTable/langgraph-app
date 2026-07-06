@@ -260,7 +260,8 @@ export function MemoryView({ className }: { className?: string }) {
         </section>
 
         <section>
-          <Skeleton className="mb-3 h-4 w-32" />
+          <Skeleton className="mb-1 h-4 w-32" />
+          <Skeleton className="mb-3 h-3 w-96 max-w-full" />
           <Card className="p-0">
             <CardContent className="p-0">
               <div>
@@ -348,7 +349,16 @@ export function MemoryView({ className }: { className?: string }) {
           <Card className="p-0">
             <CardContent className="p-0">
               {rows.length === 0 ? (
-                <p className="text-muted-foreground p-6 text-sm">No profile fields yet.</p>
+                <div className="p-8 text-center">
+                  <div className="bg-muted mx-auto mb-3 flex size-9 items-center justify-center rounded-full">
+                    <Bot className="text-muted-foreground size-4" aria-hidden />
+                  </div>
+                  <p className="mb-1 text-sm font-medium">No profile fields yet</p>
+                  <p className="text-muted-foreground mx-auto max-w-xs text-xs leading-relaxed">
+                    When the assistant writes down something to remember about you, it&apos;ll show
+                    up here. You can edit or delete it from there.
+                  </p>
+                </div>
               ) : (
                 rows.map((row, index) => {
                   const node = toNode(parseValue(row.value));
@@ -429,7 +439,20 @@ export function MemoryView({ className }: { className?: string }) {
             doesn&apos;t lose the thread over time.
           </p>
           {threadGroups.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No thread summaries yet.</p>
+            <Card className="p-0">
+              <CardContent className="p-0">
+                <div className="p-8 text-center">
+                  <div className="bg-muted mx-auto mb-3 flex size-9 items-center justify-center rounded-full">
+                    <ScrollText className="text-muted-foreground size-4" aria-hidden />
+                  </div>
+                  <p className="mb-1 text-sm font-medium">No thread summaries yet</p>
+                  <p className="text-muted-foreground mx-auto max-w-xs text-xs leading-relaxed">
+                    Once a conversation runs long enough to compress, the earlier turns get
+                    summarized and land here.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
           ) : (
             <Card className="p-0">
               <CardContent className="p-0">

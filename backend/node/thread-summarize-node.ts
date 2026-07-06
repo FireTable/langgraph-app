@@ -241,16 +241,22 @@ export async function threadSummarizeNode(
   if (!window) return { messages: [] };
   const { startIdx, endIdx } = window;
 
-  // ponytail: build the excerpt from the closed human-only interval.
-  // The slice covers everything between humanIndices[startIdx] and
-  // humanIndices[endIdx], inclusive of every interleaved AI/tool reply.
+  // ponytail: build the excerpt from [startIdx..endIdx], inclusive of every
+  // interleaved AI/tool reply, AND extend past the last human to the next
+  // human (or messages.length if endIdx is the last human) so the trailing
+  // user question captures its assistant reply. Slicing on
+  // humanIndices[endIdx] alone stops at the user message itself — the
+  // AI/tool messages immediately following would be dropped, leaving the
+  // last JSONL entry as a Q with no A.
+  //
   // Unknown / orphan roles are dropped from the LLM-facing transcript
   // (KEEPABLE_TYPES gate) — the original messages still live in
   // state.messages for the chat UI.
   const sliceStart = humanIndices[startIdx];
-  const sliceEnd = humanIndices[endIdx];
+  const nextHumanPos =
+    endIdx + 1 < humanIndices.length ? humanIndices[endIdx + 1] : messages.length;
   const excerpt: Array<ExcerptMessage> = [];
-  for (let i = sliceStart; i <= sliceEnd; i++) {
+  for (let i = sliceStart; i < nextHumanPos; i++) {
     const m = messages[i];
     if (!m) continue;
     const t = m.type;

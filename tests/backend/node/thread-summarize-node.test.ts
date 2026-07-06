@@ -273,6 +273,50 @@ describe("threadSummarizeNode", () => {
     expect(transcript).not.toContain("turn-21");
   });
 
+  it("captures the AI reply following the last human in the window (no orphan questions)", async () => {
+    // KEEP_RECENT=10 + humanCount=11 → window [0..9]. The earlier bug:
+    // sliceEnd = humanIndices[9] = position 18 which IS the 10th human
+    // itself — so turn-19 (the AI reply to the 10th user) was dropped,
+    // leaving the last JSONL entry as a Q with no A. Fix: extend the
+    // slice past the last human to the next human (or messages.length
+    // when endIdx is the last human) so the trailing AI/tool land in
+    // the same JSONL entry.
+    mockGetAllUserSummaries.mockResolvedValue([]);
+    mockInvoke.mockResolvedValueOnce({
+      entries: [{ question: "q", answer: "a", refs: ["#1-#10"] }],
+    });
+    mockWriteSummary.mockResolvedValueOnce({});
+
+    const messages = Array.from({ length: 22 }, (_, i) => ({
+      id: `m${i}`,
+      type: (i % 2 === 0 ? "human" : "ai") as "human" | "ai",
+      content: `turn-${i}`,
+    }));
+
+    await threadSummarizeNode({ messages }, CONFIG_OK);
+
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    const msgs = mockInvoke.mock.calls[0][0] as Array<{ role: string; content: string }>;
+    const transcript = msgs[1].content;
+    const lines = transcript.split("\n");
+    expect(lines).toHaveLength(10);
+    // The 10th (last) JSONL line MUST carry the AI reply that follows
+    // the 10th human — both turn-18 (Q10) and turn-19 (A10) in the
+    // same entry, otherwise the LLM sees a Q with no A.
+    expect(lines[9]).toBe(
+      JSON.stringify({
+        id: "#10",
+        messages: [
+          { role: "user", content: "turn-18" },
+          { role: "assistant", content: "turn-19" },
+        ],
+      }),
+    );
+    // The 11th pair must still not leak.
+    expect(transcript).not.toContain("turn-20");
+    expect(transcript).not.toContain("turn-21");
+  });
+
   it("uses the store anchor as the #N offset on later chunks (refs map to SummaryEntry range)", async () => {
     // After [0..9] is already compressed (lastEnd=9), the next trigger
     // at humanCount=21 covers [10..19] and the JSONL labels MUST be

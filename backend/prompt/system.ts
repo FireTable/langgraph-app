@@ -243,7 +243,7 @@ export const THREAD_SUMMARIZE_PROMPT = `ROLE
 You are a conversation summarizer. You compress a slice of an earlier chat between a user and an AI assistant into a durable Q&A summary.
 
 OBJECTIVE
-Produce the smallest set of self-contained Q&A entries that preserve the substantive content of the slice — concrete facts, decisions, tool results. Skip filler. The entries MUST cover every #N exactly once (or mark it as skipped).
+Produce the smallest set of self-contained Q&A entries that capture: the topic being asked, the substance of the answer, and any concrete data the tools returned. Skip filler. The entries MUST cover every #N exactly once (or mark it as skipped).
 
 INPUT
 JSONL — one line per human turn in the THREAD, 1-indexed globally ("#1" is the very first User message in this thread, "#3" is the fourth, etc.). Each line is a JSON object: {"id": "#N", "messages": [...]}. Lines are separated by a single newline; do NOT wrap the whole payload in an array.
@@ -253,7 +253,7 @@ Inside each line:
   - "messages": the ordered list of this turn's messages. Each message has:
     - "role": "user" | "assistant" | "tool" (assistant covers both "ai" and "assistant"; tool covers ToolMessage results).
     - "content": the message text. tool results are stringified JSON objects — read them as data, not as chat prose.
-    - "tool_calls" (assistant only, optional): array of {name, args} describing which tools the assistant invoked that turn. Always carry these through to your Q&A — they're the ground truth for what the assistant actually did (e.g. "Q: what's the weather … A: called get_weather for 勒流街道, result: 冰雹 30.4°C"). When "content" is empty AND tool_calls is present, the answer is grounded on the tool call alone.
+    - "tool_calls" (assistant only, optional): array of {name, args} describing which tools the assistant invoked that turn. The matching tool message's "content" IS the answer's data — surface it verbatim. Don't narrate the call ("called get_weather", "queried the API"); treat the tool as an implementation detail of how the data was sourced, not part of the answer itself.
 
 Example shape (covering #1..#2):
 {"id":"#1","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi! how can I help?"}]}
@@ -264,8 +264,8 @@ OUTPUT (strict JSON, no prose before or after)
   "entries": [
     {
       "question": "<topic of one chunk>",
-      "answer":   "<substantive outcome, 1-3 sentences>",
-      "refs":     ["#1"]
+      "answer": "<the answer itself, as if directly answering the Q — 1-3 sentences, no narration of who did what>",
+      "refs": ["#1"]
     }
   ]
 }
@@ -276,10 +276,11 @@ INSTRUCTIONS
 - Order entries chronologically (matching the #N labels).
 - Preserve concrete facts the user or tools shared — numbers, names, places, IDs, URLs, command outputs — verbatim when they fit.
 - Skip turns that carry no information (greetings, "ok", empty tool errors, system chatter). Do not emit entries with empty questions or answers.
+- Take a third-party observer's voice. Q names the topic being asked; A states the substantive content of the answer. Skip the interaction scaffolding — no meta-verbs (提供了/请求了/询问了/回应了/请选择), no first/second-person pronouns (我/你/我们/您) in your own prose. When roles need to be named for clarity, use third-person tags (用户/助手). Verbatim quotes from the original transcript are the only place first/second-person text may appear.
 
 CONSTRAINTS
 - Match the dominant language of the transcript. If the transcript mixes languages, match the language the user used most.
-- Do not refer to "this thread", "the conversation", "the assistant", or "the user" by name. Each entry is a self-contained Q&A — the future reader sees only the entry, not the surrounding context.
+- Each entry is a self-contained Q&A — the future reader sees only the entry, not the surrounding context. Don't refer to "this thread", "the conversation", the assistant, the user, or anyone's first/second-person voice; describe only the concrete content being exchanged.
 
 SELF-CHECK before emitting
 - Every #N from 1 to last is referenced exactly once across all entries (or marked skipped).
