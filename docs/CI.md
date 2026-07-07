@@ -146,8 +146,12 @@ needs `docker login` to pull. The release tarball lets you fetch + load
 an image with just `curl` + `docker load` — useful for self-hosted
 deploys without GHCR credentials, and for air-gapped environments.
 
-Concurrency: `cancel-in-progress: false` for CD. Don't cancel an
-in-flight release — let it finish.
+Concurrency: split by `event_name`. PR runs use
+`cancel-in-progress: true` (separate group via `event_name` in the key)
+— they're Docker sanity checks only, no push, no release, no
+side-effects to clean up. `push` events (main/dev) keep
+`cancel-in-progress: false` — an in-flight image push or GitHub
+Release should finish rather than leave a half-published artifact.
 
 ### What CD does **not** do (yet)
 

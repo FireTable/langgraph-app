@@ -26,10 +26,17 @@ permissions:
   packages: write
 
 concurrency:
-  # Don't cancel an in-flight release — if a tag push is mid-flight,
-  # let it finish.
-  group: cd-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  # PR builds are pure Docker sanity checks (no push, no release) —
+  # cancel freely on new push so we don't burn runner minutes on stale
+  # work.
+  #
+  # Push events (main/dev) involve image push + GitHub Release
+  # creation; cancelling mid-flight leaves a half-published image or a
+  # half-created release. Group by `event_name` so PR and push runs
+  # don't share a queue — push keeps `cancel-in-progress: false`,
+  # PR switches it to `true` via the expression below.
+  group: cd-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   resolve:
