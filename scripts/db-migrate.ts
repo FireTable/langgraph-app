@@ -1,15 +1,7 @@
 /**
  * Consolidated DB migrations: Drizzle + langgraph PostgresStore +
- * langgraph-api 0.10.x workaround. Idempotent — safe to re-run on every
- * deploy / container start.
- *
- * Note: langgraph PostgresSaver is intentionally NOT invoked here.
- * langgraph-api (the Python runtime) creates the checkpointer tables
- * itself at uvicorn startup with `thread_id uuid` column. The Node-side
- * PostgresSaver would create them with `thread_id text`, which collides
- * with langgraph-api's migration 5 (`add foreign key (thread_id)
- * references thread(thread_id)` — uuid vs text). The Node-side
- * checkpointer just connects to langgraph-api's tables at runtime.
+ * langgraph PostgresSaver + langgraph-api 0.10.x migration 29 workaround.
+ * Runs in order. Idempotent — safe to re-run on every deploy.
  *
  * Usage:
  *   pnpm db:migrate
@@ -17,27 +9,31 @@
  * Where it's invoked:
  *   - Local dev:    once after `pnpm db:reset` to bring the schema up.
  *   - CI:           before `pnpm build` (so `next build`'s page-data
- *                   collection finds tables), and before vitest (which
- *                   runs langgraph Node-side only — PostgresSaver.setup()
- *                   lives in tests/setup.ts to create tables locally).
- *   - Deploy:       from scripts/start.sh automatically, every container
- *                   start. No manual step needed.
+ *                   collection finds tables), and before vitest (covered by
+ *                   tests/setup.ts).
+ *   - Deploy:       once before `docker compose up -d`, and again after
+ *                   every deploy that touches `db/migrations/`,
+ *                   `backend/store.ts`, or `backend/checkpointer.ts`.
+ *                   (For container-driven deploys, scripts/start.sh runs
+ *                   this on every container start; see DEPLOY.md.)
  *
  * Why a single command:
- *   - All migrations, one canonical sequence. No "did I run the workaround?"
- *     confusion.
+ *   - Three migrations, one canonical sequence. No "did I run the store one
+ *     after drizzle?" confusion.
  *   - Module-load setup() in the app races under `next build`'s parallel
  *     page-data workers — moving it to an explicit pre-step eliminates the
  *     race entirely.
  *
  * Why postgres-js and not the psql CLI: the prod image
- * (`langchain/langgraphjs-api:22`) ships without a postgres-client
- * binary, and adding one in the Dockerfile is pure waste — `postgres` is
- * already a direct dependency.
+ * (`langchain/langgraphjs-api:22`) ships without a postgres-client binary,
+ * and adding one in the Dockerfile is pure waste — `postgres` is already a
+ * direct dependency.
  */
 import { readFileSync, readdirSync } from "node:fs";
+import * as nodeFs from "node:fs";
 import { join } from "node:path";
 
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import postgres from "postgres";
 
@@ -135,7 +131,27 @@ async function main() {
       await PostgresStore.fromConnString(databaseUrl).setup();
     });
 
-    // 3. langgraph-api 0.10.x migration 29 workaround. Runs after step 2
+    // 3. langgraph PostgresSaver (Node-side checkpointer tables) — Docker-only skip.
+    //    langgraph-api 0.10.x's migration 5 declares an FK
+    //    `checkpoints.thread_id REFERENCES thread(thread_id uuid)`, but
+    //    PostgresSaver.setup() creates checkpoints.thread_id as TEXT → FK
+    //    fails with DatatypeMismatch and the runtime crashes on first boot
+    //    against a fresh DB. So when running inside a Docker container (where
+    //    langgraph-api owns the schema), skip this step. Local Node dev
+    //    (langgraphjs dev) uses InMemorySaver and never reads Postgres
+    //    `checkpoints`; tests/setup.ts runs PostgresSaver.setup()
+    //    independently because CI has no langgraph-api.
+    if (nodeFs.existsSync("/.dockerenv")) {
+      process.stdout.write(
+        "→ PostgresSaver.setup() ... skipped (running in Docker; langgraph-api owns the schema)\n",
+      );
+    } else {
+      await step("PostgresSaver.setup()", async () => {
+        await PostgresSaver.fromConnString(databaseUrl).setup();
+      });
+    }
+
+    // 4. langgraph-api 0.10.x migration 29 workaround. Runs after step 2
     //    so the `store` table exists; the index column + migration marker
     //    are idempotent so re-runs are safe.
     await step("langgraph-api 0.10.x migration 29 workaround", async () => {
