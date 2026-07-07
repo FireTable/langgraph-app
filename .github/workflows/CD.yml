@@ -39,6 +39,10 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
       channel: ${{ steps.channel.outputs.channel }}
       should_push: ${{ steps.push.outputs.should_push }}
+      # Lowercased `github.repository_owner` — buildx rejects uppercase in
+      # the repo path (`FireTable`), and GitHub Actions has no `lower()`
+      # expression function, so we shell out.
+      image: ${{ steps.image.outputs.image }}
     steps:
       - id: tag
         run: |
@@ -76,6 +80,10 @@ jobs:
           fi
       - id: push
         run: echo "should_push=${{ github.event_name != 'pull_request' }}" >> "$GITHUB_OUTPUT"
+      - id: image
+        run: |
+          owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${owner}/langgraph-app" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build + push image
@@ -132,7 +140,7 @@ jobs:
           # `lower()` because Docker's tag validator rejects uppercase in
           # the repo path (e.g. `FireTable`). GHCR is case-insensitive at
           # the registry, but the buildx parser is strict.
-          tags: ghcr.io/${{ lower(github.repository_owner) }}/langgraph-app:${{ needs.resolve.outputs.tag }}
+          tags: ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -154,7 +162,7 @@ jobs:
             echo "| --- | --- |"
             echo "| channel | ${{ needs.resolve.outputs.channel }} |"
             echo "| tag | \`${{ needs.resolve.outputs.tag }}\` |"
-            echo "| image | \`ghcr.io/${{ lower(github.repository_owner) }}/langgraph-app:${{ needs.resolve.outputs.tag }}\` |"
+            echo "| image | \`${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }}\` |"
             echo "| source | ${{ github.server_url }}/${{ github.repository }}@${{ github.sha }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -180,12 +188,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull built image
-        run: docker pull ghcr.io/${{ lower(github.repository_owner) }}/langgraph-app:${{ needs.resolve.outputs.tag }}
+        run: docker pull ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }}
 
       - name: Save image tarball
         run: |
           mkdir -p release-assets
-          docker save ghcr.io/${{ lower(github.repository_owner) }}/langgraph-app:${{ needs.resolve.outputs.tag }} \
+          docker save ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }} \
             | gzip > release-assets/langgraph-app-${{ needs.resolve.outputs.tag }}.tar.gz
           ls -lh release-assets/
 
@@ -206,7 +214,7 @@ jobs:
 
             ### Pull from GHCR
             ```bash
-            docker pull ghcr.io/${{ lower(github.repository_owner) }}/langgraph-app:${{ needs.resolve.outputs.tag }}
+            docker pull ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }}
             ```
 
             ### Or load the attached tarball (no GHCR auth needed)
