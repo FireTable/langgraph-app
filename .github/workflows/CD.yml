@@ -138,6 +138,13 @@ jobs:
         with:
           context: .
           push: ${{ needs.resolve.outputs.should_push == 'true' }}
+          # Pass the job-level DATABASE_URL through as a build-arg. The
+          # Dockerfile's default is `langgraph_app`, but the build-time
+          # Postgres above creates `langgraph_app_build` — without this
+          # override, `next build` connects to a DB that doesn't exist.
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            DATABASE_URL=${{ env.DATABASE_URL }}
           # `lower()` because Docker's tag validator rejects uppercase in
           # the repo path (e.g. `FireTable`). GHCR is case-insensitive at
           # the registry, but the buildx parser is strict.
@@ -150,8 +157,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: ${{ needs.resolve.outputs.should_push == 'true' }}
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
 
       - name: Summary
         if: needs.resolve.outputs.should_push == 'true'
