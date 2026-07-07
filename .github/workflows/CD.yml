@@ -129,11 +129,10 @@ jobs:
           # service container.
           network: host
           push: ${{ needs.resolve.outputs.should_push == 'true' }}
-          tags: |
-            # Docker requires the repository name to be lowercase. GitHub
-            # org names are case-insensitive at the registry but the buildx
-            # tag validator is strict — `FireTable` would be rejected.
-            ghcr.io/${{ lower(github.repository_owner) }}/langgraph-app:${{ needs.resolve.outputs.tag }}
+          # `lower()` because Docker's tag validator rejects uppercase in
+          # the repo path (e.g. `FireTable`). GHCR is case-insensitive at
+          # the registry, but the buildx parser is strict.
+          tags: ghcr.io/${{ lower(github.repository_owner) }}/langgraph-app:${{ needs.resolve.outputs.tag }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
