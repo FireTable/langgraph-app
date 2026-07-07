@@ -73,13 +73,9 @@ jobs:
       BETTER_AUTH_SECRET: build_secret_aabbccddeeff00112233445566778899
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: agent
-      # WalletConnect project id — from a repo secret if set, empty
-      # otherwise. Next.js bakes NEXT_PUBLIC_* into the client bundle
-      # at build time, so this is the only place to inject it (runtime
-      # env is too late). Empty here means CI builds ship a wallet UI
-      # whose SDK can't initialize; only CD-release builds that include
-      # the secret get a working wallet.
-      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${{ secrets.WALLET_CONNECT_PROJECT_ID || '' }}
+      # WalletConnect project id — from a repo secret if set, else the
+      # placeholder so RainbowKit's prerender doesn't throw.
+      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${{ secrets.WALLET_CONNECT_PROJECT_ID || 'build-placeholder-project-id' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

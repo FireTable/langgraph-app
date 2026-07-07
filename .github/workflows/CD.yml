@@ -109,7 +109,7 @@ jobs:
       BETTER_AUTH_SECRET: build_secret_aabbccddeeff00112233445566778899
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: agent
-      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${{ secrets.WALLET_CONNECT_PROJECT_ID || '' }}
+      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${{ secrets.WALLET_CONNECT_PROJECT_ID || 'build-placeholder-project-id' }}
     steps:
       - uses: actions/checkout@v4
 
