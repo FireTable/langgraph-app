@@ -30,6 +30,7 @@ run_frontend() {
 
 run_backend() {
   echo "[start.sh] ROLE=backend → langgraph uvicorn (port ${PORT:-2024})"
+  start_grpc
   exec uvicorn langgraph_api.server:app \
     --log-config /api/logging.json \
     --host "${LANGGRAPH_SERVER_HOST:-0.0.0.0}" \
@@ -40,10 +41,29 @@ run_backend() {
 }
 
 # Wait for either child to exit; kill the other so we don't leak.
-trap 'kill ${NEXT_PID:-} ${UVICORN_PID:-} 2>/dev/null || true' TERM INT
+trap 'kill ${NEXT_PID:-} ${UVICORN_PID:-} ${GRPC_PID:-} 2>/dev/null || true' TERM INT
+
+# langgraph-api 0.10.x's uvicorn connects to a Go Core API gRPC server on
+# localhost:50051 at startup. Base image's /storage/entrypoint.sh starts
+# it in-process before uvicorn; we replicate that here.
+start_grpc() {
+  if [ "${CORE_API_GRPC_SIDECAR:-}" = "1" ] || [ "${CORE_API_GRPC_SIDECAR:-}" = "true" ]; then
+    echo "[start.sh] CORE_API_GRPC_SIDECAR set — assuming gRPC runs in another container"
+    return
+  fi
+  if ! command -v core-api-grpc >/dev/null 2>&1; then
+    echo "[start.sh] ERROR: core-api-grpc not on PATH" >&2
+    return
+  fi
+  export LSD_GRPC_SERVER_ADDRESS=${LSD_GRPC_SERVER_ADDRESS:-localhost:50051}
+  echo "[start.sh] starting core-api-grpc on ${LSD_GRPC_SERVER_ADDRESS}"
+  core-api-grpc &
+  GRPC_PID=$!
+}
 
 run_all() {
   echo "[start.sh] ROLE=all → next start + langgraph uvicorn"
+  start_grpc
 
   uvicorn langgraph_api.server:app \
     --log-config /api/logging.json \
@@ -62,7 +82,7 @@ run_all() {
   # POSIX `wait` blocks until any child exits; no `-n` (bash-only).
   wait
   EXIT=$?
-  kill $NEXT_PID $UVICORN_PID 2>/dev/null || true
+  kill $NEXT_PID $UVICORN_PID ${GRPC_PID:-} 2>/dev/null || true
   exit $EXIT
 }
 
