@@ -25,8 +25,15 @@ export async function sendVerificationEmail({
   to: string;
   url: string;
 }): Promise<SendVerificationResult> {
+  // Absolute origin for static assets in the email body. Email clients
+  // (Gmail, Outlook) don't resolve relative URLs — the rendered <Img>
+  // needs a fully-qualified https URL.
+  const baseUrl = (process.env.BETTER_AUTH_URL ?? "").replace(/\/$/, "");
+  if (!baseUrl) {
+    throw new Error("BETTER_AUTH_URL is required to send verification email");
+  }
   try {
-    const html = await render(VerificationEmail({ verificationUrl: url, userEmail: to }));
+    const html = await render(VerificationEmail({ verificationUrl: url, userEmail: to, baseUrl }));
     const { error } = await getClient().emails.send({
       from: FROM,
       to,

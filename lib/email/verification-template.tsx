@@ -21,9 +21,18 @@ import { collageTailwindConfig } from "./theme";
 interface VerificationEmailProps {
   verificationUrl: string;
   userEmail: string;
+  // Absolute origin for static assets. Email clients don't resolve
+  // relative URLs the way browsers do — `/email/...` would 404 in
+  // Gmail / Outlook. We prepend it here so the rendered <Img src>
+  // is a fully-qualified https URL.
+  baseUrl: string;
 }
 
-export const VerificationEmail = ({ verificationUrl, userEmail }: VerificationEmailProps) => (
+export const VerificationEmail = ({
+  verificationUrl,
+  userEmail,
+  baseUrl,
+}: VerificationEmailProps) => (
   <Tailwind config={collageTailwindConfig}>
     <Html>
       <Head>
@@ -36,7 +45,7 @@ export const VerificationEmail = ({ verificationUrl, userEmail }: VerificationEm
             <Section className="bg-bg border-stroke rounded-[8px] border">
               <Section className="mobile:px-6! px-10 pt-16">
                 <Img
-                  src="/email/collage-image-1.png"
+                  src={`${baseUrl}/email/collage-image-1.png`}
                   alt=""
                   width={148}
                   height={111}
@@ -80,6 +89,7 @@ export const VerificationEmail = ({ verificationUrl, userEmail }: VerificationEm
 VerificationEmail.PreviewProps = {
   verificationUrl: "https://example.com/verify?token=demo",
   userEmail: "user@example.com",
+  baseUrl: "https://example.com",
 } satisfies VerificationEmailProps;
 
 export default VerificationEmail;
