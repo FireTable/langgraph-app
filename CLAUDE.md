@@ -58,8 +58,6 @@ Full table: `README.md § Environment variables`. Notable specifics:
   console URL). When unset, `execute_code` is not registered (rule #10)
   — `write_code` still works and the model surfaces a graceful fallback.
   Token at <https://console.deno.com/> → Sandbox tab.
-- `NEXT_PUBLIC_CRYPTO_REAL_SWAP` — flag for the live Uniswap V3 swap
-  path. Unset/`false` keeps `place_crypto_order` in SIMULATED mode.
 
 ## Backend graph
 
@@ -145,8 +143,7 @@ content-encoding headers, adds permissive CORS, forwards body as text.
 crypto cards read `address` / `chainId` from wagmi hooks directly —
 never through tool args. Trade flow is fully SIMULATED regardless of
 wallet connectivity (`place_crypto_order` auto-funds Mock Coin on
-first trade). `NEXT_PUBLIC_CRYPTO_REAL_SWAP=true` is required to
-route through any real DEX path (currently dormant).
+first trade).
 
 ## Observability
 
