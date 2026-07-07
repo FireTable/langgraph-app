@@ -1,11 +1,13 @@
 /**
  * Consolidated DB migrations: Drizzle + langgraph PostgresStore + langgraph
- * PostgresSaver. Runs in order. Idempotent — safe to re-run on every deploy.
+ * PostgresSaver + langgraph-api 0.10.x workaround. Runs in order. Idempotent
+ * — safe to re-run on every deploy.
  *
  * The Python langgraph-api runtime runs its own PostgresSaver migrations
  * (langgraph_runtime_postgres.database.migrate) at uvicorn startup. We don't
  * re-run those here — it's a separate process + the langgraph base image owns
- * the schema. This script handles the Node-side tables only.
+ * the schema. This script handles the Node-side tables + the upstream-quirk
+ * shim for migration 29.
  *
  * Usage:
  *   pnpm db:migrate
@@ -15,11 +17,12 @@
  *   - CI:           before `pnpm build` (so `next build`'s page-data
  *                   collection finds tables), and before vitest (covered by
  *                   tests/setup.ts).
- *   - Deploy:       once on the VPS, before `docker compose up -d`.
+ *   - Deploy:       from scripts/start.sh automatically, every container
+ *                   start. No manual step needed.
  *
  * Why a single command:
- *   - Three migrations, one canonical sequence. No "did I run the store one
- *     after drizzle?" confusion.
+ *   - All migrations, one canonical sequence. No "did I run the workaround?"
+ *     confusion.
  *   - Module-load setup() in the app races under `next build`'s parallel
  *     page-data workers — moving it to an explicit pre-step eliminates the
  *     race entirely.
@@ -59,6 +62,26 @@ function step(name: string, fn: () => Promise<void> | void) {
   })();
 }
 
+// langgraph-api 0.10.x hardcodes column `prefix` in migration 29's
+// CREATE INDEX, but the actual PostgresStore schema (created in step 2
+// below) uses `namespace_path`. Without this shim, the Python runtime
+// crashes at uvicorn startup on first deploy against a fresh DB. Drop
+// this step once a langgraph-api release patches migration 29.
+function applyLanggraphApi029Workaround() {
+  const cmds = [
+    "ALTER TABLE store ADD COLUMN IF NOT EXISTS prefix text",
+    "UPDATE store SET prefix = namespace_path WHERE prefix IS NULL",
+    // CONCURRENTLY can't run inside a transaction; each -c is its own.
+    "CREATE INDEX CONCURRENTLY IF NOT EXISTS store_prefix_idx ON store USING btree (prefix text_pattern_ops)",
+    "INSERT INTO store_migrations (v) VALUES (29) ON CONFLICT DO NOTHING",
+  ];
+  for (const cmd of cmds) {
+    execFileSync("psql", [databaseUrl, "-v", "ON_ERROR_STOP=1", "-c", cmd], {
+      stdio: "inherit",
+    });
+  }
+}
+
 async function main() {
   // 1. Drizzle migrations — Better Auth schema + observability_spans.
   //    Apply via psql directly so we don't depend on drizzle-kit CLI
@@ -81,7 +104,14 @@ async function main() {
     await PostgresStore.fromConnString(databaseUrl).setup();
   });
 
-  // 3. langgraph PostgresSaver (Node-side checkpointer tables — distinct
+  // 3. langgraph-api 0.10.x migration 29 workaround. Runs after step 2 so
+  //    the `store` table exists; the index column + migration marker are
+  //    idempotent so re-runs are safe.
+  await step("langgraph-api 0.10.x migration 29 workaround", () => {
+    applyLanggraphApi029Workaround();
+  });
+
+  // 4. langgraph PostgresSaver (Node-side checkpointer tables — distinct
   //    from the Python-side checkpointer langgraph-api auto-migrates at
   //    uvicorn startup; both share the same table names so this is
   //    effectively idempotent against the Python run).
