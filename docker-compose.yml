@@ -1,0 +1,71 @@
+name: langgraph-app
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-langgraph_app}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # LangGraph's Python runtime requires Redis at startup (pub/sub + queue
+  # init). FF_USE_REDIS_QUEUE=false isn't enough — the connection check
+  # still runs. Keep Redis in the stack; disable the queue in env if you
+  # don't need it.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      ROLE: all
+      NODE_ENV: production
+      # App + LangGraph share the same DB; pass both env vars so each
+      # process picks up its preferred key (DATABASE_URL for the Next.js
+      # auth/checkpointer modules, POSTGRES_URI for langgraph-api).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-langgraph_app}
+      POSTGRES_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-langgraph_app}
+      REDIS_URI: redis://redis:6379
+      LANGGRAPH_API_URL: http://localhost:2024
+      LANGGRAPH_RUNTIME_EDITION: postgres
+      PORT: "2024"
+      LANGGRAPH_SERVER_HOST: 0.0.0.0
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: ${NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID:-agent}
+      NEXT_PUBLIC_LANGGRAPH_API_URL: ${NEXT_PUBLIC_LANGGRAPH_API_URL:-}
+      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID:-}
+      ALCHEMY_API_KEY: ${ALCHEMY_API_KEY:-}
+      NEXT_PUBLIC_CRYPTO_REAL_SWAP: ${NEXT_PUBLIC_CRYPTO_REAL_SWAP:-}
+    ports:
+      - "3000:3000"
+      - "2024:2024"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

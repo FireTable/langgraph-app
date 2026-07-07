@@ -113,5 +113,9 @@
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,md,css}": "oxfmt",
     "*.{ts,tsx}": "oxlint --type-aware --type-check --fix"
-  }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.16.1"
 }

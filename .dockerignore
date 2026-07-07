@@ -1,0 +1,23 @@
+.git
+.github
+.husky
+.specify
+.vscode
+.agents
+.claude
+.langgraph_api
+.next
+.observability-screens
+.verify
+coverage
+node_modules
+patches
+
+# env / secrets — never bake into image
+.env
+.env.*
+!.env.example
+
+# build artefacts
+*.tsbuildinfo
+.DS_Store
