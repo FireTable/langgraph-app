@@ -1,13 +1,15 @@
 /**
- * Consolidated DB migrations: Drizzle + langgraph PostgresStore + langgraph
- * PostgresSaver + langgraph-api 0.10.x workaround. Runs in order. Idempotent
- * — safe to re-run on every deploy.
+ * Consolidated DB migrations: Drizzle + langgraph PostgresStore +
+ * langgraph-api 0.10.x workaround. Idempotent — safe to re-run on every
+ * deploy / container start.
  *
- * The Python langgraph-api runtime runs its own PostgresSaver migrations
- * (langgraph_runtime_postgres.database.migrate) at uvicorn startup. We don't
- * re-run those here — it's a separate process + the langgraph base image owns
- * the schema. This script handles the Node-side tables + the upstream-quirk
- * shim for migration 29.
+ * Note: langgraph PostgresSaver is intentionally NOT invoked here.
+ * langgraph-api (the Python runtime) creates the checkpointer tables
+ * itself at uvicorn startup with `thread_id uuid` column. The Node-side
+ * PostgresSaver would create them with `thread_id text`, which collides
+ * with langgraph-api's migration 5 (`add foreign key (thread_id)
+ * references thread(thread_id)` — uuid vs text). The Node-side
+ * checkpointer just connects to langgraph-api's tables at runtime.
  *
  * Usage:
  *   pnpm db:migrate
@@ -15,8 +17,9 @@
  * Where it's invoked:
  *   - Local dev:    once after `pnpm db:reset` to bring the schema up.
  *   - CI:           before `pnpm build` (so `next build`'s page-data
- *                   collection finds tables), and before vitest (covered by
- *                   tests/setup.ts).
+ *                   collection finds tables), and before vitest (which
+ *                   runs langgraph Node-side only — PostgresSaver.setup()
+ *                   lives in tests/setup.ts to create tables locally).
  *   - Deploy:       from scripts/start.sh automatically, every container
  *                   start. No manual step needed.
  *
@@ -28,14 +31,13 @@
  *     race entirely.
  *
  * Why postgres-js and not the psql CLI: the prod image
- * (`langchain/langgraphjs-api:22`) ships without a postgres-client binary, and
- * adding one in the Dockerfile is pure waste — `postgres` is already a
- * direct dependency.
+ * (`langchain/langgraphjs-api:22`) ships without a postgres-client
+ * binary, and adding one in the Dockerfile is pure waste — `postgres` is
+ * already a direct dependency.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import postgres from "postgres";
 
@@ -93,9 +95,9 @@ async function applyContent(sql: postgres.Sql, content: string) {
 // langgraph-api 0.10.x hardcodes column `prefix` in migration 29's
 // CREATE INDEX, but the actual PostgresStore schema (created by
 // PostgresStore.setup() below) uses `namespace_path`. Without this shim,
-// the Python runtime crashes at uvicorn startup on first deploy against a
-// fresh DB. Drop this step once a langgraph-api release patches
-// migration 29.
+// the Python runtime crashes at uvicorn startup on first deploy against
+// a fresh DB. Drop this step + DELETE FROM store_migrations WHERE v = 29
+// once a langgraph-api release patches migration 29.
 const WORKAROUND_29 = [
   "ALTER TABLE store ADD COLUMN IF NOT EXISTS prefix text",
   "UPDATE store SET prefix = namespace_path WHERE prefix IS NULL",
@@ -140,14 +142,6 @@ async function main() {
       for (const stmt of WORKAROUND_29) {
         await sql.unsafe(stmt);
       }
-    });
-
-    // 4. langgraph PostgresSaver (Node-side checkpointer tables — distinct
-    //    from the Python-side checkpointer langgraph-api auto-migrates at
-    //    uvicorn startup; both share the same table names so this is
-    //    effectively idempotent against the Python run).
-    await step("PostgresSaver.setup()", async () => {
-      await PostgresSaver.fromConnString(databaseUrl).setup();
     });
   } finally {
     await sql.end({ timeout: 5 });

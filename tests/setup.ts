@@ -72,8 +72,12 @@ export default async function setup() {
       await applyContent(sql, content);
     }
 
-    // langgraph tables — Node-side memory store + checkpointer. Idempotent,
-    // mirrors the steps `pnpm db:migrate` runs against production DBs.
+    // langgraph tables — Node-side memory store + checkpointer. Idempotent.
+    // tests/setup.ts mirrors db-migrate.ts but is NOT identical: in prod
+    // langgraph-api creates the checkpointer tables itself (PostgresSaver
+    // would clash on column types — see scripts/db-migrate.ts header); in
+    // tests there's no langgraph-api, so PostgresSaver.setup() has to
+    // create the tables itself.
     console.log("  → PostgresStore.setup()");
     await PostgresStore.fromConnString(testUrl).setup();
     console.log("  → PostgresSaver.setup()");
