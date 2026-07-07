@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussions
+    url: https://github.com/${{ github.repository_owner }}/langgraph-app/discussions
+    about: For questions, design conversations, and "how do I…" — open a Discussion instead of an Issue.
+  - name: Documentation
+    url: https://github.com/${{ github.repository_owner }}/langgraph-app/tree/main/docs
+    about: Design docs (MEMORY.md, OBSERVABILITY.md, INTERRUPT.md, ...) — read first, the answer is often there.

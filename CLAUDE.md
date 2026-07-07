@@ -1,459 +1,368 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code in this repo. For features, quick-start, project
+layout, env vars, and tech stack → `README.md`. For design notes → `docs/`.
 
-## What this is
+## Docs index
 
-A self-hostable chat app that streams tokens from a LangGraph `StateGraph` agent into an [assistant-ui](https://github.com/assistant-ui/assistant-ui) React thread, with persistent threads, cross-conversation memory (`save_memory` + auth overlay), and in-thread compression (`threadSummarizeNode`) so long chats stay readable. Runs two graphs side-by-side: a chat graph (`agent`) and a turn-end side-effect graph (`background_agent`) that HTTP-dispatches via the SDK and runs `touchLastMessage` + `summarize` without blocking the chat stream.
+| Topic                                           | File                    |
+| ----------------------------------------------- | ----------------------- |
+| Features, quick-start, layout, env vars, deps   | `README.md`             |
+| Every HTTP endpoint under `app/api/`            | `docs/APIS.md`          |
+| Memory + thread-summarize design                | `docs/MEMORY.md`        |
+| Observability panel design + retention          | `docs/OBSERVABILITY.md` |
+| LangGraph tool inventory + frontend card wiring | `docs/TOOLS.md`         |
+| Interrupt-driven tool flow contract             | `docs/INTERRUPT.md`     |
+| Auth setup, OAuth, troubleshooting              | `docs/AUTH.md`          |
+| DB schema, ownership, indexes                   | `docs/DB.md`            |
+| CI/CD, Docker, deploys                          | `docs/CI.md`            |
+| Open follow-ups / parked decisions              | `docs/TODOS.md`         |
+
+**API changes update `docs/APIS.md` in the same commit (rule #1).**
+**Tool changes update `docs/TOOLS.md` (rule #10).**
 
 ## assistant-ui
 
-This project uses assistant-ui for chat interfaces.
-Documentation: https://www.assistant-ui.com/llms-full.txt
-Key patterns:
-
-- Use AssistantRuntimeProvider at the app root
-- Thread component for full chat interface
-- AssistantModal for floating chat widget
-- useChatRuntime hook with AI SDK transport
-
-Note: this template uses `useLangGraphRuntime` from `@assistant-ui/react-langgraph` (LangGraph transport wrapping `@langchain/langgraph-sdk`) rather than `useChatRuntime` (AI SDK transport), and renders a full-page `Thread` rather than a modal.
+Uses `useLangGraphRuntime` from `@assistant-ui/react-langgraph` (LangGraph
+transport wrapping `@langchain/langgraph-sdk`), NOT `useChatRuntime`.
+Renders full-page `<Thread>`, not `<AssistantModal>`. See the `assistant-ui`
+skill for details.
 
 ## Commands
 
-Package manager is **pnpm** (workspace enabled, see `pnpm-workspace.yaml`).
+Package manager: **pnpm** (workspace enabled, `pnpm-workspace.yaml`).
 
-- `pnpm install` — install deps. Patches under `patches/` are applied automatically (via `pnpm-workspace.yaml` `patchedDependencies`).
-- `pnpm dev` — runs `dev:frontend` and `dev:backend` concurrently. Frontend on `:3000`, LangGraph dev server on `:2024`.
-- `pnpm dev:frontend` — `next dev --turbopack` only.
-- `pnpm dev:backend` — `langgraphjs dev` only (serves the `agent` graph defined in `langgraph.json`).
-- `pnpm build` — `next build` (production frontend).
-- `pnpm start` — `next start`.
-- `pnpm lint` — `oxlint && oxfmt --check`.
-- `pnpm lint:fix` — `oxlint --fix && oxfmt`.
-- `pnpm format:fix` — `oxfmt` (write). `pnpm format` is `--check` only.
-- `pnpm test` — Vitest once. `NODE_ENV=test` reads `.env.test`; the globalSetup applies migrations to `langgraph_app_test`.
-- `pnpm test:watch` — Vitest in watch mode.
-- `pnpm db:generate` — generate a new SQL migration from the Drizzle schema.
-- `pnpm db:migrate` — apply pending migrations to `DATABASE_URL`.
-- `pnpm db:studio` — open Drizzle Studio.
-- `pnpm db:reset` — drop the database (Drizzle Studio only manages our business tables; LangGraph's checkpoint tables are recreated by `PostgresSaver.setup()` at backend startup).
+- `pnpm dev` — frontend + LangGraph dev server (`:3000` + `:2024`).
+- `pnpm test` — Vitest once. `NODE_ENV=test` reads `.env.test`;
+  `tests/setup.ts` applies migrations to the test DB.
+- `pnpm lint` / `lint:fix` / `format` / `format:fix`.
+- `pnpm db:generate` / `db:migrate` / `db:studio` / `db:reset` (reset
+  drops `public` schema; LangGraph checkpoint tables are recreated by
+  `PostgresSaver.setup()` at backend startup).
+
+Full table: `README.md § Development`.
 
 ## Environment
 
-Copy `.env.example` to `.env.local` and fill in:
+Full table: `README.md § Environment variables`. Notable specifics:
 
-- `OPENAI_API_KEY` — required for the agent to run.
-- `OPENAI_MODEL` — optional, defaults to `gpt-4o-mini`.
-- `OPENAI_BASE_URL` — optional, swap to an OpenAI-compatible endpoint.
-- `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` / `LANGSMITH_PROJECT` — optional tracing.
-- `LANGGRAPH_API_URL` — defaults to `http://localhost:2024`. The Next.js `/api/[..._path]` proxy forwards here.
-- `LANGCHAIN_API_KEY` — sent as `x-api-key` by the proxy; leave blank for local dev.
-- `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` — graph id, must match a key in `langgraph.json` (`agent`).
-- `NEXT_PUBLIC_LANGGRAPH_API_URL` — optional. If set, the browser skips the `/api` proxy and talks to LangGraph directly. Leave unset to use the in-app proxy.
-- `ALCHEMY_API_KEY` — server-only, used by `app/api/alchemy/[...path]` to proxy JSON-RPC. Required for the wallet's portfolio view (per-chain token balances via Alchemy Portfolio API).
-- `ALCHEMY_DISABLED_NETWORKS` — optional comma-separated Alchemy network slugs the proxy will reject. Default deny-list lives in `lib/alchemy/networks.ts`.
-- `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID` — Reown projectId, required for WalletConnect-based wallets (Binance, Bitget) to expose their mobile-QR fallback; injected wallets (MetaMask, Coinbase) work without it.
-- `NEXT_PUBLIC_CRYPTO_REAL_SWAP` — feature flag for the live Uniswap V3 swap path. Unset/`false` keeps `place_crypto_order` in SIMULATED mode (Mock Coin balance, no signing, no broadcast). Set `true` to enable the real path (currently dormant).
-- `DENO_DEPLOY_TOKEN` + optional `DENO_DEPLOY_ORG` — server-only. Used by the code agent's `execute_code` tool via the `@deno/sandbox` SDK to run TypeScript / JavaScript / Python in a Deno Deploy Sandbox (Firecracker microVM). TS/JS go through `deno eval`; Python goes through `python3 -c` (sandbox image ships CPython 3.13, stdlib only). An organization token (prefix `ddo_`) only needs `DENO_DEPLOY_TOKEN`; a personal token (prefix `ddp_`) also needs `DENO_DEPLOY_ORG` (the org slug from the console URL). When unset, `execute_code` is not registered — `write_code` still works, and on Run the model surfaces a graceful fallback. Create a token at https://console.deno.com/ → Sandbox tab.
+- `OPENAI_API_KEY` required. `OPENAI_BASE_URL` swaps to an
+  OpenAI-compatible endpoint.
+- Chat models in `backend/model.ts` carry
+  `modelKwargs: { reasoning_split: true }` — provider-specific, NOT stock
+  OpenAI. Strip it if you switch providers.
+- `DENO_DEPLOY_TOKEN` + optional `DENO_DEPLOY_ORG` — for `execute_code`
+  via Deno Deploy Sandbox (TS/JS via `deno eval`, Python via
+  `python3 -c`, sandbox ships CPython 3.13 stdlib). Personal tokens
+  (prefix `ddp_`) also need `DENO_DEPLOY_ORG` (the org slug from the
+  console URL). When unset, `execute_code` is not registered (rule #10)
+  — `write_code` still works and the model surfaces a graceful fallback.
+  Token at <https://console.deno.com/> → Sandbox tab.
 
-LangGraph CLI also reads `.env.local` (`langgraph.json` → `env: ".env.local"`) and pins Node 22.
+## Backend graph
 
-## Architecture
+Two compiled graphs, both registered in `langgraph.json`:
 
-```
-backend/
-  agent.ts                Chat graph — router + compiled subgraphs + trigger background dispatch (HTTP)
-  background-agent.ts     Background graph — touchLastMessage → summarize (own compile)
-  state.ts                RouterAgentState (parent) + CommonAgentState (subgraphs)
-  model.ts                ChatOpenAI singleton (chatModel)
-  checkpointer.ts         PostgresSaver (LangGraph Postgres checkpoint tables)
-  store.ts                Shared PostgresStore for memory + thread summaries
-  agent/
-    chat-agent.ts         chatAgent compiled subgraph (model ↔ tools loop)
-    weather-agent.ts      weatherAgent compiled subgraph (model ↔ tools loop)
-    crypto-agent.ts       cryptoAgent compiled subgraph (model ↔ tools loop)
-    code-agent.ts         codeAgent compiled subgraph (model ↔ tools loop)
-  node/
-    call-model-node.ts    "agent" node — calls the model, appends AI reply
-    rename-thread-agent-node.ts "renameThreadAgent" node — generates + persists the title
-    router-agent-node.ts  "routerAgent" — picks weatherAgent / chatAgent / cryptoAgent / codeAgent per turn
-    trigger-background-agent-node.ts "triggerBackgroundAgent" — SDK `runs.create` to background_agent graph
-    thread-summarize-node.ts "summarize" — compresses a K-turn window into a SummaryEntry
-  prompt/system.ts        CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, CRYPTO_AGENT_PROMPT, CODE_AGENT_PROMPT, ROUTER_AGENT_PROMPT, RENAME_THREAD_PROMPT, MEMORY_AUGMENTED_PROMPT_TEMPLATE, THREAD_SUMMARIZE_PROMPT
-  tool/                   ask_location, geocode_location, get_weather, search_web, fetch_url, save_memory
-  tool/memory/            save-memory-tool (RFC 6902 patches against the user's profile)
-  tool/crypto/            get_crypto_price, get_fx_rate, get_token_balances, get_NFT_holdings, connect_wallet, place_crypto_order, get_order_status
-  memory/
-    recall.ts             loadMemory / getCachedMemory (LRU max 1000, 60s TTL); extractUserId / extractThreadId
-    template.ts           buildSystemMessageWithMemory (mustache template) + loadThreadSummariesForPrompt + trimMessagesForInvoke
-    profile-size.ts       assertProfileSize — guard before the store write (NFR-003)
-  callbacks.ts            Singleton CapturingHandler shared by both compiled graphs (so bg-agent spans land in the same in-memory buffer)
-  observability/
-    callback-collector.ts CapturingHandler — BaseCallbackHandler that buffers in-flight spans per runId, persists on chainEnd via injected bulkInsert
-langgraph.json            CLI config: registers BOTH graphs (agent + background_agent), node version, env file
-app/                      Next.js App Router
-  layout.tsx              Root layout, fonts, TooltipProvider
-  page.tsx                Renders <Assistant /> in a full-viewport <main>
-  assistant.tsx           Builds useLangGraphRuntime; chooses /api vs direct URL
-  web3-providers.tsx      wagmi/RainbowKit QueryClient + WagmiProvider wrappers
-  api/[..._path]/route.ts Node catch-all proxy to LANGGRAPH_API_URL (withAuth-gated)
-  api/alchemy/[...path]/route.ts Server-only JSON-RPC proxy to Alchemy (with key + per-network disabled list)
-  api/alchemy/status/route.ts Returns Alchemy key health + disabled-network list
-  api/threads/[id]/observability/route.ts GET / DELETE thread spans (withAuth-gated; ownership check → 404)
-  api/threads/[id]/observability/[parentMessageId]/route.ts GET spans for a single turn (parent_message_id filter)
-  globals.css             Tailwind v4 entry
-components/
-  assistant-ui/           Chat primitives (thread, attachment, markdown, reasoning, tool-fallback, tool-group, tooltip-icon-button)
-observability/                          UI components (button / sheet / sheet-context / panel / llm-messages) — moved out of assistant-ui/ so the feature owns its own folder
-  observability/button.tsx                stateless icon (rule #8 exception) — opens the Sheet via context
-  observability/sheet.tsx                 Sheet wrapper (singleton, at ThreadRoot) — fetches list + drives 10s in-flight poll; passes threadId / aggregate / stepIdToRawSpanId / parentMessageId as props to the panel
-  observability/sheet-context.tsx         Provider + useOpenObservabilitySheet() so per-message buttons share one Sheet
-  observability/panel.tsx                 Waterfall renderer (SpanResource from @assistant-ui/react-o11y); lazy-fetches row detail via /spans/[spanId]; hover tooltips + glassy refresh overlay
-  observability/llm-messages.ts           buildLlmMessages — parses LLM span input/output into `[{role, body, isNew}]` entries for the detail Messages section (cumulative isNew: every input entry from the last human onward, plus every output entry, in order)
-  ui/                     shadcn/ui primitives (avatar, button, collapsible, dialog, tooltip) — new-york style, lucide icons
-  ui/address-or-hash.tsx  Truncated address/hash with copy-to-clipboard
-  tool-ui/ask-location/   Interrupt-driven or addResult-driven location picker card
-  tool-ui/weather/        Forecast widget renderer (vendored runtime + container + overlay)
-  tool-ui/crypto/         Price, connect-wallet, place-order, order-status, nft-gallery cards
-lib/utils.ts              cn() = twMerge(clsx(...))
-lib/threads/              Threads module (schema, queries, adapter, validators)
-lib/wagmi.ts              wagmi/RainbowKit config (chains, connectors, WalletConnect projectId)
-lib/alchemy/              networks.ts (slug → Alchemy URL + disabled list) + portfolio.ts (RPC helpers)
-lib/observability/        schema (Drizzle table) · queries (bulkInsert / get / markFailed / delete — with FORBIDDEN regex) · validators (Zod, list + detail + AggregateDTO) · config (retention days) · transform (CapturedSpan → SpanData, server-side; also buildStepIdToRawSpanId) · aggregate (RootAggregate: pre-compute stat-card row from raw spans)
-lib/prices/coingecko.ts   CoinGecko free-tier price client (60s in-memory cache)
-lib/decimal.ts            Decimal-based amount math for crypto (no native float)
-lib/memory/               Memory module — queries (getMemoryDoc / putMemoryDoc / getAuthInfo / getAllUserSummaries / getThreadSummaries / getRecentThreadSummaries / writeSummary / deleteThreadSummaries) + validators (RFC 6902 patch schema, SummaryEntry, MemoryResponse) + merge (pure mergeMemory + getStoreKeys) + constants (env-tuned limits, AUTH_OVERLAY_KEYS) + format (prettifyKey)
-backend/memory/
-  recall.ts                loadMemory / getCachedMemory — loads + caches memory per userId, returns the merged MemoryDoc; LRU cache (max 1000, 60s TTL); extractUserId / extractThreadId parse config.configurable
-  template.ts              buildSystemMessageWithMemory — mustache `{{base}} {{#memoryJson}}<memory>...</memory>{{/memoryJson}} {{#threadsJson}}<earlier_conversation>...</earlier_conversation>{{/threadsJson}}` so the no-memory / no-summaries path skips both sections; trimMessagesForInvoke drops older turns covered by summaries; formatThreadsForPrompt renders Q&A prose
-  profile-size.ts          assertProfileSize — guard before the store write (NFR-003)
-scripts/
-  cleanup-observability.ts  Physical-delete older spans: `pnpm exec tsx scripts/cleanup-observability.ts` (cron entry; not yet scheduled — see `docs/OBSERVABILITY.md`)
-docs/
-  OBSERVABILITY.md        Design doc — UI flow, storage schema, FORBIDDEN regex, retention policy, trade-offs. HTTP endpoints are in `docs/APIS.md` § Observability (rule #1).
-  MEMORY.md               Design doc — dual-graph topology (mainAgent + background_agent), `<memory>` + `<threads>` recall, save_memory RFC 6902 patches, thread-summarize trigger + window math, Memory tab UI, security stance. HTTP endpoints are in `docs/APIS.md` § Memory (rule #1).
-```
+- **`agent`** (`backend/agent.ts`, `name: "mainAgent"`) — chat graph.
+  - `START → routerAgent → (sub-agent) → triggerBackgroundAgent → END`
+  - `START → renameThreadAgent` (parallel leaf; skipped once
+    `threads.title !== DEFAULT_THREAD_TITLE` via `shouldRenameRouter`)
+- **`background_agent`** (`backend/background-agent.ts`,
+  `name: "backgroundAgent"`) — turn-end side-effects. Linear:
+  `START → touchLastMessage → summarize → END`.
 
-### Backend graph (`backend/agent.ts`)
+`triggerBackgroundAgentNode` HTTP-dispatches via SDK `runs.create` (NOT
+in-process `graph.invoke` — that would share the chat run's
+`AbortSignal` and die the moment the stream ends). Stamps
+`metadata.parent_message_id` so the observability per-turn GET can
+scope `runs.list(threadId, …)`.
 
-The agent runtime runs **two compiled graphs** (both registered in `langgraph.json`):
+Both graphs share the singleton `capturingHandler` from
+`backend/callbacks.ts`, so bg-agent spans land in the same per-turn
+waterfall as the chat run.
 
-- `agent` (`backend/agent.ts:graph`, `name: "mainAgent"`) — the chat graph. Topology:
-  - `START ──▶ routerAgent ──▶ (sub-agent) ──▶ triggerBackgroundAgent ──▶ END`
-  - `START ───────────────────▶ renameThreadAgent` (parallel leaf; `shouldRenameRouter` skips it once `threads.title !== DEFAULT_THREAD_TITLE`)
-- `background_agent` (`backend/background-agent.ts:graph`, `name: "backgroundAgent"`) — the turn-end side-effect graph. Linear: `START ──▶ touchLastMessage ──▶ summarize ──▶ END`. HTTP-dispatched by `triggerBackgroundAgentNode` via `langGraphClient.runs.create(threadId, "background_agent", { input, config, metadata: { parent_message_id } })`. In-process `graph.invoke(...)` is intentionally avoided — the parent chat invoke's composed `AbortSignal` would kill it the moment the chat stream ends.
+Sub-agents in `backend/agent/*-agent.ts` (`weatherAgent`, `chatAgent`,
+`cryptoAgent`, `codeAgent`) are compiled `StateGraph`s wired as opaque
+nodes. The conditional edge reads `state.routerDecision.next` — the
+returned string already matches the node name. **Adding a sub-agent
+means updating the enum in BOTH `state.ts` AND `router-agent-node.ts`
+AND `agent.ts` routeToSubAgent union** (or parsing throws — see
+[[router-decision-schema-duplicated]]).
 
-Main graph nodes:
+Sub-agent prompts (in `backend/prompt/system.ts`) enforce
+one-tool-per-turn (weather + crypto) and no-investment-advice (crypto).
+The chat cards (`components/tool-ui/ask-location`, crypto cards) key
+off the matching `ToolMessage`, so any tool run alongside them would
+race the human input. See `docs/INTERRUPT.md` for the resume contract.
 
-- `routerAgent` — calls `chatModel.withStructuredOutput(RouteDecisionSchema, { method: "jsonSchema" })` (tagged `nostream` so partial tokens don't leak into the chat) and returns `{ routerDecision: { next: "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" } }` for the conditional edge to read.
-- `weatherAgent` / `chatAgent` / `cryptoAgent` / `codeAgent` — compiled subgraphs from `backend/agent/*-agent.ts`, wired as opaque nodes via `addNode("weatherAgent", weatherAgent)`. PathMap is an array of allowed destinations, since the returned string already matches the node name. Each one runs the same memory prefix at every invoke: `loadThreadSummariesForPrompt(config)` → `trimMessagesForInvoke(messages, summaries)` → `buildSystemMessageWithMemory(BASE_PROMPT, config, threads)`.
-- `triggerBackgroundAgent` — fires `client.runs.create` and returns `{}` immediately. Bounded by one HTTP round-trip (SDK `runs.create` returns once enqueued, doesn't wait for the background graph to complete). Stamps `metadata.parent_message_id` so the observability per-turn GET can scope `runs.list(threadId, { status: "running" })` to the current chat turn.
-- `renameThreadAgent` — fans out from `START` (parallel to `routerAgent`), generates the thread title on the first turn only, persists it to the `threads` row. Subsequent turns skip it via `shouldRenameRouter`.
+When you add a node, prompt, or tool, update `backend/agent.ts` plus
+the matching `backend/agent/*-agent.ts` subgraph.
 
-Background graph nodes:
+## State persistence (dev vs prod)
 
-- `touchLastMessage` — bumps `threads.last_message_at` for the current thread. Was `afterAgent`'s job in the pre-dual-graph design.
-- `summarize` (`threadSummarizeNode`) — store-anchored trigger (reads back `max(endMessageIndex)` across this thread's `SummaryEntry`s). When ≥ `MEMORY_THREAD_SUMMARY_KEEP_RECENT` new human turns have accumulated, renders the JSONL transcript and runs `chatModel.withStructuredOutput(summaryOutputSchema, { method: "jsonSchema" })` under the `nostream` tag. Side-effect-only: writes `SummaryEntry` to `[userId, "threads"]` and returns `{ messages: [] }` — `state.messages` is NEVER touched (would erase user-visible history). Failures are swallowed with `console.warn`; the next turn re-fires the same window.
+Checkpointer is chosen by the runner, not by us:
 
-The graph builder lives in `backend/agent.ts`. When you add a node, prompt, or tool, update that file plus the matching `backend/agent/*-agent.ts` subgraph. Both graphs share the singleton `capturingHandler` from `backend/callbacks.ts`, so their span writes land in the same in-memory buffer and `bulkInsert` path — observability sees one continuous per-turn waterfall even though the spans were produced by two separate Pregel instances.
+- `langgraphjs dev` (`:2024`) uses an `InMemorySaver` flushed to
+  `.langgraph_api/.langgraphjs_api.checkpointer.json`. The Postgres
+  `checkpoints` table stays empty in dev.
+- `langgraphjs start` / LangSmith Deployment uses the compiled
+  `PostgresSaver` from `backend/checkpointer.ts`.
 
-The chat models in `backend/model.ts` carry `modelKwargs: { reasoning_split: true }` (and `think: false` on the rename variant) — these are minimax-provider-specific, so the graph is wired for that provider via `OPENAI_BASE_URL`, not stock OpenAI. `streaming: true` is set on `chatModel`. Node 22, ESM/TypeScript, executed directly by `langgraphjs dev` via the exports registered in `langgraph.json`.
+There is no `langgraph.json` field that pins dev to Postgres
+(`@langchain/langgraph-cli@1.3.1` hasn't ported Python's
+`checkpointer.path`).
 
-### Memory & thread summarize
+Consequences:
 
-See [`docs/MEMORY.md`](./docs/MEMORY.md) for the full design — dual-graph topology, `<memory>` + `<threads>` recall blocks, `save_memory` RFC 6902 patches + size guard, store-anchored trigger window math, the Memory tab UI, and the security stance. The short version: every sub-agent's model node prepends `<memory>` (merged profile doc + auth overlay) and `<threads>` (this thread's compressed Q&A history) to the SystemMessage on every invoke; the chat stream dispatches a fire-and-forget background run after every turn that bumps `last_message_at` and, when the trigger fires, compresses a K-turn window of humans into one `SummaryEntry` in the store.
+- `POST /api/threads` calls `langGraphClient.threads.create(...)` to
+  register the new id with the dev server's in-process store; in prod
+  it's a no-op. Don't remove it without checking dev.
+- `last_message_at` is `now()` written by `touchLastMessageNode` on
+  the background graph, NOT derived from any checkpoint table.
+- `DELETE /api/threads/[id]` removes only the metadata row; the
+  runner cleans up its own checkpoint tables.
 
-### `WEATHER_AGENT_PROMPT` enforces one-tool-per-turn
+## Frontend runtime
 
-The weather prompt (in `backend/prompt/system.ts`) lists four steps in order — `ask_location` → `geocode_location` → `get_weather` → one-sentence reply — and explicitly forbids batching tools in a single turn. The frontend card (`components/tool-ui/ask-location`) keys off the `ask_location` `ToolMessage`, so any tool run alongside it would race the human input. See `docs/INTERRUPT.md` for the resume contract.
+`app/assistant.tsx` is a client component using
+`useLangGraphRuntime({ stream, create, load })`. `stream` comes from
+`unstable_createLangGraphStream`. `apiUrl` is
+`NEXT_PUBLIC_LANGGRAPH_API_URL` if set (browser → LangGraph direct),
+otherwise the same-origin `/api` URL (proxied).
 
-### `CRYPTO_AGENT_PROMPT` enforces one-tool-per-turn + no-investment-advice
+`app/api/[..._path]/route.ts` is a node-runtime catch-all wrapped in
+`withAuth` (rule #9) that proxies to `${LANGGRAPH_API_URL}/${path}`
+with `x-api-key: LANGCHAIN_API_KEY`. Strips hop-by-hop /
+content-encoding headers, adds permissive CORS, forwards body as text.
 
-Same one-tool-per-turn discipline as weather, applied to the trade flow: `connect_wallet` → `place_crypto_order` → `get_order_status` are HARD checkpoints, each pauses for one user click. `place_crypto_order` is gated by a "no fiat amounts" rule — when the user names a dollar/yuan/euro amount, the agent declines rather than quoting. The prompt also hard-blocks investment advice: no "buy now", no price-direction predictions, no "good entry", no editorializing on token quality; the agent describes only what the user asked and what the card does. The cards render numbers — the prose never repeats them.
+## Web3 providers
 
-### State persistence (dev vs prod)
+`app/layout.tsx` wraps the tree in `<Web3Providers>`
+(`app/web3-providers.tsx`): `QueryClientProvider` → `WagmiProvider`
+(`lib/wagmi.ts`) → `RainbowKitProvider`. Wallet state is global;
+crypto cards read `address` / `chainId` from wagmi hooks directly —
+never through tool args. Trade flow is fully SIMULATED regardless of
+wallet connectivity (`place_crypto_order` auto-funds Mock Coin on
+first trade).
 
-The checkpointer active for a run is chosen by the runner, not by us:
+## Observability
 
-- `langgraphjs dev` (port 2024) replaces the compiled `PostgresSaver` with its own `InMemorySaver`, flushed to `.langgraph_api/.langgraphjs_api.checkpointer.json` on every write. The Postgres `checkpoints` table stays empty in dev.
-- `langgraphjs start` / LangSmith Deployment uses the compiled `PostgresSaver` from `backend/checkpointer.ts` and writes to the `checkpoints` / `checkpoint_blobs` / `checkpoint_writes` tables.
+Full design: `docs/OBSERVABILITY.md`. Gotchas worth keeping in mind:
 
-This split is upstream design — see langchain-ai/langgraph#5790, #5360, #5661. There is no `langgraph.json` field that pins the dev server to Postgres (Python's `checkpointer.path` has not been ported to JS as of `@langchain/langgraph-cli@1.3.1`).
+- `parent_message_id` column is nullable + indexed under
+  `(thread_id, parent_message_id, started_at)`. Backfilled from
+  `meta.parent_message_id` in `bulkInsertSpans`; pre-backfill /
+  interrupt-resume rows keep NULL and intentionally 404 against the
+  per-turn detail endpoint.
+- `FORBIDDEN` regex in `bulkInsertSpans` rejects any row whose
+  `JSON.stringify` matches
+  `api[_-]?key | _password | ^password$ | _secret$ | ^secret$ | baseURL | organization | bearer <token>`.
+  Fail-closed — adding a provider argument that trips the regex stops
+  the write until it's whitelisted.
+- `observability_spans` FK → `threads(id) ON DELETE CASCADE`. Delete
+  the thread row, spans drop with it.
+- Retention: env `OBSERVABILITY_RETENTION_DAYS` (default 30, positive
+  int). Physical delete via
+  `pnpm exec tsx scripts/cleanup-observability.ts`. System cron is
+  the operator's responsibility.
+- `collectRootChains` keys by `run_id` (not `parent_span_id`) to drop
+  the duplicate `streamSubgraphs: true` inner wrapper that shares the
+  outer `meta.run_id` — see [[langgraph-subgraph-run-map-bug]].
 
-Consequences worth knowing:
+## Styling
 
-- `POST /api/threads` calls `langGraphClient.threads.create(...)` to register the new id with the dev server's in-process STORE; in prod the call hits a LangGraph Deployment that knows the id from the compiled `PostgresSaver` directly, so it's effectively a no-op there. Don't remove it without checking dev.
-- `last_message_at` is `now()` written by `touchLastMessageNode` on the background graph (HTTP-dispatched via SDK from `triggerBackgroundAgentNode` after every chat turn), not a derived value from any checkpoint table.
-- `DELETE /api/threads/[id]` removes only the metadata row; the dev JSON file or prod checkpoint tables are cleaned up by the runner's own ops layer (not by us).
-
-### Frontend runtime
-
-`app/assistant.tsx` is a client component. It instantiates the runtime with `useLangGraphRuntime({ stream, create, load })` from `@assistant-ui/react-langgraph` (which wraps `@langchain/langgraph-sdk`'s `Client`). `stream` is built from `unstable_createLangGraphStream`; `apiUrl` is `NEXT_PUBLIC_LANGGRAPH_API_URL` if set, otherwise the same-origin `/api` URL.
-
-`app/api/[..._path]/route.ts` is a node-runtime catch-all (see rule #9 — edge throws on `auth.api.getSession`) that proxies every method (`GET/POST/PUT/PATCH/DELETE/OPTIONS`) to `${LANGGRAPH_API_URL}/${path}` with `x-api-key: LANGCHAIN_API_KEY`, strips hop-by-hop / content-encoding headers, and adds permissive CORS. The body of mutating requests is forwarded as text. The handler is wrapped in `withAuth` (cookie + Authorization are forwarded upstream so LangGraph can identify the calling thread).
-
-`components/assistant-ui/thread.tsx` registers the `ask_location` and crypto picker cards via the toolkit, which mounts them in the tool-call slot of the matching `ToolMessage`. Each card uses `useLangGraphSendCommand` directly to resume the parent's `interrupt()`. See `docs/INTERRUPT.md` for the resume contract.
-
-### Web3 providers
-
-`app/layout.tsx` wraps the assistant tree in `<Web3Providers>` (`app/web3-providers.tsx`), which stacks `@tanstack/react-query` `QueryClientProvider`, `WagmiProvider` (configured by `lib/wagmi.ts`), and RainbowKit's `RainbowKitProvider`. Wallet state is global to the browser; the crypto cards read `address` / `chainId` from wagmi hooks directly — they never receive the wallet through tool args. The trade flow is fully SIMULATED regardless of wallet connectivity: `place_crypto_order` auto-funds Mock Coin on the first trade and synthesizes the order on click. Setting `NEXT_PUBLIC_CRYPTO_REAL_SWAP=true` is required to route through any real DEX path (currently dormant — wagmi hooks live in the React tree, so a server-side router alone can't reach them).
-
-### Observability
-
-`backend/model.ts` exports `chatModel` as `ChatOpenAI.withConfig({ callbacks: [getCapturingHandler()] })`. The handler (`backend/observability/callback-collector.ts`) is a `BaseCallbackHandler` that buffers per-runId spans in a Map (Start hooks create them; End hooks mutate + persist). On every `handleChainEnd` it fires `bulkInsert([span])` against `lib/observability/queries.ts` — the second insert is a no-op via `ON CONFLICT DO NOTHING` so re-flushing an inner span from the outer chain end doesn't double-write.
-
-`bulkInsert` is constructor-injected so the handler stays DB-free and the unit tests run with `vi.fn()`. Wire-up is a one-line `bulkInsert: async (spans) => { await bulkInsertSpans(spans); }` in `getCapturingHandler()`.
-
-Front-end: `<ObservabilityButton>` is icon-only (rule #8 exception) and mounts inside `<AssistantActionBar>` of `components/assistant-ui/thread.tsx` — alongside Copy / Refresh / More on every assistant message. Click opens an `<ObservabilitySheet>` that fetches `GET /api/threads/<threadId>/observability[/parentMessageId]` and renders the waterfall with a retention banner.
-
-The Sheet itself is rendered once at `<ThreadRoot>` (not co-mounted per message — that would pile on dialog backdrops). Per-message buttons talk to the Sheet through `ObservabilitySheetProvider` / `useOpenObservabilitySheet()` from `components/observability/sheet-context.tsx`; the Sheet derives its `threadId` from the sheet-context (set by the button click) and passes it down to the panel as a prop. While at least one in-flight LangGraph run is reported by the API, the Sheet polls every 10s and renders an `<Activity/>` + countdown badge in the header.
-
-The panel (`components/observability/panel.tsx`) receives a **server-transformed** `WireSpanData[]` + a pre-computed `AggregateDTO` + a `stepIdToRawSpanId` map. The panel never touches raw `CapturedSpan` — `transformCapturedToSpanData()` (in `lib/observability/transform.ts`) + `aggregateRoot()` (`lib/observability/aggregate.ts`) run inside the route handler, so wire bytes are minimized and the client doesn't import the collector payload. Click a row → lazy-fetch `GET /api/threads/<id>/observability/<parentMessageId>/spans/<spanId>` for the full payload. Refreshes paint a glassy `<DetailRefreshOverlay>` over the existing card instead of unmounting to a skeleton. LLM-kind leaves render with `meta.ls_model_name` as the row name (`gpt-4o-mini` over `ChatOpenAI`). Hover tooltips use SpanData fields only — no extra fetch.
-
-Subgraph correctness: under `streamSubgraphs: true` the LC inner `CompiledStateGraph` wrapper shares the outer wrapper's `meta.run_id` and `span_id === meta.run_id`. `collectRootChains` keys by `run_id` (not by `parent_span_id`) to drop the duplicate; the outer wrapper wins and the inner one is suppressed. `parent_span_id` is reconstructed from `langgraph_checkpoint_ns` (LC's `parent_run_id` lies inside subgraphs), so nested wrappers render at the right depth. Two main invokes on the same turn (regenerate + follow-up) keep their separate trees because their `run_id`s differ.
-
-Endpoints:
-
-- `GET /api/threads/[id]/observability` — all turns merged
-- `GET /api/threads/[id]/observability/[parentMessageId]` — single-turn filter
-- `GET /api/threads/[id]/observability/[parentMessageId]/spans/[spanId]` — single span full payload; SDK fallback (`langGraphClient.runs.list`) covers bg-agent runs in flight that haven't landed in the DB yet (filtered by `metadata.parent_message_id === parentMessageId` so concurrent runs from a different turn can't impersonate)
-- `DELETE /api/threads/[id]/observability` — wipe the thread's spans
-
-All wrapped in `withAuth` (rule #9). Ownership → 404 (no existence leak, spec FR-008). Responses shaped via `lib/observability/validators.ts` Zod schemas; `SpanData` carries an optional `parentMessageId` extension so the panel can build the per-turn detail URL without re-deriving from the waterfall tree.
-
-DB table `observability_spans` in `lib/observability/schema.ts`, FK to `threads(id) ON DELETE CASCADE` (delete the thread row, spans drop with it — no separate cleanup). The `FORBIDDEN` regex in `bulkInsertSpans` rejects any row whose `JSON.stringify` matches `api[_-]?key | _password | ^password$ | _secret$ | ^secret$ | baseURL | organization | bearer <token>` (FR-009 / SC-003). The regex throws — the API is fail-closed: any new provider kwarg that contains a forbidden token stops the write until it's whitelisted. The `parent_message_id` column (nullable, indexed under `(thread_id, parent_message_id, started_at)`) is the per-turn filter index — `bulkInsertSpans` backfills from `meta.parent_message_id` on read so most rows have it set; interrupt-resume / cold-start / pre-backfill rows keep the column NULL and intentionally 404 against the per-turn detail endpoint.
-
-Retention: env `OBSERVABILITY_RETENTION_DAYS` (default 30, positive int). Physical delete runs via `pnpm exec tsx scripts/cleanup-observability.ts` — system cron is the operator's responsibility (no MVP+scheduling, see `docs/OBSERVABILITY.md` trade-offs).
-
-### Patches
-
-`patches/` is currently empty. `pnpm-workspace.yaml` retains the `patchedDependencies:` header as a placeholder — when you need to patch a package, add the entry there and drop the `.patch` file under `patches/`. Re-check on every package bump; drop the entry + file when upstream ships the fix.
-
-Previously patched (no longer needed — upstream caught up):
-
-- `@assistant-ui/core@0.2.18` — guards `part.text?.trim()` to tolerate missing text on `text`/`reasoning` parts.
-- `@assistant-ui/react-langgraph@0.14.9` — surfaces `__interrupt__` and message updates from subgraph events so the toolkit can render the matching tool-call card.
-
-### Styling
-
-Tailwind v4 via `@tailwindcss/postcss` (PostCSS plugin only, no `tailwind.config.js`). `app/globals.css` is the stylesheet entry. `cn()` from `lib/utils.ts` is the only util. Path alias `@/*` → repo root (see `tsconfig.json`).
+Tailwind v4 via `@tailwindcss/postcss` (no `tailwind.config.js`).
+`app/globals.css` is the stylesheet entry. `cn()` from `lib/utils.ts`
+is the only util. Path alias `@/*` → repo root (`tsconfig.json`).
 
 ## Engineering rules
 
-These are non-negotiable. They apply to every change.
+Non-negotiable. Every change.
 
 ### 1. API documentation must stay in sync
 
-Every HTTP endpoint under `app/api/` is documented in `docs/APIS.md`. **Any change to a route — request shape, response shape, status codes, semantics — must update the doc in the same commit.** The doc is the contract for the frontend, future contributors, and any external integrators. A change that drifts from the doc is a bug.
+Every route under `app/api/` is documented in `docs/APIS.md`. **Any
+change — request shape, response shape, status codes, semantics —
+updates the doc in the same commit.** Drift is a bug.
 
 When adding a new endpoint:
 
-1. Add the route handler.
-2. Add or update the matching Zod validator (in `lib/<module>/validators.ts`).
-3. Add tests in `tests/api/`.
-4. **Add a section to `docs/APIS.md`** before committing.
+1. Route handler.
+2. Zod validator in `lib/<module>/validators.ts`.
+3. Tests in `tests/api/`.
+4. **Section in `docs/APIS.md` before committing.**
 
 ### 2. TDD is mandatory for new code
 
 For every new function, route, or schema:
 
-1. Write the failing test first (`pnpm test` → RED).
-2. Write the minimum implementation to pass (`pnpm test` → GREEN).
+1. Failing test first (`pnpm test` → RED).
+2. Minimum impl to pass (GREEN).
 3. Refactor with the test still green.
 
-Skip TDD only when the code is purely declarative (type-only changes, config files, prose docs). Any code with logic — including pure validation logic, queries, and route handlers — gets tests first.
+Skip TDD only for declarative changes (types, config, prose).
+Coverage:
 
-Coverage targets:
-
-- `lib/<module>/queries.ts` and `validators.ts`: ≥ 90%.
-- `app/api/**/route.ts`: every status code path covered, including 400 / 404.
+- `lib/<module>/queries.ts` + `validators.ts`: ≥ 90%.
+- `app/api/**/route.ts`: every status code path covered, including
+  400/404.
 
 ### 3. Best practices over middle-ground solutions
 
-When investigating how to solve a problem, **find the canonical, community-standard approach first**. No "good enough for now" compromises that we'll have to redo.
+Find the canonical, community-standard approach first. No "good
+enough for now" we'll redo. Examples:
 
-Examples:
+- env loading: `@next/env`, not hand-rolled `dotenv.config({ path })`.
+- ORM migrations: `drizzle-kit`, not a custom script.
+- thread list: `RemoteThreadListAdapter` from `@assistant-ui/react`.
 
-- env loading: use `@next/env`, not a hand-rolled `dotenv.config({ path })` call.
-- ORM migrations: use `drizzle-kit`, not a custom script that scans `migrations/`.
-- thread list adapter: use `RemoteThreadListAdapter` from `@assistant-ui/react`, not a parallel implementation.
-
-If the canonical approach has friction (e.g. setup overhead), surface the trade-off explicitly and let the user decide — don't quietly substitute a workaround.
+If the canonical has friction, surface the trade-off and let the user
+decide.
 
 ### 4. Frontend UI changes must be visually verified
 
-Pure code edits to React components, Tailwind classes, layout primitives, or anything that affects what the user sees in the browser **must be visually verified before claiming done**. "Looks right" is not a substitute for running it.
+Pure code edits to React, Tailwind, layout — anything visible —
+**must be visually verified before claiming done**. "Looks right" is
+not a substitute for running it.
 
-Acceptable verification methods, in order of preference:
+In order of preference:
 
-1. **Chrome DevTools MCP** (`mcp__chrome-devtools__*`) — load the page, take a screenshot, compare against the reference. Use this for any visible change in `app/`, `components/`, or styling.
-2. **Playwright** — for repeatable end-to-end flows (login, send message, switch thread, etc.). Add a test under `tests/e2e/` and run it.
-3. **Manual verification by the user** — only when neither of the above is feasible; the user must explicitly confirm the change matches their expectation.
+1. **Chrome DevTools MCP** — load the page, screenshot, compare.
+2. **Playwright** — for repeatable flows. Add a test under
+   `tests/e2e/`.
+3. **User manual confirmation** — only when neither is feasible;
+   user explicitly confirms.
 
-For backend / database / pure-logic changes, `pnpm test` plus type-checking is enough — no browser required.
+Backend / DB / pure-logic: `pnpm test` + typecheck is enough.
 
 ### 5. Comments are short and explain why, not what
 
-Code comments should be sparse, short, and reserved for things that are non-obvious or easy to get wrong. Default to no comment.
+Sparse, short. Default to no comment.
 
-Keep a comment only when it records:
+Keep only when it records:
 
-- A non-obvious design constraint or invariant the code alone doesn't show (e.g. `// useLangGraphRuntime keeps _mainThreadId on the placeholder until initialize() resolves — see #2577`).
-- A workaround for a third-party API quirk the next reader would otherwise re-discover (e.g. `// switchToThread is typed void but returns a Promise at runtime`).
-- A subtle race condition or ordering dependency (e.g. `// effect must run before the write effect on first commit`).
-- The single sentence of "why" behind a non-trivial algorithm, when the algorithm itself is already short.
+- Non-obvious design constraint or invariant.
+- Workaround for a third-party API quirk.
+- Subtle race condition or ordering dependency.
+- Single sentence of "why" behind a non-trivial algorithm.
 
-Delete a comment that:
-
-- Restates what the code does (`// loop over items` above `for (const item of items)`).
-- Narrates a sequence the reader can follow (`// fetch user, then fetch posts, then merge`).
-- References "the official example", "the migration plan", or any process-of-writing artifact — code outlives the process that produced it.
-- Documents a function name that's already self-explanatory (`Logo`, `MobileSidebar`).
-
-When in doubt, leave it out. A diff that's 80% code and 20% comment is fine; 50/50 is a code smell.
+Delete comments that restate code, narrate a sequence, reference the
+writing process, or document a self-explanatory function name. When
+in doubt, leave it out.
 
 ### 6. Tool-call UI components stay flush with their container
 
-Components rendered inside a tool-call part (`components/tool-ui/**`) live inside `ToolFallbackContent`, which already provides `ps-6 pt-1 pb-2` padding and no horizontal margin. Inner cards must not add their own horizontal margin or drop shadow — they would compete with the tool-call chrome and produce a double-bordered look.
+`ToolFallbackContent` provides `ps-6 pt-1 pb-2` with no horizontal
+margin. Inner cards (`components/tool-ui/**`):
 
-Rules for tool-call children:
+- No `mx-*`.
+- No `shadow-*`.
+- Vertical `my-*` is fine for stacking.
+- Border + rounded corners are OK for grouping.
 
-- No `mx-*` (the container's `ps-6` is the only left margin; do not add a right margin either).
-- No `shadow-*` (the container has no shadow; neither should the child).
-- Vertical `my-*` is fine when the tool call stacks next to other parts.
-- Border + rounded corners are still allowed for visual grouping inside the tool call.
+### 7. Never kill or restart a running dev server
 
-### 7. Never kill or restart a dev server that's already running
+Before `pnpm dev`, check the port (`lsof -i :3000` for Next.js,
+`:2024` for LangGraph). If bound, that's the developer's active
+environment — **do not kill it, do not restart it**. Reuse via
+Chrome DevTools MCP for visual verification.
 
-Before running `pnpm dev` (or starting any dev server), check whether the relevant port is already bound (`lsof -i :3000` for Next.js, `:2024` for LangGraph). If it is, that is the developer's active dev environment — **do not kill it, do not restart it**. Reuse it via Chrome DevTools MCP for any visual verification.
-
-Killing a running dev server loses unsaved browser state, breaks open browser tabs, and erases hot-reload history. If the dev server appears stale or stuck, surface the observation and ask the developer how they want to proceed; do not act unilaterally.
+If stale or stuck, surface the observation and ask. Don't act
+unilaterally.
 
 ### 8. Tool-UI buttons are text-only — no icons
 
-Buttons inside `components/tool-ui/**` (and any new card added under that directory) render the label as the action. Do not put a Lucide icon (or any other icon) as a prefix to the label, even with `gap-2` to space them out. No `<MapPinIcon/>`, `<WalletIcon/>`, etc. inside `<Button>` children.
+`<Button>` children inside `components/tool-ui/**` render the label.
+No lucide icon prefix, even with `gap-2`. Icon-only controls
+(`size="icon"`) are fine when there's no label to attach (e.g.
+search-submit magnifier).
 
-Icon-only controls (`size="icon"` or equivalent) are fine when there is no label to attach the icon to (e.g. the search-submit magnifier in `ask-location-card`). Decorative icons elsewhere in the card — header avatars, status row glyphs, inline spinners — are not affected by this rule.
+### 9. Every `app/api/**/route.ts` is wrapped in `withAuth`
 
-### 9. Every `app/api/**/route.ts` handler is wrapped in `withAuth`
+From `lib/auth/with-auth.ts`. No anonymous traffic. Exceptions: Better
+Auth catch-all `app/api/auth/[...all]/route.ts` (login endpoint
+itself) and `OPTIONS` preflight in proxy routes.
 
-**Rule.** Every HTTP route under `app/api/**/route.ts` must wrap its handler in `withAuth` from `lib/auth/with-auth.ts`. No anonymous traffic. The only exceptions are the Better Auth catch-all `app/api/auth/[...all]/route.ts` (it's the login endpoint itself) and the `OPTIONS` preflight in any proxy route (preflight must succeed for the browser to even attempt the authed request).
-
-Why: prior builds left the LangGraph + Alchemy catch-all proxies unauthenticated. Any website's JS could create / list / delete threads or burn the Alchemy compute-unit quota. CORS `*` made it a public RPC.
-
-#### How to wrap
+Why: prior builds left the LangGraph + Alchemy catch-all proxies
+unauthenticated — any site could create/list/delete threads or burn
+the Alchemy CU quota.
 
 ```ts
 import { withAuth } from "@/lib/auth/with-auth";
-
-// Static params, or no params:
-export const GET = withAuth((_req, { user }) => NextResponse.json({ ... }));
-
-// Dynamic params (Next.js auto-unwraps the Promise):
+export const GET = withAuth(async (_req, { user }) => NextResponse.json({ ... }));
 export const GET = withAuth<{ id: string }>(async (req, { user, params }) => { ... });
 ```
 
-#### Runtime: default `nodejs` (don't reach for `edge`)
+Runtime: leave default `nodejs`. `withAuth` reads the session row
+from Postgres through `drizzle/postgres-js`, which needs Node `net`.
+Edge throws `Failed to get session`.
 
-`withAuth` reads the session row from Postgres through `drizzle/postgres-js`, which needs the Node `net` module. On edge it throws `Failed to get session` and the user sees 500. Leave the route's `runtime` unset (Next.js defaults to `nodejs`) or set it explicitly to `nodejs`.
-
-The Alchemy JSON-RPC and LangGraph catch-all proxies originally opted into `runtime = "edge"` for low cold-start. They both lost that on this audit — they are now `nodejs`. The trade-off is real: every request to those routes now spins up a Node handler instead of a V8 isolate. Don't try to claw edge back by calling `auth.api.getSession` directly or by reading session from a header — those paths skip the HOC, drift from the rest of the repo, and break the "every route goes through withAuth" guarantee.
-
-#### Test mock pattern
-
-Every test file that calls a route handler must mock `next/headers` and `@/lib/auth/config` and default `getSession` to a logged-in user in `beforeEach`; the 401 path is covered by an explicit `getSession.mockResolvedValueOnce(null)` in the dedicated auth tests:
-
-```ts
-const { getSession } = vi.hoisted(() => ({ getSession: vi.fn() }));
-vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
-vi.mock("@/lib/auth/config", () => ({ auth: { api: { getSession } } }));
-
-beforeEach(() => {
-  getSession.mockReset();
-  getSession.mockResolvedValue({
-    user: { id: "u1", email: "u1@example.com" },
-    session: { id: "s1", userId: "u1" },
-  });
-});
-```
-
-If a new route handler reads `process.env` at call time, also set / restore the env in `beforeEach` / `afterEach` — see `tests/api/alchemy/status.test.ts` for the pattern.
-
-Rationale: the tool-ui cards are short-lived surfaces with one or two clear actions. Icons + text compete for attention and bloat the layout without adding signal. Text-only buttons stay scannable and match the rest of the assistant-ui primitives.
-
-### 11. Use `components/tool-ui/primitives/` for card chrome — don't inline it
-
-**Rule.** Every tool-ui card shares the same chrome: a rounded border
-shell, an icon-circle header, and (sometimes) a destructive or muted
-banner. Re-typing these in a new card is a bug factory — the same
-overflow / spacing / icon-size fix has to be applied in N places.
-
-The four primitives under `components/tool-ui/primitives/`:
-
-- `CardShell` — outer wrapper + inner flex container
-- `CardHeader` — icon circle + title + subtitle (+ optional trailing)
-- `ErrorBanner` — destructive surface for tool failures (supports a
-  `monospace` flag for stack-trace content)
-- `SuccessBanner` — neutral muted surface for resolved states
-
-When you add a tool-ui card, start from `<CardShell>` and `<CardHeader>`.
-If you need a one-off error or success surface, reach for `ErrorBanner` /
-`SuccessBanner` first — only inline a new variant when none of them fit.
-
-Two non-obvious details baked into the primitives (so they don't get
-re-broken by a "quick inline" later):
-
-- The error `<span>` is `min-w-0 flex-1` plus `break-all` in monospace
-  mode. Without those, long stack-trace lines (no spaces, e.g.
-  `file:///home/app/$deno$eval.mts:1:7`) overflow the card — the
-  card's `overflow-hidden` clips, but the visual is still wrong.
-- The icon inside the circle is a flat lucide icon at `size-4`, not a
-  `CheckCircle2Icon` / `AlertCircleIcon` (the circle is already
-  drawn by the wrapper; a circle inside a circle looks small).
-
-If you add a new primitive, drop it next to the existing four and
-add a row to the "Shared UI primitives" section in `docs/TOOLS.md`.
+Test mock: mock `next/headers` + `@/lib/auth/config`, default
+`getSession` to a logged-in user in `beforeEach`; 401 path uses
+`getSession.mockResolvedValueOnce(null)`. See
+`tests/api/alchemy/status.test.ts` for the env pattern.
 
 ### 10. Tools that need a third-party key MUST be lazy-registered
 
-**Rule.** A tool that calls a third-party API which requires a server-side key (e.g. `search_web` → `JINA_API_KEYS`, `get_NFT_holdings` → `ALCHEMY_API_KEY`, `execute_code` → `DENO_DEPLOY_TOKEN`) must:
+A tool that calls a third-party API with a server-side key
+(`search_web` → `JINA_API_KEYS`, `get_NFT_holdings` → `ALCHEMY_API_KEY`,
+`execute_code` → `DENO_DEPLOY_TOKEN`) must:
 
-1. Be defined as `StructuredTool | null`, gated on `process.env.<KEY>` at module load.
-2. Be spread into `ALL_TOOLS` (and any group array it belongs to) with a `...(tool ? [tool] : [])` so a missing key drops it from the agent's tool list — the model never sees a tool that would 401 on every call.
+1. Be `StructuredTool | null`, gated on `process.env.<KEY>` at module
+   load.
+2. Be spread into `ALL_TOOLS` with `...(tool ? [tool] : [])` —
+   missing key drops it; model never sees a tool that would 401 on
+   every call.
 3. Be documented in `docs/TOOLS.md` under "Tool ↔ API key".
 
 ```ts
-// in the tool file
 export const getNftHoldingsTool: StructuredTool | null = process.env.ALCHEMY_API_KEY
   ? tool(impl, { name: "get_NFT_holdings", ... })
   : null;
-
-// in backend/tool/index.ts
-export const CRYPTO_TOOLS = [
-  ...,
-  ...(getNftHoldingsTool ? [getNftHoldingsTool] : []),
-];
 ```
 
-`fetch_url` is the one exception — r.jina.ai accepts unauthenticated requests on the free tier, so it's always registered. `lib/jina.ts` falls through to a no-Auth `fetch` when the pool is empty.
+`fetch_url` is the exception — r.jina.ai accepts unauthenticated
+requests on the free tier, so `lib/jina.ts` falls through to no-Auth
+`fetch` when the pool is empty.
 
-Why: if a tool is registered without a key, the model invokes it, the upstream returns 401, and the user sees a runtime error mid-conversation. Conditional registration is one line of code and converts that failure mode into a graceful degradation — the model just doesn't know the tool exists and falls back to prose.
+When adding a key-needing tool: update `.env.example` + the
+"Tool ↔ API key" table in `docs/TOOLS.md`.
 
-When you add a key-needing tool, also update `.env.example` (with the sign-up URL) and the "Tool ↔ API key" table in `docs/TOOLS.md`.
+### 11. Use `components/tool-ui/primitives/` for card chrome
+
+Three primitives today: `CardShell` + `CardHeader` (`card.tsx`),
+`ErrorBanner` + `SuccessBanner` (`banners.tsx`), `JsonBlock`
+(`json-block.tsx`). Start new cards from `<CardShell>` + `<CardHeader>`.
+Inline a one-off only when none of these fit.
+
+When you add a primitive, drop it next to the existing three and add
+a row to "Shared UI primitives" in `docs/TOOLS.md`.
+
+Two non-obvious details baked in:
+
+- Error `<span>` is `min-w-0 flex-1 break-all` in monospace mode —
+  long stack-trace lines (e.g.
+  `file:///…/$deno$eval.mts:1:7`) overflow without it.
+- Icon inside the circle is a flat lucide at `size-4`, not
+  `CheckCircle2Icon` / `AlertCircleIcon` (the circle is already drawn
+  by the wrapper; a circle inside a circle looks small).
 
 ## Things to know before editing
 
-- The graph id `agent` is referenced in three places: `langgraph.json` (`graphs.agent`), `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` in `.env.example`, and the `unstable_createLangGraphStream({ assistantId })` call. Keep them aligned.
-- The proxy used to hardcode `runtime = "edge"`; that was changed to `nodejs` so `withAuth` can hit Postgres. If you need edge back, route the session through a header (set in middleware) — see rule #9 for why.
-- `modelKwargs.reasoning_split` is provider-specific. If you switch back to stock OpenAI, remove it (or guard it) — OpenAI ignores unknown kwargs but it'll be a lie in the source.
-- `components.json` declares a `@assistant-ui` registry at `https://r.assistant-ui.com/{name}.json` for `shadcn`-style component adds.
-
-<!-- SPECKIT START -->
-
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
-at `specs/002-observability-panel/plan.md` (and `spec.md`, `research.md`,
-`data-model.md`, `quickstart.md`, `contracts/`).
-
-<!-- SPECKIT END -->
+- Graph id `agent` is referenced in three places: `langgraph.json`
+  (`graphs.agent`), `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` in
+  `.env.example`, and `unstable_createLangGraphStream({ assistantId })`.
+  Keep aligned.
+- The proxy used to hardcode `runtime = "edge"`; changed to `nodejs`
+  so `withAuth` can hit Postgres. If you need edge back, route session
+  through a header (set in middleware) — see rule #9 for why.
+- `components.json` declares a `@assistant-ui` registry at
+  `https://r.assistant-ui.com/{name}.json` for `shadcn`-style
+  component adds.
+- `pnpm-workspace.yaml` keeps a `patchedDependencies:` header as a
+  placeholder. When you patch a package, add the entry there and drop
+  the `.patch` under `patches/`. Re-check on every bump; drop when
+  upstream ships the fix. Previously patched (upstream caught up):
+  `@assistant-ui/core@0.2.18`, `@assistant-ui/react-langgraph@0.14.9`.
+- On `feat/*` branches, `git fetch origin main` and merge if main
+  moved before committing — see [[feature-branch-tracks-main]].

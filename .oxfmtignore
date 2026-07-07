@@ -1,0 +1,16 @@
+.next
+.turbo
+.vercel
+.svelte-kit
+dist
+build
+out
+coverage
+node_modules
+.pnpm-store
+.pnpm-store/**
+.pnpm-debug.log*
+pnpm-lock.yaml
+.cspell.json
+.langgraph_api
+*.generated.*

@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+# Per-ref concurrency: re-pushing a PR / branch cancels the previous
+# in-flight run (same branch, same workflow). Different refs run in
+# parallel — `dev` push doesn't cancel `main` push.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (oxlint + oxfmt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+
+  typecheck:
+    name: Typecheck (tsc --noEmit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  build:
+    name: Build (next build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # `next build` statically evaluates App Router routes; Better Auth
+    # runs DB migrations on first import, which requires a reachable
+    # Postgres. The build-time DB can be empty — migrations create the
+    # schema, no test data is needed.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: langgraph_app_build
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d langgraph_app_build"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/langgraph_app_build
+      BETTER_AUTH_SECRET: build_secret_aabbccddeeff00112233445566778899
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: agent
+      # RainbowKit requires a projectId at module load; placeholder is
+      # fine for the build (only the presence is checked).
+      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: build-placeholder-project-id
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+  test:
+    name: Test (vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: langgraph_app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d langgraph_app_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/langgraph_app_test
+      JINA_API_KEYS: jina_test_key_1,jina_test_key_2
+      BETTER_AUTH_SECRET: test_secret_aabbccddeeff00112233445566778899
+      BETTER_AUTH_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      # `tests/setup.ts` applies migrations via `psql` — install the
+      # client. ubuntu-latest doesn't ship with it.
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test

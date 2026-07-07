@@ -1,0 +1,241 @@
+name: CD
+
+# Tag strategy:
+#   main        → `latest` (stable channel)
+#   dev         → `beta-<sha>` (beta channel)
+#   PR          → build only, no push (sanity check)
+#   manual      → custom tag (workflow_dispatch → image_tag input)
+#
+# Same image, different tags. `docker pull ghcr.io/<owner>/langgraph-app:beta`
+# gives you the latest dev build; `:latest` gives you main.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Override image tag (default: branch-driven)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  # PR builds are pure Docker sanity checks (no push, no release) —
+  # cancel freely on new push so we don't burn runner minutes on stale
+  # work.
+  #
+  # Push events (main/dev) involve image push + GitHub Release
+  # creation; cancelling mid-flight leaves a half-published image or a
+  # half-created release. Group by `event_name` so PR and push runs
+  # don't share a queue — push keeps `cancel-in-progress: false`,
+  # PR switches it to `true` via the expression below.
+  group: cd-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  resolve:
+    name: Resolve image tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      channel: ${{ steps.channel.outputs.channel }}
+      should_push: ${{ steps.push.outputs.should_push }}
+      # Lowercased `github.repository_owner` — buildx rejects uppercase in
+      # the repo path (`FireTable`), and GitHub Actions has no `lower()`
+      # expression function, so we shell out.
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - id: tag
+        run: |
+          sha="${GITHUB_SHA::7}"
+          branch="${GITHUB_REF_NAME}"
+          override="${{ inputs.image_tag }}"
+
+          # Docker tag rules: lowercase, no slashes, [a-zA-Z0-9_.-], ≤ 128 chars.
+          # PR refs look like "8/merge" or "123/head" — slashes break the tag.
+          # workflow_dispatch branch is always clean, but sanitize anyway.
+          sanitize() {
+            echo "$1" | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -c 'a-z0-9._-' '-' | sed 's/^-*//;s/-*$//' | cut -c1-128
+          }
+
+          if [ -n "$override" ]; then
+            tag=$(sanitize "$override")
+          elif [ "$branch" = "main" ]; then
+            tag="latest"
+          elif [ "$branch" = "dev" ]; then
+            tag="beta-${sha}"
+          else
+            tag="$(sanitize "$branch")-${sha}"
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - id: channel
+        run: |
+          branch="${GITHUB_REF_NAME}"
+          if [ "$branch" = "main" ]; then
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+          elif [ "$branch" = "dev" ]; then
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=branch" >> "$GITHUB_OUTPUT"
+          fi
+      - id: push
+        run: echo "should_push=${{ github.event_name != 'pull_request' }}" >> "$GITHUB_OUTPUT"
+      - id: image
+        run: |
+          owner=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${owner}/langgraph-app" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build + push image
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # `next build` runs Better Auth migrations against the DB at module
+    # load. The buildx builder is itself a container (docker-container
+    # driver) running on the runner — `network: host` on the build step
+    # only shares the builder's network, not the runner's. So we start a
+    # dedicated Postgres container on the runner and put the builder on
+    # the host network via `driver-opts: network=host`; then the build's
+    # `localhost:5432` reaches that container.
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/langgraph_app_build
+      BETTER_AUTH_SECRET: build_secret_aabbccddeeff00112233445566778899
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start build-time Postgres
+        run: |
+          docker run -d --name build-pg --rm \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=langgraph_app_build \
+            -p 127.0.0.1:5432:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            if docker exec build-pg pg_isready -U postgres -d langgraph_app_build; then break; fi
+            sleep 1
+          done
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+        with:
+          # Builder shares the runner's network namespace — the build's
+          # `localhost:5432` then reaches the `build-pg` container above.
+          driver-opts: network=host
+
+      # GHCR login only when we're actually pushing. PRs (especially
+      # from forks) don't have access to GITHUB_TOKEN secrets.
+      - uses: docker/login-action@v3
+        if: needs.resolve.outputs.should_push == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ needs.resolve.outputs.should_push == 'true' }}
+          # Pass the job-level DATABASE_URL through as a build-arg. The
+          # Dockerfile's default is `langgraph_app`, but the build-time
+          # Postgres above creates `langgraph_app_build` — without this
+          # override, `next build` connects to a DB that doesn't exist.
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            DATABASE_URL=${{ env.DATABASE_URL }}
+          # `lower()` because Docker's tag validator rejects uppercase in
+          # the repo path (e.g. `FireTable`). GHCR is case-insensitive at
+          # the registry, but the buildx parser is strict.
+          tags: ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.resolve.outputs.tag }}
+            org.opencontainers.image.title=langgraph-app
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: ${{ needs.resolve.outputs.should_push == 'true' }}
+
+      - name: Summary
+        if: needs.resolve.outputs.should_push == 'true'
+        run: |
+          {
+            echo "### Image published"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| channel | ${{ needs.resolve.outputs.channel }} |"
+            echo "| tag | \`${{ needs.resolve.outputs.tag }}\` |"
+            echo "| image | \`${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }}\` |"
+            echo "| source | ${{ github.server_url }}/${{ github.repository }}@${{ github.sha }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: GitHub Release + tarball asset
+    needs: [resolve, build]
+    # Stable releases overwrite a single "Latest" release (tarball kept
+    # current). Beta releases are unique per short SHA — every dev push
+    # gets its own immutable release. Other branches / PRs skip.
+    if: |
+      needs.resolve.outputs.should_push == 'true' &&
+      (needs.resolve.outputs.channel == 'stable' || needs.resolve.outputs.channel == 'beta')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull built image
+        run: docker pull ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }}
+
+      - name: Save image tarball
+        run: |
+          mkdir -p release-assets
+          docker save ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }} \
+            | gzip > release-assets/langgraph-app-${{ needs.resolve.outputs.tag }}.tar.gz
+          ls -lh release-assets/
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          name: ${{ needs.resolve.outputs.channel == 'stable' && 'Latest' || needs.resolve.outputs.tag }}
+          prerelease: ${{ needs.resolve.outputs.channel == 'beta' }}
+          generate_release_notes: true
+          files: release-assets/langgraph-app-${{ needs.resolve.outputs.tag }}.tar.gz
+          body: |
+            ## ${{ needs.resolve.outputs.tag }}
+
+            - Channel: \`${{ needs.resolve.outputs.channel }}\`
+            - Commit: \`${{ github.sha }}\`
+            - Source: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+
+            ### Pull from GHCR
+            ```bash
+            docker pull ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }}
+            ```
+
+            ### Or load the attached tarball (no GHCR auth needed)
+            ```bash
+            curl -L -o image.tar.gz <this-release-asset-url>
+            docker load < image.tar.gz
+            docker run --rm -p 3000:3000 -p 2024:2024 \
+              -e OPENAI_API_KEY=... \
+              -e BETTER_AUTH_SECRET=... \
+              langgraph-app:${{ needs.resolve.outputs.tag }}
+            ```
