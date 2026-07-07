@@ -1,0 +1,62 @@
+name: Feature Request
+description: Propose a new feature or a non-trivial change.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Frame the request as a problem first. "Add X" is hard to act on;
+        "Users hit Y, so we need X" is easy.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Who is affected, how often, and what's the cost of leaving it unfixed?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Sketch the change. UI mocks, data-flow notes, links to docs — all welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you look at? Why is this approach better?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: Rough size. Calibrates how much design work is needed before code.
+      options:
+        - Small (one file, < ~100 lines)
+        - Medium (cross-module, new dep maybe)
+        - Large (architecture / new service)
+
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk
+      description: Best guess. What could go wrong?
+      options:
+        - Low — additive, behind a flag
+        - Medium — touches shared code, needs careful migration
+        - High — schema migration / breaking API change / data model
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Self-checks
+      options:
+        - label: I checked the docs (`docs/`) and didn't find this already covered.
+          required: true
+        - label: I checked existing issues / PRs and didn't find a duplicate.
+          required: true

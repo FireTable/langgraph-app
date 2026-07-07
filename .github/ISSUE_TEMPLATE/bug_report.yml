@@ -1,0 +1,78 @@
+name: Bug Report
+description: Report something broken in the app, backend, or build.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. The more context you give, the faster we can fix it.
+        Please redact any secrets from logs / env values before pasting.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear, one-paragraph description of the bug.
+      placeholder: "When I click X, the page shows Y instead of Z..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Numbered list. Include any URLs, threads, env values (redacted) involved.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Best guess. We'll re-classify during triage.
+      options:
+        - S0 — data loss / security / auth bypass
+        - S1 — feature broken, no workaround
+        - S2 — feature broken, workaround exists
+        - S3 — degraded / cosmetic
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, browser, branch / commit, .env keys (NOT values). Anything else that helps reproduce.
+      placeholder: "macOS 15.4, Chrome 138, commit 3168471, OPENAI_BASE_URL set, ALCHEMY_API_KEY set"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / screenshots
+      description: Paste server logs, browser console, or attach screenshots. Redact secrets.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Self-checks
+      options:
+        - label: I reproduced on `main` (or noted the branch I tested).
+          required: false
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: No secrets in this report.
+          required: true
