@@ -73,6 +73,10 @@ cat > .env <<EOF
 # Image
 IMAGE=ghcr.io/<owner>/langgraph-app:latest
 
+# Public domain Caddy should serve. Becomes the `{$CADDY_DOMAIN}` host
+# in the Caddyfile below; Caddy substitutes it at startup.
+CADDY_DOMAIN=chat.example.com
+
 # Postgres (used by the postgres service below, and by the app)
 POSTGRES_USER=langgraph
 POSTGRES_PASSWORD=$(openssl rand -hex 24)
@@ -170,6 +174,26 @@ services:
       ALCHEMY_API_KEY: ${ALCHEMY_API_KEY:-}
       DENO_DEPLOY_TOKEN: ${DENO_DEPLOY_TOKEN:-}
       DENO_DEPLOY_ORG: ${DENO_DEPLOY_ORG:-}
+      # OAuth (optional — empty = sign-in button hidden)
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # Resend email
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
+      ALCHEMY_DISABLED_NETWORKS: ${ALCHEMY_DISABLED_NETWORKS:-}
+      NEXT_PUBLIC_CRYPTO_REAL_SWAP: ${NEXT_PUBLIC_CRYPTO_REAL_SWAP:-}
+      NEXT_PUBLIC_LANGGRAPH_API_URL: ${NEXT_PUBLIC_LANGGRAPH_API_URL:-}
+      # LangSmith tracing
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-}
+      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
+      # Observability + memory tuning
+      OBSERVABILITY_RETENTION_DAYS: ${OBSERVABILITY_RETENTION_DAYS:-30}
+      MEMORY_THREAD_SUMMARY_KEEP_RECENT: ${MEMORY_THREAD_SUMMARY_KEEP_RECENT:-10}
+      MEMORY_PROFILE_MAX_BYTES: ${MEMORY_PROFILE_MAX_BYTES:-8192}
     depends_on:
       postgres:
         condition: service_healthy
@@ -180,6 +204,12 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # CADDY_DOMAIN is substituted into the Caddyfile's `{$CADDY_DOMAIN}`
+    # placeholder at Caddy's startup. Required — compose errors out if
+    # it's missing, which is what you want (a missing domain = silently
+    # broken proxy otherwise).
+    environment:
+      CADDY_DOMAIN: ${CADDY_DOMAIN:?set CADDY_DOMAIN in .env}
     ports:
       - "80:80"
       - "443:443"
@@ -199,9 +229,10 @@ volumes:
 And `Caddyfile` (same directory as `docker-compose.yml`):
 
 ```caddyfile
-# Replace with your domain. Caddy provisions and renews the Let's Encrypt
-# cert automatically on first request.
-chat.example.com {
+# Domain comes from $CADDY_DOMAIN (set in .env, passed to this container
+# via compose). Caddy substitutes {$VAR} placeholders at startup; missing
+# the env var makes Caddy exit with a clear error.
+{$CADDY_DOMAIN} {
     reverse_proxy app:3000
 }
 ```
