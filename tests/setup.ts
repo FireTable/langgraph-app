@@ -17,6 +17,23 @@ export default async function setup() {
   // under test stays unchanged.
   process.env.DATABASE_URL = testUrl;
 
+  // Ensure the target database exists. CI's POSTGRES_DB env creates the
+  // default db on the service container; the explicit `-d langgraph_app_test`
+  // db needs to be created on demand when the env didn't propagate (e.g.
+  // local `act` runs).
+  const dbName = new URL(testUrl).pathname.replace(/^\//, "");
+  const serverUrl = testUrl.replace(/\/[^/?]+(\?.*)?$/, "/postgres$1");
+  try {
+    execFileSync("psql", [serverUrl, "-c", `CREATE DATABASE "${dbName}"`], {
+      stdio: "pipe",
+    });
+    console.log(`  → created database ${dbName}`);
+  } catch (e) {
+    // Already exists is fine; anything else rethrow so vitest surfaces it.
+    const msg = (e as Error).message ?? "";
+    if (!/already exists/i.test(msg)) throw e;
+  }
+
   const dir = join(process.cwd(), "db", "migrations");
   const sqlFiles = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))

@@ -24,8 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -40,8 +38,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -64,23 +60,22 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: langgraph_app_build
-        ports:
-          - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -U postgres -d langgraph_app_build"
           --health-interval 5s
           --health-timeout 3s
-          --health-retries 10
+          --health-retries 30
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/langgraph_app_build
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
       BETTER_AUTH_SECRET: build_secret_aabbccddeeff00112233445566778899
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: agent
+      # RainbowKit requires a projectId at module load; placeholder is
+      # fine for the build (only the presence is checked).
+      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: build-placeholder-project-id
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -99,13 +94,11 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: langgraph_app_test
-        ports:
-          - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -U postgres -d langgraph_app_test"
           --health-interval 5s
           --health-timeout 3s
-          --health-retries 10
+          --health-retries 30
     env:
       DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/langgraph_app_test
       JINA_API_KEYS: jina_test_key_1,jina_test_key_2
@@ -114,11 +107,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: pnpm
+      # `tests/setup.ts` applies migrations via `psql` — install the
+      # client. ubuntu-latest doesn't ship with it.
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
