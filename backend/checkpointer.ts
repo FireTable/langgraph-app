@@ -1,14 +1,15 @@
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 
-// Postgres checkpointer for thread persistence. `setup()` is idempotent —
-// the first call creates the checkpoints / checkpoint_blobs /
-// checkpoint_writes tables; subsequent calls are no-ops. Pass
-// `configurable.thread_id` when invoking the graph to persist and resume
-// conversations.
+// Postgres checkpointer for thread persistence. Pass `configurable.thread_id`
+// when invoking the graph to persist and resume conversations.
+//
+// Tables are created by `pnpm db:migrate` (scripts/db-migrate.ts →
+// `checkpointer.setup()`). Never call setup() here — see backend/store.ts
+// for the same rationale.
 const databaseUrl = process.env.DATABASE_URL;
-export const checkpointer = databaseUrl ? PostgresSaver.fromConnString(databaseUrl) : undefined;
-
-if (checkpointer) await checkpointer.setup();
+export const checkpointer: PostgresSaver | undefined = databaseUrl
+  ? PostgresSaver.fromConnString(databaseUrl)
+  : undefined;
 
 // ponytail: per-invocation is the right default for our chat graph —
 // subAgents (weatherAgent / chatAgent / cryptoAgent / codeAgent) run

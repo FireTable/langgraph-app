@@ -1,3 +1,5 @@
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 import { loadEnvConfig } from "@next/env";
 import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
@@ -8,7 +10,7 @@ import { join } from "node:path";
 loadEnvConfig(process.cwd());
 
 // Vitest globalSetup: runs once before all tests in a fresh process.
-// Apply migrations directly to the test database using psql.
+// Apply migrations to the test database before tests run.
 export default async function setup() {
   const testUrl = process.env.DATABASE_URL_TEST;
   if (!testUrl) throw new Error("DATABASE_URL_TEST is required for vitest");
@@ -34,6 +36,10 @@ export default async function setup() {
     if (!/already exists/i.test(msg)) throw e;
   }
 
+  // Drizzle migrations — Better Auth schema + observability_spans.
+  // Applied via psql so we don't need a network round-trip through
+  // drizzle-kit's CLI for vitest's globalSetup. Same SQL files as
+  // `pnpm db:migrate`.
   const dir = join(process.cwd(), "db", "migrations");
   const sqlFiles = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
@@ -45,4 +51,11 @@ export default async function setup() {
       stdio: "inherit",
     });
   }
+
+  // langgraph tables — Node-side memory store + checkpointer. Idempotent,
+  // mirrors the steps `pnpm db:migrate` runs against production DBs.
+  console.log("  → PostgresStore.setup()");
+  await PostgresStore.fromConnString(testUrl).setup();
+  console.log("  → PostgresSaver.setup()");
+  await PostgresSaver.fromConnString(testUrl).setup();
 }

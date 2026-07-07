@@ -29,17 +29,20 @@ describe("backend/store", () => {
     process.env.DATABASE_URL = originalDatabaseUrl;
   });
 
-  it("exports a PostgresStore instance built from DATABASE_URL and runs setup() once", async () => {
+  it("exports a PostgresStore instance built from DATABASE_URL and never runs setup() at module load", async () => {
     process.env.DATABASE_URL = "postgres://test/test";
     const { store } = await import("@/backend/store");
 
     expect(store).toBeDefined();
     expect(mockFromConnString).toHaveBeenCalledTimes(1);
     expect(mockFromConnString).toHaveBeenCalledWith("postgres://test/test");
-    expect(mockSetup).toHaveBeenCalledTimes(1);
+    // ponytail: setup() now runs from `pnpm db:migrate` (scripts/db-migrate.ts),
+    // not at module load — module-load side effects race under `next build`'s
+    // N parallel page-data workers and break CI deterministically.
+    expect(mockSetup).not.toHaveBeenCalled();
   });
 
-  it("exports undefined and skips setup() when DATABASE_URL is unset", async () => {
+  it("exports undefined when DATABASE_URL is unset", async () => {
     delete process.env.DATABASE_URL;
     const { store } = await import("@/backend/store");
 

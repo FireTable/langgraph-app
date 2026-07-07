@@ -1,10 +1,13 @@
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 
-// Postgres store for cross-thread long-term memory. `setup()` is idempotent —
-// the first call creates the store tables; subsequent calls are no-ops. Wire
-// into the graph with `compile({ store })` and reach it inside nodes via
-// `runtime.store`, scoped by namespace (typically `[userId, "memories"]`).
+// Postgres store for cross-thread long-term memory. Wire into the graph with
+// `compile({ store })` and reach it inside nodes via `runtime.store`, scoped
+// by namespace (typically `[userId, "memories"]`).
+//
+// Tables are created by `pnpm db:migrate` (scripts/db-migrate.ts →
+// `store.setup()`). Never call setup() here — module-load side effects race
+// under `next build`'s N parallel page-data workers and break CI.
 const databaseUrl = process.env.DATABASE_URL;
-export const store = databaseUrl ? PostgresStore.fromConnString(databaseUrl) : undefined;
-
-if (store) await store.setup();
+export const store: PostgresStore | undefined = databaseUrl
+  ? PostgresStore.fromConnString(databaseUrl)
+  : undefined;

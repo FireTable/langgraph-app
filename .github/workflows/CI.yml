@@ -49,10 +49,11 @@ jobs:
     name: Build (next build)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # `next build` statically evaluates App Router routes; Better Auth
-    # runs DB migrations on first import, which requires a reachable
-    # Postgres. The build-time DB can be empty — migrations create the
-    # schema, no test data is needed.
+    # `next build` statically evaluates App Router routes; routes that
+    # import `backend/store.ts` or `backend/checkpointer.ts` need the
+    # langgraph tables present before the build (otherwise the page-data
+    # collection crashes on the first query). Run `pnpm db:migrate` once
+    # to bring the schema up — the build-time DB can be empty otherwise.
     services:
       postgres:
         image: postgres:16-alpine
@@ -83,6 +84,7 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
       - run: pnpm build
 
   test:

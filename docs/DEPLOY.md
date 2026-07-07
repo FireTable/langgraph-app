@@ -236,9 +236,33 @@ And `Caddyfile` (same directory as `docker-compose.yml`):
 }
 ```
 
-## First-time Postgres fix (langgraph-api 0.10.x)
+## First-time Postgres setup
 
-`langgraph-api` runs ~29 migrations on first start, including a
+Three migration sources cover the schema:
+
+1. **Drizzle** (Better Auth + `observability_spans`) — SQL files in
+   `db/migrations/*.sql`, applied via `pnpm db:migrate`.
+2. **langgraph PostgresStore** (memory doc tables) — invoked from
+   `pnpm db:migrate` via `scripts/db-migrate.ts`.
+3. **langgraph PostgresSaver** (checkpointer tables) — invoked from
+   `pnpm db:migrate`; the langgraph-api Python runtime also runs the same
+   migrations at uvicorn startup, so this is idempotent against the
+   Python run.
+
+Run once **before** the first `docker compose up` (and after every deploy
+that touches `db/migrations/` or `backend/store.ts` / `backend/checkpointer.ts`):
+
+```bash
+# From the repo root, with .env loaded
+pnpm db:migrate
+```
+
+The script is idempotent — safe to re-run on every deploy.
+
+### First-time Postgres fix (langgraph-api 0.10.x)
+
+After `pnpm db:migrate`, `langgraph-api` (the Python runtime) will run
+~29 migrations on first start, including a
 `CREATE INDEX CONCURRENTLY ... store_prefix_idx`. Upstream 0.10.x wraps
 this in a transaction, which Postgres rejects for `CONCURRENTLY` indexes.
 Until upstream fixes it, run this once **before** the first `docker compose up`:
