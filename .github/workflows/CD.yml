@@ -109,6 +109,7 @@ jobs:
       BETTER_AUTH_SECRET: build_secret_aabbccddeeff00112233445566778899
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: agent
+      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${{ secrets.WALLET_CONNECT_PROJECT_ID || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -149,9 +150,14 @@ jobs:
           # Dockerfile's default is `langgraph_app`, but the build-time
           # Postgres above creates `langgraph_app_build` — without this
           # override, `next build` connects to a DB that doesn't exist.
+          # NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID is also baked at build
+          # time (Next.js inlines NEXT_PUBLIC_* into the client bundle),
+          # so it has to flow through here too. Runtime env can't undo
+          # a wrong build.
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             DATABASE_URL=${{ env.DATABASE_URL }}
+            NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=${{ env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID }}
           # `lower()` because Docker's tag validator rejects uppercase in
           # the repo path (e.g. `FireTable`). GHCR is case-insensitive at
           # the registry, but the buildx parser is strict.

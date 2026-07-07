@@ -36,7 +36,14 @@ ENV DATABASE_URL=${DATABASE_URL}
 ENV BETTER_AUTH_SECRET=build_secret_aabbccddeeff00112233445566778899
 ENV BETTER_AUTH_URL=http://localhost:3000
 ENV NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID=agent
-ENV NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=build-placeholder-project-id
+# WalletConnect project id is `NEXT_PUBLIC_*` so Next.js bakes it into
+# the client bundle at build time — runtime env (docker-compose) is too
+# late. CD.yml passes it via `--build-arg` from the
+# `WALLET_CONNECT_PROJECT_ID` GitHub Actions secret. Empty default
+# makes wallet features a no-op without the secret rather than
+# silently shipping a placeholder upstream of any real project.
+ARG NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=""
+ENV NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=${NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID}
 RUN pnpm build
 
 # LangGraph runtime config — point at our graphs and DB.

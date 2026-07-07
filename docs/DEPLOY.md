@@ -409,6 +409,22 @@ GOOGLE_CLIENT_SECRET=...
 Restart the app. Better Auth reads these at startup. Provider setup
 walkthroughs are in [`docs/AUTH.md`](AUTH.md).
 
+## WalletConnect project id (build-time secret)
+
+The crypto sub-agent's wallet UI uses WalletConnect. The project id
+(`NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`) is a `NEXT_PUBLIC_*` var — Next.js
+inlines those into the client bundle at `next build`, so runtime env is too
+late to set it.
+
+The CD pipeline pulls the value from a GitHub Actions secret:
+**Settings → Secrets and variables → Actions → `WALLET_CONNECT_PROJECT_ID`**.
+
+Get the value at <https://cloud.walletconnect.com>. Without the secret,
+the build succeeds but the bundle ships an empty project id, and
+WalletConnect SDK calls like
+`https://api.web3modal.org/appkit/v1/config?projectId=` go out without a
+real id — wallet features (connect, sign) silently fail.
+
 ## Backups
 
 The only persistent state is the `postgres-data` volume. A nightly
