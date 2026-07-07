@@ -259,6 +259,16 @@ pnpm db:migrate
 
 The script is idempotent — safe to re-run on every deploy.
 
+On the VPS, where Node + pnpm aren't installed, run it inside the
+app container with the same env vars the app will see:
+
+```bash
+docker compose run --rm app node_modules/.bin/tsx scripts/db-migrate.ts
+```
+
+(`tsx` is in the image's `node_modules` because the Dockerfile installs
+devDependencies for the build.)
+
 ### First-time Postgres fix (langgraph-api 0.10.x)
 
 After `pnpm db:migrate`, `langgraph-api` (the Python runtime) will run
@@ -281,9 +291,14 @@ After the fix, start the stack:
 
 ```bash
 docker compose pull app       # refresh the image
+docker compose run --rm app node_modules/.bin/tsx scripts/db-migrate.ts   # Node-side migrations
 docker compose up -d
 docker compose logs -f app    # watch startup
 ```
+
+If you deploy from a host that has Node + pnpm (your laptop), run
+`pnpm db:migrate` instead of the `docker compose run` line — both
+produce the same Node-side schema state.
 
 You should see:
 
