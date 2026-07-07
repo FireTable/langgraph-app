@@ -17,14 +17,18 @@ for the local build commands. Everything else here applies identically.
 - An OpenAI-compatible API key (`OPENAI_API_KEY`)
 - A long random string for `BETTER_AUTH_SECRET` — `openssl rand -hex 32`
 
-Ports the app needs open:
+Ports the stack exposes:
 
-- `3000` — Next.js (the user-facing chat UI)
-- `2024` — LangGraph API (called by Next.js; you usually don't expose this
-  publicly, but the proxy under `app/api/[..._path]/route.ts` forwards to it)
-- `5432` — Postgres (bind to localhost only, or use an external DB)
-- `6379` — Redis (bind to localhost only; required by the langgraph-api
-  runtime — see [Why Redis?](CI.md#single-image-role-dispatched-scriptstartsh))
+- `80` / `443` — **only public surface**; Caddy terminates TLS and
+  reverse-proxies to the app. Open these on the firewall.
+- `3000` — Next.js. Bound to `127.0.0.1` only; Caddy reaches it on the
+  docker network. Don't open on the firewall.
+- `2024` — LangGraph API. Bound to `127.0.0.1` only; the Next.js
+  catch-all proxy talks to it on the docker network. Don't open on
+  the firewall.
+- `5432` — Postgres. Bound to `127.0.0.1` only, for backups / debugging.
+- `6379` — Redis. Not exposed at all (only the `app` service talks to it,
+  on the docker network — required by the langgraph-api runtime).
 
 ## Pick an image tag
 
@@ -132,6 +136,15 @@ services:
   app:
     image: ${IMAGE}
     restart: unless-stopped
+    # 3000 is only for Caddy (and ad-hoc debugging from the host).
+    # 2024 stays on localhost — the Next.js proxy in `app/api/[..._path]/route.ts`
+    # talks to it on the docker network, never publicly.
+    expose:
+      - "3000"
+      - "2024"
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:2024:2024"
     environment:
       ROLE: all
       NODE_ENV: production
@@ -157,18 +170,40 @@ services:
       ALCHEMY_API_KEY: ${ALCHEMY_API_KEY:-}
       DENO_DEPLOY_TOKEN: ${DENO_DEPLOY_TOKEN:-}
       DENO_DEPLOY_ORG: ${DENO_DEPLOY_ORG:-}
-    ports:
-      - "3000:3000"
-      # 2024 is internal; the Next.js proxy talks to it. Don't expose publicly.
-      - "127.0.0.1:2024:2024"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
 
+  # Reverse proxy + automatic TLS via Let's Encrypt. The only public surface.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
 volumes:
   postgres-data:
+  caddy_data:
+  caddy_config:
+```
+
+And `Caddyfile` (same directory as `docker-compose.yml`):
+
+```caddyfile
+# Replace with your domain. Caddy provisions and renews the Let's Encrypt
+# cert automatically on first request.
+chat.example.com {
+    reverse_proxy app:3000
+}
 ```
 
 ## First-time Postgres fix (langgraph-api 0.10.x)
@@ -247,19 +282,24 @@ then `docker compose pull app && docker compose up -d`.
 
 ## Reverse proxy + TLS
 
-The example above binds the app to `:3000` on the host. In production
-you almost always want TLS termination in front. Two common shapes:
+The compose stack above already includes a `caddy` service — it's the
+only thing bound to the public network (`:80` + `:443`). Caddy reads
+`./Caddyfile` and provisions / renews a Let's Encrypt certificate on
+first request. Nothing to configure beyond the domain name in
+`Caddyfile`.
 
-- **Caddy / nginx** on the host, reverse-proxying `chat.example.com` →
-  `localhost:3000`. Set `BETTER_AUTH_URL=https://chat.example.com` in
-  `.env` so Better Auth issues correct cookies + OAuth redirects.
-- **Cloudflare Tunnel / Tailscale** if you don't want to open ports at all.
-  Same `BETTER_AUTH_URL` rules apply — it must match the URL the browser
-  actually uses.
+If you'd rather terminate TLS elsewhere, drop the `caddy` service from
+the compose file and point your own proxy at `app:3000`:
+
+- **Caddy / nginx on the host** — reverse-proxy `chat.example.com` →
+  `app:3000` (same docker network). Same `BETTER_AUTH_URL` rules apply.
+- **Cloudflare Tunnel / Tailscale** — if you don't want to open ports
+  at all. `BETTER_AUTH_URL` must match the URL the browser actually uses.
 
 Don't put the langgraph port (`:2024`) behind the public proxy. The
-Next.js route at `app/api/[..._path]/route.ts` calls it on localhost; if
-you do expose it, the proxy auth check (rule #9) is bypassed.
+Next.js route at `app/api/[..._path]/route.ts` calls it on the docker
+network; if you do expose it, the proxy auth check (rule #9) is
+bypassed.
 
 ## External Postgres (optional)
 

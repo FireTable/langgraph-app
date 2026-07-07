@@ -12,9 +12,15 @@ FROM langchain/langgraphjs-api:22
 
 WORKDIR /deps/langgraph-app
 
-# Deps first (cached layer).
+# Deps first (cached layer when the lockfile doesn't change).
+# BuildKit cache-mount the pnpm store so packages survive across
+# builds — only changed deps are re-fetched when the lockfile
+# changes. Combined with CD.yml's `cache-to: type=gha,mode=max`,
+# the store persists across CI runs. Requires DOCKER_BUILDKIT=1
+# (default on GitHub Actions and modern Docker).
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store,id=pnpm \
+    corepack enable && pnpm install --frozen-lockfile
 
 # App source.
 COPY . .

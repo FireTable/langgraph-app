@@ -211,11 +211,32 @@ pnpm test
 
 ## Updating
 
-- **Bump Node** — bump `.nvmrc`, `langgraph.json` `node_version`, and the
-  `FROM node:22-bookworm-slim` lines in the `Dockerfile`.
+- **Bump Node** — bump `.nvmrc`, `langgraph.json` `node_version`, and
+  the `langchain/langgraphjs-api` base tag in the `Dockerfile`.
 - **Add a CI job** — append a new entry under `jobs:` in `CI.yml`.
 - **Add a CD channel** — extend the `resolve` job's branch logic; the
   build job picks the tag up automatically.
 - **Change deploy target** — extend `CD.yml` after the `build` job.
   Don't remove the GHCR push — it's the artifact store that any deploy
   step pulls from.
+
+## Dependency caching
+
+Both CI and CD cache `pnpm install` output, keyed on the lockfile:
+
+- **CI** — `actions/setup-node` with `cache: pnpm` caches the
+  `~/.local/share/pnpm/store` directory to the GitHub Actions cache.
+  Each job restores it before `pnpm install --frozen-lockfile`, so only
+  the link step runs.
+- **CD** — the Dockerfile's `pnpm install` step uses a BuildKit
+  `--mount=type=cache` for the same store path. The `build-push-action`
+  writes the cache to GHA (`cache-to: type=gha,mode=max`) and restores
+  it on the next run (`cache-from: type=gha`). The Docker layer that
+  contains `node_modules` is also cached as a regular layer.
+
+When `pnpm-lock.yaml` doesn't change between runs, both cache paths
+hit and `pnpm install` skips downloading entirely. When it does
+change, only the diff is fetched — the rest stays warm.
+
+Cold-start (no cache, fresh runner): ~60s for `pnpm install`. Warm
+cache: ~5s.
