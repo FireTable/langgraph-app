@@ -411,19 +411,32 @@ walkthroughs are in [`docs/AUTH.md`](AUTH.md).
 
 ## WalletConnect project id (build-time secret)
 
-The crypto sub-agent's wallet UI uses WalletConnect. The project id
+The crypto sub-agent's wallet UI uses WalletConnect / Reown. The project id
 (`NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`) is a `NEXT_PUBLIC_*` var — Next.js
 inlines those into the client bundle at `next build`, so runtime env is too
 late to set it.
 
-The CD pipeline pulls the value from a GitHub Actions secret:
-**Settings → Secrets and variables → Actions → `WALLET_CONNECT_PROJECT_ID`**.
+The CD pipeline pulls the value from a GitHub Actions repository secret
+of the **same name**: `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`. Set it at
+**Settings → Secrets and variables → Actions → New repository secret**.
 
-Get the value at <https://cloud.walletconnect.com>. Without the secret,
-the build succeeds but the bundle ships an empty project id, and
-WalletConnect SDK calls like
-`https://api.web3modal.org/appkit/v1/config?projectId=` go out without a
-real id — wallet features (connect, sign) silently fail.
+CD has **no fallback** for this var — without the secret, the release
+build fails at `docker build` (the `NEXT_PUBLIC_*` placeholder can't be
+empty, RainbowKit's prerender throws "No projectId found"). CI keeps the
+placeholder fallback so PR / fork builds from branches without the secret
+still pass lint + typecheck + test.
+
+Get the value at <https://dashboard.reown.com> (formerly
+cloud.walletconnect.com) → Project settings. After creating the project,
+**lock it to your domain** in Allowed domains (e.g. `ai.firetable.tech`)
+so a forked image deployed elsewhere can't piggy-back on your project id
+quota. Without the secret, the build fails; with the secret set, the
+bundle ships the real id and WalletConnect SDK calls like
+`https://api.web3modal.org/appkit/v1/config?projectId=...` go out with it.
+
+If a deployment domain doesn't match the project id's Allowed domains,
+WalletConnect rejects calls at runtime (HTTP 401 / 403) — wallet
+features silently fail.
 
 ## Backups
 
