@@ -91,24 +91,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # `next build` runs Better Auth migrations against the DB at module
-    # load. The buildx builder runs in an isolated network by default, so
-    # the service container is unreachable from there — `network: host`
-    # makes the build share the runner's network namespace, where
-    # `localhost:5432` is the service via the `ports:` mapping below.
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: langgraph_app_build
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+    # load. The buildx builder is itself a container (docker-container
+    # driver) running on the runner — `network: host` on the build step
+    # only shares the builder's network, not the runner's. So we start a
+    # dedicated Postgres container on the runner and put the builder on
+    # the host network via `driver-opts: network=host`; then the build's
+    # `localhost:5432` reaches that container.
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/langgraph_app_build
       BETTER_AUTH_SECRET: build_secret_aabbccddeeff00112233445566778899
@@ -117,8 +105,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Start build-time Postgres
+        run: |
+          docker run -d --name build-pg --rm \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=langgraph_app_build \
+            -p 127.0.0.1:5432:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            if docker exec build-pg pg_isready -U postgres -d langgraph_app_build; then break; fi
+            sleep 1
+          done
+
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
+        with:
+          # Builder shares the runner's network namespace — the build's
+          # `localhost:5432` then reaches the `build-pg` container above.
+          driver-opts: network=host
 
       # GHCR login only when we're actually pushing. PRs (especially
       # from forks) don't have access to GITHUB_TOKEN secrets.
@@ -132,10 +137,6 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          # See the comment on the services block above — `network: host`
-          # is what lets the build's `localhost:5432` reach the GH Actions
-          # service container.
-          network: host
           push: ${{ needs.resolve.outputs.should_push == 'true' }}
           # `lower()` because Docker's tag validator rejects uppercase in
           # the repo path (e.g. `FireTable`). GHCR is case-insensitive at
