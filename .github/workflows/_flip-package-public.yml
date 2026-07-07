@@ -1,0 +1,36 @@
+name: Flip package visibility to public
+
+on: workflow_dispatch
+
+permissions:
+  packages: write
+
+jobs:
+  flip:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make ghcr.io/firetable/langgraph-app public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          # Try user-level endpoint first, then org-level.
+          for path in "users/${OWNER}" "orgs/${OWNER}"; do
+            echo "Trying PATCH /${path}/packages/container/langgraph-app ..."
+            status=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+              -X PATCH \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d '{"visibility":"public"}' \
+              "https://api.github.com/${path}/packages/container/langgraph-app")
+            echo "  HTTP ${status}"
+            cat /tmp/resp.json | head -c 400
+            echo
+            if [ "${status}" = "200" ]; then
+              echo "  PATCH succeeded on /${path}"
+              exit 0
+            fi
+          done
+          echo "Both endpoints failed — likely token lacks packages:write on this package."
+          exit 1
