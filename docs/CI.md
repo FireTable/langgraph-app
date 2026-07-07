@@ -43,28 +43,31 @@ Two runtime requirements the base image enforces:
 - **Redis on `$REDIS_URI`** — required at startup (`FF_USE_REDIS_QUEUE=false`
   doesn't bypass the connection check). The compose stack includes a
   `redis:7-alpine` service.
-- **DB migrations** — `pnpm db:migrate` covers Drizzle +
-  langgraph `PostgresStore` + langgraph `PostgresSaver` (Node-side).
-  The Python langgraph-api runtime also runs its own PostgresSaver
-  migrations at uvicorn startup; both write the same tables so they're
-  idempotent against each other. Run `pnpm db:migrate` once before
-  the first `docker compose up`, and again after every deploy that
-  touches `db/migrations/`, `backend/store.ts`, or
-  `backend/checkpointer.ts`. Don't move `setup()` calls back into app
-  module-load — under `next build`'s N parallel page-data workers,
-  `CREATE TABLE IF NOT EXISTS` races on `pg_type_typname_nsp_index`
-  and breaks CI deterministically. The CI build + test jobs run
-  `pnpm db:migrate` as an explicit step before `next build` / `vitest`.
-- langgraph-api 0.10.x also wraps `CREATE INDEX CONCURRENTLY ... store_prefix_idx`
+- **DB migrations** — three sources share the same DB:
+  Drizzle SQL files (`db/migrations/*.sql`), langgraph
+  `PostgresStore.setup()`, langgraph `PostgresSaver.setup()`. All
+  three are idempotent. The prod container runs `pnpm db:migrate`
+  automatically inside `scripts/start.sh` before forking Next.js +
+  langgraph-api, so a fresh deploy doesn't need a manual migration
+  step (see [docs/DEPLOY.md](DEPLOY.md#first-time-postgres-setup)).
+  Don't move `setup()` calls back into app module-load — under `next
+build`'s N parallel page-data workers, `CREATE TABLE IF NOT EXISTS`
+  races on `pg_type_typname_nsp_index` and breaks CI deterministically.
+  The CI build + test jobs run `pnpm db:migrate` as an explicit step
+  before `next build` / `vitest` because those commands bypass
+  `start.sh`.
+- langgraph-api 0.10.x wraps `CREATE INDEX CONCURRENTLY ... store_prefix_idx`
   in a transaction, which Postgres rejects. Until upstream fixes it,
-  run the index manually once before the first start (see
+  run the workaround once after the first start (see
   [docs/DEPLOY.md](DEPLOY.md#first-time-postgres-fix-langgraph-api-010x)):
   ```sql
+  ALTER TABLE store ADD COLUMN IF NOT EXISTS prefix text;
+  UPDATE store SET prefix = namespace_path WHERE prefix IS NULL;
   CREATE INDEX CONCURRENTLY IF NOT EXISTS store_prefix_idx
     ON store USING btree (prefix text_pattern_ops);
+  INSERT INTO store_migrations (v) VALUES (29) ON CONFLICT DO NOTHING;
   ```
-  Then start the container; subsequent restarts skip already-applied
-  migrations.
+  Subsequent restarts skip already-applied migrations.
 
 ## CI (`CI.yml`)
 

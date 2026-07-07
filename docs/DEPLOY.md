@@ -238,67 +238,59 @@ And `Caddyfile` (same directory as `docker-compose.yml`):
 
 ## First-time Postgres setup
 
-Three migration sources cover the schema:
+DB migrations run automatically inside the app container on every start
+(via `scripts/start.sh` → `pnpm db:migrate`, idempotent — `CREATE TABLE IF
+NOT EXISTS` everywhere). Compose gates on `depends_on: service_healthy`,
+so Postgres is reachable by the time migrations run.
 
-1. **Drizzle** (Better Auth + `observability_spans`) — SQL files in
-   `db/migrations/*.sql`, applied via `pnpm db:migrate`.
-2. **langgraph PostgresStore** (memory doc tables) — invoked from
-   `pnpm db:migrate` via `scripts/db-migrate.ts`.
-3. **langgraph PostgresSaver** (checkpointer tables) — invoked from
-   `pnpm db:migrate`; the langgraph-api Python runtime also runs the same
-   migrations at uvicorn startup, so this is idempotent against the
-   Python run.
+You don't need to invoke `pnpm db:migrate` manually. Just `docker compose
+up -d` — the first start applies all three migration sources in order:
 
-Run once **before** the first `docker compose up` (and after every deploy
-that touches `db/migrations/` or `backend/store.ts` / `backend/checkpointer.ts`):
+1. **Drizzle** (Better Auth tables + `observability_spans`) — SQL files in
+   `db/migrations/*.sql`.
+2. **langgraph PostgresStore** (memory doc tables) — via `scripts/db-migrate.ts`.
+3. **langgraph PostgresSaver** (checkpointer tables) — same script; the
+   langgraph-api Python runtime also runs these at uvicorn startup, so
+   it's idempotent against the Python run.
 
-```bash
-# From the repo root, with .env loaded
-pnpm db:migrate
-```
+Subsequent `docker compose restart app` runs are safe to skip — all three
+sources are idempotent and bail on existing objects.
 
-The script is idempotent — safe to re-run on every deploy.
-
-On the VPS, where Node + pnpm aren't installed, run it inside the
-app container with the same env vars the app will see:
-
-```bash
-docker compose run --rm app node_modules/.bin/tsx scripts/db-migrate.ts
-```
-
-(`tsx` is in the image's `node_modules` because the Dockerfile installs
-devDependencies for the build.)
+To migrate **before** pulling a new image (zero-downtime deploys), run
+`pnpm db:migrate` against the DB from any host that has Node + pnpm.
 
 ### First-time Postgres fix (langgraph-api 0.10.x)
 
-After `pnpm db:migrate`, `langgraph-api` (the Python runtime) will run
-~29 migrations on first start, including a
-`CREATE INDEX CONCURRENTLY ... store_prefix_idx`. Upstream 0.10.x wraps
-this in a transaction, which Postgres rejects for `CONCURRENTLY` indexes.
-Until upstream fixes it, run this once **before** the first `docker compose up`:
+The first start of `langgraph-api` (the Python runtime) runs ~29
+migrations, including a `CREATE INDEX CONCURRENTLY ...
+store_prefix_idx`. Upstream 0.10.x wraps this in a transaction, which
+Postgres rejects for `CONCURRENTLY` indexes.
+
+If you see `psycopg.errors.UndefinedColumn: column "prefix" does not exist`
+in `docker compose logs app` on first start, run this once **after** the
+first boot completes (the languagegraph-api run creates most tables
+itself; the workaround just fixes the index migration):
 
 ```bash
-docker compose run --rm postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-  -c "CREATE INDEX CONCURRENTLY IF NOT EXISTS store_prefix_idx \
-      ON store USING btree (prefix text_pattern_ops);"
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<'SQL'
+ALTER TABLE store ADD COLUMN IF NOT EXISTS prefix text;
+UPDATE store SET prefix = namespace_path WHERE prefix IS NULL;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS store_prefix_idx
+  ON store USING btree (prefix text_pattern_ops);
+INSERT INTO store_migrations (v) VALUES (29) ON CONFLICT DO NOTHING;
+SQL
 ```
 
-(If the `store` table doesn't exist yet, this will error with
-`relation "store" does not exist` — that's fine, the langgraph-api
-migration will create it on first start. Then re-run the index command.)
+Then `docker compose restart app` so langgraph-api re-runs its migration
+check (it'll skip already-applied ones).
 
-After the fix, start the stack:
+After the fix, the stack is up:
 
 ```bash
 docker compose pull app       # refresh the image
-docker compose run --rm app node_modules/.bin/tsx scripts/db-migrate.ts   # Node-side migrations
 docker compose up -d
 docker compose logs -f app    # watch startup
 ```
-
-If you deploy from a host that has Node + pnpm (your laptop), run
-`pnpm db:migrate` instead of the `docker compose run` line — both
-produce the same Node-side schema state.
 
 You should see:
 

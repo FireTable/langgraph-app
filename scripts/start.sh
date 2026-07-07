@@ -14,6 +14,15 @@ set -eu
 
 ROLE="${ROLE:-all}"
 
+# Apply DB migrations at startup. Idempotent (CREATE TABLE IF NOT EXISTS
+# + PostgresStore/PostgresSaver.setup() both bail on existing objects).
+# Compose gates on `service_healthy`, so postgres is up by this point.
+# Skipped when DATABASE_URL is unset so dev/in-memory runs aren't blocked.
+if [ -n "${DATABASE_URL:-}" ]; then
+  echo "[start.sh] applying DB migrations..."
+  pnpm db:migrate
+fi
+
 run_frontend() {
   echo "[start.sh] ROLE=frontend → next start (port 3000)"
   exec pnpm start
