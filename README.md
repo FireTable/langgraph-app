@@ -276,6 +276,8 @@ Test database stays isolated from dev — never put production-like data in `lan
 - [`docs/INTERRUPT.md`](docs/INTERRUPT.md) — interrupt-driven tool flows (ask_location, connect_wallet, place_crypto_order, get_order_status) — the two runtime paths the cards can take.
 - [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, troubleshooting.
 - [`docs/DB.md`](docs/DB.md) — database schema (Better Auth + `threads`), ownership model, indexes. Source of truth: `db/migrations/0000_*.sql`.
+- [`docs/CI.md`](docs/CI.md) — CI/CD layout, base-image runtime requirements, local verification commands.
+- [`docs/DEPLOY.md`](docs/DEPLOY.md) — self-hosting guide: pull the image, configure env, first-start Postgres fix, reverse proxy + TLS, backups. **Read this if you're deploying.**
 
 ## Engineering rules
 

@@ -1,4 +1,4 @@
-name: ci
+name: CI
 
 on:
   push:
@@ -66,7 +66,12 @@ jobs:
           --health-timeout 3s
           --health-retries 30
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      # In GitHub Actions the service container is reachable via its
+      # service name (`postgres`) on the job's shared network — no
+      # `ports:` mapping needed. Using `localhost` here would only work
+      # with a port mapping, which conflicts with Mac's local Postgres
+      # when running `act` locally.
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/postgres
       BETTER_AUTH_SECRET: build_secret_aabbccddeeff00112233445566778899
       BETTER_AUTH_URL: http://localhost:3000
       NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: agent
@@ -100,7 +105,7 @@ jobs:
           --health-timeout 3s
           --health-retries 30
     env:
-      DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/langgraph_app_test
+      DATABASE_URL_TEST: postgresql://postgres:postgres@postgres:5432/langgraph_app_test
       JINA_API_KEYS: jina_test_key_1,jina_test_key_2
       BETTER_AUTH_SECRET: test_secret_aabbccddeeff00112233445566778899
       BETTER_AUTH_URL: http://localhost:3000

@@ -1,4 +1,4 @@
-name: cd
+name: CD
 
 # Tag strategy:
 #   main        → `latest` (stable channel)
@@ -46,14 +46,21 @@ jobs:
           branch="${GITHUB_REF_NAME}"
           override="${{ inputs.image_tag }}"
 
+          # Docker tag rules: lowercase, no slashes, [a-zA-Z0-9_.-], ≤ 128 chars.
+          # PR refs look like "8/merge" or "123/head" — slashes break the tag.
+          # workflow_dispatch branch is always clean, but sanitize anyway.
+          sanitize() {
+            echo "$1" | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -c 'a-z0-9._-' '-' | sed 's/^-*//;s/-*$//' | cut -c1-128
+          }
+
           if [ -n "$override" ]; then
-            tag="$override"
+            tag=$(sanitize "$override")
           elif [ "$branch" = "main" ]; then
             tag="latest"
           elif [ "$branch" = "dev" ]; then
             tag="beta-${sha}"
           else
-            tag="${branch}-${sha}"
+            tag="$(sanitize "$branch")-${sha}"
           fi
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -76,8 +83,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # `next build` runs Better Auth migrations against the DB at module
-    # load. The Docker build inside this job therefore needs a reachable
-    # Postgres on localhost:5432.
+    # load. The buildx builder runs in an isolated network by default, so
+    # the service container is unreachable from there — `network: host`
+    # makes the build share the runner's network namespace, where
+    # `localhost:5432` is the service via the `ports:` mapping below.
     services:
       postgres:
         image: postgres:16-alpine
@@ -115,6 +124,10 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          # See the comment on the services block above — `network: host`
+          # is what lets the build's `localhost:5432` reach the GH Actions
+          # service container.
+          network: host
           push: ${{ needs.resolve.outputs.should_push == 'true' }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/langgraph-app:${{ needs.resolve.outputs.tag }}
