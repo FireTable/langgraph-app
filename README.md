@@ -279,6 +279,41 @@ Test database stays isolated from dev — never put production-like data in `lan
 - [`docs/CI.md`](docs/CI.md) — CI/CD layout, base-image runtime requirements, local verification commands.
 - [`docs/DEPLOY.md`](docs/DEPLOY.md) — self-hosting guide: pull the image, configure env, first-start Postgres fix, reverse proxy + TLS, backups. **Read this if you're deploying.**
 
+## Skills
+
+`skills/` holds **Claude Code skill files** — self-contained, agent-loadable instructions for specific operations. A skill is just a `.md` file with a `name` + `description` frontmatter; agents that read the file's description can auto-invoke it when the user's request matches.
+
+### Available skills
+
+- [`skills/langgraph-app-maintain.md`](skills/langgraph-app-maintain.md) — Deploy and maintain `langgraph-app` on a VPS. Covers first-time cold start, push-to-CD deploys, rollback to a previous image, DB reset, OS / Docker / base image / Node upgrades, backup and restore. **The agent walks the developer through every step**, with explicit "user does X" vs "agent does Y" boundaries (the agent never pretends to click external dashboards on the user's behalf). Reads as: who pulls the keys, who writes `.env.vps`, who configures GitHub secrets, who opens the Cloudflare Origin Certificate, etc. End with a red-line list of actions the agent must NOT take (apply for keys, generate random secrets, pay for anything, etc.).
+
+### How to use
+
+To invoke a skill, point the agent at the file. Example prompts that should trigger `langgraph-app-maintain`:
+
+- "Deploy this to my VPS"
+- "Upgrade the base image"
+- "Roll back to yesterday's deploy"
+- "Reset the database on the VPS"
+- "How do I rotate `BETTER_AUTH_SECRET`?"
+
+The agent will read `skills/langgraph-app-maintain.md`, ask the user for the key anchors (VPS host, GitHub owner, public domain, etc.), and run through the steps. Before each external action (apply for a key, configure a GH secret, generate a Cloudflare cert), the skill explicitly stops and hands the task back to the user.
+
+### Adding a new skill
+
+Create a new `.md` file in `skills/` with frontmatter:
+
+```markdown
+---
+name: <short-kebab-case>
+description: <one-line summary, include trigger keywords so the agent knows when to load it>
+---
+
+<the skill body — assume the agent has no other context, write self-contained>
+```
+
+A skill should be self-contained (no references to `/tmp/...` or other transient paths), free of real secrets (use `<placeholder>` or external links), and explicit about which steps are user actions vs agent actions.
+
 ## Engineering rules
 
 See `CLAUDE.md` for the project's hard rules:
