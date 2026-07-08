@@ -279,6 +279,10 @@ Test database stays isolated from dev — never put production-like data in `lan
 - [`docs/CI.md`](docs/CI.md) — CI/CD layout, base-image runtime requirements, local verification commands.
 - [`docs/DEPLOY.md`](docs/DEPLOY.md) — self-hosting guide: pull the image, configure env, first-start Postgres fix, reverse proxy + TLS, backups. **Read this if you're deploying.**
 
+### Issues
+
+Issue titles use a `[Type]:` prefix so the queue scans cleanly. Common types: `[Bug]:`, `[Feat]:`, `[Docs]:`, `[Chore]:`, `[Perf]:`, `[Refactor]:`, `[Test]:`, `[Question]:`. Match the same name as the `gh` label you apply (`bug`, `enhancement`, `documentation`, …).
+
 ## Skills
 
 `skills/` holds **Claude Code skill files** — self-contained, agent-loadable instructions for specific operations. A skill is just a `.md` file with a `name` + `description` frontmatter; agents that read the file's description can auto-invoke it when the user's request matches.

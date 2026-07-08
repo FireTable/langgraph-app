@@ -366,3 +366,7 @@ Two non-obvious details baked in:
   `@assistant-ui/core@0.2.18`, `@assistant-ui/react-langgraph@0.14.9`.
 - On `feat/*` branches, `git fetch origin main` and merge if main
   moved before committing — see [[feature-branch-tracks-main]].
+- Issue titles use a `[Type]:` prefix (`[Bug]:`, `[Feat]:`, `[Docs]:`,
+  `[Chore]:`, `[Perf]:`, `[Refactor]:`, `[Test]:`, `[Question]:`) so
+  the queue scans cleanly. Match the same name as the `gh` label
+  applied to the issue.
