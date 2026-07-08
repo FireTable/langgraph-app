@@ -13,7 +13,6 @@ on:
       - "**/*.md"
       - ".claude/**"
       - ".specify/**"
-      - "scripts/cleanup-observability.ts"
       - "**/CHANGELOG.md"
   pull_request:
     branches: [main, dev]
@@ -23,7 +22,6 @@ on:
       - "**/*.md"
       - ".claude/**"
       - ".specify/**"
-      - "scripts/cleanup-observability.ts"
       - "**/CHANGELOG.md"
 
 permissions:
