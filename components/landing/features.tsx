@@ -28,21 +28,25 @@ type BentoCard = {
   icon: ReactNode;
   iconClassName: string;
   span: "big" | "wide" | "default";
+  codePreview?: string; // ponytail: optional monospace snippet rendered below the description; used by Chat anything to fill the 2x2 with a non-text visual
 };
 
 const BENTO: BentoCard[] = [
   {
-    title: "Streaming chat",
+    title: "Chat anything",
     description:
-      "Tokens land in the chat the moment the model emits them.\n\nMarkdown, code blocks, tool calls, and interrupt-driven approval cards all render incrementally on a single stream — no spinner, no second transport, no partial response to reconcile.\n\nAbort mid-flight: the SDK cancels, nothing half-written ever persists.",
+      "Ask the model about anything — web lookups, code reviews, prices, weather, even trade approvals. Tokens reach the chat live, the moment the model emits.\n\nMarkdown, code blocks, and tool-call UI render inline on the same wire.\n\nA click stops the reply mid-flight — the SDK cancels, nothing half-written persists.",
     icon: <MessagesSquareIcon className="size-6" />,
     iconClassName: "bg-primary/10 text-primary",
     span: "big",
+    codePreview: `useLangGraphRuntime({
+  stream, create, load,
+})`,
   },
   {
     title: "Cross-conversation memory",
     description:
-      "User facts and recent threads surface automatically. The model sees them; you don't manage a memory panel — it just remembers.",
+      "User facts and recent threads surface automatically. \n\nThe model sees them; you don't manage a memory panel — it just remembers.",
     icon: <BrainIcon className="size-4" />,
     iconClassName: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
     span: "wide",
@@ -118,21 +122,6 @@ const StreamingHint = () => (
   </div>
 );
 
-// ponytail: vertical dot pattern fills the tall Memory card so the
-// title isn't floating in dead space.
-const MemoryHint = () => (
-  <div className="text-muted-foreground mt-auto flex items-end gap-1.5 pt-4">
-    {Array.from({ length: 6 }).map((_, i) => (
-      <span
-        key={i}
-        className="bg-violet-500/40 inline-block rounded-sm"
-        style={{ width: 6, height: 6 + (i % 3) * 6 }}
-        aria-hidden
-      />
-    ))}
-  </div>
-);
-
 // ponytail: shared card chrome. The two grids diverge only in
 // column-count and row placement; everything inside is uniform so
 // the section reads as one design with two regions.
@@ -187,6 +176,11 @@ const BentoShell = ({ card, children }: { card: BentoCard; children?: ReactNode 
         >
           {card.description}
         </p>
+        {card.codePreview && (
+          <pre className="bg-muted/40 border-border/40 text-foreground/85 mt-1 overflow-x-auto rounded-md border p-3 font-mono text-[11px] leading-relaxed">
+            <code>{card.codePreview}</code>
+          </pre>
+        )}
       </div>
       {children}
     </div>
@@ -211,7 +205,6 @@ export const Features: FC = () => (
           {BENTO.map((card, i) => (
             <BentoShell key={card.title} card={card}>
               {i === 0 && <StreamingHint />}
-              {i === 1 && <MemoryHint />}
             </BentoShell>
           ))}
         </div>

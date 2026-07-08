@@ -27,7 +27,7 @@ describe("Features", () => {
   it("names every headline feature in the section heading hierarchy", () => {
     render(<Features />);
     // Each feature renders an h3 with the feature name.
-    expect(screen.getByRole("heading", { name: /streaming chat/i, level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /chat anything/i, level: 3 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /dual-graph/i, level: 3 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /memory/i, level: 3 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /observability/i, level: 3 })).toBeInTheDocument();
