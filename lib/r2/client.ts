@@ -1,4 +1,10 @@
-import { S3Client } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const REQUIRED_ENV = [
   "R2_ACCOUNT_ID",
@@ -47,3 +53,41 @@ export const getR2PublicBaseUrl = (): string => {
   if (!process.env.R2_PUBLIC_BASE_URL) throw new R2NotConfiguredError(["R2_PUBLIC_BASE_URL"]);
   return process.env.R2_PUBLIC_BASE_URL.replace(/\/$/, "");
 };
+
+// ponytail: keep all four helpers in one file — the S3 client is the
+// only thing that needs to change for a future Backblaze B2 / MinIO
+// migration, and bundling the per-call wrappers next to the connection
+// makes that single-swap point visible.
+
+export async function presignPut(args: {
+  key: string;
+  contentType: string;
+  contentLength: number;
+  contentDisposition?: string;
+  expiresInSeconds?: number;
+}): Promise<string> {
+  const cmd = new PutObjectCommand({
+    Bucket: getR2Bucket(),
+    Key: args.key,
+    ContentType: args.contentType,
+    ContentLength: args.contentLength,
+    ...(args.contentDisposition ? { ContentDisposition: args.contentDisposition } : {}),
+  });
+  return getSignedUrl(getS3Client(), cmd, { expiresIn: args.expiresInSeconds ?? 300 });
+}
+
+export async function headObject(key: string): Promise<{
+  contentType: string | undefined;
+  contentLength: number | undefined;
+}> {
+  const res = await getS3Client().send(new HeadObjectCommand({ Bucket: getR2Bucket(), Key: key }));
+  return { contentType: res.ContentType, contentLength: res.ContentLength };
+}
+
+export async function deleteObject(key: string): Promise<void> {
+  await getS3Client().send(new DeleteObjectCommand({ Bucket: getR2Bucket(), Key: key }));
+}
+
+export function buildPublicUrl(key: string): string {
+  return `${getR2PublicBaseUrl()}/${key}`;
+}
