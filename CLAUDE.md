@@ -8,6 +8,7 @@ layout, env vars, and tech stack → `README.md`. For design notes → `docs/`.
 | Topic                                           | File                    |
 | ----------------------------------------------- | ----------------------- |
 | Features, quick-start, layout, env vars, deps   | `README.md`             |
+| Marketing landing page sections + assets        | `docs/LANDING.md`       |
 | Every HTTP endpoint under `app/api/`            | `docs/APIS.md`          |
 | Memory + thread-summarize design                | `docs/MEMORY.md`        |
 | Observability panel design + retention          | `docs/OBSERVABILITY.md` |

@@ -257,6 +257,63 @@
   }
 }
 
+/* Manual shimmer kill-switch. The hero demo's interrupt card uses
+   this — keep the conic ring running while the user is deciding,
+   fade it out the moment they click Confirm/Decline so the
+   resolved state reads as "done" instead of "still waiting".
+   Specificity outranks the base [data-slot$="-card"] rule above. */
+.tool-call-glow-host[data-shimmer="off"] [data-slot$="-card"]::before,
+.tool-call-glow-host[data-shimmer="off"] [data-slot="weather-widget"]::before {
+  animation: none;
+  opacity: 0;
+  transition: opacity 0.5s ease-out;
+}
+
+/* CTA halo marquee — `@property` makes the conic `from` angle
+   interpolatable without a layout pass. cta.tsx attaches the
+   animation inline via the `animation` shorthand; keyframes
+   are vendored here so component files stay free of bespoke
+   keyframe blocks. */
+@property --cta-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes cta-marquee {
+  to {
+    --cta-angle: 360deg;
+  }
+}
+
+/* Hero h1 text-gradient flow. `bg-size: 200%` gives the gradient
+   room to drift horizontally; the animation runs `alternate` so
+   colors oscillate forward and back instead of snapping at the
+   end of each cycle. Matches the warm halo palette already in
+   --glow-warm / --glow-bright. Reduced-motion halts the drift. */
+@keyframes hero-text-flow {
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+.animate-hero-text-flow {
+  background-size: 200% 200%;
+  animation: hero-text-flow 4s ease-in-out infinite alternate;
+}
+
+.animate-hero-halo-flow {
+  background-size: 200% 100%;
+  animation: hero-text-flow 4s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hero-text-flow,
+  .animate-hero-halo-flow {
+    animation: none;
+  }
+}
+
 :where(.aui-md[data-status="running"]):empty::after,
 :where(.aui-md[data-status="running"]) > :where(:not(ol):not(ul):not(pre)):last-child::after,
 :where(.aui-md[data-status="running"]) > pre:last-child code::after,
