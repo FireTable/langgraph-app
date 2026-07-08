@@ -14,6 +14,9 @@ import { AlertCircleIcon, ChevronRightIcon, MapPinIcon, PencilLineIcon } from "l
 
 export const HumanInTheLoopDemo = () => (
   <div className="w-full max-w-md">
+    <p className="text-muted-foreground mb-3 text-center text-xs">
+      Client-side UI rendered while the graph pauses.
+    </p>
     <div className="tool-call-glow-host flex justify-start" data-slot="interrupt-tool-card-wrapper">
       <m.div
         data-slot="interrupt-tool-card"

@@ -35,7 +35,7 @@ const BENTO: BentoCard[] = [
   {
     title: "Chat anything",
     description:
-      "Ask the model about anything — web lookups, code reviews, prices, weather, even trade approvals. Tokens reach the chat live, the moment the model emits.\n\nMarkdown, code blocks, and tool-call UI render inline on the same wire.\n\nA click stops the reply mid-flight — the SDK cancels, nothing half-written persists.",
+      "Ask the model about anything — web lookups, code reviews, prices, weather, even trade approvals. Tokens reach the chat live, the moment the model emits.\nMarkdown, code blocks, and tool-call UI render inline on the same wire.\nA click stops the reply mid-flight — the SDK cancels, nothing half-written persists.",
     icon: <MessagesSquareIcon className="size-6" />,
     iconClassName: "bg-primary/10 text-primary",
     span: "big",
@@ -44,7 +44,7 @@ const BENTO: BentoCard[] = [
   {
     title: "Cross-conversation memory",
     description:
-      "User facts and recent threads surface automatically. \n\nThe model sees them; you don't manage a memory panel — it just remembers.",
+      "User facts and recent threads surface automatically. \nThe model sees them; you don't manage a memory panel — it just remembers.",
     icon: <BrainIcon className="size-4" />,
     iconClassName: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
     span: "wide",

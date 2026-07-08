@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const QuickStartTabs = ({ agent, command }: { agent: ReactNode; command: ReactNode }) => (
   <Tabs defaultValue="agent" className="gap-3">
-    <TabsList variant="line" className="w-full justify-start">
+    <TabsList className="w-full justify-start">
       <TabsTrigger value="agent">
         <SparklesIcon className="size-3.5" />
         Agent
