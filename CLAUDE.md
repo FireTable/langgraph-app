@@ -14,6 +14,7 @@ layout, env vars, and tech stack → `README.md`. For design notes → `docs/`.
 | Observability panel design + retention          | `docs/OBSERVABILITY.md` |
 | LangGraph tool inventory + frontend card wiring | `docs/TOOLS.md`         |
 | Interrupt-driven tool flow contract             | `docs/INTERRUPT.md`     |
+| Attachments backing (R2 + presign) design       | `docs/ATTACHMENTS.md`   |
 | Auth setup, OAuth, troubleshooting              | `docs/AUTH.md`          |
 | DB schema, ownership, indexes                   | `docs/DB.md`            |
 | CI/CD, Docker, deploys                          | `docs/CI.md`            |
