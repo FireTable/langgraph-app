@@ -21,12 +21,12 @@ export const SelfHost: FC = () => (
           Self-host
         </p>
         <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          One VPS. One Postgres. One process.
+          One VPS. One Postgres. One repo.
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed">
-          The project is built to run on a single box. No SaaS, no per-seat pricing, no background
-          services talking to a third party. Bring your own OpenAI-compatible endpoint and your own
-          Postgres; the rest is in the repo.
+          The project ships as a single docker-compose on a single box. No SaaS, no per-seat
+          pricing, no background services talking to a third party. Bring your own OpenAI-compatible
+          endpoint and your own Postgres; the rest is in the repo.
         </p>
         <ul className="flex flex-col gap-3">
           {SHIPPED.map((item) => (

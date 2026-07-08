@@ -112,7 +112,7 @@ const BENTO: BentoCard[] = [
   {
     title: "Cross-conversation memory",
     description:
-      "User facts and recent threads surface automatically. \nThe model sees them; you don't manage a memory panel — it just remembers.",
+      "User facts and recent threads surface automatically. \nThe model sees them in a prepended system block; the Memory tab lets you review and delete.",
     icon: <BrainIcon className="size-4" />,
     hue: "violet",
     span: "wide",
@@ -159,7 +159,7 @@ const BOTTOM_ROW: RowCard[] = [
   {
     title: "Self-host first",
     description:
-      "One docker-compose, one Postgres, one process. No SaaS, no per-seat pricing, no tracking pixels.",
+      "One docker-compose, one Postgres, one repo. No SaaS, no per-seat pricing, no tracking pixels.",
     icon: <ServerIcon className="size-4" />,
     hue: "sky",
   },

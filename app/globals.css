@@ -298,7 +298,7 @@
 }
 
 .animate-hero-text-flow {
-  background-size: 500% 100%;
+  background-size: 200% 200%;
   animation: hero-text-flow 4s ease-in-out infinite alternate;
 }
 

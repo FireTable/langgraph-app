@@ -42,7 +42,7 @@ export const HowItWorks: FC = () => (
         <ExplainRow
           eyebrow="Memory"
           title="The model sees what you told it. Across threads."
-          body="On every turn, a small system block surfaces stable user facts and a short summary of recent threads. The chat graph reads the block, not the raw history. You don't manage a memory panel; the model just remembers."
+          body="On every turn, a small system block surfaces stable user facts and a short summary of recent threads. The chat graph reads the block, not the raw history. The Memory settings tab lets you review and delete what's stored."
         >
           <MemoryRecallDemo />
         </ExplainRow>
