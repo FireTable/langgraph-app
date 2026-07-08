@@ -3,8 +3,28 @@ name: CI
 on:
   push:
     branches: [main, dev]
+    # Skip CI when only docs change — there's nothing to typecheck or
+    # test in a markdown-only commit. Mirrors the path filter in CD.yml
+    # so both workflows behave the same way. To force CI on a docs
+    # commit, use workflow_dispatch or push a no-op code change.
+    paths-ignore:
+      - "docs/**"
+      - "skills/**"
+      - "**/*.md"
+      - ".claude/**"
+      - ".specify/**"
+      - "scripts/cleanup-observability.ts"
+      - "**/CHANGELOG.md"
   pull_request:
     branches: [main, dev]
+    paths-ignore:
+      - "docs/**"
+      - "skills/**"
+      - "**/*.md"
+      - ".claude/**"
+      - ".specify/**"
+      - "scripts/cleanup-observability.ts"
+      - "**/CHANGELOG.md"
 
 permissions:
   contents: read

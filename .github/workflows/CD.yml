@@ -12,8 +12,36 @@ name: CD
 on:
   push:
     branches: [main, dev]
+    # Skip CD when only docs change — building/pushing an image for a
+    # README tweak is wasted runner minutes and clutters the release
+    # stream. If you need to force a rebuild for docs-only commits,
+    # use workflow_dispatch (Actions tab → Run workflow) or just push
+    # a no-op code change (whitespace, comment fix).
+    #
+    # Wildcards below match anywhere in the tree. Listed paths are the
+    # ones that DO require an image rebuild:
+    #   - application code (app/, backend/, lib/, components/)
+    #   - dependencies (package.json, pnpm-lock.yaml, pnpm-workspace.yaml, .npmrc)
+    #   - container / runtime config (Dockerfile, docker-compose*, Caddyfile, langgraph.json, start.sh, db-migrate.ts)
+    #   - this workflow's own changes (.github/workflows/)
+    paths-ignore:
+      - "docs/**"
+      - "skills/**"
+      - "**/*.md"
+      - ".claude/**"
+      - ".specify/**"
+      - "scripts/cleanup-observability.ts"
+      - "**/CHANGELOG.md"
   pull_request:
     branches: [main, dev]
+    paths-ignore:
+      - "docs/**"
+      - "skills/**"
+      - "**/*.md"
+      - ".claude/**"
+      - ".specify/**"
+      - "scripts/cleanup-observability.ts"
+      - "**/CHANGELOG.md"
   workflow_dispatch:
     inputs:
       image_tag:
