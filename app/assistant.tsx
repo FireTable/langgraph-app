@@ -24,6 +24,7 @@ import weatherToolkit from "@/components/tool-ui/toolkit";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
+import { R2AttachmentAdapter } from "@/lib/attachments/r2-adapter";
 import { cn } from "@/lib/utils";
 import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID } from "@/lib/constants";
 import { createLangGraphStream } from "@/lib/langgraph/create-stream";
@@ -200,12 +201,29 @@ export function Assistant() {
 
   const eventHandlers = useMemo(() => ({}), []);
 
+  // ponytail: gate the adapter on the same env that the server enforces.
+  // When `NEXT_PUBLIC_ATTACHMENTS_ENABLED !== "true"` the composer renders
+  // without an attachment button — no client-side conditional render
+  // needed; the runtime skips `adapters.attachments` and assistant-ui
+  // hides the picker automatically.
+  const attachments = useMemo(
+    () =>
+      process.env.NEXT_PUBLIC_ATTACHMENTS_ENABLED === "true"
+        ? new R2AttachmentAdapter({
+            getCurrentThreadId: () => bridgeRef.current.mainThreadId,
+          })
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   const runtime = useLangGraphRuntime({
     unstable_allowCancellation: true,
     unstable_enableMessageQueue: true,
     unstable_threadListAdapter: threadListAdapter,
     stream,
     eventHandlers,
+    ...(attachments ? { adapters: { attachments } } : {}),
     create: async () => {
       const { externalId } = await threadListAdapter.initialize!("local");
       return { externalId: externalId! };

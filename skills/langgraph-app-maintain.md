@@ -108,10 +108,33 @@ vim .env.vps
 #   POSTGRES_USER=langgraph
 #   POSTGRES_PASSWORD=$(openssl rand -hex 24)
 #   POSTGRES_DB=langgraph_app
+#   # For chat attachments (issue #12; design at docs/ATTACHMENTS.md):
+#   R2_ACCOUNT_ID=<from the Cloudflare R2 dashboard URL>
+#   R2_ACCESS_KEY_ID=<from "Manage R2 API Tokens" with Object Read & Write on the bucket>
+#   R2_SECRET_ACCESS_KEY=<same>
+#   R2_BUCKET=langgraph-app
+#   R2_PUBLIC_BASE_URL=https://<PUBLIC_ATTACHMENT_DOMAIN>  # custom R2 domain
+#   NEXT_PUBLIC_ATTACHMENTS_ENABLED=true  # gates the composer attachment button
 # See .env.example comments for the rest
 ```
 
 `.env.vps` is already in `.gitignore` — `git status` won't see it. **Never commit it.**
+
+> **R2 CORS gotcha** — the browser PUTs bytes directly to R2, which requires a CORS rule on the bucket. Without it, every upload silently fails at the browser layer. Set this in the R2 dashboard before going live:
+>
+> ```json
+> [
+>   {
+>     "AllowedOrigins": ["https://<PUBLIC_DOMAIN>"],
+>     "AllowedMethods": ["GET", "PUT", "HEAD"],
+>     "AllowedHeaders": ["Content-Type"],
+>     "ExposeHeaders": ["ETag"],
+>     "MaxAgeSeconds": 3000
+>   }
+> ]
+> ```
+>
+> Local dev adds `http://localhost:3000` to the same rule. See `docs/ATTACHMENTS.md` for the full key convention, `Content-Disposition` per-object (images inline, others attachment), and why `messageId` is deferred.
 
 ### 1.3 VPS-side initialization (first time SSHing into the VPS)
 

@@ -15,6 +15,7 @@ A self-hostable chat app (this repo: `langgraph-app`) that streams tokens from a
 - **Tool-using agent**: every sub-agent is bound to `search_web` (Jina Search), `fetch_url` (Jina Reader), `save_memory`, and the domain-specific tools (weather / crypto / code). See [docs/TOOLS.md](docs/TOOLS.md) and [docs/INTERRUPT.md](docs/INTERRUPT.md) for the per-card contract.
 - **Crypto sub-agent**: price, NFT holdings (5-chain gallery via Alchemy Portfolio), and a simulated swap flow against an auto-funded Mock Coin balance.
 - **Observability panel**: every LLM / Tool / Chain / Node span is captured by a `BaseCallbackHandler` and persisted to a `observability_spans` Postgres table. Each assistant message shows an icon button that opens a per-turn waterfall — duration, token usage, nested parent/child spans. The list endpoint is server-transformed (panel never carries the raw collector payload); per-row click lazy-loads the full span via a dedicated detail endpoint. See [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
+- **Chat attachments**: assistant-ui's `AttachmentAdapter` plus a presigned PUT to Cloudflare R2 — the browser uploads bytes directly to R2, nothing traverses Next.js. Lazy-register on missing env (mirrors DENO / ALCHEMY). See [docs/ATTACHMENTS.md](docs/ATTACHMENTS.md) for the key convention, messageId-deferred decision, and Content-Disposition XSS guard.
 
 ## Tech stack
 
@@ -239,29 +240,36 @@ Test database stays isolated from dev — never put production-like data in `lan
 
 ## Environment variables
 
-| Var                                  | Used by                   | Required?                                                                         |
-| ------------------------------------ | ------------------------- | --------------------------------------------------------------------------------- |
-| `OPENAI_API_KEY`                     | backend agent             | yes                                                                               |
-| `OPENAI_MODEL`                       | backend agent             | optional (default `gpt-4o-mini`)                                                  |
-| `OPENAI_BASE_URL`                    | backend agent             | optional (OpenAI-compatible gateway)                                              |
-| `JINA_API_KEYS`                      | web-search + web-fetch    | yes (comma-separated; one per Jina account)                                       |
-| `ALCHEMY_API_KEY`                    | NFT gallery + portfolio   | yes (server-only; powers `get_NFT_holdings`)                                      |
-| `LANGGRAPH_API_URL`                  | Next.js proxy             | optional (default `http://localhost:2024`)                                        |
-| `LANGCHAIN_API_KEY`                  | Next.js proxy → LangGraph | optional (leave blank locally)                                                    |
-| `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` | browser runtime           | optional (default `agent`)                                                        |
-| `NEXT_PUBLIC_LANGGRAPH_API_URL`      | browser runtime           | optional (uses proxy if unset)                                                    |
-| `DATABASE_URL`                       | drizzle-kit + backend     | yes                                                                               |
-| `DATABASE_URL_TEST`                  | vitest                    | yes                                                                               |
-| `BETTER_AUTH_SECRET`                 | session cookie signing    | yes (see [docs/AUTH.md](docs/AUTH.md))                                            |
-| `BETTER_AUTH_URL`                    | OAuth callback base       | yes (default `http://localhost:3000`)                                             |
-| `RESEND_API_KEY`                     | verification emails       | yes                                                                               |
-| `RESEND_FROM_EMAIL`                  | verification email sender | optional (`onboarding@resend.dev` default)                                        |
-| `GITHUB_CLIENT_ID` / `_SECRET`       | GitHub OAuth              | optional                                                                          |
-| `GOOGLE_CLIENT_ID` / `_SECRET`       | Google OAuth              | optional                                                                          |
-| `LANGSMITH_*`                        | tracing                   | optional                                                                          |
-| `OBSERVABILITY_RETENTION_DAYS`       | observability spans       | optional (default `30`; must be a positive integer)                               |
-| `MEMORY_THREAD_SUMMARY_KEEP_RECENT`  | thread summarization      | optional (default `10`; trigger cadence + recent floor for `threadSummarizeNode`) |
-| `MEMORY_PROFILE_MAX_BYTES`           | `save_memory` size guard  | optional (default `8192`; profile-doc size cap before store write)                |
+| Var                                    | Used by                   | Required?                                                                                                                    |
+| -------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`                       | backend agent             | yes                                                                                                                          |
+| `OPENAI_MODEL`                         | backend agent             | optional (default `gpt-4o-mini`)                                                                                             |
+| `OPENAI_BASE_URL`                      | backend agent             | optional (OpenAI-compatible gateway)                                                                                         |
+| `JINA_API_KEYS`                        | web-search + web-fetch    | yes (comma-separated; one per Jina account)                                                                                  |
+| `ALCHEMY_API_KEY`                      | NFT gallery + portfolio   | yes (server-only; powers `get_NFT_holdings`)                                                                                 |
+| `LANGGRAPH_API_URL`                    | Next.js proxy             | optional (default `http://localhost:2024`)                                                                                   |
+| `LANGCHAIN_API_KEY`                    | Next.js proxy → LangGraph | optional (leave blank locally)                                                                                               |
+| `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID`   | browser runtime           | optional (default `agent`)                                                                                                   |
+| `NEXT_PUBLIC_LANGGRAPH_API_URL`        | browser runtime           | optional (uses proxy if unset)                                                                                               |
+| `DATABASE_URL`                         | drizzle-kit + backend     | yes                                                                                                                          |
+| `DATABASE_URL_TEST`                    | vitest                    | yes                                                                                                                          |
+| `BETTER_AUTH_SECRET`                   | session cookie signing    | yes (see [docs/AUTH.md](docs/AUTH.md))                                                                                       |
+| `BETTER_AUTH_URL`                      | OAuth callback base       | yes (default `http://localhost:3000`)                                                                                        |
+| `RESEND_API_KEY`                       | verification emails       | yes                                                                                                                          |
+| `RESEND_FROM_EMAIL`                    | verification email sender | optional (`onboarding@resend.dev` default)                                                                                   |
+| `GITHUB_CLIENT_ID` / `_SECRET`         | GitHub OAuth              | optional                                                                                                                     |
+| `GOOGLE_CLIENT_ID` / `_SECRET`         | Google OAuth              | optional                                                                                                                     |
+| `LANGSMITH_*`                          | tracing                   | optional                                                                                                                     |
+| `OBSERVABILITY_RETENTION_DAYS`         | observability spans       | optional (default `30`; must be a positive integer)                                                                          |
+| `MEMORY_THREAD_SUMMARY_KEEP_RECENT`    | thread summarization      | optional (default `10`; trigger cadence + recent floor for `threadSummarizeNode`)                                            |
+| `MEMORY_PROFILE_MAX_BYTES`             | `save_memory` size guard  | optional (default `8192`; profile-doc size cap before store write)                                                           |
+| `R2_ACCOUNT_ID`                        | chat attachments          | yes (server-only; Cloudflare account id from the R2 dashboard URL)                                                           |
+| `R2_ACCESS_KEY_ID` / `_SECRET`         | chat attachments          | yes (server-only; R2 API token, Object Read & Write scoped to the bucket)                                                    |
+| `R2_BUCKET`                            | chat attachments          | yes (server-only; bucket name, e.g. `langgraph-app`)                                                                         |
+| `R2_PUBLIC_BASE_URL`                   | chat attachments          | yes (e.g. `https://file.ai.firetable.tech`; no trailing slash)                                                               |
+| `R2_MAX_BYTES`                         | chat attachments          | optional (default `10485760` / 10 MiB)                                                                                       |
+| `NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES` | chat attachments          | optional (default `image/png,image/jpeg,image/webp,application/pdf`; read by both server validator and composer file-picker) |
+| `NEXT_PUBLIC_ATTACHMENTS_ENABLED`      | chat attachments          | optional (default `false`; flip to `"true"` once `R2_*` is set — gates the composer attachment button)                       |
 
 ## Patches
 
@@ -276,7 +284,8 @@ Test database stays isolated from dev — never put production-like data in `lan
 - [`docs/TOOLS.md`](docs/TOOLS.md) — LangGraph tool inventory and frontend card wiring. Update whenever a tool or card is added/removed/rerouted.
 - [`docs/INTERRUPT.md`](docs/INTERRUPT.md) — interrupt-driven tool flows (ask_location, connect_wallet, place_crypto_order, get_order_status) — the two runtime paths the cards can take.
 - [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, troubleshooting.
-- [`docs/DB.md`](docs/DB.md) — database schema (Better Auth + `threads`), ownership model, indexes. Source of truth: `db/migrations/0000_*.sql`.
+- [`docs/ATTACHMENTS.md`](docs/ATTACHMENTS.md) — chat attachments backed by Cloudflare R2: direct-upload architecture, key convention, lazy-register on missing env, `Content-Disposition` XSS guard, `messageId`-deferred decision.
+- [`docs/DB.md`](docs/DB.md) — database schema (Better Auth + `threads` + `attachments`), ownership model, indexes. Source of truth: `db/migrations/0000_*.sql`.
 - [`docs/CI.md`](docs/CI.md) — CI/CD layout, base-image runtime requirements, local verification commands.
 - [`docs/DEPLOY.md`](docs/DEPLOY.md) — self-hosting guide: pull the image, configure env, first-start Postgres fix, reverse proxy + TLS, backups. **Read this if you're deploying.**
 
