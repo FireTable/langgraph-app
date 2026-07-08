@@ -54,7 +54,7 @@ export const Hero: FC<HeroProps> = ({ signedIn }) => (
             </span>
           </span>
           <br />
-          <span className="text-muted-foreground text-2.5xl leading-none">
+          <span className="text-muted-foreground text-3xl leading-[1.05]">
             A chat surface for a real agent graph.
           </span>
         </h1>
