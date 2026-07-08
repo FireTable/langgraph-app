@@ -16,9 +16,23 @@ export const Cta: FC<CtaProps> = ({ signedIn }) => {
   // for the login screen (which isn't itself a named surface).
   const CtaIcon = isAuthed ? MessagesSquareIcon : ArrowRightIcon;
   return (
-    <section id="cta" className="border-b border-border/60">
+    // ponytail: warm conic gradient + heavy blur sits behind the
+    // card. Same palette as the interrupt-glow ring
+    // (var(--glow-warm) / var(--glow-bright) in globals.css) so
+    // the "interrupt" affordance and the "ship it" affordance
+    // share a hue family — the page reads as one design.
+    <section id="cta" className="border-b border-border/60 relative overflow-hidden">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 blur-3xl"
+        style={{
+          background:
+            "conic-gradient(from 180deg at 50% 50%, var(--glow-warm) 0deg, var(--glow-bright) 120deg, var(--glow-warm) 240deg, var(--glow-bright) 360deg)",
+          opacity: 0.35,
+        }}
+      />
       <div className="mx-auto w-full max-w-6xl px-6 py-24">
-        <div className="bg-muted/30 flex flex-col items-start gap-6 rounded-2xl p-8 sm:p-10">
+        <div className="bg-card/70 supports-[backdrop-filter]:bg-card/50 supports-[backdrop-filter]:backdrop-blur-md border-border/60 flex flex-col items-start gap-6 rounded-2xl border p-8 sm:p-10">
           <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Read the code. Run it. Skip the demo.
           </h2>
