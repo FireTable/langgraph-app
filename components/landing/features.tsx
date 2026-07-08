@@ -39,9 +39,7 @@ const BENTO: BentoCard[] = [
     icon: <MessagesSquareIcon className="size-6" />,
     iconClassName: "bg-primary/10 text-primary",
     span: "big",
-    codePreview: `useLangGraphRuntime({
-  stream, create, load,
-})`,
+    codePreview: ``,
   },
   {
     title: "Cross-conversation memory",
