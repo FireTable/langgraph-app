@@ -5,6 +5,7 @@
 import type { FC } from "react";
 
 import { BackgroundSplitDemo } from "@/components/landing/motion/background-split-demo";
+import { HumanInTheLoopDemo } from "@/components/landing/motion/human-in-the-loop-demo";
 import { MemoryRecallDemo } from "@/components/landing/motion/memory-recall-demo";
 import { ObservabilityWaterfallDemo } from "@/components/landing/motion/observability-waterfall-demo";
 import { StreamingTokensDemo } from "@/components/landing/motion/streaming-tokens-demo";
@@ -53,6 +54,14 @@ export const HowItWorks: FC = () => (
           reverse
         >
           <ObservabilityWaterfallDemo />
+        </ExplainRow>
+
+        <ExplainRow
+          eyebrow="Human in the loop"
+          title="Some tools only run with your sign-off."
+          body="LangGraph's interrupt() halts a run mid-execution, hands control to the user, and resumes when they send a payload back. Locations, wallet picks, trade confirmations — every input that needs judgement passes through one card chrome."
+        >
+          <HumanInTheLoopDemo />
         </ExplainRow>
       </div>
     </div>

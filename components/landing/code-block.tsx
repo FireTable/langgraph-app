@@ -1,7 +1,8 @@
-// ponytail: small server-rendered bash code block. Renders
-// monospace text with a tiny token-color pass (comment / string /
-// command) so the Agent tab reads like a real terminal excerpt
-// without pulling in a syntax highlighter.
+// ponytail: small server-rendered bash code block. A tokenizer
+// pass colors commands / flags / strings / URLs / env-vars so the
+// Command tab reads like a terminal excerpt without pulling in a
+// syntax highlighter. Whitespace is preserved as its own tone so
+// tokenization is lossless.
 
 import type { FC } from "react";
 
@@ -9,23 +10,65 @@ import { cn } from "@/lib/utils";
 
 const COMMENT = /^\s*#.*$/;
 
-type Token = { text: string; tone: "comment" | "string" | "plain" };
+type Tone = "comment" | "command" | "string" | "url" | "flag" | "envvar" | "plain";
+
+type Token = { text: string; tone: Tone };
+
+function classifyNonComment(piece: string, isFirstWord: boolean): Tone {
+  if (/^["'].*["']$/.test(piece)) return "string";
+  if (/^https?:\/\//.test(piece)) return "url";
+  if (/^-{1,2}\w/.test(piece)) return "flag";
+  if (isFirstWord) return "command";
+  return "plain";
+}
+
+function isEnvVar(piece: string): boolean {
+  return /^[A-Z][A-Z0-9_]+$/.test(piece);
+}
 
 function tokenize(line: string): Token[] {
-  if (COMMENT.test(line)) return [{ text: line, tone: "comment" }];
-  // Split on quoted strings; render the rest as plain.
-  const out: Token[] = [];
-  const re = /"[^"]*"|'[^']*'/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(line)) !== null) {
-    if (m.index > last) out.push({ text: line.slice(last, m.index), tone: "plain" });
-    out.push({ text: m[0], tone: "string" });
-    last = m.index + m[0].length;
+  if (COMMENT.test(line)) {
+    // Highlight env-var names inside comments (e.g. OPENAI_API_KEY
+    // inside `# fill in OPENAI_API_KEY, ...`). The rest of the
+    // line stays muted/italic.
+    const tokens: Token[] = [];
+    for (const piece of line.split(/(\s+)/)) {
+      if (!piece) continue;
+      tokens.push({
+        text: piece,
+        tone: isEnvVar(piece) ? "envvar" : "comment",
+      });
+    }
+    return tokens;
   }
-  if (last < line.length) out.push({ text: line.slice(last), tone: "plain" });
-  return out;
+  // Non-comment: first non-whitespace token is the command, then
+  // flags / URLs / strings get their own tones, everything else is
+  // plain. Splits preserve whitespace so the rendered output is
+  // byte-identical to the source line.
+  const tokens: Token[] = [];
+  let firstWordSeen = false;
+  for (const piece of line.split(/(\s+)/)) {
+    if (!piece) continue;
+    if (/^\s+$/.test(piece)) {
+      tokens.push({ text: piece, tone: "plain" });
+      continue;
+    }
+    const isFirst = !firstWordSeen;
+    firstWordSeen = true;
+    tokens.push({ text: piece, tone: classifyNonComment(piece, isFirst) });
+  }
+  return tokens;
 }
+
+const TONE_CLASS: Record<Tone, string> = {
+  comment: "text-muted-foreground italic",
+  command: "text-violet-600 dark:text-violet-400",
+  string: "text-emerald-600 dark:text-emerald-400",
+  url: "text-emerald-600 dark:text-emerald-400",
+  flag: "text-amber-600 dark:text-amber-400",
+  envvar: "text-sky-600 dark:text-sky-400",
+  plain: "",
+};
 
 export type CodeBlockProps = {
   code: string;
@@ -39,24 +82,15 @@ export const CodeBlock: FC<CodeBlockProps> = ({ code, className }) => (
       className,
     )}
   >
-    {code.split("\n").map((line, i) => {
-      const tokens = tokenize(line);
-      return (
-        <div key={i}>
-          {tokens.map((t, j) => (
-            <span
-              key={j}
-              className={cn(
-                t.tone === "comment" && "text-muted-foreground italic",
-                t.tone === "string" && "text-emerald-600 dark:text-emerald-400",
-              )}
-            >
-              {t.text}
-            </span>
-          ))}
-          {"\n"}
-        </div>
-      );
-    })}
+    {code.split("\n").map((line, i) => (
+      <div key={i}>
+        {tokenize(line).map((t, j) => (
+          <span key={j} className={cn(TONE_CLASS[t.tone])}>
+            {t.text}
+          </span>
+        ))}
+        {"\n"}
+      </div>
+    ))}
   </pre>
 );

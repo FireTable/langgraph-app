@@ -16,22 +16,30 @@ export const Cta: FC<CtaProps> = ({ signedIn }) => {
   // for the login screen (which isn't itself a named surface).
   const CtaIcon = isAuthed ? MessagesSquareIcon : ArrowRightIcon;
   return (
-    // ponytail: warm conic gradient + heavy blur sits behind the
-    // card. Same palette as the interrupt-glow ring
+    // ponytail: warm halo sits behind the card. Layered so the
+    // page bg (white) can't hide it (`-z-10` would punch through
+    // to the body — see `relative z-10` on the content wrapper).
+    // Same palette as the interrupt-glow ring
     // (var(--glow-warm) / var(--glow-bright) in globals.css) so
     // the "interrupt" affordance and the "ship it" affordance
-    // share a hue family — the page reads as one design.
+    // share a hue family — the page reads as one design. The
+    // conic is doubled with a radial so the center stays warm
+    // even after blur-3xl smears the angular bands. The conic's
+    // `from` angle rotates via `cta-marquee` (see globals.css) so
+    // the warm overflow breathes instead of standing still. The
+    // radial stays put to anchor the layout.
     <section id="cta" className="border-b border-border/60 relative overflow-hidden">
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 blur-3xl"
+        className="pointer-events-none absolute inset-0 z-0 blur-3xl"
         style={{
           background:
-            "conic-gradient(from 180deg at 50% 50%, var(--glow-warm) 0deg, var(--glow-bright) 120deg, var(--glow-warm) 240deg, var(--glow-bright) 360deg)",
-          opacity: 0.35,
+            "radial-gradient(ellipse 55% 70% at 50% 60%, oklch(0.78 0.2 25 / 0.55) 0%, oklch(0.96 0.08 70 / 0.35) 40%, transparent 75%), conic-gradient(from var(--cta-angle) at 50% 50%, transparent 0deg, var(--glow-warm) 60deg, transparent 140deg, var(--glow-bright) 220deg, transparent 300deg, var(--glow-warm) 360deg)",
+          opacity: 0.7,
+          animation: "cta-marquee 15s linear infinite",
         }}
       />
-      <div className="mx-auto w-full max-w-6xl px-6 py-24">
+      <div className="relative z-10 mx-auto w-full max-w-6xl px-6 py-24">
         <div className="bg-card/70 supports-[backdrop-filter]:bg-card/50 supports-[backdrop-filter]:backdrop-blur-md border-border/60 flex flex-col items-start gap-6 rounded-2xl border p-8 sm:p-10">
           <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Read the code. Run it. Skip the demo.

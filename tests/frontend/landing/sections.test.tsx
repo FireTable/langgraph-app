@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { Hero } from "@/components/landing/hero";
 import { Features } from "@/components/landing/features";
 import { Footer } from "@/components/landing/footer";
+import { HowItWorks } from "@/components/landing/how-it-works";
 
 // Marketing copy regression — the section components ship with copy
 // that names each headline feature (streaming, dual-graph, memory,
@@ -50,5 +51,25 @@ describe("Footer", () => {
     // GitHub link in the Project column one cell over.
     expect(screen.queryByRole("link", { name: /sign in/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /chat now/i })).toBeNull();
+  });
+});
+
+describe("HumanInTheLoop row", () => {
+  afterEach(cleanup);
+
+  it("ships the explainer inside How-it-works", () => {
+    render(<HowItWorks />);
+    expect(
+      screen.getByRole("heading", { name: /some tools only run with your sign-off/i, level: 3 }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/human in the loop/i)).toBeInTheDocument();
+  });
+
+  it("calls out the LangGraph interrupt primitive", () => {
+    render(<HowItWorks />);
+    // docs/INTERRUPT.md is the canonical record — the row
+    // copy must reference `interrupt()` so a marketer dropping
+    // the doc link in has something to anchor onto.
+    expect(screen.getByText(/interrupt\(\)/)).toBeInTheDocument();
   });
 });

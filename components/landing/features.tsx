@@ -1,61 +1,88 @@
+// ponytail: feature bento. Two grids stacked — top is the 4-card
+// bento (Streaming big, Memory tall, plus two single cells filling
+// the right column) and bottom is a 3-col row of equal-width cards
+// (Composable / Human in the loop / Self-host). Two grids feels
+// heavier than one but reads cleanly: the bento is the engine,
+// the row below are the operational guarantees.
+
 import type { FC, ReactNode } from "react";
 import {
-  MessagesSquareIcon,
-  GitBranchIcon,
-  BrainIcon,
   ActivityIcon,
-  WrenchIcon,
+  BrainIcon,
+  GitBranchIcon,
+  MessagesSquareIcon,
   ServerIcon,
+  UserCheckIcon,
+  WrenchIcon,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-// ponytail: feature grid is fully server-rendered. The icons come from
-// lucide; no per-card motion needed at the section level — the
-// how-it-works section carries the load for "show, don't tell".
+// ponytail: bottom row sits in its own grid so 3 cards get exactly
+// 1/3 width regardless of viewport. The bento above stays
+// 4-col so the headliner card can claim its 2×2 footprint.
 
-type Feature = {
+type BentoCard = {
+  title: string;
+  description: string;
+  icon: ReactNode;
+  iconClassName: string;
+  span: "big" | "tall" | "default";
+};
+
+const BENTO: BentoCard[] = [
+  {
+    title: "Streaming chat",
+    description:
+      "Tokens flow from LangGraph to the UI in real time. The runtime never blocks waiting for a complete response — aborts cancel at the SDK layer.",
+    icon: <MessagesSquareIcon className="size-6" />,
+    iconClassName: "bg-primary/10 text-primary",
+    span: "big",
+  },
+  {
+    title: "Cross-conversation memory",
+    description:
+      "User facts and recent threads surface automatically. The model sees them; you don't manage a memory panel — it just remembers.",
+    icon: <BrainIcon className="size-4" />,
+    iconClassName: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+    span: "tall",
+  },
+  {
+    title: "Dual-graph agent",
+    description: "Two graphs in parallel.",
+    icon: <GitBranchIcon className="size-4" />,
+    iconClassName: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    span: "default",
+  },
+  {
+    title: "Observability waterfall",
+    description: "Every span, every tool, one tree.",
+    icon: <ActivityIcon className="size-4" />,
+    iconClassName: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    span: "default",
+  },
+];
+
+type RowCard = {
   title: string;
   description: string;
   icon: ReactNode;
   iconClassName: string;
 };
 
-const FEATURES: Feature[] = [
-  {
-    title: "Streaming chat",
-    description:
-      "Tokens flow from LangGraph to the UI in real time. The runtime never blocks waiting for a complete response.",
-    icon: <MessagesSquareIcon className="size-4" />,
-    iconClassName: "bg-primary/10 text-primary",
-  },
-  {
-    title: "Dual-graph agent",
-    description:
-      "A chat graph routes to sub-agents; a second background graph handles summarization and observability after every turn.",
-    icon: <GitBranchIcon className="size-4" />,
-    iconClassName: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  },
-  {
-    title: "Cross-conversation memory",
-    description:
-      "User facts and recent threads are surfaced automatically. The model sees them; you don't manage them.",
-    icon: <BrainIcon className="size-4" />,
-    iconClassName: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  },
-  {
-    title: "Observability waterfall",
-    description:
-      "Every LLM call, tool run, and graph node is captured as a span tree. Inspect the per-turn path that produced any reply.",
-    icon: <ActivityIcon className="size-4" />,
-    iconClassName: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  },
+const BOTTOM_ROW: RowCard[] = [
   {
     title: "Composable tools",
-    description:
-      "Web search, code execution, NFT holdings, on-chain prices, weather — all lazy-registered so missing keys never 401.",
+    description: "Web, code, NFT, prices, weather — lazy-registered so missing keys never 401.",
     icon: <WrenchIcon className="size-4" />,
     iconClassName: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  },
+  {
+    title: "Human in the loop",
+    description:
+      "LangGraph's interrupt() pauses the run for the user — locations, wallets, trade confirmations.",
+    icon: <UserCheckIcon className="size-4" />,
+    iconClassName: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   },
   {
     title: "Self-host first",
@@ -66,12 +93,99 @@ const FEATURES: Feature[] = [
   },
 ];
 
+// ponytail: anchored bottom on the headliner card only. Staggered
+// bars evoke "tokens streaming" without re-animating the typewriter
+// demo that already lives in the hero above.
+const StreamingHint = () => (
+  <div className="text-muted-foreground mt-auto flex items-center gap-3 pt-4 text-[11px]">
+    <span className="bg-emerald-500 size-2 shrink-0 rounded-full" aria-hidden />
+    <span className="font-medium tracking-wide uppercase">Live</span>
+    <div className="flex items-center gap-1" aria-hidden>
+      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+        <span
+          key={i}
+          className="bg-foreground/70 inline-block h-1 rounded-full"
+          style={{
+            width: 4 + ((i * 7) % 12),
+            animation: "aui-pulse 1.4s ease-in-out infinite",
+            animationDelay: `${i * 0.12}s`,
+          }}
+        />
+      ))}
+    </div>
+  </div>
+);
+
+// ponytail: vertical dot pattern fills the tall Memory card so the
+// title isn't floating in dead space.
+const MemoryHint = () => (
+  <div className="text-muted-foreground mt-auto flex items-end gap-1.5 pt-4">
+    {Array.from({ length: 6 }).map((_, i) => (
+      <span
+        key={i}
+        className="bg-violet-500/40 inline-block rounded-sm"
+        style={{ width: 6, height: 6 + (i % 3) * 6 }}
+        aria-hidden
+      />
+    ))}
+  </div>
+);
+
+// ponytail: shared card chrome. The two grids diverge only in
+// column-count and row placement; everything inside is uniform so
+// the section reads as one design with two regions.
+const BentoShell = ({ card, children }: { card: BentoCard; children?: ReactNode }) => {
+  // 4-col grid: Streaming 2×2 (4 cells), Memory 1×2 (2 cells), two
+  // 1×1 cards stack on the right column.
+  const layout: Record<BentoCard["span"], string> = {
+    big: "lg:col-span-2 lg:row-span-2",
+    tall: "lg:col-span-1 lg:row-span-2",
+    default: "lg:col-span-1 lg:row-span-1",
+  };
+  return (
+    <div
+      className={cn(
+        "border-border/60 bg-card text-card-foreground flex flex-col gap-3 rounded-2xl border p-5 transition-colors hover:border-border",
+        (card.span === "big" || card.span === "tall") && "gap-4 p-6 min-h-[260px]",
+        layout[card.span],
+      )}
+    >
+      <div
+        className={cn(
+          "flex shrink-0 items-center justify-center rounded-full",
+          card.span === "big" ? "size-12" : "size-9",
+          card.iconClassName,
+        )}
+      >
+        {card.icon}
+      </div>
+      <h3
+        className={cn(
+          "font-semibold tracking-tight",
+          card.span === "big" ? "text-xl" : "text-base",
+        )}
+      >
+        {card.title}
+      </h3>
+      <p
+        className={cn(
+          "text-muted-foreground leading-relaxed",
+          card.span === "big" ? "text-sm" : "text-xs",
+        )}
+      >
+        {card.description}
+      </p>
+      {children}
+    </div>
+  );
+};
+
 export const Features: FC = () => (
   <section id="features" className="border-b border-border/60">
     <div className="mx-auto w-full max-w-6xl px-6 py-24">
       <div className="mb-12 flex flex-col gap-3">
         <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          Everything the chat needs, nothing it doesn't.
+          Everything the chat needs, nothing it doesn&apos;t.
         </h2>
         <p className="text-muted-foreground max-w-2xl text-base">
           The project ships the parts of an LLM product that you would otherwise rebuild every time.
@@ -79,28 +193,36 @@ export const Features: FC = () => (
         </p>
       </div>
 
-      <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {FEATURES.map((feature) => (
-          <li
-            key={feature.title}
-            className={cn(
-              "border-border/60 bg-card text-card-foreground flex flex-col gap-3 rounded-xl border p-5",
-              "transition-colors hover:border-border",
-            )}
-          >
+      <div className="flex flex-col gap-4">
+        <div className="grid auto-rows-fr grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {BENTO.map((card, i) => (
+            <BentoShell key={card.title} card={card}>
+              {i === 0 && <StreamingHint />}
+              {i === 1 && <MemoryHint />}
+            </BentoShell>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {BOTTOM_ROW.map((card) => (
             <div
-              className={cn(
-                "flex size-9 shrink-0 items-center justify-center rounded-full",
-                feature.iconClassName,
-              )}
+              key={card.title}
+              className="border-border/60 bg-card text-card-foreground flex min-h-[180px] flex-col gap-3 rounded-2xl border p-6 transition-colors hover:border-border"
             >
-              {feature.icon}
+              <div
+                className={cn(
+                  "flex size-9 shrink-0 items-center justify-center rounded-full",
+                  card.iconClassName,
+                )}
+              >
+                {card.icon}
+              </div>
+              <h3 className="text-base font-semibold tracking-tight">{card.title}</h3>
+              <p className="text-muted-foreground text-xs leading-relaxed">{card.description}</p>
             </div>
-            <h3 className="text-base font-semibold">{feature.title}</h3>
-            <p className="text-muted-foreground text-sm leading-relaxed">{feature.description}</p>
-          </li>
-        ))}
-      </ul>
+          ))}
+        </div>
+      </div>
     </div>
   </section>
 );
