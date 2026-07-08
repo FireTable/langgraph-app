@@ -32,7 +32,7 @@ export const Hero: FC<HeroProps> = ({ signedIn }) => (
                 colors oscillate rather than snap.
               Both run on the same 6s clock so the wash and the
               glyphs stay in phase. */}
-          <span className="relative inline-block">
+          <span className="relative inline-block my-2">
             <span
               aria-hidden
               className={cn(

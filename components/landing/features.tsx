@@ -31,13 +31,42 @@ type BentoCard = {
   codePreview?: string; // ponytail: optional monospace snippet rendered below the description; used by Chat anything to fill the 2x2 with a non-text visual
 };
 
+// ponytail: liquid-glass chip — translucent hue fill + backdrop blur
+// + inset ring + a soft white inner highlight so the chip reads as
+// a tinted lens, not a flat circle. The bento already had flat
+// tinted backgrounds; this upgrade gives each icon a distinct
+// surface that pops without competing with the headliner card's
+// amber wash. Per-card hue lives in `iconClassName` as
+// `bg-{color}/25 text-{color}`; the rest of the glass chrome is
+// shared.
+const GLASS_CHIP =
+  "backdrop-blur-md ring-1 ring-inset ring-white/40 shadow-[inset_0_1px_1px_rgba(255,255,255,0.5)] dark:ring-white/10 dark:shadow-[inset_0_1px_1px_rgba(255,255,255,0.08)]";
+
+// ponytail: palette of icon-chip hues. The bento needs each chip
+// to feel distinct without two adjacent cards landing in the same
+// family (sky+teal, rose+fuchsia, amber+orange all read as
+// duplicates). 10 entries is room for a 7-card bento + 3-card row
+// with one repeat maximum; expand the list before duplicating.
+const HUE = {
+  amber: "bg-amber-500/25 text-amber-700 dark:text-amber-300",
+  orange: "bg-orange-500/25 text-orange-700 dark:text-orange-300",
+  rose: "bg-rose-500/25 text-rose-700 dark:text-rose-300",
+  fuchsia: "bg-fuchsia-500/25 text-fuchsia-700 dark:text-fuchsia-300",
+  violet: "bg-violet-500/25 text-violet-700 dark:text-violet-300",
+  indigo: "bg-indigo-500/25 text-indigo-700 dark:text-indigo-300",
+  sky: "bg-sky-500/25 text-sky-700 dark:text-sky-300",
+  teal: "bg-teal-500/25 text-teal-700 dark:text-teal-300",
+  emerald: "bg-emerald-500/25 text-emerald-700 dark:text-emerald-300",
+  lime: "bg-lime-500/25 text-lime-700 dark:text-lime-300",
+} as const;
+
 const BENTO: BentoCard[] = [
   {
     title: "Chat anything",
     description:
       "Ask the model about anything — web lookups, code reviews, prices, weather, even trade approvals. Tokens reach the chat live, the moment the model emits.\nMarkdown, code blocks, and tool-call UI render inline on the same wire.\nA click stops the reply mid-flight — the SDK cancels, nothing half-written persists.",
     icon: <MessagesSquareIcon className="size-6" />,
-    iconClassName: "bg-primary/10 text-primary",
+    iconClassName: HUE.rose,
     span: "big",
     codePreview: ``,
   },
@@ -46,7 +75,7 @@ const BENTO: BentoCard[] = [
     description:
       "User facts and recent threads surface automatically. \nThe model sees them; you don't manage a memory panel — it just remembers.",
     icon: <BrainIcon className="size-4" />,
-    iconClassName: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+    iconClassName: HUE.violet,
     span: "wide",
   },
   {
@@ -54,7 +83,7 @@ const BENTO: BentoCard[] = [
     description:
       "Chat handles the turn; a second graph runs memory, summarization, and observability capture behind the scenes.",
     icon: <GitBranchIcon className="size-4" />,
-    iconClassName: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    iconClassName: "bg-emerald-500/25 text-emerald-700 dark:text-emerald-300",
     span: "default",
   },
   {
@@ -62,7 +91,7 @@ const BENTO: BentoCard[] = [
     description:
       "Every span, every tool — one tree. Redacted at write, indexed by turn, viewable alongside the reply.",
     icon: <ActivityIcon className="size-4" />,
-    iconClassName: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    iconClassName: HUE.teal,
     span: "default",
   },
 ];
@@ -79,21 +108,21 @@ const BOTTOM_ROW: RowCard[] = [
     title: "Composable tools",
     description: "Web, code, NFT, prices, weather — lazy-registered so missing keys never 401.",
     icon: <WrenchIcon className="size-4" />,
-    iconClassName: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+    iconClassName: HUE.fuchsia,
   },
   {
     title: "Human in the loop",
     description:
       "LangGraph's interrupt() pauses the run for the user — locations, wallets, trade confirmations.",
     icon: <UserCheckIcon className="size-4" />,
-    iconClassName: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    iconClassName: HUE.orange,
   },
   {
     title: "Self-host first",
     description:
       "One docker-compose, one Postgres, one process. No SaaS, no per-seat pricing, no tracking pixels.",
     icon: <ServerIcon className="size-4" />,
-    iconClassName: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+    iconClassName: "bg-sky-500/25 text-sky-700 dark:text-sky-300",
   },
 ];
 
@@ -137,7 +166,8 @@ const BentoShell = ({ card, children }: { card: BentoCard; children?: ReactNode 
     <div
       className={cn(
         "border-border/60 bg-card text-card-foreground flex flex-col gap-3 rounded-2xl border p-5 transition-colors hover:border-border",
-        card.span === "big" && "gap-4 p-6 min-h-[260px]",
+        card.span === "big" &&
+          "border-amber-200/60 bg-amber-50 gap-4 p-6 min-h-[260px] dark:bg-amber-950/40 dark:border-amber-800/40",
         card.span === "wide" && "gap-3 p-6 min-h-[140px]",
         layout[card.span],
       )}
@@ -145,6 +175,7 @@ const BentoShell = ({ card, children }: { card: BentoCard; children?: ReactNode 
       <div
         className={cn(
           "flex shrink-0 items-center justify-center rounded-full",
+          GLASS_CHIP,
           card.span === "big" ? "size-12" : "size-9",
           card.iconClassName,
         )}
@@ -216,6 +247,7 @@ export const Features: FC = () => (
               <div
                 className={cn(
                   "flex size-9 shrink-0 items-center justify-center rounded-full",
+                  GLASS_CHIP,
                   card.iconClassName,
                 )}
               >
