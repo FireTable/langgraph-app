@@ -22,7 +22,7 @@ export const Hero: FC<HeroProps> = ({ signedIn }) => (
           Self-hostable · Open source
         </p>
 
-        <h1 className="text-4xl leading-[1.05] font-semibold tracking-tight sm:text-5xl lg:text-6xl">
+        <h1 className="text-5xl leading-[1.05] font-semibold tracking-tight sm:text-6xl lg:text-7xl">
           {/* ponytail: flowing warm-halo gradient on the h1.
               - halo span sits behind the text, blurred, so the
                 surrounding whitespace picks up a soft rose/amber

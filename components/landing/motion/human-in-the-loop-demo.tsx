@@ -17,7 +17,7 @@ export const HumanInTheLoopDemo = () => (
         data-slot="human-in-the-loop-card"
         className="bg-card text-card-foreground border-border/60 overflow-hidden rounded-2xl border"
       >
-        <div className="text-amber-700 dark:text-amber-400 bg-amber-500/10 border-amber-500/30 flex items-center gap-1.5 border-b px-3 py-2 text-[11px] font-medium tracking-wide uppercase">
+        <div className="text-amber-700 dark:text-amber-400 flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase">
           <AlertCircleIcon className="size-3" aria-hidden />
           Requires approval
           <code className="bg-muted/60 text-foreground ml-1 rounded px-1.5 py-0.5 font-mono text-[11px] normal-case tracking-normal">
