@@ -37,7 +37,19 @@ import "@rainbow-me/rainbowkit/styles.css";
 // eth-mainnet/arb-mainnet/base-mainnet, and forwards with permissive
 // CORS. If the proxy is unreachable, wagmi falls back to its default
 // transport per chain.
-const alchemyTransport = (slug: string) => http(`/api/alchemy/${slug}`, { batch: true });
+//
+// ponytail: viem's `http()` rejects a relative path — `createHttpProvider`
+// throws "Provided URL is not compatible with HTTP connection: /api/..."
+// when given a path with no scheme. viem does support relative URLs via
+// window.location.origin on the client, but wallet-detection code (e.g.
+// RainbowKit's AlchemyProvider for the wallet picker avatar) instantiates
+// transports in a context where window may not exist, so the path falls
+// through unprefixed. Pin to window.location.origin explicitly so the
+// URL is always absolute on the client.
+const alchemyTransport = (slug: string) =>
+  http(`${typeof window !== "undefined" ? window.location.origin : ""}/api/alchemy/${slug}`, {
+    batch: true,
+  });
 
 // Public dapp identifier from Reown (formerly WalletConnect) — see
 // https://dashboard.reown.com. Empty string disables WalletConnect v2

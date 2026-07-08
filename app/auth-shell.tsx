@@ -14,6 +14,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
       authClient={authClient}
       basePaths={{ auth: "/login", settings: "/settings" }}
       socialProviders={["github", "google"]}
+      multipleAccountsPerProvider={false}
       plugins={[memorySettingsPlugin]}
       emailAndPassword={{
         minPasswordLength: 8,
