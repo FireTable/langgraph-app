@@ -270,6 +270,7 @@ Test database stays isolated from dev — never put production-like data in `lan
 ## Documentation
 
 - [`docs/APIS.md`](docs/APIS.md) — HTTP endpoint reference. Update whenever a route under `app/api/` changes.
+- [`docs/LANDING.md`](docs/LANDING.md) — marketing landing at `/`: per-section file map, asset inventory, motion keyframes, route-group naming rule, frontend test layout.
 - [`docs/MEMORY.md`](docs/MEMORY.md) — memory + thread-summarize design: dual-graph topology, `<memory>` + `<threads>` recall, `save_memory` RFC 6902 patches, store-anchored trigger window math, Memory tab UI, security stance.
 - [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — observability panel design: callback handler wiring, `observability_spans` schema, server-side transform + aggregate, lazy-loaded row detail, security/redaction, retention config, and curl examples.
 - [`docs/TOOLS.md`](docs/TOOLS.md) — LangGraph tool inventory and frontend card wiring. Update whenever a tool or card is added/removed/rerouted.
