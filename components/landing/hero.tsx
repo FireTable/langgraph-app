@@ -53,18 +53,18 @@ export const Hero: FC<HeroProps> = ({ signedIn }) => (
               {APP_NAME}
             </span>
           </span>
-          <br />
-          <span className="text-muted-foreground text-3xl leading-[1.05]">
-            A chat surface for a real agent graph.
-          </span>
         </h1>
 
-        <p className="text-muted-foreground max-w-xl text-base leading-relaxed sm:text-lg">
-          Streaming chat backed by a LangGraph StateGraph. A second graph quietly runs memory
-          summarization, observability capture, and thread housekeeping after every turn. Ship the
-          whole thing on a single VPS.
-        </p>
-
+        <div className="flex flex-1 flex-col gap-4">
+          <span className="text-muted-foreground text-3xl leading-[1.05] font-semibold tracking-tight">
+            A chat surface for a real agent graph.
+          </span>
+          <p className="text-muted-foreground max-w-xl text-base leading-relaxed sm:text-lg">
+            Streaming chat backed by a LangGraph StateGraph. A second graph quietly runs memory
+            summarization, observability capture, and thread housekeeping after every turn. Ship the
+            whole thing on a single VPS.
+          </p>
+        </div>
         <HeroCta signedIn={signedIn} showSecondary />
       </div>
 

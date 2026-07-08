@@ -29,48 +29,39 @@ export default async function Image() {
         fontFamily: "ui-sans-serif, system-ui, sans-serif",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-        <div
-          style={{
-            width: 18,
-            height: 18,
-            borderRadius: 6,
-            background: "#f5d76e",
-          }}
-        />
+      <div style={{ display: "flex", flexDirection: "column", gap: 36 }}>
         <div
           style={{
             fontSize: 22,
             letterSpacing: 0.4,
-            textTransform: "uppercase",
             color: "#8b8fa3",
           }}
         >
           {APP_NAME}
         </div>
-      </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-        <div
-          style={{
-            fontSize: 76,
-            lineHeight: 1.05,
-            fontWeight: 600,
-            letterSpacing: -1.5,
-            maxWidth: 980,
-          }}
-        >
-          {TAGLINE}
-        </div>
-        <div
-          style={{
-            fontSize: 26,
-            lineHeight: 1.4,
-            color: "#8b8fa3",
-            maxWidth: 900,
-          }}
-        >
-          Streaming chat · Dual-graph background work · Memory · Observability waterfall
+        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          <div
+            style={{
+              fontSize: 48,
+              lineHeight: 1.05,
+              fontWeight: 600,
+              letterSpacing: -1.5,
+              maxWidth: 980,
+            }}
+          >
+            {TAGLINE}
+          </div>
+          <div
+            style={{
+              fontSize: 26,
+              lineHeight: 1.4,
+              color: "#8b8fa3",
+              maxWidth: 900,
+            }}
+          >
+            Streaming chat · Dual-graph background work · Memory · Observability waterfall
+          </div>
         </div>
       </div>
 

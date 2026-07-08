@@ -298,13 +298,13 @@
 }
 
 .animate-hero-text-flow {
-  background-size: 200% 100%;
-  animation: hero-text-flow 6s ease-in-out infinite alternate;
+  background-size: 500% 100%;
+  animation: hero-text-flow 4s ease-in-out infinite alternate;
 }
 
 .animate-hero-halo-flow {
   background-size: 200% 100%;
-  animation: hero-text-flow 6s ease-in-out infinite alternate;
+  animation: hero-text-flow 4s ease-in-out infinite alternate;
 }
 
 @media (prefers-reduced-motion: reduce) {
