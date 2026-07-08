@@ -59,6 +59,41 @@ Response shape (single row, same for list / fetch / create / update):
 | `PATCH /api/threads/[id]`  | Rename, archive, unarchive, or replace `custom` jsonb (owner-only).                           | 200 / 400 / 401 / 404 |
 | `DELETE /api/threads/[id]` | Remove the thread metadata row (owner-only; does not touch LangGraph checkpoints).            | 204 / 401 / 404       |
 
+## Attachments
+
+Chat attachments backed by Cloudflare R2 (issue #12). The browser uploads directly to R2 via a presigned PUT — bytes never touch the Next.js server. Design doc: [`docs/ATTACHMENTS.md`](./ATTACHMENTS.md) (key convention, lazy-register, Content-Disposition per-object).
+
+**Auth + isolation contract**: every endpoint below is wrapped in `withAuth` (rule #9). Reads scope by `user_id`; cross-user access returns 404 (no existence leak). When any `R2_*` server env is missing the routes return `503 ATTACHMENTS_NOT_CONFIGURED` rather than 500 — mirrors the DENO / ALCHEMY lazy-register pattern.
+
+### `POST /api/attachments/presign`
+
+Reserve an attachment row and a 5-minute presigned PUT URL. Browser immediately PUTs the file to R2 with the returned `uploadHeaders` (Content-Type is baked into the signature — a mismatch is a 403 from R2).
+
+|               |                                                                                                                                                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0), threadId?: string (1..128) }`. `contentType` must appear in `NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES`; `sizeBytes` ≤ `R2_MAX_BYTES`. |
+| 201 response  | `{ id, key, uploadUrl, publicUrl, contentType, sizeBytes, uploadHeaders: { "Content-Type": contentType } }`. The presigned URL expires in 300s. `publicUrl` is `${R2_PUBLIC_BASE_URL}/${key}`.                    |
+| Failure codes | 400 `BAD_REQUEST` (invalid JSON / schema). 400 `CONTENT_TYPE_NOT_ALLOWED`. 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `ATTACHMENTS_NOT_CONFIGURED`.                                |
+
+### `POST /api/attachments/[id]/confirm`
+
+Finalize after the browser PUT. Server does a `HeadObject` to verify the upload landed with the claimed `Content-Length`; row flips from `pending` to `uploaded` and `confirmedAt` is stamped.
+
+|               |                                                                                                                                                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | empty                                                                                                                                                                                                                                 |
+| 200 response  | `{ id, publicUrl, contentType, sizeBytes, status: "uploaded" }`                                                                                                                                                                       |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND` (id missing or owned by another user). 409 `SIZE_MISMATCH` (`{ expected, actual }` — partial upload). 409 `UPLOAD_MISSING` (HeadObject 404 — PUT never landed). 503 `ATTACHMENTS_NOT_CONFIGURED`. |
+
+### `DELETE /api/attachments/[id]`
+
+Best-effort cleanup of a composer chip. Removes the row + the R2 object. Idempotent: R2 404 on delete is swallowed (the row is gone either way).
+
+|               |                                                                        |
+| ------------- | ---------------------------------------------------------------------- |
+| Response      | `204 No Content`                                                       |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND`. 503 `ATTACHMENTS_NOT_CONFIGURED`. |
+
 ## Observability
 
 Per-thread captured LLM / Tool / Chain / Node / Human spans — written at every End hook by the callback handler attached to the compiled graph in `backend/agent.ts` via `compile({ checkpointer }).withConfig({ callbacks: [capturingHandler] })`. Attaching at the compile layer (not per-model) ensures ToolNode spans are captured too. Design doc: [`docs/OBSERVABILITY.md`](./OBSERVABILITY.md) (storage, retention, FORBIDDEN regex, trade-offs).
