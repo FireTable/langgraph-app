@@ -27,25 +27,25 @@ type BentoCard = {
   description: string;
   icon: ReactNode;
   iconClassName: string;
-  span: "big" | "tall" | "default";
+  span: "big" | "wide" | "default";
 };
 
 const BENTO: BentoCard[] = [
   {
-    title: "Streaming chat",
-    description:
-      "Tokens flow from LangGraph to the UI in real time. The runtime never blocks waiting for a complete response — aborts cancel at the SDK layer.",
-    icon: <MessagesSquareIcon className="size-6" />,
-    iconClassName: "bg-primary/10 text-primary",
-    span: "big",
-  },
-  {
     title: "Cross-conversation memory",
     description:
       "User facts and recent threads surface automatically. The model sees them; you don't manage a memory panel — it just remembers.",
-    icon: <BrainIcon className="size-4" />,
+    icon: <BrainIcon className="size-6" />,
     iconClassName: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-    span: "tall",
+    span: "big",
+  },
+  {
+    title: "Streaming chat",
+    description:
+      "Tokens flow from LangGraph to the UI in real time. The runtime never blocks waiting for a complete response — aborts cancel at the SDK layer.",
+    icon: <MessagesSquareIcon className="size-4" />,
+    iconClassName: "bg-primary/10 text-primary",
+    span: "wide",
   },
   {
     title: "Dual-graph agent",
@@ -135,18 +135,21 @@ const MemoryHint = () => (
 // column-count and row placement; everything inside is uniform so
 // the section reads as one design with two regions.
 const BentoShell = ({ card, children }: { card: BentoCard; children?: ReactNode }) => {
-  // 4-col grid: Streaming 2×2 (4 cells), Memory 1×2 (2 cells), two
-  // 1×1 cards stack on the right column.
+  // 4-col grid: Memory 2×2 (4 cells) leads; Streaming 2×1 wide
+  // spans the top-right half (2 cells); the two single-cell cards
+  // stack on the bottom-right column. Streaming drops from headliner
+  // to "wide footer" so Memory claims the big footprint.
   const layout: Record<BentoCard["span"], string> = {
     big: "lg:col-span-2 lg:row-span-2",
-    tall: "lg:col-span-1 lg:row-span-2",
+    wide: "lg:col-span-2 lg:row-span-1",
     default: "lg:col-span-1 lg:row-span-1",
   };
   return (
     <div
       className={cn(
         "border-border/60 bg-card text-card-foreground flex flex-col gap-3 rounded-2xl border p-5 transition-colors hover:border-border",
-        (card.span === "big" || card.span === "tall") && "gap-4 p-6 min-h-[260px]",
+        card.span === "big" && "gap-4 p-6 min-h-[260px]",
+        card.span === "wide" && "gap-3 p-6 min-h-[140px] lg:flex-row lg:items-center lg:gap-6",
         layout[card.span],
       )}
     >
@@ -155,26 +158,38 @@ const BentoShell = ({ card, children }: { card: BentoCard; children?: ReactNode 
           "flex shrink-0 items-center justify-center rounded-full",
           card.span === "big" ? "size-12" : "size-9",
           card.iconClassName,
+          card.span === "wide" && "lg:order-first",
         )}
       >
         {card.icon}
       </div>
-      <h3
+      {/* ponytail: the wide card lays icon + title + description
+          in a row at lg+ so it doesn't read as a "small card
+          with empty space" — the headline sits next to the icon,
+          the description spills below the row on wider viewports. */}
+      <div
         className={cn(
-          "font-semibold tracking-tight",
-          card.span === "big" ? "text-xl" : "text-base",
+          "flex flex-col gap-2",
+          card.span === "wide" && "lg:flex-row lg:items-center lg:gap-4",
         )}
       >
-        {card.title}
-      </h3>
-      <p
-        className={cn(
-          "text-muted-foreground leading-relaxed",
-          card.span === "big" ? "text-sm" : "text-xs",
-        )}
-      >
-        {card.description}
-      </p>
+        <h3
+          className={cn(
+            "font-semibold tracking-tight",
+            card.span === "big" ? "text-xl" : "text-base",
+          )}
+        >
+          {card.title}
+        </h3>
+        <p
+          className={cn(
+            "text-muted-foreground leading-relaxed",
+            card.span === "big" ? "text-sm" : "text-xs",
+          )}
+        >
+          {card.description}
+        </p>
+      </div>
       {children}
     </div>
   );
@@ -197,8 +212,8 @@ export const Features: FC = () => (
         <div className="grid auto-rows-fr grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
           {BENTO.map((card, i) => (
             <BentoShell key={card.title} card={card}>
-              {i === 0 && <StreamingHint />}
-              {i === 1 && <MemoryHint />}
+              {i === 0 && <MemoryHint />}
+              {i === 1 && <StreamingHint />}
             </BentoShell>
           ))}
         </div>
