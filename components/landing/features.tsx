@@ -32,19 +32,19 @@ type BentoCard = {
 
 const BENTO: BentoCard[] = [
   {
-    title: "Cross-conversation memory",
-    description:
-      "User facts and recent threads surface automatically. The model sees them; you don't manage a memory panel — it just remembers.",
-    icon: <BrainIcon className="size-6" />,
-    iconClassName: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-    span: "big",
-  },
-  {
     title: "Streaming chat",
     description:
       "Tokens flow from LangGraph to the UI in real time. The runtime never blocks waiting for a complete response — aborts cancel at the SDK layer.",
-    icon: <MessagesSquareIcon className="size-4" />,
+    icon: <MessagesSquareIcon className="size-6" />,
     iconClassName: "bg-primary/10 text-primary",
+    span: "big",
+  },
+  {
+    title: "Cross-conversation memory",
+    description:
+      "User facts and recent threads surface automatically. The model sees them; you don't manage a memory panel — it just remembers.",
+    icon: <BrainIcon className="size-4" />,
+    iconClassName: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
     span: "wide",
   },
   {
@@ -212,8 +212,8 @@ export const Features: FC = () => (
         <div className="grid auto-rows-fr grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
           {BENTO.map((card, i) => (
             <BentoShell key={card.title} card={card}>
-              {i === 0 && <MemoryHint />}
-              {i === 1 && <StreamingHint />}
+              {i === 0 && <StreamingHint />}
+              {i === 1 && <MemoryHint />}
             </BentoShell>
           ))}
         </div>

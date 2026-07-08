@@ -19,8 +19,8 @@ export const HumanInTheLoopDemo = () => (
       >
         <div className="text-amber-700 dark:text-amber-400 bg-amber-500/10 border-amber-500/30 flex items-center gap-1.5 border-b px-3 py-2 text-[11px] font-medium tracking-wide uppercase">
           <AlertCircleIcon className="size-3" aria-hidden />
-          Awaiting tool-call
-          <code className="bg-background/60 text-foreground ml-1 rounded px-1.5 py-0.5 font-mono text-[11px] normal-case tracking-normal">
+          Requires approval
+          <code className="bg-muted/60 text-foreground ml-1 rounded px-1.5 py-0.5 font-mono text-[11px] normal-case tracking-normal">
             ask_location
           </code>
         </div>
