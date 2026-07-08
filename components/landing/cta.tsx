@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { FC } from "react";
-import { ArrowRightIcon, ExternalLinkIcon } from "lucide-react";
+import { ArrowRightIcon, ExternalLinkIcon, MessagesSquareIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
@@ -11,7 +11,10 @@ export type CtaProps = {
 export const Cta: FC<CtaProps> = ({ signedIn }) => {
   const isAuthed = signedIn === true;
   const ctaHref = isAuthed ? "/chat" : "/login";
-  const ctaLabel = isAuthed ? "Open chat" : "Sign in";
+  const ctaLabel = isAuthed ? "Chat now" : "Sign in";
+  // ponytail: chat glyph for the chat destination, generic arrow
+  // for the login screen (which isn't itself a named surface).
+  const CtaIcon = isAuthed ? MessagesSquareIcon : ArrowRightIcon;
   return (
     <section id="cta" className="border-b border-border/60">
       <div className="mx-auto w-full max-w-6xl px-6 py-24">
@@ -27,8 +30,8 @@ export const Cta: FC<CtaProps> = ({ signedIn }) => {
           <div className="flex flex-wrap items-center gap-3">
             <Button asChild size="lg">
               <Link href={ctaHref}>
+                <CtaIcon />
                 {ctaLabel}
-                <ArrowRightIcon />
               </Link>
             </Button>
             <Button asChild size="lg" variant="outline">

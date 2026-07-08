@@ -40,9 +40,9 @@ describe("Header", () => {
     expect(cta).toHaveAttribute("href", "/login");
   });
 
-  it("renders an 'Open chat' CTA pointing at /chat when signed in", () => {
+  it("renders a 'Chat now' CTA pointing at /chat when signed in", () => {
     render(<Header signedIn={true} />);
-    const cta = screen.getByRole("link", { name: /open chat/i });
+    const cta = screen.getByRole("link", { name: /chat now/i });
     expect(cta).toHaveAttribute("href", "/chat");
   });
 

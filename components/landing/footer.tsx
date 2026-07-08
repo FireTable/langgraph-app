@@ -1,15 +1,13 @@
 // ponytail: marketing footer. Three columns: brand + one-liner,
-// link groups, social/license. The brand column carries a single
-// auth-aware CTA mirror (Sign in / Open chat) — keeps the path
-// to the chat one click away without competing with the GitHub
-// link that's already in the Project column.
+// link groups, social/license. No CTA button on the left — the
+// sticky header and the CTA section above both carry auth-aware
+// "Chat now" / "Sign in", so adding one here would only compete
+// with the GitHub link in the Project column one cell over.
 
 import Link from "next/link";
-import { ArrowRightIcon } from "lucide-react";
 import type { FC } from "react";
 
 import { APP_NAME } from "@/lib/constants";
-import { Button } from "@/components/ui/button";
 
 const PRODUCT_LINKS = [
   { label: "Features", href: "#features" },
@@ -41,15 +39,7 @@ const COLUMNS = [
   { heading: "Legal", links: LEGAL_LINKS },
 ];
 
-export type FooterProps = {
-  signedIn: boolean | null;
-};
-
-export const Footer: FC<FooterProps> = ({ signedIn }) => {
-  const isAuthed = signedIn === true;
-  const ctaLabel = isAuthed ? "Open chat" : "Sign in";
-  const ctaHref = isAuthed ? "/chat" : "/login";
-
+export const Footer: FC = () => {
   return (
     <footer className="border-border/60 border-t">
       <div className="mx-auto grid w-full max-w-6xl grid-cols-1 gap-10 px-6 py-16 md:grid-cols-[1.4fr_repeat(3,minmax(0,1fr))]">

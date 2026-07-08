@@ -13,7 +13,7 @@
 // the full primary + secondary pair via its own composition.
 
 import Link from "next/link";
-import { ArrowRightIcon } from "lucide-react";
+import { ArrowRightIcon, MessagesSquareIcon } from "lucide-react";
 import type { FC } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -33,13 +33,18 @@ export const HeroCta: FC<HeroCtaProps> = ({
 }) => {
   const isAuthed = signedIn === true;
   const href = isAuthed ? "/chat" : "/login";
-  const label = isAuthed ? "Open chat" : "Sign in";
+  // ponytail: icon is a destination glyph, not a generic arrow.
+  // Chat now = chat bubble (the destination is the chat surface);
+  // Sign in keeps the arrow since /login is not itself a named
+  // destination.
+  const label = isAuthed ? "Chat now" : "Sign in";
+  const Icon = isAuthed ? MessagesSquareIcon : ArrowRightIcon;
 
   if (iconOnly) {
     return (
       <Button asChild size="icon" variant="outline" aria-label={label}>
         <Link href={href}>
-          <ArrowRightIcon />
+          <Icon />
         </Link>
       </Button>
     );
@@ -49,8 +54,8 @@ export const HeroCta: FC<HeroCtaProps> = ({
     return (
       <Button asChild size="sm">
         <Link href={href}>
+          <Icon />
           {label}
-          <ArrowRightIcon />
         </Link>
       </Button>
     );
@@ -60,8 +65,8 @@ export const HeroCta: FC<HeroCtaProps> = ({
     <div className="flex flex-wrap items-center gap-3">
       <Button asChild size="lg">
         <Link href={href}>
+          <Icon />
           {label}
-          <ArrowRightIcon />
         </Link>
       </Button>
       {showSecondary && (

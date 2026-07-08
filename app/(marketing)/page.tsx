@@ -28,7 +28,7 @@ const MarketingHome: FC = async () => {
         <HowItWorks />
         <SelfHost />
         <Cta signedIn={signedIn} />
-        <Footer signedIn={signedIn} />
+        <Footer />
       </main>
     </>
   );

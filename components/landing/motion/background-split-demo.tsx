@@ -38,16 +38,18 @@ const CHAT_EDGES: Array<[string, string]> = [
 ];
 
 const BG_NODES = [
-  { id: "b0", x: 30, y: 50, lit: "fill-fuchsia-500 stroke-fuchsia-500", edge: "text-fuchsia-500" },
-  { id: "b1", x: 110, y: 30, lit: "fill-orange-500 stroke-orange-500", edge: "text-orange-500" },
-  { id: "b2", x: 110, y: 110, lit: "fill-teal-500 stroke-teal-500", edge: "text-teal-500" },
-  { id: "b3", x: 180, y: 70, lit: "fill-blue-500 stroke-blue-500", edge: "text-blue-500" },
+  { id: "b0", x: 20, y: 95, lit: "fill-fuchsia-500 stroke-fuchsia-500", edge: "text-fuchsia-500" },
+  { id: "b1", x: 75, y: 60, lit: "fill-orange-500 stroke-orange-500", edge: "text-orange-500" },
+  { id: "b2", x: 130, y: 100, lit: "fill-teal-500 stroke-teal-500", edge: "text-teal-500" },
+  { id: "b3", x: 180, y: 130, lit: "fill-blue-500 stroke-blue-500", edge: "text-blue-500" },
 ] as const;
 
+// ponytail: linear chain (touchLastMessage → summarize → …), no
+// converging edges. The previous diamond was a closed loop and
+// read as a cycle rather than a pipeline.
 const BG_EDGES: Array<[string, string]> = [
   ["b0", "b1"],
-  ["b0", "b2"],
-  ["b1", "b3"],
+  ["b1", "b2"],
   ["b2", "b3"],
 ];
 
@@ -102,22 +104,8 @@ export const BackgroundSplitDemo = () => {
         <span>Background Agent Graph</span>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <GraphPanel
-          label="Agent"
-          accent="text-primary"
-          dotClass="bg-primary"
-          nodes={CHAT_NODES}
-          edges={CHAT_EDGES}
-          litNodes={litChat}
-        />
-        <GraphPanel
-          label="backgroundAgent"
-          accent="text-emerald-600 dark:text-emerald-400"
-          dotClass="bg-emerald-500"
-          nodes={BG_NODES}
-          edges={BG_EDGES}
-          litNodes={litBg}
-        />
+        <GraphPanel nodes={CHAT_NODES} edges={CHAT_EDGES} litNodes={litChat} />
+        <GraphPanel nodes={BG_NODES} edges={BG_EDGES} litNodes={litBg} />
       </div>
       <div className="text-muted-foreground flex items-center gap-2 text-[10px] font-mono">
         <span
@@ -135,20 +123,13 @@ export const BackgroundSplitDemo = () => {
 type NodeSpec = { id: string; x: number; y: number; lit: string; edge: string };
 
 type GraphPanelProps = {
-  label: string;
-  accent: string;
-  dotClass: string;
   nodes: readonly NodeSpec[];
   edges: Array<[string, string]>;
   litNodes: number;
 };
 
-const GraphPanel = ({ label, accent, dotClass, nodes, edges, litNodes }: GraphPanelProps) => (
+const GraphPanel = ({ nodes, edges, litNodes }: GraphPanelProps) => (
   <div className="border-border/60 bg-muted/30 flex flex-col gap-2 rounded-lg border p-2">
-    <div className="flex items-center gap-1.5 px-1">
-      <span className={cn("size-1.5 rounded-full", dotClass)} aria-hidden />
-      <span className={cn("text-[10px] font-medium tracking-wide uppercase", accent)}>{label}</span>
-    </div>
     <svg viewBox="0 0 200 190" className="h-32 w-full">
       {edges.map(([fromId, toId]) => {
         const from = findNode(nodes, fromId);

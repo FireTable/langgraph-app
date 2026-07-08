@@ -37,18 +37,18 @@ describe("Footer", () => {
   afterEach(cleanup);
 
   it("links to the GitHub repo in the project column", () => {
-    render(<Footer signedIn={false} />);
+    render(<Footer />);
     const gh = screen.getByRole("link", { name: /^github$/i });
     expect(gh).toHaveAttribute("href", "https://github.com/FireTable/langgraph-app");
   });
 
   it("does not duplicate the auth CTA — header + CTA section cover it", () => {
-    render(<Footer signedIn={false} />);
-    // The footer intentionally skips the "Sign in" / "Open chat"
+    render(<Footer />);
+    // The footer intentionally skips the "Sign in" / "Chat now"
     // button. The same affordance lives in the sticky header and
     // in the CTA section; adding it here would compete with the
     // GitHub link in the Project column one cell over.
     expect(screen.queryByRole("link", { name: /sign in/i })).toBeNull();
-    expect(screen.queryByRole("link", { name: /open chat/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /chat now/i })).toBeNull();
   });
 });

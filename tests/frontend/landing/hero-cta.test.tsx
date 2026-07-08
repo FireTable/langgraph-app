@@ -17,9 +17,9 @@ describe("HeroCta", () => {
     expect(link).toHaveAttribute("href", "/login");
   });
 
-  it("renders an 'Open chat' link to /chat when the visitor is signed in", () => {
+  it("renders a 'Chat now' link to /chat when the visitor is signed in", () => {
     render(<HeroCta signedIn={true} />);
-    const link = screen.getByRole("link", { name: /open chat/i });
+    const link = screen.getByRole("link", { name: /chat now/i });
     expect(link).toHaveAttribute("href", "/chat");
   });
 
