@@ -34,7 +34,7 @@ const BENTO: BentoCard[] = [
   {
     title: "Streaming chat",
     description:
-      "Tokens flow from LangGraph to the UI in real time. The runtime never blocks waiting for a complete response — aborts cancel at the SDK layer.",
+      "Tokens stream into the chat in real time. The @assistant-ui/react-langgraph runtime subscribes to the LangGraph run, appends each token the moment it's emitted, and renders markdown, code, and tool calls incrementally. Tool-call UI and interrupt-driven approval cards ride the same stream — no second transport, no client-side reconciliation. Aborts cancel at the SDK layer; half-written replies never land in a thread.",
     icon: <MessagesSquareIcon className="size-6" />,
     iconClassName: "bg-primary/10 text-primary",
     span: "big",
@@ -149,7 +149,7 @@ const BentoShell = ({ card, children }: { card: BentoCard; children?: ReactNode 
       className={cn(
         "border-border/60 bg-card text-card-foreground flex flex-col gap-3 rounded-2xl border p-5 transition-colors hover:border-border",
         card.span === "big" && "gap-4 p-6 min-h-[260px]",
-        card.span === "wide" && "gap-3 p-6 min-h-[140px] lg:flex-row lg:items-center lg:gap-6",
+        card.span === "wide" && "gap-3 p-6 min-h-[140px]",
         layout[card.span],
       )}
     >
@@ -158,21 +158,16 @@ const BentoShell = ({ card, children }: { card: BentoCard; children?: ReactNode 
           "flex shrink-0 items-center justify-center rounded-full",
           card.span === "big" ? "size-12" : "size-9",
           card.iconClassName,
-          card.span === "wide" && "lg:order-first",
         )}
       >
         {card.icon}
       </div>
-      {/* ponytail: the wide card lays icon + title + description
-          in a row at lg+ so it doesn't read as a "small card
-          with empty space" — the headline sits next to the icon,
-          the description spills below the row on wider viewports. */}
-      <div
-        className={cn(
-          "flex flex-col gap-2",
-          card.span === "wide" && "lg:flex-row lg:items-center lg:gap-4",
-        )}
-      >
+      {/* ponytail: wide card now renders the same vertical chrome
+          as the default cards — icon top-left, title and description
+          stacked below. The extra horizontal space lets the long
+          Memory title fit on one line without the old horizontal
+          flex crushing it into a 3-line wrap. */}
+      <div className="flex flex-col gap-2">
         <h3
           className={cn(
             "font-semibold tracking-tight",

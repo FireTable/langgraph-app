@@ -26,8 +26,8 @@ export const Hero: FC<HeroProps> = ({ signedIn }) => (
           <span
             className={cn(
               "bg-clip-text text-transparent",
-              "bg-gradient-to-r from-violet-600 via-rose-500 to-amber-500",
-              "dark:from-violet-400 dark:via-rose-400 dark:to-amber-400",
+              "bg-gradient-to-r from-rose-500 via-amber-500 to-amber-300",
+              "dark:from-rose-400 dark:via-amber-400 dark:to-amber-200",
             )}
           >
             {APP_NAME}
