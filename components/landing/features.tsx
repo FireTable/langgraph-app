@@ -34,7 +34,7 @@ const BENTO: BentoCard[] = [
   {
     title: "Streaming chat",
     description:
-      "Tokens stream into the chat in real time. The @assistant-ui/react-langgraph runtime subscribes to the LangGraph run, appends each token the moment it's emitted, and renders markdown, code, and tool calls incrementally. Tool-call UI and interrupt-driven approval cards ride the same stream — no second transport, no client-side reconciliation. Aborts cancel at the SDK layer; half-written replies never land in a thread.",
+      "Tokens land in the chat the moment the model emits them.\n\nMarkdown, code blocks, tool calls, and interrupt-driven approval cards all render incrementally on a single stream — no spinner, no second transport, no partial response to reconcile.\n\nAbort mid-flight: the SDK cancels, nothing half-written ever persists.",
     icon: <MessagesSquareIcon className="size-6" />,
     iconClassName: "bg-primary/10 text-primary",
     span: "big",
@@ -49,14 +49,16 @@ const BENTO: BentoCard[] = [
   },
   {
     title: "Dual-graph agent",
-    description: "Two graphs in parallel.",
+    description:
+      "Chat handles the turn; a second graph runs memory, summarization, and observability capture behind the scenes.",
     icon: <GitBranchIcon className="size-4" />,
     iconClassName: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
     span: "default",
   },
   {
     title: "Observability waterfall",
-    description: "Every span, every tool, one tree.",
+    description:
+      "Every span, every tool — one tree. Redacted at write, indexed by turn, viewable alongside the reply.",
     icon: <ActivityIcon className="size-4" />,
     iconClassName: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
     span: "default",
@@ -180,6 +182,7 @@ const BentoShell = ({ card, children }: { card: BentoCard; children?: ReactNode 
           className={cn(
             "text-muted-foreground leading-relaxed",
             card.span === "big" ? "text-sm" : "text-xs",
+            "whitespace-pre-line", // ponytail: only the Streaming description uses \n\n for paragraph breaks; other cards are single sentences and unaffected
           )}
         >
           {card.description}

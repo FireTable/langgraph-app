@@ -23,14 +23,35 @@ export const Hero: FC<HeroProps> = ({ signedIn }) => (
         </p>
 
         <h1 className="text-4xl leading-[1.05] font-semibold tracking-tight sm:text-5xl lg:text-6xl">
-          <span
-            className={cn(
-              "bg-clip-text text-transparent",
-              "bg-gradient-to-r from-rose-500 via-amber-500 to-amber-300",
-              "dark:from-rose-400 dark:via-amber-400 dark:to-amber-200",
-            )}
-          >
-            {APP_NAME}
+          {/* ponytail: flowing warm-halo gradient on the h1.
+              - halo span sits behind the text, blurred, so the
+                surrounding whitespace picks up a soft rose/amber
+                wash.
+              - text span clips the same gradient to the glyphs and
+                drifts position via the `alternate` keyframe so the
+                colors oscillate rather than snap.
+              Both run on the same 6s clock so the wash and the
+              glyphs stay in phase. */}
+          <span className="relative inline-block">
+            <span
+              aria-hidden
+              className={cn(
+                "absolute -inset-x-2 inset-y-1 -z-10 rounded-[inherit] blur-2xl opacity-60",
+                "bg-gradient-to-r from-rose-500 via-amber-500 to-amber-300",
+                "dark:from-rose-400 dark:via-amber-400 dark:to-amber-200",
+                "animate-hero-halo-flow",
+              )}
+            />
+            <span
+              className={cn(
+                "bg-clip-text text-transparent",
+                "bg-gradient-to-r from-rose-500 via-amber-500 to-amber-300",
+                "dark:from-rose-400 dark:via-amber-400 dark:to-amber-200",
+                "animate-hero-text-flow",
+              )}
+            >
+              {APP_NAME}
+            </span>
           </span>
           <br />
           <span className="text-muted-foreground">A chat surface for a real agent graph.</span>
