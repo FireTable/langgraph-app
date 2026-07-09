@@ -12,7 +12,6 @@ import {
   trimMessagesForInvoke,
 } from "@/backend/memory/template";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
-import { inlineFileData } from "@/lib/langgraph/inline-file-data";
 
 // Weather agent: a focused sub-agent that owns the RAG-style weather
 // flow (resolve place → fetch forecast → answer). The whole flow
@@ -36,12 +35,7 @@ async function weatherModelNode(
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
   const sysMsg = await buildSystemMessageWithMemory(WEATHER_AGENT_PROMPT, config, threads);
 
-  // File URLs → base64 inlining (see lib/langgraph/inline-file-data.ts).
-  // The router may dispatch a PDF-bearing human turn directly to the
-  // weather sub-agent; without this the second LLM call would 400
-  // the same way chat-agent did.
-  const inlined = await inlineFileData(history);
-  const response = await chatModel.bindTools(WEATHER_TOOLS).invoke([sysMsg, ...inlined], config);
+  const response = await chatModel.bindTools(WEATHER_TOOLS).invoke([sysMsg, ...history], config);
 
   return { messages: [response] };
 }

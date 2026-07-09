@@ -12,7 +12,6 @@ import {
   trimMessagesForInvoke,
 } from "@/backend/memory/template";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
-import { inlineFileData } from "@/lib/langgraph/inline-file-data";
 
 // Code sub-agent: model ↔ tools loop. write_code proposes code that
 // the user reviews in an editor; execute_code runs it in a Deno
@@ -32,13 +31,8 @@ async function codeModelNode({ messages }: { messages: BaseMessage[] }, config?:
   // is NEVER touched.
   const threads = await loadThreadSummariesForPrompt(config);
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
-  // Same file-URL → base64 inlining as chat-agent: see
-  // lib/langgraph/inline-file-data.ts. Without it, a PDF on the
-  // human message survives the model boundary once but crashes the
-  // second LLM call (code sub-agent) with the same file_data error.
-  const inlined = await inlineFileData(history);
   const sysMsg = await buildSystemMessageWithMemory(CODE_AGENT_PROMPT, config, threads);
-  const response = await chatModel.bindTools(CODE_TOOLS).invoke([sysMsg, ...inlined], config);
+  const response = await chatModel.bindTools(CODE_TOOLS).invoke([sysMsg, ...history], config);
   return { messages: [response] };
 }
 

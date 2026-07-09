@@ -12,7 +12,6 @@ import {
   trimMessagesForInvoke,
 } from "@/backend/memory/template";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
-import { inlineFileData } from "@/lib/langgraph/inline-file-data";
 
 // Chat agent gets every tool — the router already decided whether this
 // turn is weather, so chatAgent never sees a weather question. Weather
@@ -39,14 +38,9 @@ async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?:
   // checkpointer read from it directly.
   const threads = await loadThreadSummariesForPrompt(config);
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
-  // Fetch + base64 any file URLs in the user's message before the LLM
-  // sees them — OpenAI Responses API rejects plain HTTPS in `file_data`
-  // and demands `data:<mime>;base64,...`. See
-  // lib/langgraph/inline-file-data.ts for the cap and large-file marker.
-  const inlined = await inlineFileData(history);
 
   const sysMsg = await buildSystemMessageWithMemory(CHAT_AGENT_PROMPT, config, threads);
-  const response = await chatModel.bindTools(ALL_TOOLS).invoke([sysMsg, ...inlined], config);
+  const response = await chatModel.bindTools(ALL_TOOLS).invoke([sysMsg, ...history], config);
 
   return { messages: [response] };
 }
