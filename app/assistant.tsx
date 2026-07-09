@@ -209,11 +209,8 @@ export function Assistant() {
   const attachments = useMemo(
     () =>
       process.env.NEXT_PUBLIC_ATTACHMENTS_ENABLED === "true"
-        ? new R2AttachmentAdapter({
-            getCurrentThreadId: () => bridgeRef.current.mainThreadId,
-          })
+        ? new R2AttachmentAdapter()
         : undefined,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 

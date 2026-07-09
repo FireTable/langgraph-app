@@ -21,7 +21,7 @@ export async function getAttachmentForUser(id: string, userId: string): Promise<
 export async function setAttachmentStatus(
   id: string,
   userId: string,
-  patch: { status: "pending" | "uploaded"; confirmedAt?: Date; threadId?: string },
+  patch: { status: "pending" | "uploaded"; confirmedAt?: Date },
 ): Promise<Attachment | null> {
   const [row] = await db
     .update(attachments)
@@ -39,5 +39,18 @@ export async function deleteAttachmentForUser(
     .delete(attachments)
     .where(and(eq(attachments.id, id), eq(attachments.userId, userId)))
     .returning();
+  return row ?? null;
+}
+
+// Q2: dedup probe. Returns the user's existing uploaded row for this sha
+// if one exists, so presign can return its publicUrl and skip the PUT.
+export async function findUploadedBySha(
+  userId: string,
+  sha256: string,
+): Promise<Attachment | null> {
+  const row = await db.query.attachments.findFirst({
+    where: (t, { and: a, eq: e }) =>
+      a(e(t.userId, userId), e(t.sha256, sha256), e(t.status, "uploaded")),
+  });
   return row ?? null;
 }

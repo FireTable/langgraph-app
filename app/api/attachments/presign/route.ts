@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 
 import { R2NotConfiguredError, buildPublicUrl, presignPut } from "@/lib/r2/client";
 import { PresignBody } from "@/lib/attachments/validators";
-import { insertAttachment } from "@/lib/attachments/queries";
+import { findUploadedBySha, insertAttachment } from "@/lib/attachments/queries";
 import { buildKey } from "@/lib/attachments/keys";
 import { withAuth } from "@/lib/auth/with-auth";
 
@@ -72,6 +72,27 @@ export const POST = withAuth(async (req, { user }) => {
     );
   }
 
+  // Q2 dedup short-circuit: if the client supplied a sha256 AND we have
+  // an uploaded row for this (user, sha), skip the PUT entirely and hand
+  // back the existing publicUrl. Adapter detects skipUpload:true and
+  // jumps straight to confirm.
+  if (parsed.data.sha256) {
+    const existing = await findUploadedBySha(user.id, parsed.data.sha256);
+    if (existing) {
+      return NextResponse.json(
+        {
+          id: existing.id,
+          key: existing.r2Key,
+          publicUrl: buildPublicUrl(existing.r2Key),
+          contentType: existing.contentType,
+          sizeBytes: Number(existing.sizeBytes),
+          skipUpload: true,
+        },
+        { status: 201 },
+      );
+    }
+  }
+
   const id = generateId();
   const key = buildKey(user.id, id, parsed.data.name);
 
@@ -98,11 +119,11 @@ export const POST = withAuth(async (req, { user }) => {
   await insertAttachment({
     id,
     userId: user.id,
-    threadId: parsed.data.threadId ?? null,
     r2Key: key,
     name: parsed.data.name,
     contentType,
     sizeBytes: parsed.data.sizeBytes,
+    sha256: parsed.data.sha256 ?? null,
     status: "pending",
   });
 

@@ -66,7 +66,7 @@ function presignBody(
     name: string;
     contentType: string;
     sizeBytes: number;
-    threadId: string;
+    sha256: string;
   }> = {},
 ) {
   return {
@@ -166,7 +166,10 @@ describe("POST /api/attachments/presign — happy path", () => {
     });
   });
 
-  it("inserts a pending row scoped to the caller", async () => {
+  it("inserts a pending row scoped to the caller (no thread binding)", async () => {
+    // Q3 design: attachments row has no thread_id column. The renderer
+    // reads content parts off the message; the table only tracks upload
+    // metadata for dedup + retention sweeps.
     process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png";
     process.env.R2_MAX_BYTES = "10485760";
     const res = await POSTPresign(jsonRequest(presignBody()), ctx);
@@ -177,14 +180,96 @@ describe("POST /api/attachments/presign — happy path", () => {
     expect(row?.sizeBytes).toBe(1024);
   });
 
-  it("stores threadId when provided", async () => {
-    // FK requires a threads row to exist before referencing thread_id.
-    await db.insert(threads).values({ id: "thread-1", userId: owner, title: "test" });
-    const res = await POSTPresign(jsonRequest(presignBody({ threadId: "thread-1" })), ctx);
-    expect(res.status).toBe(201);
+  it("stores the sha256 hash on the row for dedup", async () => {
+    process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png";
+    process.env.R2_MAX_BYTES = "10485760";
+    const sha = "a".repeat(64);
+    const res = await POSTPresign(jsonRequest(presignBody({ sha256: sha })), ctx);
     const body = await res.json();
     const row = await db.query.attachments.findFirst({ where: (t, { eq }) => eq(t.id, body.id) });
-    expect(row?.threadId).toBe("thread-1");
+    expect((row as { sha256?: string }).sha256).toBe(sha);
+  });
+});
+
+// ---------- POST /api/attachments/presign — Q2 dedup ----------
+
+describe("POST /api/attachments/presign — dedup (Q2)", () => {
+  const ctx = { params: Promise.resolve(undefined as never) };
+  // 64-char hex sha256 — any valid-looking string works for the test
+  const sha = "b".repeat(64);
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png";
+    process.env.R2_MAX_BYTES = "10485760";
+  });
+
+  it("returns 201 with skipUpload=true when a matching uploaded row exists for this user", async () => {
+    // First call: insert a row and confirm it (status='uploaded')
+    await db.insert(attachments).values({
+      id: "exists1",
+      userId: owner,
+      r2Key: `u/${owner}/exists1-pic.png`,
+      name: "pic.png",
+      contentType: "image/png",
+      sizeBytes: 1024,
+      sha256: sha,
+      status: "uploaded",
+    });
+    const res = await POSTPresign(jsonRequest(presignBody({ sha256: sha })), ctx);
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.skipUpload).toBe(true);
+    expect(body.id).toBe("exists1");
+    expect(body.publicUrl).toBe(`https://file.example/u/${owner}/exists1-pic.png`);
+    expect(body.uploadUrl).toBeUndefined();
+    expect(mockState.presignPut).not.toHaveBeenCalled();
+  });
+
+  it("issues a fresh presign when the same sha is on a 'pending' (in-flight) row from this user", async () => {
+    // Pending rows are NOT shared — that would race two parallel uploads
+    // against the same R2 key.
+    await db.insert(attachments).values({
+      id: "in_flight",
+      userId: owner,
+      r2Key: `u/${owner}/in_flight-pic.png`,
+      name: "pic.png",
+      contentType: "image/png",
+      sizeBytes: 1024,
+      sha256: sha,
+      status: "pending",
+    });
+    const res = await POSTPresign(jsonRequest(presignBody({ sha256: sha })), ctx);
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.skipUpload).toBeUndefined();
+    expect(body.id).not.toBe("in_flight");
+    expect(mockState.presignPut).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not dedup across users (different user with same sha gets a fresh row)", async () => {
+    const other = await makeUser();
+    await db.insert(attachments).values({
+      id: "theirs",
+      userId: other.id,
+      r2Key: `u/${other.id}/theirs-pic.png`,
+      name: "pic.png",
+      contentType: "image/png",
+      sizeBytes: 1024,
+      sha256: sha,
+      status: "uploaded",
+    });
+    const res = await POSTPresign(jsonRequest(presignBody({ sha256: sha })), ctx);
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.skipUpload).toBeUndefined();
+    expect(body.id).not.toBe("theirs");
+  });
+
+  it("skips sha lookup when no sha is provided (back-compat / disabled clients)", async () => {
+    const res = await POSTPresign(jsonRequest(presignBody()), ctx);
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.skipUpload).toBeUndefined();
   });
 });
 

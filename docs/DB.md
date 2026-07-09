@@ -15,7 +15,7 @@ Source of truth: `db/migrations/0000_*.sql` (drizzle-kit generated). This doc de
 
 ## Cascade behavior
 
-`user.id` is the cascade root. Deleting a user removes every `session`, `account`, `thread`, and `attachment` they own. `threads.id` cascade also removes its `attachments` (so thread delete cleans up uploads). No soft delete; CASCADE only.
+`user.id` is the cascade root. Deleting a user removes every `session`, `account`, `thread`, and `attachment` they own. `attachments` has no FK to `threads` (Q3 — see `docs/ATTACHMENTS.md` for why), so thread deletion does NOT clean up attachment rows. Use the retention sweep if those accumulate. No soft delete; CASCADE only.
 
 ## `user`
 
@@ -91,32 +91,30 @@ Indexes:
 
 ## `attachments`
 
-Bytes live in Cloudflare R2 — this table is the source of truth for the URL the renderer hands the model and for thread-side cleanup. One row per uploaded file. Lifecycle:
+Bytes live in Cloudflare R2 — this table is the source of truth for the URL the renderer hands the model. One row per uploaded file. Lifecycle:
 
 - `POST /api/attachments/presign` → INSERT row with `status='pending'`, `size_bytes` from request
 - Browser PUTs bytes directly to R2 (presigned URL)
 - `POST /api/attachments/[id]/confirm` → `HeadObject` size check, then `UPDATE status='uploaded', confirmed_at=now()`
 - `DELETE /api/attachments/[id]` → DELETE row + `DeleteObject` on R2
 
-| Column         | Type                 | Notes                                                                                                                             |
-| -------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `id`           | text PK              | 12-char nanoid; also embedded in the R2 key                                                                                       |
-| `user_id`      | text FK→user         | CASCADE on user delete                                                                                                            |
-| `thread_id`    | text FK→threads NULL | Set at presign when the adapter knows the active thread; nullable for the brief window before `confirm`. CASCADE on thread delete |
-| `r2_key`       | text                 | `u/<userId>/<nanoid>-<safe-filename>`                                                                                             |
-| `name`         | text                 | Original (sanitized) filename                                                                                                     |
-| `content_type` | text                 | MIME type — restricted to `NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES`                                                                  |
-| `size_bytes`   | bigint               | Claimed at presign, verified via `HeadObject` at confirm                                                                          |
-| `status`       | enum                 | `pending` \| `uploaded`                                                                                                           |
-| `created_at`   | timestamptz          |                                                                                                                                   |
-| `confirmed_at` | timestamptz NULL     | Stamped at confirm                                                                                                                |
+| Column         | Type             | Notes                                                            |
+| -------------- | ---------------- | ---------------------------------------------------------------- |
+| `id`           | text PK          | 12-char nanoid; also embedded in the R2 key                      |
+| `user_id`      | text FK→user     | CASCADE on user delete                                           |
+| `r2_key`       | text             | `u/<userId>/<nanoid>-<safe-filename>`                            |
+| `name`         | text             | Original (sanitized) filename                                    |
+| `content_type` | text             | MIME type — restricted to `NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES` |
+| `size_bytes`   | bigint           | Claimed at presign, verified via `HeadObject` at confirm         |
+| `status`       | enum             | `pending` \| `uploaded`                                          |
+| `created_at`   | timestamptz      |                                                                  |
+| `confirmed_at` | timestamptz NULL | Stamped at confirm                                               |
 
-No `message_id` column: assistant-ui has no documented mechanism to correlate an attachment with the resulting message after send. Thread-side rendering joins `attachments` to LangGraph `messages` via `(thread_id, created_at)` window — see `docs/ATTACHMENTS.md`.
+No `thread_id` or `message_id` column by design (Q3): the renderer reads content parts directly off the message (`{ type: "image", image: publicUrl }` is embedded by `send()`), so the `attachments` table only tracks upload metadata for retention sweeps + dedup. See `docs/ATTACHMENTS.md` for the full reasoning.
 
 Indexes:
 
-- `attachments_user_created_idx` `(user_id, created_at DESC)` — sidebar / cleanup
-- `attachments_thread_created_idx` `(thread_id, created_at DESC)` — `(thread_id, created_at)` join
+- `attachments_user_created_idx` `(user_id, created_at DESC)` — "list this user's recent uploads" + retention sweep target
 
 ## Code → table map
 

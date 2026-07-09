@@ -22,6 +22,27 @@
       "when": 1783533354154,
       "tag": "0002_workable_senator_kelly",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783565494695,
+      "tag": "0003_narrow_wild_child",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783566104231,
+      "tag": "0004_tranquil_mandarin",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783567745932,
+      "tag": "0005_tricky_shadowcat",
+      "breakpoints": true
     }
   ]
 }

@@ -12,36 +12,104 @@ table shape and ownership rules see [`docs/DB.md`](./DB.md#attachments).
 
 ```
 [ browser composer ]
-      │ 1. POST /api/attachments/presign   (Next.js)
-      ▼
-[ presign route ]── inserts row (status='pending') → returns { id, uploadUrl, publicUrl }
-      │ 2. PUT uploadUrl (bytes)            (direct to R2)
+      │ 1. user picks a file → adapter.add() (zero network, no DB row)
+      │
+      │ 2. user clicks Send → adapter.send()
+      │      a. POST /api/attachments/presign   (Next.js → row status='pending')
+      │      b. PUT uploadUrl                   (browser → R2)
+      │      c. POST /api/attachments/[id]/confirm  (Next.js → row status='uploaded')
       ▼
 [ Cloudflare R2 ]   u/<userId>/<nanoid>-<safe-name>  + Content-Disposition
       │
-      │ 3. POST /api/attachments/[id]/confirm (Next.js)
+      │ 3. assistant-ui embed the publicUrl into the message content part
+      │    (`{ type: "image", image: publicUrl }`)
       ▼
-[ confirm route ]  HeadObject size check → UPDATE status='uploaded', confirmed_at=now()
-      │
-      │ 4. assistant-ui `send()` builds content parts (image | file) pointing at publicUrl
-      ▼
-[ LangGraph chat run ]
+[ LangGraph chat run ]   renderer reads content parts directly off the message
 ```
 
-## Why direct upload, not a Next.js proxy
+The `add()` step is intentionally a no-op on the network. The full pipeline
+runs in `send()` the moment the user hits Send. See
+[Deferred upload](#deferred-upload) below for why.
 
-The project is self-hosted — proxying through Next.js means eating our own
-VPS bandwidth on every upload, blocking event loops on large files, and
-adding a CU quota on whatever happens to be sitting in front of the app.
-A 5-minute presigned PUT lets R2 absorb the bytes; the Next.js server only
-orchestrates (presign → confirm).
+## Deferred upload
 
-The PUT signature covers `Key` + `Content-Length`; the browser adds
-`Content-Type` and `Content-Disposition` as plain headers (R2 stores both
-on the object). Signing `Content-Type` would force the browser to send a
-matching value — `fetch(file)` does set Content-Type, but `fetch(file)`
-doesn't add `Content-Disposition`, so we keep it out of the signature
-and let R2 accept it as object metadata.
+`add()` does **not** call `presign` or `PUT`. It just returns a
+`PendingAttachment` with status `requires-action` and stashes the original
+`File` on the chip. `send()` then runs the full
+`presign → PUT → confirm` chain and returns a `CompleteAttachment` whose
+content parts embed the `publicUrl` for the renderer to display.
+
+Side effects this avoids:
+
+- **No orphan `pending` rows.** Closing the tab before sending leaves
+  nothing on the server side — `add()` never created a row.
+- **No "uploading" state to design.** The chip is stable from the moment
+  the file is picked; bytes only fly at Send time.
+- **Adapter is thread-agnostic.** The presign body no longer carries
+  `threadId` at all (Q3 — see [No thread binding](#no-thread-binding)).
+  The composer dispatches the message AFTER `send()` returns, so the
+  thread is a `__LOCALID_*` placeholder at presign time. We sidestep
+  the issue by not reading the thread at all.
+
+The R2 `PUT` is a single round trip; `fetch(file)` carries the bytes
+straight to the bucket. Network drops mid-flight mean the user re-picks
+the file. For files >100 MiB, swap to multipart PUT.
+
+## SHA-256 dedup (Q2)
+
+`send()` hashes the file bytes with `crypto.subtle.digest("SHA-256", ...)`
+and sends the 64-char hex in the presign body. The route checks for an
+existing uploaded row with the same `(user_id, sha256)` and short-circuits
+when one exists — response carries `skipUpload: true` and the existing
+row's `publicUrl`. The adapter jumps straight to confirm; the PUT to R2
+never happens.
+
+What this saves:
+
+- **No second upload** of the same bytes — same image re-attached in a
+  different thread (or the same) hits dedup, R2 sees one PUT.
+- **No duplicate storage** — R2 only holds one copy of the bytes per
+  (user, sha).
+
+Scope is per-user by design. User A and user B uploading the same file
+get separate rows in R2 with separate publicUrls — storage quotas and
+deletion rights are user-scoped, so cross-user dedup would create a
+shared object that the other user could read but not delete.
+
+The partial unique index `attachments_user_sha_uploaded_idx` enforces
+"at most one uploaded row per (user, sha)" at the DB level. `pending`
+rows are excluded from the index so two parallel uploads of the same
+file from different tabs don't race the constraint.
+
+Clients without `crypto.subtle` (very old browsers, server-side flows)
+just omit `sha256` from the presign body — the validator accepts it as
+optional, dedup simply doesn't run for them.
+
+## No thread binding
+
+`attachments` has **no** `thread_id` or `message_id` column. Three reasons:
+
+1. **The composer dispatches the message after `send()` returns**, so the
+   thread is still a `__LOCALID_*` placeholder at presign time. Storing it
+   would require a time-window backfill that misbehaves on slow networks.
+2. **The renderer reads content parts directly off the message**
+   (`{ type: "image", image: publicUrl }` is embedded by `send()`), so it
+   never needs to query the `attachments` table to find what belongs to a
+   message.
+3. **Cross-thread sharing falls out for free.** The same upload referenced
+   from N messages just embeds the same `publicUrl` N times — no FK
+   gymnastics.
+
+Lifecycle:
+
+- **Create:** `add()` does nothing on the network. `send()` writes a
+  `pending` row at presign, then `uploaded` at confirm.
+- **Confirm:** `HeadObject` verifies the R2 size matches `sizeBytes`; on
+  mismatch the row is left in `pending` and the adapter surfaces
+  `409 SIZE_MISMATCH` so the user knows to retry.
+- **Cleanup:** no FK cascade to `threads` anymore. Orphan `pending` rows
+  (created mid-confirm when the user closes the tab) are swept by a
+  retention job — see [Watch-outs](#watch-outs).
 
 ## R2 key convention
 
@@ -49,10 +117,9 @@ and let R2 accept it as object metadata.
 u/<userId>/<nanoid>-<safe-filename>
 ```
 
-- `userId` — bare Better Auth user id. Community standard (Vercel guide,
-  AWS blog, SO answers). The "exposes user activity via bucket list"
-  concern is bounded: R2 list operations require IAM regardless of the
-  bucket's public-read policy.
+- `userId` — bare Better Auth user id. The "exposes user activity via
+  bucket list" concern is bounded: R2 list operations require IAM
+  regardless of the bucket's public-read policy.
 - 12-char nanoid — URL-safe alphabet, ~71 bits of entropy. Generated from
   `crypto.randomBytes` (no nanoid dep). The id is also the row PK so the
   public URL never carries a guessable id.
@@ -82,8 +149,8 @@ u/<userId>/<nanoid>-<safe-filename>
    GET is permitted so the renderer can re-fetch uploaded URLs after the
    runtime serves them; `ExposeHeaders: ["ETag"]` lets the client inspect
    the upload identity. `Content-Disposition` MUST be in `AllowedHeaders`
-   — the adapter sends it as a plain HTTP header on the PUT (see point 3)
-   and the browser preflight asks permission. New dev origins (or a second
+   — the adapter sends it as a plain HTTP header on the PUT and the
+   browser preflight asks permission. New dev origins (or a second
    production origin) need to be added; don't try to wildcard.
 
 3. **Content-Disposition is per-object, server-decided, sent as a plain
@@ -95,31 +162,18 @@ u/<userId>/<nanoid>-<safe-filename>
      would require the browser to send matching values on the wire, but
      `fetch(file)` doesn't add `Content-Disposition` and a mismatch would
      surface as an opaque CORS failure ("Failed to fetch" with no detail).
-   * images → `inline; filename="..."`
-   * everything else → `attachment; filename="..."`
+   * images → `inline`
+   * everything else → `attachment`
+
+   The filename is intentionally omitted from the header value:
+   `fetch()` rejects header values with non-ISO-8859-1 code points (e.g.
+   CJK characters), and RFC 6266 `filename*` encoding adds noise for no
+   gain — the browser falls back to the URL's last segment (already
+   nanoid-prefixed + sanitized).
 
    R2 has no bucket-level "default Content-Disposition" override — the
    per-object metadata is authoritative and is served back unchanged on
    GET. This is the XSS guardrail: SVG / HTML / PDF never execute inline.
-
-## No `messageId` column
-
-assistant-ui has no documented mechanism to correlate an attachment with
-the resulting `message_id` after `send()`. The attachment becomes content
-parts inline; there's no out-of-band id exposed to the backend.
-
-Implementing `messageId` backfill needs custom `useLangGraphRuntime`
-run-metadata hooks + backend run-metadata plumbing — out of scope.
-
-**Adopted strategy:** `attachments` has no `message_id` column. Thread-side
-rendering joins `attachments` to LangGraph `messages` via `(thread_id,
-created_at)` window — find attachments created within the user message's
-send timestamp window. Slightly fuzzy but sufficient for the only consumer
-(thread-side chip rendering on reload).
-
-If exact `messageId` mapping ever becomes necessary (e.g. KB ingestion
-correlation), add it via `runConfig.metadata` from the adapter and
-backfill on the `triggerBackgroundAgent` run.
 
 ## Lazy-register on missing env (mirrors rule #10)
 
@@ -158,11 +212,14 @@ client gets a fast 400 if they try to upload something larger.
 | `POST /api/attachments/[id]/confirm` | HeadObject verify + flip to `uploaded`           | 200 / 401 / 404 / 409 / 503 |
 | `DELETE /api/attachments/[id]`       | Remove row + R2 object (idempotent)              | 204 / 401 / 404 / 503       |
 
-## Watch-outs when extending
+## Watch-outs
 
-- **Orphan `pending` rows.** If a user picks a file then closes the tab
-  before the PUT finishes, or before sending, the row stays `pending`.
-  Add a retention sweep on `created_at` if these accumulate.
+- **Orphan `pending` rows.** The `add()` step makes no network calls
+  anymore, so a user who picks a file and closes the tab before
+  clicking Send leaves nothing on the server. The remaining source of
+  orphans is: confirm fails (network drops between PUT and confirm).
+  Add a retention sweep on `created_at < now() - 24h AND status='pending'`
+  if these accumulate.
 - **No partial-upload resume.** The PUT is a single request — a network
   drop mid-flight means the user re-picks the file. For files >100 MiB
   this gets painful; consider multipart PUT then.
@@ -170,6 +227,15 @@ client gets a fast 400 if they try to upload something larger.
   and zero egress. Each upload = 1 Class A + 1 Class B; each confirm = 1
   Class A (HeadObject); each delete = 1 Class A. Track if you scale
   beyond the free tier — see [R2 pricing](https://developers.cloudflare.com/r2/pricing/).
-- **`Content-Disposition` filename.** The presign route escapes `"` in the
-  filename but doesn't transliterate non-ASCII. For full i18n support
-  encode the filename as `filename*=UTF-8''...` per RFC 6266.
+- **No thread-side attachment queries.** Because the row has no
+  `thread_id`, "show me all attachments in this thread" isn't a query
+  you can do directly. The renderer reads content parts off the
+  message; for an admin view, filter on the
+  `(message.content[*].type === 'image' | 'file')` JSONB. If a true
+  thread-side index becomes necessary, add a join table
+  `message_attachments(message_id, attachment_id)` — the existing
+  schema leaves room for it (PK is the row id, no FK to threads).
+- **CORS preflight caching.** When iterating on the CORS rule, remember
+  browsers cache failed preflights for `MaxAgeSeconds` (we set 3000s =
+  50min). A hard reload (Cmd+Shift+R) bypasses the cache; otherwise
+  expect a long wait after changing the rule.
