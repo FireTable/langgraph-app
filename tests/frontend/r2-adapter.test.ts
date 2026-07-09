@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { PendingAttachment } from "@assistant-ui/react";
 import { R2AttachmentAdapter } from "@/lib/attachments/r2-adapter";
 
 function fakeFile(name: string, type: string, sizeBytes: number): File {
@@ -47,6 +48,22 @@ describe("R2AttachmentAdapter — add (deferred)", () => {
     const pending = await adapter.add({ file: fakeFile("a.pdf", "application/pdf", 8) });
     expect(pending.type).toBe("file");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("kicks off SHA-256 in the background and stashes the promise on the pending", async () => {
+    // ponytail: send() awaits shaPromise so a typical 5-30s drag→send gap
+    // finishes the digest before the first network round-trip fires.
+    const adapter = new R2AttachmentAdapter();
+    const pending = (await adapter.add({
+      file: fakeFile("a.png", "image/png", 32),
+    })) as PendingAttachment & { shaPromise?: Promise<string | undefined> };
+
+    expect(pending.shaPromise).toBeInstanceOf(Promise);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Resolves to a 64-char hex string once the digest lands.
+    const sha = await pending.shaPromise!;
+    expect(sha).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
@@ -139,6 +156,10 @@ describe("R2AttachmentAdapter — send (full upload pipeline)", () => {
   });
 
   it("builds a file content part for non-image types", async () => {
+    // TEMP: PDF path embeds raw base64 in `data` (LangChain's ChatOpenAI
+    // converter prepends `data:${mime_type};base64,` itself). Drop this
+    // assertion and re-add a URL assertion once issue #12 ships the
+    // PDF→markdown text path.
     fetchMock
       .mockResolvedValueOnce(
         new Response(
@@ -176,43 +197,37 @@ describe("R2AttachmentAdapter — send (full upload pipeline)", () => {
       file: fakeFile("doc.pdf", "application/pdf", 100),
       status: { type: "requires-action", reason: "composer-send" },
     });
-    expect(complete.content).toEqual([
-      {
-        type: "file",
-        data: "https://file.example/u/u1/p1-doc.pdf",
-        mimeType: "application/pdf",
-        filename: "doc.pdf",
-      },
-    ]);
+    expect(complete.content).toHaveLength(1);
+    const part = complete.content[0];
+    if (part.type !== "file") throw new Error("expected file part");
+    expect(part).toMatchObject({
+      type: "file",
+      mimeType: "application/pdf",
+      filename: "doc.pdf",
+    });
+    expect(part.data).toMatch(/^[A-Za-z0-9+/=]+$/);
+    // 100 zero bytes → 136 base64 chars (8/6 + padding)
+    expect(part.data).toHaveLength(136);
   });
 
-  it("when server returns skipUpload:true, jumps to confirm with no PUT", async () => {
+  it("when server returns skipUpload:true, only calls presign (skip PUT and confirm)", async () => {
     // Q2: dedup hit. The presign response carries the existing row's
-    // publicUrl and skipUpload=true; the adapter must skip the PUT and
-    // still call confirm so the row stays 'uploaded'.
-    fetchMock
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            id: "existing1",
-            key: "u/u1/existing1-pic.png",
-            publicUrl: "https://file.example/u/u1/existing1-pic.png",
-            contentType: "image/png",
-            sizeBytes: 12,
-            skipUpload: true,
-          }),
-          { status: 201, headers: { "Content-Type": "application/json" } },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            publicUrl: "https://file.example/u/u1/existing1-pic.png",
-            contentType: "image/png",
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      );
+    // publicUrl and skipUpload=true; the row is already 'uploaded' and
+    // presign gave us everything we need, so the adapter makes zero
+    // further requests.
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          id: "existing1",
+          key: "u/u1/existing1-pic.png",
+          publicUrl: "https://file.example/u/u1/existing1-pic.png",
+          contentType: "image/png",
+          sizeBytes: 12,
+          skipUpload: true,
+        }),
+        { status: 201, headers: { "Content-Type": "application/json" } },
+      ),
+    );
 
     const adapter = new R2AttachmentAdapter();
     const complete = await adapter.send({
@@ -224,9 +239,8 @@ describe("R2AttachmentAdapter — send (full upload pipeline)", () => {
       status: { type: "requires-action", reason: "composer-send" },
     });
 
-    // Only 2 calls: presign + confirm. No PUT.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1][0]).toBe("/api/attachments/existing1/confirm");
+    // Only 1 call: presign. No PUT, no confirm.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(complete.id).toBe("existing1");
     expect(complete.content).toEqual([
       {
@@ -235,6 +249,51 @@ describe("R2AttachmentAdapter — send (full upload pipeline)", () => {
         filename: "pic.png",
       },
     ]);
+  });
+
+  it("reuses shaPromise from add() instead of recomputing in send()", async () => {
+    // ponytail: a pre-resolved shaPromise on the pending short-circuits
+    // the recompute path — send() awaits it and uses that hex directly.
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: "p1",
+            uploadUrl: "https://r2.example/p",
+            uploadHeaders: { "Content-Type": "image/png" },
+            contentType: "image/png",
+            sizeBytes: 12,
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            publicUrl: "https://file.example/u/u1/p1-pic.png",
+            contentType: "image/png",
+          }),
+          { status: 200 },
+        ),
+      );
+
+    const adapter = new R2AttachmentAdapter();
+    const precomputedSha = "a".repeat(64);
+    await adapter.send({
+      id: "local-uuid",
+      type: "image",
+      name: "pic.png",
+      contentType: "image/png",
+      file: fakeFile("pic.png", "image/png", 12),
+      status: { type: "requires-action", reason: "composer-send" },
+      shaPromise: Promise.resolve(precomputedSha),
+    } as PendingAttachment & { shaPromise?: Promise<string | undefined> });
+
+    // presign body must carry the precomputed sha verbatim, not a fresh
+    // digest of the 12-byte fake file.
+    const presignBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(presignBody.sha256).toBe(precomputedSha);
   });
 
   it("throws on presign failure (4xx) without attempting PUT or confirm", async () => {
