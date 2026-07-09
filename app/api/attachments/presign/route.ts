@@ -78,9 +78,11 @@ export const POST = withAuth(async (req, { user }) => {
   // ponytail: images inline so <img> renders, everything else attachment
   // so PDF/HTML/SVG never execute inline. Server-decided — clients can't
   // override via signed GET (we use public bucket, no signed GET).
-  const contentDisposition = contentType.startsWith("image/")
-    ? `inline; filename="${parsed.data.name.replace(/"/g, "")}"`
-    : `attachment; filename="${parsed.data.name.replace(/"/g, "")}"`;
+  // Filename is intentionally omitted: fetch() rejects header values with
+  // non-ISO-8859-1 code points (e.g. CJK characters), and RFC 6266
+  // filename* encoding adds noise for no gain — the browser falls back to
+  // the URL's last segment (already nanoid-prefixed + sanitized).
+  const contentDisposition = contentType.startsWith("image/") ? "inline" : "attachment";
 
   let uploadUrl: string;
   try {

@@ -162,7 +162,7 @@ describe("POST /api/attachments/presign — happy path", () => {
     expect(body.publicUrl).toBe(`https://file.example/u/${owner}/${body.id}-pic.png`);
     expect(body.uploadHeaders).toEqual({
       "Content-Type": "image/png",
-      "Content-Disposition": 'inline; filename="pic.png"',
+      "Content-Disposition": "inline",
     });
   });
 
