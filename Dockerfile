@@ -26,7 +26,16 @@ WORKDIR /deps/langgraph-app
 # `pnpm install` runs. CI hit ENOENT on this exact path; the
 # follow-up `COPY . .` below copies the rest of the source but
 # it's too late by then.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc patches ./
+#
+# The two-step COPY is intentional: a single-line `COPY ... patches ./`
+# reused a stale GHA layer that had been built when .dockerignore
+# still excluded `patches/`. Splitting the COPY into a wildcard
+# (`patches/*.patch`) and renaming the destination (`.` → `./patches/`)
+# forces a new layer because both the source glob and the destination
+# differ from the old step. The expanded wildcard pulls the actual
+# files in now that .dockerignore no longer filters the directory.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY patches/*.patch ./patches/
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store,id=pnpm \
     corepack enable && pnpm install --frozen-lockfile
 
