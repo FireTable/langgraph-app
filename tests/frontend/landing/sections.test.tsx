@@ -45,11 +45,10 @@ describe("Footer", () => {
 
   it("does not duplicate the auth CTA — header + CTA section cover it", () => {
     render(<Footer />);
-    // The footer intentionally skips the "Sign in" / "Chat now"
-    // button. The same affordance lives in the sticky header and
-    // in the CTA section; adding it here would compete with the
-    // GitHub link in the Project column one cell over.
-    expect(screen.queryByRole("link", { name: /sign in/i })).toBeNull();
+    // The footer intentionally skips the "Chat now" button. The
+    // same affordance lives in the sticky header and in the CTA
+    // section; adding it here would compete with the GitHub link
+    // in the Project column one cell over.
     expect(screen.queryByRole("link", { name: /chat now/i })).toBeNull();
   });
 });

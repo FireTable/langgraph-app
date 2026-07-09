@@ -4,8 +4,9 @@ import "@testing-library/jest-dom/vitest";
 import { Header } from "@/components/landing/header";
 
 // Header — sticky nav with brand, anchor links, GitHub repo link,
-// and an auth-aware CTA on the right. The CTA is the same
-// HeroCta primitive the hero uses; signedIn drives its label + href.
+// and a CTA on the right. The CTA is the same HeroCta primitive
+// the hero uses; copy is "Chat now" for everyone, signedIn drives
+// only the href (signed-in → /chat, anon / null → /login bounce).
 
 const REPO_URL = "https://github.com/FireTable/langgraph-app";
 
@@ -34,9 +35,9 @@ describe("Header", () => {
     expect(gh).toHaveAttribute("href", REPO_URL);
   });
 
-  it("renders a 'Sign in' CTA pointing at /login when signed out", () => {
+  it("renders a 'Chat now' CTA pointing at /login when signed out", () => {
     render(<Header signedIn={false} />);
-    const cta = screen.getByRole("link", { name: /sign in/i });
+    const cta = screen.getByRole("link", { name: /chat now/i });
     expect(cta).toHaveAttribute("href", "/login");
   });
 
@@ -48,7 +49,7 @@ describe("Header", () => {
 
   it("falls back to the signed-out CTA while the session is loading", () => {
     render(<Header signedIn={null} />);
-    const cta = screen.getByRole("link", { name: /sign in/i });
+    const cta = screen.getByRole("link", { name: /chat now/i });
     expect(cta).toHaveAttribute("href", "/login");
   });
 });

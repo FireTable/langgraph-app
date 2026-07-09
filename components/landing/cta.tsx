@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { FC } from "react";
-import { ArrowRightIcon, ExternalLinkIcon, MessagesSquareIcon } from "lucide-react";
+import { ExternalLinkIcon, MessagesSquareIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
@@ -9,12 +9,11 @@ export type CtaProps = {
 };
 
 export const Cta: FC<CtaProps> = ({ signedIn }) => {
-  const isAuthed = signedIn === true;
-  const ctaHref = isAuthed ? "/chat" : "/login";
-  const ctaLabel = isAuthed ? "Chat now" : "Sign in";
-  // ponytail: chat glyph for the chat destination, generic arrow
-  // for the login screen (which isn't itself a named surface).
-  const CtaIcon = isAuthed ? MessagesSquareIcon : ArrowRightIcon;
+  const ctaHref = signedIn === true ? "/chat" : "/login";
+  // ponytail: copy stays "Chat now" for everyone; only the
+  // destination shifts (authed → /chat, anon → /login bounce).
+  const ctaLabel = "Chat now";
+  const CtaIcon = MessagesSquareIcon;
   return (
     // ponytail: warm halo sits behind the card. Layered so the
     // page bg (white) can't hide it (`-z-10` would punch through
