@@ -12,6 +12,7 @@ import {
   trimMessagesForInvoke,
 } from "@/backend/memory/template";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
+import { inlineFileData } from "@/lib/langgraph/inline-file-data";
 
 // Crypto sub-agent: mirrors the weather subgraph. The model ↔ tools
 // loop runs end-to-end inside the subgraph so the parent graph doesn't
@@ -27,8 +28,12 @@ async function cryptoModelNode({ messages }: { messages: BaseMessage[] }, config
   // is NEVER touched.
   const threads = await loadThreadSummariesForPrompt(config);
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
+  // File URLs → base64 inlining (see lib/langgraph/inline-file-data.ts).
+  // Without it, a PDF on the human turn would 400 the same way
+  // chat-agent did.
+  const inlined = await inlineFileData(history);
   const sysMsg = await buildSystemMessageWithMemory(CRYPTO_AGENT_PROMPT, config, threads);
-  const response = await chatModel.bindTools(CRYPTO_TOOLS).invoke([sysMsg, ...history], config);
+  const response = await chatModel.bindTools(CRYPTO_TOOLS).invoke([sysMsg, ...inlined], config);
   return { messages: [response] };
 }
 
