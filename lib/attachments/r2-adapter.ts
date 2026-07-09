@@ -71,9 +71,14 @@ export class R2AttachmentAdapter implements AttachmentAdapter {
   readonly accept: string;
 
   constructor() {
+    // ponytail: default allow-list is images only. PDF was tried as a
+    // sync-render-to-image path (#12 comment 2026-07-09 06:22) but
+    // moved behind the knowledge base (#13) — the chat composer no
+    // longer surfaces a PDF picker until KB ingestion lands. Override
+    // via NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES if a non-image flow
+    // needs the broader allow-list in the meantime.
     this.accept =
-      process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES ??
-      "image/png,image/jpeg,image/webp,application/pdf";
+      process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES ?? "image/png,image/jpeg,image/webp";
   }
 
   async add({ file }: { file: File }): Promise<PendingAttachment> {
