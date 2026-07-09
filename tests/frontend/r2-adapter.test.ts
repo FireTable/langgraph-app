@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { PendingAttachment } from "@assistant-ui/react";
 import { R2AttachmentAdapter } from "@/lib/attachments/r2-adapter";
+import { useUploadStore } from "@/lib/attachments/upload-store";
 
 function fakeFile(name: string, type: string, sizeBytes: number): File {
   return new File([new Uint8Array(sizeBytes)], name, { type });
@@ -413,5 +414,187 @@ describe("R2AttachmentAdapter — accept string", () => {
     process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png,application/pdf";
     const adapter = new R2AttachmentAdapter();
     expect(adapter.accept).toBe("image/png,application/pdf");
+  });
+});
+
+// ponytail: the spinner on the Send button reads from upload-store.
+// begin/end bracket the entire presign → PUT → confirm pipeline so
+// the spinner reflects real upload work, not just a button click.
+// begin fires before any fetch; end fires in finally so errors and
+// success both clear the flag.
+describe("R2AttachmentAdapter — upload-store lifecycle", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    useUploadStore.setState({ count: 0 });
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const happyPathResponses = () =>
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: "p1",
+            uploadUrl: "https://r2.example/p",
+            publicUrl: "https://file.example/p",
+            uploadHeaders: { "Content-Type": "image/png" },
+            contentType: "image/png",
+            sizeBytes: 8,
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ publicUrl: "https://file.example/p" }), {
+          status: 200,
+        }),
+      );
+
+  it("beginUpload fires before the first fetch on a successful send", async () => {
+    happyPathResponses();
+    const seen: number[] = [];
+    const unsub = useUploadStore.subscribe((s) => seen.push(s.count));
+    try {
+      const adapter = new R2AttachmentAdapter();
+      await adapter.send({
+        id: "local",
+        type: "image",
+        name: "a.png",
+        contentType: "image/png",
+        file: fakeFile("a.png", "image/png", 8),
+        status: { type: "requires-action", reason: "composer-send" },
+      });
+    } finally {
+      unsub();
+    }
+    // observed sequence: 0 → 1 (begin) → 0 (end). fetch is called
+    // between the two transitions.
+    expect(seen).toEqual([1, 0]);
+  });
+
+  it("endUpload still fires when presign fails (try/finally semantics)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: "FILE_TOO_LARGE" }), { status: 400 }),
+    );
+    const seen: number[] = [];
+    const unsub = useUploadStore.subscribe((s) => seen.push(s.count));
+    try {
+      const adapter = new R2AttachmentAdapter();
+      await expect(
+        adapter.send({
+          id: "local",
+          type: "image",
+          name: "a.png",
+          contentType: "image/png",
+          file: fakeFile("a.png", "image/png", 8),
+          status: { type: "requires-action", reason: "composer-send" },
+        }),
+      ).rejects.toThrow(/presign failed/);
+    } finally {
+      unsub();
+    }
+    // begin fired (count: 0 → 1) then finally cleared it (1 → 0),
+    // even though the send threw. Without try/finally the sequence
+    // would be [] and the spinner would spin forever.
+    expect(seen).toEqual([1, 0]);
+  });
+
+  it("endUpload still fires when R2 PUT fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: "p1",
+            uploadUrl: "https://r2.example/p",
+            uploadHeaders: {},
+            contentType: "image/png",
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 403 }));
+    const seen: number[] = [];
+    const unsub = useUploadStore.subscribe((s) => seen.push(s.count));
+    try {
+      const adapter = new R2AttachmentAdapter();
+      await expect(
+        adapter.send({
+          id: "local",
+          type: "image",
+          name: "a.png",
+          contentType: "image/png",
+          file: fakeFile("a.png", "image/png", 8),
+          status: { type: "requires-action", reason: "composer-send" },
+        }),
+      ).rejects.toThrow(/upload to R2 failed/);
+    } finally {
+      unsub();
+    }
+    expect(seen).toEqual([1, 0]);
+  });
+
+  it("endUpload still fires when confirm fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: "p1",
+            uploadUrl: "https://r2.example/p",
+            uploadHeaders: {},
+            contentType: "application/pdf",
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: "SIZE_MISMATCH" }), { status: 409 }),
+      );
+    const seen: number[] = [];
+    const unsub = useUploadStore.subscribe((s) => seen.push(s.count));
+    try {
+      const adapter = new R2AttachmentAdapter();
+      await expect(
+        adapter.send({
+          id: "local",
+          type: "document",
+          name: "doc.pdf",
+          contentType: "application/pdf",
+          file: fakeFile("doc.pdf", "application/pdf", 100),
+          status: { type: "requires-action", reason: "composer-send" },
+        }),
+      ).rejects.toThrow(/confirm failed/);
+    } finally {
+      unsub();
+    }
+    expect(seen).toEqual([1, 0]);
+  });
+
+  it("parallel sends balance the counter to zero (Promise.all semantics)", async () => {
+    // SDK does Promise.all(attachments.map(a => adapter.send(a))).
+    // Two attachments → two begin() calls before either end() runs.
+    happyPathResponses();
+    happyPathResponses();
+    const seen: number[] = [];
+    const unsub = useUploadStore.subscribe((s) => seen.push(s.count));
+    try {
+      const adapter = new R2AttachmentAdapter();
+      const pending = {
+        id: "local",
+        type: "image" as const,
+        name: "a.png",
+        contentType: "image/png",
+        file: fakeFile("a.png", "image/png", 8),
+        status: { type: "requires-action" as const, reason: "composer-send" as const },
+      };
+      await Promise.all([adapter.send(pending), adapter.send(pending)]);
+    } finally {
+      unsub();
+    }
+    // observed: 1 (begin A) → 2 (begin B) → 1 (end A) → 0 (end B).
+    expect(seen).toEqual([1, 2, 1, 0]);
   });
 });

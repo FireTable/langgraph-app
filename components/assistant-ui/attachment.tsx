@@ -1,7 +1,7 @@
 "use client";
 
 import { type PropsWithChildren, useEffect, useMemo, useState, type FC } from "react";
-import { XIcon, PlusIcon, FileText } from "lucide-react";
+import { XIcon, PlusIcon, FileText, Loader2Icon } from "lucide-react";
 import { AttachmentPrimitive, ComposerPrimitive, useAuiState, useAui } from "@assistant-ui/react";
 import type { CompleteAttachment, ThreadUserMessagePart } from "@assistant-ui/react";
 import { useShallow } from "zustand/shallow";
@@ -10,6 +10,7 @@ import { Dialog, DialogTitle, DialogContent, DialogTrigger } from "@/components/
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
+import { useUploadStore } from "@/lib/attachments/upload-store";
 
 // ponytail: client-side object URL for a pending File. Drops on unmount.
 const useFileSrc = (file: File | undefined) => {
@@ -68,8 +69,13 @@ const AttachmentPreview: FC<AttachmentPreviewProps & { onLoad?: () => void }> = 
     <img
       src={src}
       alt="Attachment preview"
+      // ponytail: h-full w-full + object-contain lets the <img> element
+      // fill the parent's aspect-square box and the browser letterboxes the
+      // actual image inside. The previous h-auto/max-h-[80vh]/max-w-full
+      // mix let tall portraits compute a viewport-relative size larger than
+      // the parent (80vh vs parent's 80dvh) and push past overflow-hidden.
       className={cn(
-        "block h-auto max-h-[80vh] w-auto max-w-full object-contain transition-opacity duration-200",
+        "max-h-full rounded-lg object-contain transition-opacity duration-200",
         isLoaded
           ? "aui-attachment-preview-image-loaded opacity-100"
           : "aui-attachment-preview-image-loading opacity-0",
@@ -105,15 +111,15 @@ const AttachmentPreviewDialog: FC<PropsWithChildren<{ src?: string }>> = ({ chil
       >
         {children}
       </DialogTrigger>
-      <DialogContent className="aui-attachment-preview-dialog-content [&>button]:bg-foreground/60 [&_svg]:text-background [&>button]:hover:[&_svg]:text-destructive p-2 sm:max-w-3xl [&>button]:rounded-full [&>button]:p-1 [&>button]:opacity-100 [&>button]:ring-0!">
+      <DialogContent className="aui-attachment-preview-dialog-content [&>button]:bg-foreground/60 [&_svg]:text-background p-2 sm:max-w-3xl [&>button]:rounded-full [&>button]:p-1 [&>button]:opacity-70 [&>button]:hover:opacity-100 [&>button]:transition-opacity [&>button]:ring-0!">
         <DialogTitle className="aui-sr-only sr-only">Image Attachment Preview</DialogTitle>
-        {/* ponytail: min-h keeps the DialogContent from collapsing to 0
-            while the <img> is still streaming — pre-decode <img> reports
-            0×0, which would otherwise shrink the flex container and the
-            surrounding dialog. min-h-[60vh] gives a stable box; the
-            image's own max-h-[80vh]+object-contain still does the final
-            sizing once it's loaded. */}
-        <div className="aui-attachment-preview bg-background relative mx-auto flex min-h-[60vh] max-h-[80dvh] w-full items-center justify-center overflow-hidden">
+        {/* ponytail: aspect-square caps both axes so the dialog doesn't
+            grow with image dimensions — a tall portrait would otherwise
+            push max-h-[80dvh] and force vertical scroll. aspect-square
+            fixes both axes at 1:1, max-h-[80dvh] keeps the box in view,
+            object-contain on the <img> below letterboxes non-square
+            sources instead of cropping. */}
+        <div className="aui-attachment-preview bg-background relative mx-auto flex aspect-square max-h-[80dvh] max-w-[80dvh] w-full items-center justify-center overflow-hidden">
           {/* ponytail: skeleton placeholder. absolute inset-0 covers the
               whole flex container; the <img> fades in over it via opacity
               transition. Removed once the image has decoded so it can't
@@ -162,14 +168,36 @@ const AttachmentThumbWithSdk: FC = () => {
 };
 
 const AttachmentRemove: FC = () => {
+  // ponytail: lock the X button while r2-adapter.send() is in flight.
+  // SDK keeps the chip in `requires-action` until upload finishes; if
+  // the user removes mid-flight the pending disappears from the
+  // composer's attachments array but the network round-trip is still
+  // pending, so the message lands without the file or with a phantom
+  // chip. Easier to disable than to coordinate remove with the
+  // adapter's finally block.
+  //
+  // ponytail: swap X for Loader2 while uploading — disabled-opacity-40
+  // is invisible against the white chip background, so we use a spinner
+  // (matching the Send button) to make the lock state self-evident.
+  const isUploading = useUploadStore((s) => s.count > 0);
   return (
     <AttachmentPrimitive.Remove asChild>
       <TooltipIconButton
-        tooltip="Remove file"
-        className="aui-attachment-tile-remove text-muted-foreground hover:[&_svg]:text-destructive absolute end-1.5 top-1.5 size-3.5 rounded-full bg-white opacity-100 shadow-sm hover:bg-white! [&_svg]:text-black"
+        tooltip={isUploading ? "Uploading…" : "Remove file"}
+        className={cn(
+          "aui-attachment-tile-remove text-muted-foreground absolute end-1.5 top-1.5 flex size-3.5 items-center justify-center rounded-full bg-white opacity-100 shadow-sm [&_svg]:text-black",
+          isUploading
+            ? "cursor-progress"
+            : "hover:[&_svg]:text-destructive hover:bg-white! disabled:opacity-40 disabled:cursor-not-allowed",
+        )}
         side="top"
+        disabled={isUploading}
       >
-        <XIcon className="aui-attachment-remove-icon size-3 dark:stroke-[2.5px]" />
+        {isUploading ? (
+          <Loader2Icon className="aui-attachment-remove-icon size-3 animate-spin" />
+        ) : (
+          <XIcon className="aui-attachment-remove-icon size-3 dark:stroke-[2.5px]" />
+        )}
       </TooltipIconButton>
     </AttachmentPrimitive.Remove>
   );
@@ -197,12 +225,20 @@ const AttachmentUI: FC = () => {
     }
   });
 
+  // ponytail: dim the chip while r2-adapter.send() is in flight. This
+  // runs alongside the X→Loader2 swap on AttachmentRemove — together
+  // they signal "locked, uploading" without depending on SDK's
+  // status="running" UI (which we can't reach from the deferred-upload
+  // contract; see sdk-attachment-progress-add-only).
+  const isUploading = useUploadStore((s) => s.count > 0);
+
   return (
     <Tooltip>
       <AttachmentPrimitive.Root
         className={cn(
           "aui-attachment-root relative",
           isImage && !isComposer && "aui-attachment-root-message only:*:first:size-24",
+          isComposer && isUploading && "opacity-60",
         )}
       >
         <AttachmentPreviewDialogWithSdk>
@@ -394,15 +430,22 @@ export const ComposerAttachments: FC = () => {
 };
 
 export const ComposerAddAttachment: FC = () => {
+  // ponytail: lock the Plus while a previous attachment is uploading
+  // so the composer doesn't accumulate overlapping uploads. SDK calls
+  // adapter.send on each pending attachment in Promise.all, so two
+  // would actually run — but for the user the experience is jarring
+  // (two spinner windows instead of one). Disable until count===0.
+  const isUploading = useUploadStore((s) => s.count > 0);
   return (
     <ComposerPrimitive.AddAttachment asChild>
       <TooltipIconButton
-        tooltip="Add Attachment"
+        tooltip={isUploading ? "Uploading…" : "Add Attachment"}
         side="bottom"
         variant="ghost"
         size="icon"
-        className="aui-composer-add-attachment hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30 size-7 rounded-full p-1 text-xs font-semibold"
+        className="aui-composer-add-attachment hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30 size-7 rounded-full p-1 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
         aria-label="Add Attachment"
+        disabled={isUploading}
       >
         <PlusIcon className="aui-attachment-add-icon size-4.5 stroke-[1.5px]" />
       </TooltipIconButton>

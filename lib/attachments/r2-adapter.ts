@@ -4,6 +4,7 @@ import type {
   CompleteAttachment,
   PendingAttachment,
 } from "@assistant-ui/react";
+import { beginUpload, endUpload } from "./upload-store";
 
 // ponytail: deferred-upload contract. add() just stashes the file on the
 // chip — zero network, zero DB row. send() runs the full pipeline
@@ -96,87 +97,98 @@ export class R2AttachmentAdapter implements AttachmentAdapter {
   }
 
   async send(pending: PendingAttachment): Promise<CompleteAttachment> {
-    const file = pending.file;
-    if (!file) throw new Error("send() requires the original File (lost between add and send)");
+    // ponytail: bracket the entire presign → PUT → confirm pipeline so
+    // the Send-button spinner reflects real upload work, not just a
+    // click. finally clears the flag on success AND on thrown errors,
+    // so a 4xx presign can't leave the spinner spinning forever. With
+    // Promise.all(adapter.send) the counter accumulates per-pending,
+    // so two attachments show "active" until both finish.
+    beginUpload();
+    try {
+      const file = pending.file;
+      if (!file) throw new Error("send() requires the original File (lost between add and send)");
 
-    // ponytail: reuse the sha computation started in add() when present.
-    // A typical user drags a file and then types for 5-30s before Send,
-    // which is plenty of time for crypto.subtle to finish — Send's
-    // first network round-trip (presign) goes out with sha in hand.
-    const sha = await ((pending as AttachmentWithSha).shaPromise ?? sha256Hex(file));
+      // ponytail: reuse the sha computation started in add() when present.
+      // A typical user drags a file and then types for 5-30s before Send,
+      // which is plenty of time for crypto.subtle to finish — Send's
+      // first network round-trip (presign) goes out with sha in hand.
+      const sha = await ((pending as AttachmentWithSha).shaPromise ?? sha256Hex(file));
 
-    const contentType = isImageType(file.type) ? "image" : "document";
+      const contentType = isImageType(file.type) ? "image" : "document";
 
-    // 1. presign — inserts the DB row (status='pending') and returns the
-    //    server-generated id we'll use to confirm. Q2: pass sha256 so the
-    //    server can dedup against an existing uploaded row.
-    const presignRes = await fetch("/api/attachments/presign", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: file.name,
-        contentType: file.type || "application/octet-stream",
-        sizeBytes: file.size,
-        ...(sha ? { sha256: sha } : {}),
-      }),
-    });
-    if (!presignRes.ok) {
-      const detail = (await presignRes.json().catch(() => ({}))) as { code?: string };
-      throw new Error(`presign failed: ${presignRes.status} ${detail.code ?? ""}`);
-    }
-    const presign = (await presignRes.json()) as {
-      id: string;
-      uploadUrl: string;
-      publicUrl: string;
-      uploadHeaders: Record<string, string>;
-      contentType: string;
-      sizeBytes: number;
-      skipUpload?: boolean;
-    };
+      // 1. presign — inserts the DB row (status='pending') and returns the
+      //    server-generated id we'll use to confirm. Q2: pass sha256 so the
+      //    server can dedup against an existing uploaded row.
+      const presignRes = await fetch("/api/attachments/presign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: file.name,
+          contentType: file.type || "application/octet-stream",
+          sizeBytes: file.size,
+          ...(sha ? { sha256: sha } : {}),
+        }),
+      });
+      if (!presignRes.ok) {
+        const detail = (await presignRes.json().catch(() => ({}))) as { code?: string };
+        throw new Error(`presign failed: ${presignRes.status} ${detail.code ?? ""}`);
+      }
+      const presign = (await presignRes.json()) as {
+        id: string;
+        uploadUrl: string;
+        publicUrl: string;
+        uploadHeaders: Record<string, string>;
+        contentType: string;
+        sizeBytes: number;
+        skipUpload?: boolean;
+      };
 
-    // Q2: dedup hit — the row is already 'uploaded' and presign returned
-    // the existing publicUrl. Zero network from here: skip both PUT
-    // and confirm (confirm's only useful side-effect is HEAD + status
-    // flip, both already done at presign time on the dedup path).
-    if (presign.skipUpload) {
+      // Q2: dedup hit — the row is already 'uploaded' and presign returned
+      // the existing publicUrl. Zero network from here: skip both PUT
+      // and confirm (confirm's only useful side-effect is HEAD + status
+      // flip, both already done at presign time on the dedup path).
+      if (presign.skipUpload) {
+        return {
+          id: presign.id,
+          type: pending.type,
+          name: pending.name,
+          contentType: pending.contentType ?? presign.contentType,
+          status: { type: "complete" },
+          content: buildContent(presign.publicUrl, presign.contentType, pending.name, contentType),
+        };
+      }
+
+      // 1. PUT — direct upload to R2 via the presigned URL.
+      const putRes = await fetch(presign.uploadUrl, {
+        method: "PUT",
+        headers: presign.uploadHeaders,
+        body: file,
+      });
+      if (!putRes.ok) {
+        throw new Error(`upload to R2 failed: ${putRes.status}`);
+      }
+
+      // 2. confirm — HeadObject verifies size and flips status to 'uploaded'.
+      const confirmRes = await fetch(`/api/attachments/${presign.id}/confirm`, {
+        method: "POST",
+      });
+      if (!confirmRes.ok) {
+        const detail = (await confirmRes.json().catch(() => ({}))) as { code?: string };
+        throw new Error(`confirm failed: ${confirmRes.status} ${detail.code ?? ""}`);
+      }
+      const confirm = (await confirmRes.json()) as { publicUrl: string; contentType: string };
+
       return {
         id: presign.id,
         type: pending.type,
         name: pending.name,
-        contentType: pending.contentType ?? presign.contentType,
+        contentType: pending.contentType ?? confirm.contentType,
         status: { type: "complete" },
-        content: buildContent(presign.publicUrl, presign.contentType, pending.name, contentType),
+        content: buildContent(confirm.publicUrl, confirm.contentType, pending.name, contentType),
       };
+    } finally {
+      endUpload();
     }
-
-    // 1. PUT — direct upload to R2 via the presigned URL.
-    const putRes = await fetch(presign.uploadUrl, {
-      method: "PUT",
-      headers: presign.uploadHeaders,
-      body: file,
-    });
-    if (!putRes.ok) {
-      throw new Error(`upload to R2 failed: ${putRes.status}`);
-    }
-
-    // 2. confirm — HeadObject verifies size and flips status to 'uploaded'.
-    const confirmRes = await fetch(`/api/attachments/${presign.id}/confirm`, {
-      method: "POST",
-    });
-    if (!confirmRes.ok) {
-      const detail = (await confirmRes.json().catch(() => ({}))) as { code?: string };
-      throw new Error(`confirm failed: ${confirmRes.status} ${detail.code ?? ""}`);
-    }
-    const confirm = (await confirmRes.json()) as { publicUrl: string; contentType: string };
-
-    return {
-      id: presign.id,
-      type: pending.type,
-      name: pending.name,
-      contentType: pending.contentType ?? confirm.contentType,
-      status: { type: "complete" },
-      content: buildContent(confirm.publicUrl, confirm.contentType, pending.name, contentType),
-    };
   }
 
   async remove(_attachment: Attachment): Promise<void> {
