@@ -8,6 +8,32 @@ how to operate the bucket.
 For the HTTP surface see [`docs/APIS.md`](./APIS.md#attachments). For the
 table shape and ownership rules see [`docs/DB.md`](./DB.md#attachments).
 
+## Scope today — images only
+
+The default `NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES` is
+`image/png,image/jpeg,image/webp` — the chat composer does not surface a
+PDF picker. PDF (and other non-image types) is intentionally excluded:
+
+- The SDK's `convertLangChainMessages` hardcodes
+  `source_type: "base64"` for any `{type: "file"}` content part
+  (see `node_modules/@assistant-ui/react-langgraph/dist/convertLangChainMessages.js:205-211`),
+  so a `data: application/pdf;base64, <R2 URL>` string is rejected by
+  the model adapter — the URL is not valid base64, and even if it were
+  the model never gets the PDF bytes it expects.
+- The "correct" path is for the knowledge-base agent (issue #13) to
+  own ALL attachment-derived representations (page images for vision
+  models, markdown for text models, embeddings for retrieval). The
+  chat composer rendering a PDF picker before #13 ships would let
+  users upload files the model can't actually read.
+
+To re-enable a non-image flow in the meantime, set
+`NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES` to a comma-separated list that
+includes the desired MIME types. The presign route will accept them
+and the composer will surface the picker. Note: even with PDF
+re-enabled, the model still won't see the file — this is a
+**composer-side** toggle, not a model-side fix. Use it only for
+experimentation, not production.
+
 ## Architecture
 
 ```
@@ -76,10 +102,15 @@ get separate rows in R2 with separate publicUrls — storage quotas and
 deletion rights are user-scoped, so cross-user dedup would create a
 shared object that the other user could read but not delete.
 
-The partial unique index `attachments_user_sha_uploaded_idx` enforces
-"at most one uploaded row per (user, sha)" at the DB level. `pending`
-rows are excluded from the index so two parallel uploads of the same
-file from different tabs don't race the constraint.
+Dedup is **best-effort**, not strict. The only index on `(user_id, sha256)`
+is non-unique (`attachments_user_sha_idx`); a partial unique index
+("at most one uploaded row per (user, sha)") was considered but not
+landed because the real-world race (two parallel uploads of the same
+file from different tabs) is rare and the worst-case outcome is two
+copies of the bytes in R2. `findUploadedBySha` returns the first
+matching row, so the second upload gets the first's publicUrl on a
+re-attempt — the second PUT just creates an extra R2 object. The
+retention sweep (Watch-outs) cleans up stragglers.
 
 Clients without `crypto.subtle` (very old browsers, server-side flows)
 just omit `sha256` from the presign body — the validator accepts it as
@@ -163,7 +194,9 @@ u/<userId>/<nanoid>-<safe-filename>
      `fetch(file)` doesn't add `Content-Disposition` and a mismatch would
      surface as an opaque CORS failure ("Failed to fetch" with no detail).
    * images → `inline`
-   * everything else → `attachment`
+   * everything else → `attachment` (only relevant when the allow-list
+     is widened past images — see
+     [Scope today](#scope-today-images-only))
 
    The filename is intentionally omitted from the header value:
    `fetch()` rejects header values with non-ISO-8859-1 code points (e.g.
