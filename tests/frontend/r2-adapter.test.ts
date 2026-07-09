@@ -43,10 +43,10 @@ describe("R2AttachmentAdapter — add (deferred)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("marks non-image types as 'file' kind", async () => {
+  it("marks non-image types as 'document' kind", async () => {
     const adapter = new R2AttachmentAdapter();
     const pending = await adapter.add({ file: fakeFile("a.pdf", "application/pdf", 8) });
-    expect(pending.type).toBe("file");
+    expect(pending.type).toBe("document");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -156,10 +156,6 @@ describe("R2AttachmentAdapter — send (full upload pipeline)", () => {
   });
 
   it("builds a file content part for non-image types", async () => {
-    // TEMP: PDF path embeds raw base64 in `data` (LangChain's ChatOpenAI
-    // converter prepends `data:${mime_type};base64,` itself). Drop this
-    // assertion and re-add a URL assertion once issue #12 ships the
-    // PDF→markdown text path.
     fetchMock
       .mockResolvedValueOnce(
         new Response(
@@ -191,7 +187,7 @@ describe("R2AttachmentAdapter — send (full upload pipeline)", () => {
     const adapter = new R2AttachmentAdapter();
     const complete = await adapter.send({
       id: "local-uuid",
-      type: "file",
+      type: "document",
       name: "doc.pdf",
       contentType: "application/pdf",
       file: fakeFile("doc.pdf", "application/pdf", 100),
@@ -200,14 +196,12 @@ describe("R2AttachmentAdapter — send (full upload pipeline)", () => {
     expect(complete.content).toHaveLength(1);
     const part = complete.content[0];
     if (part.type !== "file") throw new Error("expected file part");
-    expect(part).toMatchObject({
+    expect(part).toEqual({
       type: "file",
       mimeType: "application/pdf",
       filename: "doc.pdf",
+      data: "https://file.example/u/u1/p1-doc.pdf",
     });
-    expect(part.data).toMatch(/^[A-Za-z0-9+/=]+$/);
-    // 100 zero bytes → 136 base64 chars (8/6 + padding)
-    expect(part.data).toHaveLength(136);
   });
 
   it("when server returns skipUpload:true, only calls presign (skip PUT and confirm)", async () => {
@@ -307,7 +301,7 @@ describe("R2AttachmentAdapter — send (full upload pipeline)", () => {
     await expect(
       adapter.send({
         id: "local",
-        type: "file",
+        type: "image",
         name: "a.png",
         contentType: "image/png",
         file: fakeFile("a.png", "image/png", 8),
@@ -335,7 +329,7 @@ describe("R2AttachmentAdapter — send (full upload pipeline)", () => {
     await expect(
       adapter.send({
         id: "local",
-        type: "file",
+        type: "image",
         name: "a.png",
         contentType: "image/png",
         file: fakeFile("a.png", "image/png", 8),
@@ -369,7 +363,7 @@ describe("R2AttachmentAdapter — send (full upload pipeline)", () => {
     await expect(
       adapter.send({
         id: "local",
-        type: "file",
+        type: "document",
         name: "doc.pdf",
         contentType: "application/pdf",
         file: fakeFile("doc.pdf", "application/pdf", 100),
@@ -391,7 +385,7 @@ describe("R2AttachmentAdapter — remove (no-op)", () => {
     const adapter = new R2AttachmentAdapter();
     await adapter.remove({
       id: "local",
-      type: "file",
+      type: "document",
       name: "doc.pdf",
       contentType: "application/pdf",
       file: fakeFile("doc.pdf", "application/pdf", 100),
@@ -404,7 +398,7 @@ describe("R2AttachmentAdapter — remove (no-op)", () => {
     const adapter = new R2AttachmentAdapter();
     await adapter.remove({
       id: "p1",
-      type: "file",
+      type: "document",
       name: "doc.pdf",
       contentType: "application/pdf",
       status: { type: "complete" },

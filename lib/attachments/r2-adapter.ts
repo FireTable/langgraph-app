@@ -19,11 +19,18 @@ function isImageType(contentType: string): boolean {
   return contentType.toLowerCase().startsWith("image/");
 }
 
+// ponytail: at the attachment level, "document" routes to assistant-ui's
+// PDF-aware chip UI instead of the generic file chip. The content part
+// the model sees stays `type: "file"` — `ThreadUserMessagePart` only allows
+// "image"/"file"/"text"/"data"/"audio", and multimodal models dispatch on
+// `mimeType` rather than on the content-part `type`. The split is by
+// audience: attachment.type is for the composer/thread chrome;
+// content[].type is for the model.
 function buildContent(
   publicUrl: string,
   contentType: string,
   name: string,
-  type: "image" | "file",
+  type: "image" | "document",
 ): CompleteAttachment["content"] {
   if (type === "image") {
     return [{ type: "image", image: publicUrl, filename: name }];
@@ -79,7 +86,7 @@ export class R2AttachmentAdapter implements AttachmentAdapter {
 
     return {
       id: crypto.randomUUID(),
-      type: isImageType(file.type) ? "image" : "file",
+      type: isImageType(file.type) ? "image" : "document",
       name: file.name,
       contentType: file.type,
       file,
@@ -92,30 +99,13 @@ export class R2AttachmentAdapter implements AttachmentAdapter {
     const file = pending.file;
     if (!file) throw new Error("send() requires the original File (lost between add and send)");
 
-    const type = pending.type === "image" ? "image" : "file";
-
     // ponytail: reuse the sha computation started in add() when present.
     // A typical user drags a file and then types for 5-30s before Send,
     // which is plenty of time for crypto.subtle to finish — Send's
     // first network round-trip (presign) goes out with sha in hand.
     const sha = await ((pending as AttachmentWithSha).shaPromise ?? sha256Hex(file));
 
-    // TEMP TEST ONLY: PDF → raw base64 (replaces R2 publicUrl for PDFs).
-    // SDK's getMessageContent hardcodes source_type:"base64" for file parts.
-    // LangChain's ChatOpenAI converter (completions.js:90) then prepends
-    // `data:${mime_type};base64,` itself — so we MUST send RAW base64 here,
-    // not a full data URL. Sending the full data URL produces a doubled
-    // prefix ("data:...;base64,data:...;base64,...") and OpenAI rejects it
-    // with "invalid base64-encoded value". Drop this block once issue #12
-    // ships the PDF→markdown text path.
-    let pdfBase64Raw: string | undefined;
-    if (file.type === "application/pdf") {
-      const buf = await file.arrayBuffer();
-      const bytes = new Uint8Array(buf);
-      let binary = "";
-      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-      pdfBase64Raw = btoa(binary); // raw base64, no data: prefix
-    }
+    const contentType = isImageType(file.type) ? "image" : "document";
 
     // 1. presign — inserts the DB row (status='pending') and returns the
     //    server-generated id we'll use to confirm. Q2: pass sha256 so the
@@ -155,12 +145,7 @@ export class R2AttachmentAdapter implements AttachmentAdapter {
         name: pending.name,
         contentType: pending.contentType ?? presign.contentType,
         status: { type: "complete" },
-        content: buildContent(
-          pdfBase64Raw ?? presign.publicUrl,
-          presign.contentType,
-          pending.name,
-          type,
-        ),
+        content: buildContent(presign.publicUrl, presign.contentType, pending.name, contentType),
       };
     }
 
@@ -190,12 +175,7 @@ export class R2AttachmentAdapter implements AttachmentAdapter {
       name: pending.name,
       contentType: pending.contentType ?? confirm.contentType,
       status: { type: "complete" },
-      content: buildContent(
-        pdfBase64Raw ?? confirm.publicUrl,
-        confirm.contentType,
-        pending.name,
-        type,
-      ),
+      content: buildContent(confirm.publicUrl, confirm.contentType, pending.name, contentType),
     };
   }
 
