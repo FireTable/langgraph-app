@@ -20,7 +20,7 @@ function generateId(): string {
 }
 
 function parseAllowList(): Set<string> {
-  const raw = process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES ?? "";
+  const raw = process.env.R2_ALLOWED_CONTENT_TYPES ?? "";
   return new Set(
     raw
       .split(",")

@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://ai.firetable.tech";
+const SITE_URL = process.env.SITE_URL ?? "https://ai.firetable.tech";
 
 // ponytail: marketing-only sitemap. /chat, /settings, and /login
 // are auth-gated and don't belong in a public sitemap.

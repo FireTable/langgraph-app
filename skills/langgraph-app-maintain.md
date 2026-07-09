@@ -77,11 +77,15 @@ The following **must be done by a human** — the agent must never pretend to be
 
 At <https://github.com/<GH_OWNER>/<GH_REPO>/settings/secrets/actions> → New repository secret:
 
-| Secret name                             | Value            | Purpose                                                                       |
-| --------------------------------------- | ---------------- | ----------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID` | Reown Project ID | CD bakes it into the client bundle at build time (`NEXT_PUBLIC_*` is inlined) |
+| Secret name                 | Value            | Purpose                                                                                                                                   |
+| --------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `WALLET_CONNECT_PROJECT_ID` | Reown Project ID | Surfaced to the browser at runtime via `window.__CONFIG__` (CLAUDE.md rule #12) — no build-time inlining, no GitHub Actions secret needed |
 
-**If this secret is missing**: CD won't fail — it falls back to the placeholder `build-placeholder-project-id` and continues. But the bundle will carry a fake project ID, and the wallet UI won't work.
+**No GitHub Actions secret needed** for `WALLET_CONNECT_PROJECT_ID`. It
+rides through `window.__CONFIG__` injected by `app/layout.tsx` at request
+time. Changes only need a container restart. The placeholder
+`build-placeholder-project-id` is no longer used; pre-2026-07 builds
+required a repo secret of the same name.
 
 #### Cloudflare setup (if the domain is CF-proxied)
 
@@ -114,7 +118,7 @@ vim .env.vps
 #   R2_SECRET_ACCESS_KEY=<same>
 #   R2_BUCKET=langgraph-app
 #   R2_PUBLIC_BASE_URL=https://<PUBLIC_ATTACHMENT_DOMAIN>  # custom R2 domain
-#   NEXT_PUBLIC_ATTACHMENTS_ENABLED=true  # gates the composer attachment button
+#   ATTACHMENTS_ENABLED=true  # gates the composer attachment button
 # See .env.example comments for the rest
 ```
 
@@ -395,7 +399,7 @@ The only persistent state is the `langgraph-app_postgres-data` named volume. `pg
 | Failure                                       | Cause                                                             | Fix                                                                                                                        |
 | --------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm build` exit 1                           | typecheck / lint / test failed                                    | Reproduce locally with `pnpm typecheck && pnpm lint && pnpm test`                                                          |
-| `pnpm build` says "No projectId found"        | `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID` GH secret not set         | Set the secret, or confirm the repo's CD workflow file has a `\|\| 'build-placeholder-project-id'` fallback                |
+| `pnpm build` says "No projectId found"        | `WALLET_CONNECT_PROJECT_ID` is empty in `.env`                    | Set the real Reown project id in `.env`; restart the container (no rebuild needed)                                         |
 | `failed to solve: Get https://ghcr.io/v2/...` | GHCR auth failed                                                  | `permissions: packages: write` is already in the CD workflow; PRs from forks don't push, so auth failure is expected there |
 | VPS pull 401 unauthorized                     | GHCR image went private                                           | <https://github.com/<GH_OWNER>/<GH_REPO>/packages/container/langgraph-app/settings> → Change visibility → Public           |
 | App container keeps restarting                | Postgres / Redis didn't come up; first start is slow (migrations) | Check `docker compose logs postgres`; 30-60s on first start is normal                                                      |

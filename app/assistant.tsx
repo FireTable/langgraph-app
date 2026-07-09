@@ -165,12 +165,14 @@ export function Assistant() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Default to the in-app /api proxy so CORS + x-api-key stay in Next.js;
-  // NEXT_PUBLIC_LANGGRAPH_API_URL bypasses it (e.g. behind Cloudflare Tunnel).
+  // LANGGRAPH_PUBLIC_URL bypasses it (e.g. behind Cloudflare Tunnel).
+  // Read from window.__CONFIG__ (app/layout.tsx).
   const apiUrl =
-    process.env.NEXT_PUBLIC_LANGGRAPH_API_URL ||
+    (typeof window !== "undefined" && window.__CONFIG__?.LANGGRAPH_PUBLIC_URL) ||
     (typeof window !== "undefined" ? new URL("/api", window.location.href).href : undefined);
 
-  const assistantId = process.env.NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID!;
+  const assistantId =
+    (typeof window !== "undefined" && window.__CONFIG__?.LANGGRAPH_ASSISTANT_ID) || "agent";
 
   // apiUrl is undefined on the first SSR pass, so the runtime builds lazily.
   const client = useMemo(() => new Client({ apiUrl: apiUrl! }), [apiUrl]);
@@ -202,13 +204,13 @@ export function Assistant() {
   const eventHandlers = useMemo(() => ({}), []);
 
   // ponytail: gate the adapter on the same env that the server enforces.
-  // When `NEXT_PUBLIC_ATTACHMENTS_ENABLED !== "true"` the composer renders
-  // without an attachment button — no client-side conditional render
-  // needed; the runtime skips `adapters.attachments` and assistant-ui
-  // hides the picker automatically.
+  // When ATTACHMENTS_ENABLED !== "true" the composer renders without an
+  // attachment button — no client-side conditional render needed; the
+  // runtime skips `adapters.attachments` and assistant-ui hides the
+  // picker automatically. Read from window.__CONFIG__ (see app/layout.tsx).
   const attachments = useMemo(
     () =>
-      process.env.NEXT_PUBLIC_ATTACHMENTS_ENABLED === "true"
+      (typeof window !== "undefined" && window.__CONFIG__?.ATTACHMENTS_ENABLED) === "true"
         ? new R2AttachmentAdapter()
         : undefined,
     [],

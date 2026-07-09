@@ -55,7 +55,21 @@ const alchemyTransport = (slug: string) =>
 // https://dashboard.reown.com. Empty string disables WalletConnect v2
 // entirely: binanceWallet / bitgetWallet fall back to injected-only
 // (no mobile-QR). Free tier: 100k connections / month, no payment.
-const WALLETCONNECT_PROJECT_ID = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ?? "";
+// ponytail: read from window.__CONFIG__ on the client (injected by
+// app/layout.tsx at request time). wagmiConfig is built at module-init
+// so the script must run before this module — root layout hoists it
+// into <head> with strategy="beforeInteractive".
+//
+// On the server (SSR), window doesn't exist; fall back to process.env
+// (loaded from .env.local in dev, from the container env in prod). If
+// neither is set (rare; only happens with no .env at all), use a
+// placeholder so getDefaultConfig doesn't throw — the placeholder never
+// reaches WalletConnect because no wallet connection happens during SSR.
+const isBrowser = typeof window !== "undefined";
+const WALLETCONNECT_PROJECT_ID =
+  (isBrowser
+    ? window.__CONFIG__?.WALLET_CONNECT_PROJECT_ID
+    : process.env.WALLET_CONNECT_PROJECT_ID) || "ssr-placeholder";
 
 export const wagmiConfig = getDefaultConfig({
   appName: "FireTable",

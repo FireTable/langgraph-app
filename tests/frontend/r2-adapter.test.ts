@@ -17,7 +17,12 @@ describe("R2AttachmentAdapter — add (deferred)", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png,application/pdf";
+    // ponytail: r2-adapter reads R2_ALLOWED_CONTENT_TYPES from
+    // window.__CONFIG__ (injected by app/layout.tsx). Stub it here
+    // because jsdom doesn't run the layout's <script>.
+    (window as Window & { __CONFIG__?: Record<string, string> }).__CONFIG__ = {
+      R2_ALLOWED_CONTENT_TYPES: "image/png,application/pdf",
+    };
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -410,8 +415,10 @@ describe("R2AttachmentAdapter — remove (no-op)", () => {
 });
 
 describe("R2AttachmentAdapter — accept string", () => {
-  it("reads NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES for the composer's file picker", () => {
-    process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png,application/pdf";
+  it("reads R2_ALLOWED_CONTENT_TYPES from window.__CONFIG__ for the composer's file picker", () => {
+    (window as Window & { __CONFIG__?: Record<string, string> }).__CONFIG__ = {
+      R2_ALLOWED_CONTENT_TYPES: "image/png,application/pdf",
+    };
     const adapter = new R2AttachmentAdapter();
     expect(adapter.accept).toBe("image/png,application/pdf");
   });

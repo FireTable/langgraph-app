@@ -98,17 +98,17 @@ Bytes live in Cloudflare R2 — this table is the source of truth for the URL th
 - `POST /api/attachments/[id]/confirm` → `HeadObject` size check, then `UPDATE status='uploaded', confirmed_at=now()`
 - `DELETE /api/attachments/[id]` → DELETE row + `DeleteObject` on R2
 
-| Column         | Type             | Notes                                                            |
-| -------------- | ---------------- | ---------------------------------------------------------------- |
-| `id`           | text PK          | 12-char nanoid; also embedded in the R2 key                      |
-| `user_id`      | text FK→user     | CASCADE on user delete                                           |
-| `r2_key`       | text             | `u/<userId>/<nanoid>-<safe-filename>`                            |
-| `name`         | text             | Original (sanitized) filename                                    |
-| `content_type` | text             | MIME type — restricted to `NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES` |
-| `size_bytes`   | bigint           | Claimed at presign, verified via `HeadObject` at confirm         |
-| `status`       | enum             | `pending` \| `uploaded`                                          |
-| `created_at`   | timestamptz      |                                                                  |
-| `confirmed_at` | timestamptz NULL | Stamped at confirm                                               |
+| Column         | Type             | Notes                                                    |
+| -------------- | ---------------- | -------------------------------------------------------- |
+| `id`           | text PK          | 12-char nanoid; also embedded in the R2 key              |
+| `user_id`      | text FK→user     | CASCADE on user delete                                   |
+| `r2_key`       | text             | `u/<userId>/<nanoid>-<safe-filename>`                    |
+| `name`         | text             | Original (sanitized) filename                            |
+| `content_type` | text             | MIME type — restricted to `R2_ALLOWED_CONTENT_TYPES`     |
+| `size_bytes`   | bigint           | Claimed at presign, verified via `HeadObject` at confirm |
+| `status`       | enum             | `pending` \| `uploaded`                                  |
+| `created_at`   | timestamptz      |                                                          |
+| `confirmed_at` | timestamptz NULL | Stamped at confirm                                       |
 
 No `thread_id` or `message_id` column by design (Q3): the renderer reads content parts directly off the message (`{ type: "image", image: publicUrl }` is embedded by `send()`), so the `attachments` table only tracks upload metadata for retention sweeps + dedup. See `docs/ATTACHMENTS.md` for the full reasoning.
 

@@ -33,8 +33,24 @@ services:
       retries: 10
 
   app:
-    build: .
+    # ponytail: env_file replaces the per-var `environment:` block.
+    # Every value below (BETTER_AUTH_SECRET, OPENAI_API_KEY, all OAuth /
+    # Resend / Alchemy / R2 / Jina / Deno Deploy / LangSmith / observability
+    # tunings, etc) lives in `.env` per CLAUDE.md rule #12. Adding a new
+    # server-only env is now a one-line change in `.env.example`.
+    # Hardcoded service-to-service URLs (DATABASE_URL etc) stay in
+    # `environment:` — they're compose-internal, not part of `.env`.
+    build:
+      context: .
+      # DATABASE_URL is the only remaining build-arg: `next build` opens
+      # a Postgres connection at module load (Better Auth runs
+      # migrations). The default in Dockerfile points at
+      # localhost:5432/langgraph_app; CD overrides via this arg to the
+      # build-pg container.
+      args:
+        DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-langgraph_app}}
     restart: unless-stopped
+    env_file: .env
     environment:
       ROLE: all
       NODE_ENV: production
@@ -44,40 +60,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-langgraph_app}
       POSTGRES_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-langgraph_app}
       REDIS_URI: redis://redis:6379
-      LANGGRAPH_API_URL: http://localhost:2024
       LANGGRAPH_RUNTIME_EDITION: postgres
       PORT: "2024"
       LANGGRAPH_SERVER_HOST: 0.0.0.0
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
-      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY in .env}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-}
-      NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: ${NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID:-agent}
-      NEXT_PUBLIC_LANGGRAPH_API_URL: ${NEXT_PUBLIC_LANGGRAPH_API_URL:-}
-      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID:-}
-      ALCHEMY_API_KEY: ${ALCHEMY_API_KEY:-}
-      # OAuth (optional — empty = sign-in button hidden)
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      # Resend email
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
-      ALCHEMY_DISABLED_NETWORKS: ${ALCHEMY_DISABLED_NETWORKS:-}
-      JINA_API_KEYS: ${JINA_API_KEYS:-}
-      DENO_DEPLOY_TOKEN: ${DENO_DEPLOY_TOKEN:-}
-      DENO_DEPLOY_ORG: ${DENO_DEPLOY_ORG:-}
-      # LangSmith tracing
-      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
-      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
-      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-}
-      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
-      # Observability + memory tuning
-      OBSERVABILITY_RETENTION_DAYS: ${OBSERVABILITY_RETENTION_DAYS:-30}
-      MEMORY_THREAD_SUMMARY_KEEP_RECENT: ${MEMORY_THREAD_SUMMARY_KEEP_RECENT:-10}
-      MEMORY_PROFILE_MAX_BYTES: ${MEMORY_PROFILE_MAX_BYTES:-8192}
     ports:
       - "3000:3000"
       - "2024:2024"

@@ -75,10 +75,12 @@ export class R2AttachmentAdapter implements AttachmentAdapter {
     // sync-render-to-image path (#12 comment 2026-07-09 06:22) but
     // moved behind the knowledge base (#13) — the chat composer no
     // longer surfaces a PDF picker until KB ingestion lands. Override
-    // via NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES if a non-image flow
-    // needs the broader allow-list in the meantime.
+    // via R2_ALLOWED_CONTENT_TYPES if a non-image flow needs the
+    // broader allow-list in the meantime. Read from window.__CONFIG__
+    // (see app/layout.tsx) so the value is server-only env.
     this.accept =
-      process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES ?? "image/png,image/jpeg,image/webp";
+      (typeof window !== "undefined" && window.__CONFIG__?.R2_ALLOWED_CONTENT_TYPES) ||
+      "image/png,image/jpeg,image/webp";
   }
 
   async add({ file }: { file: File }): Promise<PendingAttachment> {

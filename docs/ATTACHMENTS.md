@@ -10,7 +10,7 @@ table shape and ownership rules see [`docs/DB.md`](./DB.md#attachments).
 
 ## Scope today — images only
 
-The default `NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES` is
+The default `R2_ALLOWED_CONTENT_TYPES` is
 `image/png,image/jpeg,image/webp` — the chat composer does not surface a
 PDF picker. PDF (and other non-image types) is intentionally excluded:
 
@@ -27,7 +27,7 @@ PDF picker. PDF (and other non-image types) is intentionally excluded:
   users upload files the model can't actually read.
 
 To re-enable a non-image flow in the meantime, set
-`NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES` to a comma-separated list that
+`R2_ALLOWED_CONTENT_TYPES` to a comma-separated list that
 includes the desired MIME types. The presign route will accept them
 and the composer will surface the picker. Note: even with PDF
 re-enabled, the model still won't see the file — this is a
@@ -215,24 +215,24 @@ u/<userId>/<nanoid>-<safe-filename>
 R2_PUBLIC_BASE_URL` is missing. Each route catches that and returns
   `503 ATTACHMENTS_NOT_CONFIGURED`. Not 404 (route exists), not 500 (not a
   bug) — same contract as the DENO and ALCHEMY lazy-register patterns.
-- **Frontend**: single client-visible flag `NEXT_PUBLIC_ATTACHMENTS_ENABLED`.
+- **Frontend**: single client-visible flag `ATTACHMENTS_ENABLED`.
   When `"false"` (default in `.env.example`), the assistant-ui `<Composer />`
   renders without an attachment button — `useLangGraphRuntime` simply isn't
   passed `adapters.attachments` and assistant-ui hides the picker
   automatically. No custom conditional render.
 
 The two flags must be flipped together: backend needs `R2_*` populated,
-frontend needs `NEXT_PUBLIC_ATTACHMENTS_ENABLED="true"`.
+frontend needs `ATTACHMENTS_ENABLED="true"`.
 
-## `NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES` — single env, read by both sides
+## `R2_ALLOWED_CONTENT_TYPES` — single env, read by both sides
 
-The MIME allow-list is a **non-secret public config**. The
-`NEXT_PUBLIC_` prefix lets both server (`lib/attachments/validators.ts` +
-presign route) and client (`R2AttachmentAdapter.accept`) read the same
-env var — avoids dual-env drift and avoids a `/api/attachments/config`
-endpoint just to surface this to the frontend.
+The MIME allow-list is a **non-secret public config**. The same env var
+is read by both server (`app/api/attachments/presign/route.ts`) and
+client (`R2AttachmentAdapter.accept`); the client reads it from
+`window.__CONFIG__` injected by `app/layout.tsx` (CLAUDE.md rule #12) —
+single source of truth across client + server, no rebuild-on-env-change.
 
-Do NOT add `NEXT_PUBLIC_` to `R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
+Do NOT expose `R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
 R2_SECRET_ACCESS_KEY / R2_BUCKET` — those are secrets, server-only.
 `R2_MAX_BYTES` stays server-only too; the cap is enforced at presign, the
 client gets a fast 400 if they try to upload something larger.

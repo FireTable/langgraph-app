@@ -91,11 +91,11 @@ OPENAI_MODEL=                                 # leave empty for provider default
 
 # RainbowKit / WalletConnect — required for the crypto sub-agent's wallet UI.
 # Get one at https://cloud.walletconnect.com
-NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=your_walletconnect_project_id
+WALLET_CONNECT_PROJECT_ID=your_walletconnect_project_id
 
 # Assistant graph id (don't change unless you renamed the graph in
 # langgraph.json — see CLAUDE.md "Things to know before editing")
-NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID=agent
+LANGGRAPH_ASSISTANT_ID=agent
 EOF
 chmod 600 .env
 ```
@@ -149,50 +149,23 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
       - "127.0.0.1:2024:2024"
+    # ponytail: env_file replaces the per-var `environment:` block.
+    # Every value in `.env` (CLAUDE.md rule #12) flows through here.
+    # Hardcoded service-to-service URLs stay in `environment:` below.
+    env_file: .env
     environment:
       ROLE: all
       NODE_ENV: production
       # App + LangGraph share the same DB; pass both env vars so each
       # process picks up its preferred key (DATABASE_URL for the Next.js
       # auth/checkpointer modules, POSTGRES_URI for langgraph-api).
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      POSTGRES_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql://::5432/
+      POSTGRES_URI: postgresql://::5432/
       REDIS_URI: redis://redis:6379
       LANGGRAPH_API_URL: http://localhost:2024
       LANGGRAPH_RUNTIME_EDITION: postgres
       PORT: "2024"
       LANGGRAPH_SERVER_HOST: 0.0.0.0
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
-      BETTER_AUTH_URL: ${BETTER_AUTH_URL}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-}
-      NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: ${NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID}
-      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID}
-      # Tool keys (optional — see docs/TOOLS.md)
-      JINA_API_KEYS: ${JINA_API_KEYS:-}
-      ALCHEMY_API_KEY: ${ALCHEMY_API_KEY:-}
-      DENO_DEPLOY_TOKEN: ${DENO_DEPLOY_TOKEN:-}
-      DENO_DEPLOY_ORG: ${DENO_DEPLOY_ORG:-}
-      # OAuth (optional — empty = sign-in button hidden)
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      # Resend email
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
-      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
-      ALCHEMY_DISABLED_NETWORKS: ${ALCHEMY_DISABLED_NETWORKS:-}
-      NEXT_PUBLIC_LANGGRAPH_API_URL: ${NEXT_PUBLIC_LANGGRAPH_API_URL:-}
-      # LangSmith tracing
-      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
-      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
-      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-}
-      LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
-      # Observability + memory tuning
-      OBSERVABILITY_RETENTION_DAYS: ${OBSERVABILITY_RETENTION_DAYS:-30}
-      MEMORY_THREAD_SUMMARY_KEEP_RECENT: ${MEMORY_THREAD_SUMMARY_KEEP_RECENT:-10}
-      MEMORY_PROFILE_MAX_BYTES: ${MEMORY_PROFILE_MAX_BYTES:-8192}
     depends_on:
       postgres:
         condition: service_healthy
@@ -409,34 +382,31 @@ GOOGLE_CLIENT_SECRET=...
 Restart the app. Better Auth reads these at startup. Provider setup
 walkthroughs are in [`docs/AUTH.md`](AUTH.md).
 
-## WalletConnect project id (build-time secret)
+## WalletConnect project id
 
 The crypto sub-agent's wallet UI uses WalletConnect / Reown. The project id
-(`NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`) is a `NEXT_PUBLIC_*` var — Next.js
-inlines those into the client bundle at `next build`, so runtime env is too
-late to set it.
-
-The CD pipeline pulls the value from a GitHub Actions repository secret
-of the **same name**: `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID`. Set it at
-**Settings → Secrets and variables → Actions → New repository secret**.
-
-CD has **no fallback** for this var — without the secret, the release
-build fails at `docker build` (the `NEXT_PUBLIC_*` placeholder can't be
-empty, RainbowKit's prerender throws "No projectId found"). CI keeps the
-placeholder fallback so PR / fork builds from branches without the secret
-still pass lint + typecheck + test.
+(`WALLET_CONNECT_PROJECT_ID`) is a **non-secret public value** surfaced
+to the browser via `window.__CONFIG__` (CLAUDE.md rule #12) — injected
+by `app/layout.tsx` from `.env` at request time. **No build-time
+inlining**, so changes to `WALLET_CONNECT_PROJECT_ID` only need a
+container restart, no image rebuild and no GitHub Actions secret.
 
 Get the value at <https://dashboard.reown.com> (formerly
 cloud.walletconnect.com) → Project settings. After creating the project,
 **lock it to your domain** in Allowed domains (e.g. `ai.firetable.tech`)
 so a forked image deployed elsewhere can't piggy-back on your project id
-quota. Without the secret, the build fails; with the secret set, the
-bundle ships the real id and WalletConnect SDK calls like
+quota. With the value set in `.env`, the bundle reads it at runtime and
+WalletConnect SDK calls like
 `https://api.web3modal.org/appkit/v1/config?projectId=...` go out with it.
 
 If a deployment domain doesn't match the project id's Allowed domains,
 WalletConnect rejects calls at runtime (HTTP 401 / 403) — wallet
 features silently fail.
+
+The repo's GitHub Actions no longer needs a `WALLET_CONNECT_PROJECT_ID`
+secret; `CD.yml` and `CI.yml` build without it. Older releases
+(2026-07 and earlier) baked the value at build time and required a repo
+secret of the same name.
 
 ## Backups
 

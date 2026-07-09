@@ -52,18 +52,12 @@ ARG DATABASE_URL=postgresql://postgres:postgres@localhost:5432/langgraph_app
 ENV DATABASE_URL=${DATABASE_URL}
 ENV BETTER_AUTH_SECRET=build_secret_aabbccddeeff00112233445566778899
 ENV BETTER_AUTH_URL=http://localhost:3000
-ENV NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID=agent
-# WalletConnect project id is `NEXT_PUBLIC_*` so Next.js bakes it into
-# the client bundle at build time — runtime env (docker-compose) is too
-# late. CD.yml passes it via `--build-arg` from the
-# `WALLET_CONNECT_PROJECT_ID` GitHub Actions secret. Default has to be
-# a non-empty placeholder because RainbowKit's prerender throws
-# "No projectId found" on an empty string — that broke CD on
-# 2026-07-07. With the placeholder default, builds without the secret
-# succeed (same silent wallet failure as before); with the secret set
-# CD overwrites the placeholder with the real id.
-ARG NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID="build-placeholder-project-id"
-ENV NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=${NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID}
+ENV LANGGRAPH_ASSISTANT_ID=agent
+# ponytail: all client-visible values (LANGGRAPH_ASSISTANT_ID,
+# LANGGRAPH_PUBLIC_URL, WALLET_CONNECT_PROJECT_ID,
+# R2_ALLOWED_CONTENT_TYPES, ATTACHMENTS_ENABLED) are server-only env,
+# surfaced to the browser at request time via `window.__CONFIG__`
+# injected by app/layout.tsx. CLAUDE.md rule #12.
 RUN pnpm build
 
 # LangGraph runtime config — point at our graphs and DB.

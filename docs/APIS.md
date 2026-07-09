@@ -69,11 +69,11 @@ Chat attachments backed by Cloudflare R2 (issue #12). The browser uploads direct
 
 Reserve an attachment row and a 5-minute presigned PUT URL. Browser immediately PUTs the file to R2 with the returned `uploadHeaders` (Content-Type is baked into the signature — a mismatch is a 403 from R2).
 
-|               |                                                                                                                                                                                                                   |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0), threadId?: string (1..128) }`. `contentType` must appear in `NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES`; `sizeBytes` ≤ `R2_MAX_BYTES`. |
-| 201 response  | `{ id, key, uploadUrl, publicUrl, contentType, sizeBytes, uploadHeaders: { "Content-Type": contentType } }`. The presigned URL expires in 300s. `publicUrl` is `${R2_PUBLIC_BASE_URL}/${key}`.                    |
-| Failure codes | 400 `BAD_REQUEST` (invalid JSON / schema). 400 `CONTENT_TYPE_NOT_ALLOWED`. 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `ATTACHMENTS_NOT_CONFIGURED`.                                |
+|               |                                                                                                                                                                                                       |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0), threadId?: string (1..128) }`. `contentType` must appear in `R2_ALLOWED_CONTENT_TYPES`; `sizeBytes` ≤ `R2_MAX_BYTES`. |
+| 201 response  | `{ id, key, uploadUrl, publicUrl, contentType, sizeBytes, uploadHeaders: { "Content-Type": contentType } }`. The presigned URL expires in 300s. `publicUrl` is `${R2_PUBLIC_BASE_URL}/${key}`.        |
+| Failure codes | 400 `BAD_REQUEST` (invalid JSON / schema). 400 `CONTENT_TYPE_NOT_ALLOWED`. 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `ATTACHMENTS_NOT_CONFIGURED`.                    |
 
 ### `POST /api/attachments/[id]/confirm`
 

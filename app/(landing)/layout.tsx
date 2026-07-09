@@ -7,7 +7,7 @@ import { LandingMotionProvider } from "@/components/landing/landing-motion-provi
 const TITLE = `${APP_NAME} — streaming chat backed by a LangGraph StateGraph`;
 const DESCRIPTION =
   "Self-hostable chat surface for a real LangGraph agent. Streaming chat, dual-graph background work, cross-conversation memory, observability waterfall, and composable tools.";
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://ai.firetable.tech";
+const SITE_URL = process.env.SITE_URL ?? "https://ai.firetable.tech";
 const OG_IMAGE = `${SITE_URL}/opengraph-image`;
 
 export const metadata: Metadata = {

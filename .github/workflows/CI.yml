@@ -90,12 +90,8 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/langgraph_app_build
       BETTER_AUTH_SECRET: build_secret_aabbccddeeff00112233445566778899
       BETTER_AUTH_URL: http://localhost:3000
-      NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID: agent
-      # WalletConnect project id — from a repo secret if set, else the
-      # placeholder so CI builds (PR / forks / branches without the secret)
-      # don't fail. CD is stricter (no fallback) so releases always carry
-      # a real id when the secret is configured.
-      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || 'build-placeholder-project-id' }}
+      # ponytail: client-visible values no longer need build-time env —
+      # they ride through window.__CONFIG__ (CLAUDE.md rule #12).
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

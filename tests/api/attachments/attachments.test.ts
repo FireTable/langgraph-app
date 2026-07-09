@@ -87,7 +87,7 @@ beforeEach(async () => {
   resetMocks();
   // Default env so a test that forgets to set them still gets a sane
   // allow-list + cap (tests that exercise validation override per-test).
-  process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png,image/jpeg,application/pdf";
+  process.env.R2_ALLOWED_CONTENT_TYPES = "image/png,image/jpeg,application/pdf";
   process.env.R2_MAX_BYTES = "10485760";
   setCurrentUser({ id: owner, email: TEST_USER.email });
 });
@@ -119,7 +119,7 @@ describe("POST /api/attachments/presign — auth + validation", () => {
   });
 
   it("returns 400 when contentType is not in the allow-list", async () => {
-    process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png,image/jpeg";
+    process.env.R2_ALLOWED_CONTENT_TYPES = "image/png,image/jpeg";
     const res = await POSTPresign(
       jsonRequest(presignBody({ contentType: "application/zip" })),
       ctx,
@@ -151,7 +151,7 @@ describe("POST /api/attachments/presign — happy path", () => {
   const ctx = { params: Promise.resolve(undefined as never) };
 
   it("returns 201 with id, key, uploadUrl, publicUrl and ride-along Content-Type + Content-Disposition in uploadHeaders", async () => {
-    process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png";
+    process.env.R2_ALLOWED_CONTENT_TYPES = "image/png";
     process.env.R2_MAX_BYTES = "10485760";
     const res = await POSTPresign(jsonRequest(presignBody({ name: "pic.png" })), ctx);
     expect(res.status).toBe(201);
@@ -170,7 +170,7 @@ describe("POST /api/attachments/presign — happy path", () => {
     // Q3 design: attachments row has no thread_id column. The renderer
     // reads content parts off the message; the table only tracks upload
     // metadata for dedup + retention sweeps.
-    process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png";
+    process.env.R2_ALLOWED_CONTENT_TYPES = "image/png";
     process.env.R2_MAX_BYTES = "10485760";
     const res = await POSTPresign(jsonRequest(presignBody()), ctx);
     const body = await res.json();
@@ -181,7 +181,7 @@ describe("POST /api/attachments/presign — happy path", () => {
   });
 
   it("stores the sha256 hash on the row for dedup", async () => {
-    process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png";
+    process.env.R2_ALLOWED_CONTENT_TYPES = "image/png";
     process.env.R2_MAX_BYTES = "10485760";
     const sha = "a".repeat(64);
     const res = await POSTPresign(jsonRequest(presignBody({ sha256: sha })), ctx);
@@ -199,7 +199,7 @@ describe("POST /api/attachments/presign — dedup (Q2)", () => {
   const sha = "b".repeat(64);
 
   beforeEach(() => {
-    process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png";
+    process.env.R2_ALLOWED_CONTENT_TYPES = "image/png";
     process.env.R2_MAX_BYTES = "10485760";
   });
 
@@ -310,7 +310,7 @@ describe("POST /api/attachments/[id]/confirm — auth + ownership", () => {
 
 describe("POST /api/attachments/[id]/confirm — happy + edge paths", () => {
   beforeEach(async () => {
-    process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png";
+    process.env.R2_ALLOWED_CONTENT_TYPES = "image/png";
     process.env.R2_MAX_BYTES = "10485760";
   });
 
