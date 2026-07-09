@@ -11,7 +11,12 @@
 .verify
 coverage
 node_modules
-patches
+
+# ponytail: `patches/` is intentionally kept IN the build context —
+# pnpm-workspace.yaml's `patchedDependencies` references it during
+# install, and the lockfile hash-checks patch contents. Excluding
+# the directory here silently breaks `pnpm install --frozen-lockfile`
+# in the Docker build with "ENOENT ... patches/<name>.patch".
 
 # env / secrets — never bake into image
 .env
