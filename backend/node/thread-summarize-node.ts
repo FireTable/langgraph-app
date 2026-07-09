@@ -31,16 +31,39 @@ type Config = { configurable?: { userId?: unknown; thread_id?: unknown } };
 
 const KEEPABLE_TYPES = new Set(["human", "ai", "assistant", "tool", "function"]);
 
-function stringifyContent(content: unknown): string {
+// ponytail: image_url / file / audio parts used to be silently dropped
+// (the old guard only kept parts with a `text` field), which meant an
+// "upload + question" turn rendered as just the question in the
+// summarize transcript — the LLM had no idea an image was attached.
+// Now we emit a small marker for every non-text part so the
+// compressor at least knows the part existed and can name it in the
+// summary entry's question/answer text.
+function renderPart(part: Record<string, unknown>): string {
+  if (typeof part.text === "string") return part.text;
+  if (part.type === "image_url" && part.image_url) {
+    const url = (part.image_url as { url?: unknown }).url;
+    if (typeof url === "string") return `[image: ${url}]`;
+  }
+  if (part.type === "image" && typeof part.image === "string") {
+    return `[image: ${part.image}]`;
+  }
+  if (part.type === "file") {
+    const filename = (part as { filename?: unknown }).filename;
+    if (typeof filename === "string" && filename.length > 0) return `[file: ${filename}]`;
+    const data = (part as { data?: unknown }).data;
+    if (typeof data === "string") return `[file: ${data}]`;
+  }
+  return JSON.stringify(part);
+}
+
+export function stringifyContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content
       .map((part) =>
-        part && typeof part === "object" && "text" in (part as object)
-          ? String((part as Record<string, unknown>).text ?? "")
-          : "",
+        part && typeof part === "object" ? renderPart(part as Record<string, unknown>) : "",
       )
-      .filter(Boolean)
+      .filter((s) => s.length > 0)
       .join(" ");
   }
   if (content == null) return "";

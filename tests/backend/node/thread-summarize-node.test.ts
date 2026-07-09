@@ -17,7 +17,11 @@ vi.mock("@/backend/model", () => ({
   },
 }));
 
-import { computeCumulativeWindow, threadSummarizeNode } from "@/backend/node/thread-summarize-node";
+import {
+  computeCumulativeWindow,
+  stringifyContent,
+  threadSummarizeNode,
+} from "@/backend/node/thread-summarize-node";
 
 const makeMessages = (n: number) =>
   Array.from({ length: n }, (_, i) => ({
@@ -477,3 +481,63 @@ function makeSummary(
     createdAt: new Date().toISOString(),
   };
 }
+
+describe("stringifyContent", () => {
+  it("returns a plain string as-is", () => {
+    expect(stringifyContent("hello")).toBe("hello");
+  });
+
+  it("joins multiple text parts with spaces", () => {
+    expect(
+      stringifyContent([
+        { type: "text", text: "这是谁" },
+        { type: "text", text: "?" },
+      ]),
+    ).toBe("这是谁 ?");
+  });
+
+  it("renders image_url as a [image: <url>] marker so the LLM knows an image was attached", () => {
+    // Regression: previously the function dropped any part without a `text`
+    // field, so an image attachment disappeared from the summarize
+    // transcript and the LLM had no idea the user sent an image.
+    const out = stringifyContent([
+      { type: "text", text: "这是谁" },
+      { type: "image_url", image_url: { url: "https://file.example/x.jpg" } },
+    ]);
+    expect(out).toContain("这是谁");
+    expect(out).toMatch(/\[image:\s*https:\/\/file\.example\/x\.jpg\]/);
+  });
+
+  it("renders a LangChain-style image part the same way (image: <value>)", () => {
+    expect(stringifyContent([{ type: "image", image: "https://x/y.png" }])).toBe(
+      "[image: https://x/y.png]",
+    );
+  });
+
+  it("renders file parts as [file: <name>] when a filename is present", () => {
+    expect(
+      stringifyContent([{ type: "file", data: "https://x/y.pdf", filename: "report.pdf" }]),
+    ).toBe("[file: report.pdf]");
+  });
+
+  it("renders file parts as [file: <data>] when no filename is set", () => {
+    expect(stringifyContent([{ type: "file", data: "https://x/y.pdf" }])).toBe(
+      "[file: https://x/y.pdf]",
+    );
+  });
+
+  it("does not drop unknown parts — falls back to a JSON one-liner", () => {
+    expect(stringifyContent([{ type: "audio", audio: { url: "https://x/y.mp3" } }])).toBe(
+      '{"type":"audio","audio":{"url":"https://x/y.mp3"}}',
+    );
+  });
+
+  it("returns empty string for null / undefined", () => {
+    expect(stringifyContent(null)).toBe("");
+    expect(stringifyContent(undefined)).toBe("");
+  });
+
+  it("JSON-stringifies non-array objects", () => {
+    expect(stringifyContent({ foo: 1 })).toBe('{"foo":1}');
+  });
+});
