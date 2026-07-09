@@ -58,6 +58,12 @@ function makeRecordingStdin() {
 }
 
 beforeEach(() => {
+  // ponytail: clear FIRST so the "unset" test isn't poisoned by
+  // `loadEnvConfig` reading .env.local in tests/setup.ts. afterEach
+  // alone wouldn't catch the first test in the file (no previous
+  // afterEach ran). The other tests below re-set the env explicitly.
+  delete process.env.DENO_DEPLOY_TOKEN;
+  delete process.env.DENO_DEPLOY_ORG;
   sandboxCreate.mockReset();
   sandboxSpawn.mockReset();
   sandboxChildOutput.mockReset();

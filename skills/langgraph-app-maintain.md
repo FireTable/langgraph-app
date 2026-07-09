@@ -178,6 +178,11 @@ scp .env.vps <VPS_USER>@<VPS_HOST>:<VPS_DEPLOY_DIR>/.env
 ssh <VPS_USER>@<VPS_HOST> 'chmod 600 <VPS_DEPLOY_DIR>/.env <VPS_DEPLOY_DIR>/caddy-origin*.pem'
 ```
 
+> ⚠️ `.env` MUST set `IMAGE=ghcr.io/<GH_OWNER>/<GH_REPO>:latest`. The
+> `app:` service uses `image: ${IMAGE}` + `build:` together — VPS has no
+> source tree, so without IMAGE pointing at GHCR `docker compose up`
+> tries to build from `.` and dies with "Dockerfile not found".
+
 **1.4.2 Pull image + start stack**
 
 ```bash

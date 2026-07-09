@@ -40,6 +40,13 @@ services:
     # server-only env is now a one-line change in `.env.example`.
     # Hardcoded service-to-service URLs (DATABASE_URL etc) stay in
     # `environment:` — they're compose-internal, not part of `.env`.
+    #
+    # Dual-source: `image: ${IMAGE}` pulls the GHCR-published build
+    # (used by CD + VPS `docker compose up`); `build:` below is the
+    # local-dev fallback (`docker compose up` rebuilds when there's no
+    # image cached). `pull` reads `image`; `up` prefers an existing
+    # image over a rebuild, so they coexist cleanly.
+    image: ${IMAGE}
     build:
       context: .
       # DATABASE_URL is the only remaining build-arg: `next build` opens
