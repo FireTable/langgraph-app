@@ -40,17 +40,36 @@ Non-negotiable. Every change.
 3. **Best practices over middle-ground.** Use the canonical approach first (`@next/env`, `drizzle-kit`, `RemoteThreadListAdapter` from `@assistant-ui/react`). Surface trade-offs when the canonical has friction; let the user decide.
 4. **Visually verify frontend changes.** Order: Chrome DevTools MCP → Playwright (under `tests/e2e/`) → user manual confirmation. Backend/DB/pure-logic: `pnpm test` + typecheck.
 5. **Comments explain why, not what.** Sparse, short. Default to no comment. Delete comments that restate code or narrate sequences.
-6. **Tool-UI cards stay flush with container.** No `mx-*`, no `shadow-*`. Use `components/tool-ui/primitives/` (`CardShell`, `CardHeader`, `ErrorBanner`, `SuccessBanner`, `JsonBlock`).
+6. **Tool-UI cards stay flush with container.** No `mx-*`, no `shadow-*`. Vertical `my-*` is fine for stacking. Use `components/tool-ui/primitives/` (`CardShell`, `CardHeader`, `ErrorBanner`, `SuccessBanner`, `JsonBlock`).
 7. **Tool-UI buttons are text-only.** No lucide icon prefix even with `gap-2`. `size="icon"` is fine for icon-only controls (e.g. submit magnifier).
-8. **Never kill or restart a dev server.** Check ports first (`lsof -i :3000` for Next.js, `:2024` for LangGraph). Reuse via Chrome DevTools MCP. If stale/stuck, surface and ask.
-9. **`app/api/**/route.ts`is`withAuth`-wrapped.** From `lib/auth/with-auth.ts`. Exceptions: Better Auth catch-all `app/api/auth/[...all]/route.ts`and`OPTIONS`preflight in proxy routes. Test mock:`next/headers`+`@/lib/auth/config`, default `getSession`to a logged-in user in`beforeEach`; 401 path uses `getSession.mockResolvedValueOnce(null)`. Runtime stays `nodejs`(edge throws on`withAuth` → Postgres).
-10. **Third-party-key tools lazy-register.** `StructuredTool | null` gated on `process.env.<KEY>` at module load; spread with `...(tool ? [tool] : [])`. Update `.env.example` and `docs/TOOLS.md` "Tool ↔ API key" table when adding one. `fetch_url` is exempt (r.jina.ai free tier).
+8. **Never kill or restart a dev server.** Check ports first (`lsof -i :3000` for Next.js, `:2024` for LangGraph). Reuse via Chrome DevTools MCP. If stale/stuck, surface the observation and ask. Don't act unilaterally.
+9. **`app/api/**/route.ts`is`withAuth`-wrapped.** From `lib/auth/with-auth.ts`. Exceptions: Better Auth catch-all `app/api/auth/[...all]/route.ts`and`OPTIONS`preflight in proxy routes. Runtime stays`nodejs`(edge throws on`withAuth` → Postgres). Pattern:
+
+   ```ts
+   import { withAuth } from "@/lib/auth/with-auth";
+   export const GET = withAuth(async (_req, { user }) => NextResponse.json({ ... }));
+   export const GET = withAuth<{ id: string }>(async (req, { user, params }) => { ... });
+   ```
+
+   Test mock: `next/headers` + `@/lib/auth/config`; default `getSession` to a logged-in user in `beforeEach`; 401 path uses `getSession.mockResolvedValueOnce(null)`. See `tests/api/alchemy/status.test.ts` for the env pattern.
+
+10. **Third-party-key tools lazy-register.** `StructuredTool | null` gated on `process.env.<KEY>` at module load; spread with `...(tool ? [tool] : [])`. Update `.env.example` and the "Tool ↔ API key" table in `docs/TOOLS.md` when adding one. Pattern:
+
+    ```ts
+    export const getNftHoldingsTool: StructuredTool | null = process.env.ALCHEMY_API_KEY
+      ? tool(impl, { name: "get_NFT_holdings", ... })
+      : null;
+    ```
+
+    `fetch_url` is exempt (r.jina.ai accepts unauthenticated requests on the free tier).
+
 11. **Back up DB before out-of-app mutations.** Run `scripts/db-snapshot.sh` (refuses non-localhost; custom-format dump) before any raw `psql`, ad-hoc `tsx` script with `DELETE/TRUNCATE/DROP`, or manual `ALTER TABLE` outside the migration runner. Migration runner (`pnpm db:migrate`) and API routes are exempt.
 
 ## Things to know before editing
 
 - Graph id `agent` is in `langgraph.json`, `NEXT_PUBLIC_LANGGRAPH_ASSISTANT_ID` (`.env.example`), and `unstable_createLangGraphStream({ assistantId })`. Keep aligned.
 - `app/api/[..._path]/route.ts` proxy uses `runtime = "nodejs"` (was edge) — `withAuth` needs Node `net` for Postgres session reads.
+- `components.json` declares a `@assistant-ui` registry at `https://r.assistant-ui.com/{name}.json` for `shadcn`-style component adds.
 - `feat/*` branches: `git fetch origin main` and merge if main moved before committing — see [[feature-branch-tracks-main]].
 - Issue titles use `[Type]:` prefix matching the `gh` label (`[Bug]:`, `[Feat]:`, `[Docs]:`, `[Chore]:`, `[Perf]:`, `[Refactor]:`, `[Test]:`, `[Question]:`).
 - `pnpm-workspace.yaml` keeps a `patchedDependencies:` placeholder. Re-check on every bump; drop when upstream ships the fix.
