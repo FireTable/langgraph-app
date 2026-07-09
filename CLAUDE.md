@@ -349,6 +349,44 @@ Two non-obvious details baked in:
   `CheckCircle2Icon` / `AlertCircleIcon` (the circle is already drawn
   by the wrapper; a circle inside a circle looks small).
 
+### 12. Back up the DB before any out-of-app data operation
+
+Any direct DB mutation that **does not go through the app's API or
+migration runner** (raw `psql`, one-off `tsx` scripts, ORM
+`db.execute(sql\`DELETE/TRUNCATE/DROP …\`)`) is destructive in a way
+the app's safety nets don't cover — no schema version gate, no auth
+check, no audit row. Treat every such command as recoverable-or-it-
+didn't-happen:
+
+1. **Snapshot first.** `pg_dump -Fc "$DATABASE_URL" -f
+~/.local/db-snapshots/langgraph_app-$(date +%Y%m%d-%H%M%S).dump` —
+   the `-Fc` (custom) format compresses well and `pg_restore` reads
+   it back losslessly. The dev DB on `localhost:5432` is the obvious
+   target; the test DB on the same host but a different db name is
+   the same story.
+2. **Verify the URL points where you think it does** before any
+   destructive keyword (`DROP`, `TRUNCATE`, `DELETE`, `ALTER … DROP
+COLUMN`). The DB name in the URL is the only safety net — print
+   the URL (or `current_database()`) and confirm it's the dev DB,
+   not prod, not test.
+3. **Prefer the smallest scope.** `DELETE FROM attachments WHERE
+status='pending' AND created_at < now() - interval '1 day'` over
+   `TRUNCATE attachments`. `DROP COLUMN` after `pg_dump` over `DROP
+TABLE`. Never `DROP SCHEMA public CASCADE` against any DB unless
+   the user explicitly said "wipe everything, I have a backup".
+4. **If a destructive op fails partway, stop and surface the state**
+   rather than trying a second fix. A failed migration is debuggable;
+   a half-migrated DB that's been re-dropped is not.
+
+The migration runner (`scripts/db-migrate.ts`, `pnpm db:migrate`) and
+the API routes are exempt — they have their own idempotency and
+versioning. The rule is for **one-off** mutations an AI agent (or a
+human chasing a bug) might reach for.
+
+A helper script lives at `scripts/db-snapshot.sh` (one-liner around
+`pg_dump` above) — call it before any DELETE/TRUNCATE/DROP unless the
+user has just told you the data is throwaway.
+
 ## Things to know before editing
 
 - Graph id `agent` is referenced in three places: `langgraph.json`
