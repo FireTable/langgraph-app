@@ -1,0 +1,27 @@
+diff --git a/dist/runtime/base/base-composer-runtime-core.js b/dist/runtime/base/base-composer-runtime-core.js
+index 61b7136deeb1657089162008875370a67e8a7e7d..f49005a2419beb835c351d8cb8a8cb15da8b38c0 100644
+--- a/dist/runtime/base/base-composer-runtime-core.js
++++ b/dist/runtime/base/base-composer-runtime-core.js
+@@ -119,7 +119,13 @@ var BaseComposerRuntimeCore = class extends BaseSubscribable {
+ 		const text = this.text;
+ 		const quote = this._quote;
+ 		this._quote = void 0;
+-		this._emptyTextAndAttachments();
++		// ponytail: defer clearing both text and attachments until after
++		// handleSend resolves. Without this, _emptyTextAndAttachments()
++		// runs synchronously and the user sees an empty composer and
++		// empty chat for ~1s while `await attachments` resolves. Keeping
++		// the composer visible (text + chips) until handleSend surfaces
++		// the message makes the send feel instant. Upstream issue:
++		// assistant-ui/assistant-ui#4796.
+ 		const message = {
+ 			createdAt: /* @__PURE__ */ new Date(),
+ 			role: this.role,
+@@ -132,6 +138,7 @@ var BaseComposerRuntimeCore = class extends BaseSubscribable {
+ 			metadata: { custom: { ...quote ? { quote } : {} } }
+ 		};
+ 		this.handleSend(message, options);
++		this._emptyTextAndAttachments();
+ 		this._notifyEventSubscribers("send", {});
+ 	}
+ 	cancel() {

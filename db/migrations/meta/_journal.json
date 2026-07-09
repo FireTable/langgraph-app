@@ -15,6 +15,13 @@
       "when": 1782926622000,
       "tag": "0001_opposite_virginia_dare",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783571084726,
+      "tag": "0002_sparkling_bloodstrike",
+      "breakpoints": true
     }
   ]
 }

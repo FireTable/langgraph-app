@@ -30,6 +30,8 @@
     "@assistant-ui/react-langgraph": "^0.14.11",
     "@assistant-ui/react-markdown": "^0.14.5",
     "@assistant-ui/react-o11y": "^0.0.25",
+    "@aws-sdk/client-s3": "^3.1081.0",
+    "@aws-sdk/s3-request-presigner": "^3.1081.0",
     "@base-ui/react": "^1.6.0",
     "@better-auth-ui/core": "^1.6.27",
     "@better-auth-ui/react": "^1.6.27",
@@ -122,6 +124,9 @@
   "pnpm": {
     "overrides": {
       "qr": "0.5.5"
+    },
+    "patchedDependencies": {
+      "@assistant-ui/core@0.2.20": "patches/@assistant-ui__core@0.2.20.patch"
     }
   }
 }

@@ -13,7 +13,7 @@
 // the full primary + secondary pair via its own composition.
 
 import Link from "next/link";
-import { ArrowRightIcon, MessagesSquareIcon } from "lucide-react";
+import { MessagesSquareIcon } from "lucide-react";
 import type { FC } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -31,14 +31,11 @@ export const HeroCta: FC<HeroCtaProps> = ({
   iconOnly = false,
   showSecondary = false,
 }) => {
-  const isAuthed = signedIn === true;
-  const href = isAuthed ? "/chat" : "/login";
-  // ponytail: icon is a destination glyph, not a generic arrow.
-  // Chat now = chat bubble (the destination is the chat surface);
-  // Sign in keeps the arrow since /login is not itself a named
-  // destination.
-  const label = isAuthed ? "Chat now" : "Sign in";
-  const Icon = isAuthed ? MessagesSquareIcon : ArrowRightIcon;
+  const href = signedIn === true ? "/chat" : "/login";
+  // ponytail: copy stays "Chat now" for everyone; only the
+  // destination shifts (authed → /chat, anon → /login bounce).
+  const label = "Chat now";
+  const Icon = MessagesSquareIcon;
 
   if (iconOnly) {
     return (

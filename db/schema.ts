@@ -5,3 +5,4 @@
 export * from "@/lib/threads/schema";
 export * from "@/lib/auth/schema";
 export * from "@/lib/observability/schema";
+export * from "@/lib/attachments/schema";

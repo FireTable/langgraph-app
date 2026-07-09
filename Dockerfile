@@ -18,7 +18,24 @@ WORKDIR /deps/langgraph-app
 # changes. Combined with CD.yml's `cache-to: type=gha,mode=max`,
 # the store persists across CI runs. Requires DOCKER_BUILDKIT=1
 # (default on GitHub Actions and modern Docker).
+#
+# ponytail: `patches/` is bundled with the workspace files because
+# pnpm-workspace.yaml's `patchedDependencies` references it
+# (CLAUDE.md's pnpm-10 placeholder). The lockfile hash-checks
+# patch contents, so the files MUST be in the build context before
+# `pnpm install` runs. CI hit ENOENT on this exact path; the
+# follow-up `COPY . .` below copies the rest of the source but
+# it's too late by then.
+#
+# The two-step COPY is intentional: a single-line `COPY ... patches ./`
+# reused a stale GHA layer that had been built when .dockerignore
+# still excluded `patches/`. Splitting the COPY into a wildcard
+# (`patches/*.patch`) and renaming the destination (`.` → `./patches/`)
+# forces a new layer because both the source glob and the destination
+# differ from the old step. The expanded wildcard pulls the actual
+# files in now that .dockerignore no longer filters the directory.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY patches/*.patch ./patches/
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store,id=pnpm \
     corepack enable && pnpm install --frozen-lockfile
 

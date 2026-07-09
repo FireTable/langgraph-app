@@ -47,6 +47,7 @@ import {
   ChevronRightIcon,
   CopyIcon,
   DownloadIcon,
+  Loader2Icon,
   MicIcon,
   MoreHorizontalIcon,
   PencilIcon,
@@ -60,6 +61,7 @@ import {
   type FC,
   type PropsWithChildren,
 } from "react";
+import { useUploadStore } from "@/lib/attachments/upload-store";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 
@@ -215,6 +217,12 @@ const ThreadSuggestionItem: FC = () => {
 };
 
 const Composer: FC = () => {
+  // ponytail: lock the textbox while r2-adapter.send() is in flight so
+  // the user can't edit a message that's mid-upload. SDK keeps the
+  // text + attachments visible (deferred clear), but mutating either
+  // here changes the message that handleSend eventually receives —
+  // the actual wire payload and the on-screen composer drift apart.
+  const isUploading = useUploadStore((s) => s.count > 0);
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <ComposerPrimitive.AttachmentDropzone asChild>
@@ -225,10 +233,11 @@ const Composer: FC = () => {
           <ComposerAttachments />
           <ComposerPrimitive.Input
             placeholder="Send a message..."
-            className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
+            className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none disabled:opacity-60 disabled:cursor-not-allowed"
             rows={1}
             autoFocus
             aria-label="Message input"
+            disabled={isUploading}
           />
           <ComposerAction />
         </div>
@@ -238,6 +247,15 @@ const Composer: FC = () => {
 };
 
 const ComposerAction: FC = () => {
+  // ponytail: spinner during the upload window (presign → PUT → confirm)
+  // before isRunning flips. SDK exposes only two states — !isRunning /
+  // isRunning — and the upload happens before handleSend, so isRunning
+  // is still false while R2 receives the file. The send store counter
+  // is incremented by r2-adapter.send() and cleared in finally, so the
+  // spinner reflects real upload work, not just a button click. See
+  // lib/attachments/upload-store.ts.
+  const isUploading = useUploadStore((s) => s.count > 0);
+
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <ComposerAddAttachment />
@@ -277,15 +295,20 @@ const ComposerAction: FC = () => {
         <AuiIf condition={(s) => !s.thread.isRunning}>
           <ComposerPrimitive.Send asChild>
             <TooltipIconButton
-              tooltip="Send message"
+              tooltip={isUploading ? "Uploading…" : "Send message"}
               side="bottom"
               type="button"
               variant="default"
               size="icon"
               className="aui-composer-send size-7 rounded-full"
-              aria-label="Send message"
+              aria-label={isUploading ? "Uploading attachment" : "Send message"}
+              disabled={isUploading}
             >
-              <ArrowUpIcon className="aui-composer-send-icon size-4.5" />
+              {isUploading ? (
+                <Loader2Icon className="aui-composer-send-icon size-4.5 animate-spin" />
+              ) : (
+                <ArrowUpIcon className="aui-composer-send-icon size-4.5" />
+              )}
             </TooltipIconButton>
           </ComposerPrimitive.Send>
         </AuiIf>
@@ -474,6 +497,16 @@ const AssistantActionBar: FC = () => {
 };
 
 const UserMessage: FC = () => {
+  // ponytail: SDK still renders a stray <p><span></span></p> for an
+  // empty text part, so :empty on the wrapper never matches and the
+  // gray bubble shows even for attachment-only messages. Read the
+  // content array directly and only show the bg + action bar when
+  // there's actual text — image/file parts are already nulled out in
+  // <MessagePrimitive.Parts components={...} /> and rendered above
+  // via <UserMessageAttachments />.
+  const hasText = useAuiState((s) =>
+    s.message.content.some((p) => p.type === "text" && p.text.trim().length > 0),
+  );
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
@@ -483,10 +516,25 @@ const UserMessage: FC = () => {
       <UserMessageAttachments />
 
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div className="aui-user-message-content peer bg-muted text-foreground rounded-xl px-4 py-2 wrap-break-word empty:hidden">
-          <MessagePrimitive.Parts />
+        <div
+          className={cn(
+            "aui-user-message-content peer bg-muted text-foreground rounded-xl px-4 py-2 wrap-break-word empty:hidden",
+            !hasText && "hidden",
+          )}
+        >
+          <MessagePrimitive.Parts
+            components={{
+              Image: () => null,
+              File: () => null,
+            }}
+          />
         </div>
-        <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
+        <div
+          className={cn(
+            "aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full",
+            !hasText && "hidden",
+          )}
+        >
           <UserActionBar />
         </div>
       </div>

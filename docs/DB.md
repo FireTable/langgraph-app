@@ -4,17 +4,18 @@ Source of truth: `db/migrations/0000_*.sql` (drizzle-kit generated). This doc de
 
 ## Tables
 
-| Table          | Owner | Purpose                                         |
-| -------------- | ----- | ----------------------------------------------- |
-| `user`         | app   | Better Auth user rows; FK target for owned rows |
-| `session`      | app   | Better Auth DB sessions (cookie → userId)       |
-| `account`      | app   | Better Auth credentials / OAuth links per user  |
-| `verification` | app   | One-time tokens (email verify, password reset)  |
-| `threads`      | app   | Chat threads; one row per assistant-ui thread   |
+| Table          | Owner | Purpose                                               |
+| -------------- | ----- | ----------------------------------------------------- |
+| `user`         | app   | Better Auth user rows; FK target for owned rows       |
+| `session`      | app   | Better Auth DB sessions (cookie → userId)             |
+| `account`      | app   | Better Auth credentials / OAuth links per user        |
+| `verification` | app   | One-time tokens (email verify, password reset)        |
+| `threads`      | app   | Chat threads; one row per assistant-ui thread         |
+| `attachments`  | app   | Chat attachment metadata; bytes live in Cloudflare R2 |
 
 ## Cascade behavior
 
-`user.id` is the cascade root. Deleting a user removes every `session`, `account`, and `thread` they own. No soft delete; CASCADE only.
+`user.id` is the cascade root. Deleting a user removes every `session`, `account`, `thread`, and `attachment` they own. `attachments` has no FK to `threads` (Q3 — see `docs/ATTACHMENTS.md` for why), so thread deletion does NOT clean up attachment rows. Use the retention sweep if those accumulate. No soft delete; CASCADE only.
 
 ## `user`
 
@@ -88,15 +89,43 @@ Indexes:
 - `threads_status_last_message_idx` `(status, last_message_at DESC)` — reserved for future "recent activity" sort
 - `threads_user_id_idx` `(user_id)` — supports `eq(threads.userId, userId)` lookups in every `*ForUser` query
 
+## `attachments`
+
+Bytes live in Cloudflare R2 — this table is the source of truth for the URL the renderer hands the model. One row per uploaded file. Lifecycle:
+
+- `POST /api/attachments/presign` → INSERT row with `status='pending'`, `size_bytes` from request
+- Browser PUTs bytes directly to R2 (presigned URL)
+- `POST /api/attachments/[id]/confirm` → `HeadObject` size check, then `UPDATE status='uploaded', confirmed_at=now()`
+- `DELETE /api/attachments/[id]` → DELETE row + `DeleteObject` on R2
+
+| Column         | Type             | Notes                                                            |
+| -------------- | ---------------- | ---------------------------------------------------------------- |
+| `id`           | text PK          | 12-char nanoid; also embedded in the R2 key                      |
+| `user_id`      | text FK→user     | CASCADE on user delete                                           |
+| `r2_key`       | text             | `u/<userId>/<nanoid>-<safe-filename>`                            |
+| `name`         | text             | Original (sanitized) filename                                    |
+| `content_type` | text             | MIME type — restricted to `NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES` |
+| `size_bytes`   | bigint           | Claimed at presign, verified via `HeadObject` at confirm         |
+| `status`       | enum             | `pending` \| `uploaded`                                          |
+| `created_at`   | timestamptz      |                                                                  |
+| `confirmed_at` | timestamptz NULL | Stamped at confirm                                               |
+
+No `thread_id` or `message_id` column by design (Q3): the renderer reads content parts directly off the message (`{ type: "image", image: publicUrl }` is embedded by `send()`), so the `attachments` table only tracks upload metadata for retention sweeps + dedup. See `docs/ATTACHMENTS.md` for the full reasoning.
+
+Indexes:
+
+- `attachments_user_created_idx` `(user_id, created_at DESC)` — "list this user's recent uploads" + retention sweep target
+
 ## Code → table map
 
-| Table          | Reads                                           | Writes                                               |
-| -------------- | ----------------------------------------------- | ---------------------------------------------------- |
-| `user`         | `lib/auth/queries.ts` (`getSessionFromHeaders`) | Better Auth handlers in `app/api/auth/[...all]`      |
-| `session`      | `withAuth` (`lib/auth/with-auth.ts`)            | Better Auth sign-in / sign-out / refresh             |
-| `account`      | Better Auth internal                            | Sign-up (credential provider writes password hash)   |
-| `verification` | Better Auth internal                            | Better Auth on email verify / password reset request |
-| `threads`      | `lib/threads/queries.ts` (UI list + adapter)    | API routes under `app/api/threads/`                  |
+| Table          | Reads                                           | Writes                                                                                                           |
+| -------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `user`         | `lib/auth/queries.ts` (`getSessionFromHeaders`) | Better Auth handlers in `app/api/auth/[...all]`                                                                  |
+| `session`      | `withAuth` (`lib/auth/with-auth.ts`)            | Better Auth sign-in / sign-out / refresh                                                                         |
+| `account`      | Better Auth internal                            | Sign-up (credential provider writes password hash)                                                               |
+| `verification` | Better Auth internal                            | Better Auth on email verify / password reset request                                                             |
+| `threads`      | `lib/threads/queries.ts` (UI list + adapter)    | API routes under `app/api/threads/`                                                                              |
+| `attachments`  | `lib/attachments/queries.ts`                    | API routes under `app/api/attachments/` (presign → row, confirm → `status='uploaded'`, DELETE → row + R2 object) |
 
 ## Tooling
 
