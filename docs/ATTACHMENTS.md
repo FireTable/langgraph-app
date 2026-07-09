@@ -36,9 +36,12 @@ adding a CU quota on whatever happens to be sitting in front of the app.
 A 5-minute presigned PUT lets R2 absorb the bytes; the Next.js server only
 orchestrates (presign → confirm).
 
-The PUT signature bakes in `Content-Type` and `Content-Length`; a
-mismatch is a 403 from R2, so the wire contract is enforced by the
-signature, not just by our validator.
+The PUT signature covers `Key` + `Content-Length`; the browser adds
+`Content-Type` and `Content-Disposition` as plain headers (R2 stores both
+on the object). Signing `Content-Type` would force the browser to send a
+matching value — `fetch(file)` does set Content-Type, but `fetch(file)`
+doesn't add `Content-Disposition`, so we keep it out of the signature
+and let R2 accept it as object metadata.
 
 ## R2 key convention
 
@@ -69,7 +72,7 @@ u/<userId>/<nanoid>-<safe-filename>
      {
        "AllowedOrigins": ["http://localhost:3000", "https://ai.firetable.tech"],
        "AllowedMethods": ["GET", "PUT", "HEAD"],
-       "AllowedHeaders": ["Content-Type"],
+       "AllowedHeaders": ["Content-Type", "Content-Disposition"],
        "ExposeHeaders": ["ETag"],
        "MaxAgeSeconds": 3000
      }
@@ -78,13 +81,22 @@ u/<userId>/<nanoid>-<safe-filename>
 
    GET is permitted so the renderer can re-fetch uploaded URLs after the
    runtime serves them; `ExposeHeaders: ["ETag"]` lets the client inspect
-   the upload identity. New dev origins (or a second production origin)
-   need to be added; don't try to wildcard.
+   the upload identity. `Content-Disposition` MUST be in `AllowedHeaders`
+   — the adapter sends it as a plain HTTP header on the PUT (see point 3)
+   and the browser preflight asks permission. New dev origins (or a second
+   production origin) need to be added; don't try to wildcard.
 
-3. **Content-Disposition is per-object, server-decided.** The presign
-   route sets `ContentDisposition` on `PutObjectCommand`:
-   - images → `inline; filename="..."`
-   - everything else → `attachment; filename="..."`
+3. **Content-Disposition is per-object, server-decided, sent as a plain
+   HTTP header (NOT in the signature).** The presign route includes
+   `Content-Disposition` in the `uploadHeaders` returned to the adapter;
+   the browser sends it on the PUT. R2 stores it on the object and serves
+   it back unchanged on GET. The `PutObjectCommand` only signs over `Key`
+   - `Content-Length` — signing `Content-Type` or `Content-Disposition`
+     would require the browser to send matching values on the wire, but
+     `fetch(file)` doesn't add `Content-Disposition` and a mismatch would
+     surface as an opaque CORS failure ("Failed to fetch" with no detail).
+   * images → `inline; filename="..."`
+   * everything else → `attachment; filename="..."`
 
    R2 has no bucket-level "default Content-Disposition" override — the
    per-object metadata is authoritative and is served back unchanged on

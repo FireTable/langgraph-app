@@ -150,7 +150,7 @@ describe("POST /api/attachments/presign — auth + validation", () => {
 describe("POST /api/attachments/presign — happy path", () => {
   const ctx = { params: Promise.resolve(undefined as never) };
 
-  it("returns 201 with id, key, uploadUrl, publicUrl and bakes Content-Type into uploadHeaders", async () => {
+  it("returns 201 with id, key, uploadUrl, publicUrl and ride-along Content-Type + Content-Disposition in uploadHeaders", async () => {
     process.env.NEXT_PUBLIC_R2_ALLOWED_CONTENT_TYPES = "image/png";
     process.env.R2_MAX_BYTES = "10485760";
     const res = await POSTPresign(jsonRequest(presignBody({ name: "pic.png" })), ctx);
@@ -160,7 +160,10 @@ describe("POST /api/attachments/presign — happy path", () => {
     expect(body.key).toBe(`u/${owner}/${body.id}-pic.png`);
     expect(body.uploadUrl).toBe("https://r2.example/presigned");
     expect(body.publicUrl).toBe(`https://file.example/u/${owner}/${body.id}-pic.png`);
-    expect(body.uploadHeaders).toEqual({ "Content-Type": "image/png" });
+    expect(body.uploadHeaders).toEqual({
+      "Content-Type": "image/png",
+      "Content-Disposition": 'inline; filename="pic.png"',
+    });
   });
 
   it("inserts a pending row scoped to the caller", async () => {

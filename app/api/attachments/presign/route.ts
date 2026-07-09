@@ -86,9 +86,7 @@ export const POST = withAuth(async (req, { user }) => {
   try {
     uploadUrl = await presignPut({
       key,
-      contentType,
       contentLength: parsed.data.sizeBytes,
-      contentDisposition,
     });
   } catch (e) {
     if (e instanceof R2NotConfiguredError) return notConfiguredResponse();
@@ -114,9 +112,11 @@ export const POST = withAuth(async (req, { user }) => {
       publicUrl: buildPublicUrl(key),
       contentType,
       sizeBytes: parsed.data.sizeBytes,
-      // Headers the browser MUST send verbatim on the PUT — these were
-      // baked into the signature so a mismatch turns into a 403 from R2.
-      uploadHeaders: { "Content-Type": contentType },
+      // ponytail: Content-Type + Content-Disposition ride as PLAIN headers
+      // from the browser — they're not part of the signature (signed only
+      // over key + length). R2 stores both on the object; the inline/attachment
+      // decision enforces XSS-safe rendering (SVG/HTML/PDF never execute inline).
+      uploadHeaders: { "Content-Type": contentType, "Content-Disposition": contentDisposition },
     },
     { status: 201 },
   );

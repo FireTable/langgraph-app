@@ -127,7 +127,7 @@ vim .env.vps
 >   {
 >     "AllowedOrigins": ["https://<PUBLIC_DOMAIN>"],
 >     "AllowedMethods": ["GET", "PUT", "HEAD"],
->     "AllowedHeaders": ["Content-Type"],
+>     "AllowedHeaders": ["Content-Type", "Content-Disposition"],
 >     "ExposeHeaders": ["ETag"],
 >     "MaxAgeSeconds": 3000
 >   }

@@ -59,19 +59,20 @@ export const getR2PublicBaseUrl = (): string => {
 // migration, and bundling the per-call wrappers next to the connection
 // makes that single-swap point visible.
 
+// ponytail: only sign auth-critical fields (key + length). ContentType and
+// ContentDisposition ride as plain headers from the browser — R2 still stores
+// them on the object, but the signature doesn't pin them. Signing them would
+// require the browser to send matching values, and `fetch(file)` doesn't add
+// `content-disposition`, which would surface as an opaque CORS failure.
 export async function presignPut(args: {
   key: string;
-  contentType: string;
   contentLength: number;
-  contentDisposition?: string;
   expiresInSeconds?: number;
 }): Promise<string> {
   const cmd = new PutObjectCommand({
     Bucket: getR2Bucket(),
     Key: args.key,
-    ContentType: args.contentType,
     ContentLength: args.contentLength,
-    ...(args.contentDisposition ? { ContentDisposition: args.contentDisposition } : {}),
   });
   return getSignedUrl(getS3Client(), cmd, { expiresIn: args.expiresInSeconds ?? 300 });
 }
