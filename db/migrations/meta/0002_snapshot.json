@@ -1,5 +1,5 @@
 {
-  "id": "ba3ae04c-4fe9-490b-9032-fbe57215ae58",
+  "id": "6622190f-ff25-4e68-9dcb-06b353e1a7ec",
   "prevId": "c1caf932-3819-4f28-8b6f-16f42c50b208",
   "version": "7",
   "dialect": "postgresql",
@@ -678,8 +678,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "thread_id": {
-          "name": "thread_id",
+        "sha256": {
+          "name": "sha256",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -751,19 +751,19 @@
           "method": "btree",
           "with": {}
         },
-        "attachments_thread_created_idx": {
-          "name": "attachments_thread_created_idx",
+        "attachments_user_sha_idx": {
+          "name": "attachments_user_sha_idx",
           "columns": [
             {
-              "expression": "thread_id",
+              "expression": "user_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             },
             {
-              "expression": "created_at",
+              "expression": "sha256",
               "isExpression": false,
-              "asc": false,
+              "asc": true,
               "nulls": "last"
             }
           ],
@@ -779,15 +779,6 @@
           "tableFrom": "attachments",
           "tableTo": "user",
           "columnsFrom": ["user_id"],
-          "columnsTo": ["id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "attachments_thread_id_threads_id_fk": {
-          "name": "attachments_thread_id_threads_id_fk",
-          "tableFrom": "attachments",
-          "tableTo": "threads",
-          "columnsFrom": ["thread_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
