@@ -124,6 +124,9 @@
   "pnpm": {
     "overrides": {
       "qr": "0.5.5"
+    },
+    "patchedDependencies": {
+      "@assistant-ui/core@0.2.20": "patches/@assistant-ui__core@0.2.20.patch"
     }
   }
 }
