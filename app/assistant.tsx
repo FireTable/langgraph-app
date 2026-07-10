@@ -26,7 +26,6 @@ import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
 import { R2AttachmentAdapter } from "@/lib/attachments/r2-adapter";
 import { cn } from "@/lib/utils";
-import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID } from "@/lib/constants";
 import { createLangGraphStream } from "@/lib/langgraph/create-stream";
 
 // Provider-scoped values (api, mainThreadId) bridged into a ref so the
@@ -355,12 +354,10 @@ const AuiRefCapture: FC<{ bridgeRef: RefObject<RuntimeBridge> }> = ({ bridgeRef 
 // echo from re-pushing.
 const ThreadUrlShadow: FC = () => {
   const api = useAui();
-  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
   const activeExternalId = useAuiState(
     (s) => s.threads.threadItems.find((t) => t.id === s.threads.mainThreadId)?.externalId,
   );
   const lastSyncedIdRef = useRef<string | null>(null);
-  const didHydrateRef = useRef(false);
 
   // Read thread id off the current path. /chat/<id> → id. /chat (or
   // anything else) → null. We use window.location (NOT useParams/usePathname)
@@ -373,6 +370,12 @@ const ThreadUrlShadow: FC = () => {
 
   // URL → aUI: initial mount + browser back/forward. After our pushState
   // popstate does NOT fire — that's the whole point of bypassing the router.
+  // ponytail: /chat root has no thread id to hydrate from the URL; we let
+  // the runtime's own constructor `switchToNewThread()` run and the
+  // placeholder effect below pushes the URL accordingly. (Removed the
+  // localStorage fallback in #27 — URL is canonical now and a stale tab
+  // is best resumed from the actual /chat/<id> URL, not a persisted
+  // copy that might point at a deleted thread.)
   useEffect(() => {
     const syncFromUrl = () => {
       const urlThreadId = readUrlThreadId();
@@ -390,40 +393,11 @@ const ThreadUrlShadow: FC = () => {
         lastSyncedIdRef.current = urlThreadId;
       }
     };
-    if (!didHydrateRef.current) {
-      didHydrateRef.current = true;
-      const urlThreadId = readUrlThreadId();
-      if (!urlThreadId) {
-        // /chat root: seed from localStorage so a stale tab re-opens on
-        // its last thread. The seeded thread will then trigger
-        // onThreadIdChange → pushState.
-        const savedId = localStorage.getItem(ACTIVE_THREAD_ID);
-        if (savedId) {
-          void Promise.resolve(
-            api.threads().switchToThread(savedId) as unknown as Promise<void>,
-          ).catch(() => {
-            localStorage.removeItem(ACTIVE_THREAD_ID);
-          });
-        }
-      }
-      syncFromUrl();
-    }
+    syncFromUrl();
     window.addEventListener("popstate", syncFromUrl);
     return () => window.removeEventListener("popstate", syncFromUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // localStorage write-through so a stale tab still re-opens correctly.
-  // mainThreadId is also tracked (placeholder phase) — see #27 history
-  // on the placeholder id fallback (assistant-ui #2577, PR #3855).
-  useEffect(() => {
-    const id = activeExternalId ?? mainThreadId;
-    if (!id || (typeof id === "string" && id.startsWith(LOCAL_THREAD_PREFIX))) {
-      localStorage.removeItem(ACTIVE_THREAD_ID);
-      return;
-    }
-    localStorage.setItem(ACTIVE_THREAD_ID, id);
-  }, [activeExternalId, mainThreadId]);
 
   // ponytail: parallel URL-write for the NEW-thread placeholder case.
   // `onThreadIdChange` only fires on `_mainThreadRemoteId` transitions,
