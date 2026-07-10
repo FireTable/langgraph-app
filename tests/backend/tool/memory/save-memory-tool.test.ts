@@ -49,6 +49,39 @@ describe("saveMemoryTool — patch matrix (FR-001..003)", () => {
     expect(result.patches).toEqual([{ op: "add", path: "role", value: "frontend" }]);
   });
 
+  it("rejects a data-URL / base64 blob value (issue #28) without writing", async () => {
+    mockGetMemoryDoc.mockResolvedValueOnce({});
+    const dataUrl = `data:image/png;base64,${"A".repeat(600)}`;
+    await expect(
+      saveMemoryTool.invoke(
+        { patches: [{ op: "add", path: "/avatar", value: dataUrl }] },
+        cfg("u1"),
+      ),
+    ).rejects.toThrow(/base64/i);
+    expect(mockPutMemoryDoc).not.toHaveBeenCalled();
+  });
+
+  it("rejects a base64 blob nested inside an object value", async () => {
+    mockGetMemoryDoc.mockResolvedValueOnce({});
+    await expect(
+      saveMemoryTool.invoke(
+        { patches: [{ op: "add", path: "/pic", value: { raw: "B".repeat(700) } }] },
+        cfg("u1"),
+      ),
+    ).rejects.toThrow(/base64/i);
+    expect(mockPutMemoryDoc).not.toHaveBeenCalled();
+  });
+
+  it("does not flag short normal values (wallet address / hash)", async () => {
+    mockGetMemoryDoc.mockResolvedValueOnce({});
+    mockPutMemoryDoc.mockResolvedValueOnce(undefined);
+    await saveMemoryTool.invoke(
+      { patches: [{ op: "add", path: "/wallet", value: "0xAbC123def456" }] },
+      cfg("u1"),
+    );
+    expect(mockPutMemoryDoc).toHaveBeenCalledWith("u1", { wallet: "0xAbC123def456" });
+  });
+
   it("merges multiple adds with existing keys (non-destructive)", async () => {
     mockGetMemoryDoc.mockResolvedValueOnce({ language: "zh" });
     mockPutMemoryDoc.mockResolvedValueOnce(undefined);
@@ -106,7 +139,9 @@ describe("saveMemoryTool — patch matrix (FR-001..003)", () => {
 
   it("rejects a patch set that would exceed profile size (FR-003)", async () => {
     mockGetMemoryDoc.mockResolvedValueOnce({});
-    const padding = "x".repeat(9000);
+    // ponytail: spaced text so it trips the SIZE guard, not the base64
+    // guard (a long unbroken A-Za-z0-9 run would look like a blob).
+    const padding = "long note ".repeat(900);
     await expect(
       saveMemoryTool.invoke({ patches: [{ op: "add", path: "/note", value: padding }] }, cfg("u1")),
     ).rejects.toThrow(/exceeds|MemorySize|profile size/i);
