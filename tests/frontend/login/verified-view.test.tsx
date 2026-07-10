@@ -23,67 +23,43 @@ describe("VerifiedView", () => {
     vi.useRealTimers();
   });
 
-  describe("with a session (auto-signed in)", () => {
-    it("renders the success heading, signed-in copy, and chat-bound CTA", () => {
-      render(<VerifiedView hasSession={true} />);
+  it("renders the success heading, signed-in copy, and chat-bound CTA", () => {
+    render(<VerifiedView />);
 
-      expect(screen.getByText(/email verified/i)).toBeInTheDocument();
-      expect(screen.getByText(/you're signed in/i)).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: /chat now/i })).toHaveAttribute("href", "/chat");
-      expect(screen.getByText(/redirecting in 5s/i)).toBeInTheDocument();
-    });
-
-    it("renders the success icon", () => {
-      const { container } = render(<VerifiedView hasSession={true} />);
-      expect(container.querySelector("svg")).toBeInTheDocument();
-    });
-
-    it("redirects via router.replace after the 5s countdown", async () => {
-      vi.useFakeTimers();
-      render(<VerifiedView hasSession={true} />);
-
-      // Initial render schedules setTimeout — replace must not fire yet.
-      expect(replace).not.toHaveBeenCalled();
-
-      // Advance in 1s ticks. Each tick fires the setRemaining callback, then
-      // we await act() so React re-renders and re-runs the effect with the
-      // new remaining value (the effect's dep is `[remaining, router, target]`).
-      // Without draining React between advances, all 5 timers fire against
-      // stale `remaining=5` state and the final router.replace never triggers.
-      for (let i = 0; i < 6; i++) {
-        await act(async () => {
-          await vi.advanceTimersByTimeAsync(1000);
-        });
-      }
-
-      expect(replace).toHaveBeenCalledTimes(1);
-      expect(replace).toHaveBeenCalledWith("/chat");
-    });
+    expect(screen.getByText(/email verified/i)).toBeInTheDocument();
+    expect(screen.getByText(/you're signed in/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /chat now/i })).toHaveAttribute("href", "/chat");
+    expect(screen.getByText(/redirecting in 5s/i)).toBeInTheDocument();
   });
 
-  describe("without a session (defensive fallback — page no longer renders this)", () => {
-    // The server page redirects to /login when !session, so hasSession=false
-    // is unreachable in practice. Pin the visible surface anyway so the
-    // fallback branch stays correct if someone re-wires the page.
-    it("renders the success heading, sign-in copy, and sign-in-bound CTA", () => {
-      render(<VerifiedView hasSession={false} />);
+  it("renders the success icon", () => {
+    const { container } = render(<VerifiedView />);
+    expect(container.querySelector("svg")).toBeInTheDocument();
+  });
 
-      expect(screen.getByText(/email verified/i)).toBeInTheDocument();
-      expect(screen.getByText(/you can now sign in/i)).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: /chat now/i })).toHaveAttribute("href", "/login");
-    });
+  it("redirects via router.replace to /chat at the 5-second mark", async () => {
+    vi.useFakeTimers();
+    render(<VerifiedView />);
 
-    it("redirects via router.replace to /login after the countdown", async () => {
-      vi.useFakeTimers();
-      render(<VerifiedView hasSession={false} />);
+    // Initial render schedules setTimeout — replace must not fire yet.
+    expect(replace).not.toHaveBeenCalled();
 
-      for (let i = 0; i < 6; i++) {
-        await act(async () => {
-          await vi.advanceTimersByTimeAsync(1000);
-        });
-      }
+    // Advance in 1s ticks. Each tick fires the setRemaining callback, then
+    // we await act() so React re-renders and re-runs the effect with the
+    // new remaining value (the effect's dep is `[remaining, router]`).
+    // Without draining React between advances, all 5 timers fire against
+    // stale `remaining=5` state and the final router.replace never triggers.
+    //
+    // 5 ticks exactly — the 5th decrements remaining to 0 and the effect's
+    // `if (remaining <= 0)` branch fires router.replace. Pinning this
+    // count catches a regression where the redirect drifts to 6s.
+    for (let i = 0; i < 5; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+    }
 
-      expect(replace).toHaveBeenCalledWith("/login");
-    });
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledWith("/chat");
   });
 });

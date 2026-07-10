@@ -11,25 +11,22 @@ import { FieldDescription } from "@/components/ui/field";
 
 const REDIRECT_SECONDS = 5;
 
-export function VerifiedView({ hasSession }: { hasSession: boolean }) {
+// The server page at app/login/verified/page.tsx redirects to /login
+// whenever there's no session, so by the time this component renders the
+// user is verified and signed in. No `hasSession` prop needed — the page
+// is the gate.
+export function VerifiedView() {
   const router = useRouter();
   const [remaining, setRemaining] = useState(REDIRECT_SECONDS);
 
-  // lib/auth/config.ts sets autoSignInAfterVerification: true, so a fresh
-  // verification lands here with a real session → CTA → /chat.
-  // hasSession=false is the rare case: direct bookmark/refresh visits,
-  // where there's no verification flow in flight and the user still needs
-  // to sign in.
-  const target = hasSession ? "/chat" : "/login";
-
   useEffect(() => {
     if (remaining <= 0) {
-      router.replace(target);
+      router.replace("/chat");
       return;
     }
     const t = setTimeout(() => setRemaining((s) => s - 1), 1000);
     return () => clearTimeout(t);
-  }, [remaining, router, target]);
+  }, [remaining, router]);
 
   return (
     <div className="bg-muted/30 flex min-h-dvh items-center justify-center p-4">
@@ -40,17 +37,17 @@ export function VerifiedView({ hasSession }: { hasSession: boolean }) {
         </CardHeader>
 
         <CardContent>
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4">
             <FieldDescription className="text-center">
-              Your email is confirmed. {hasSession ? "You're signed in." : "You can now sign in."}
+              Your email is confirmed. You're signed in.
             </FieldDescription>
 
             <FieldDescription className="text-center" aria-live="polite">
               {remaining > 0 ? `Redirecting in ${remaining}s…` : "Redirecting…"}
             </FieldDescription>
 
-            <Button asChild size="lg" className="w-full mt-2">
-              <Link href={target} replace>
+            <Button asChild size="lg" className="w-full">
+              <Link href="/chat" replace>
                 <MessagesSquareIcon />
                 Chat Now
               </Link>

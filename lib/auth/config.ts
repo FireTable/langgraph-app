@@ -105,12 +105,13 @@ export type Session = typeof auth.$Infer.Session;
  *
  * Better Auth constructs the verification link as
  * `${baseURL}/api/auth/verify-email?token=...&callbackURL=...` (the
- * `/api/auth` prefix comes from the catch-all proxy in
- * `app/api/auth/[...all]/route.ts`). After the user clicks the link,
- * Better Auth consumes the token at that endpoint and 302s to the
- * `callbackURL`. The default callbackURL is `/`, which silently drops
- * the user on the landing page with no feedback that verification
- * succeeded.
+ * `/api/auth` prefix is Better Auth's default `basePath`; the catch-all
+ * route at `app/api/auth/[...all]/route.ts` just mounts `auth.handler`
+ * at that path via `toNextJsHandler` and doesn't add the prefix itself).
+ * After the user clicks the link, Better Auth consumes the token at that
+ * endpoint and 302s to the `callbackURL`. The default callbackURL is `/`,
+ * which silently drops the user on the landing page with no feedback that
+ * verification succeeded.
  *
  * We only touch the `callbackURL` query param — the verification endpoint
  * path MUST stay intact, otherwise the token is never consumed and the
