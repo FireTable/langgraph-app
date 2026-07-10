@@ -475,7 +475,10 @@ const WaterfallTimeline: FC<{ retentionDays: number | null; stillRunning: boolea
 
   return (
     <TooltipContext.Provider value={{ tooltip, setTooltip }}>
-      <div ref={outerRef} className="border-border relative overflow-hidden rounded-lg border">
+      <div
+        ref={outerRef}
+        className="border-border relative overflow-x-auto overflow-y-hidden rounded-lg border"
+      >
         <div
           className="border-border bg-background sticky top-0 z-20 flex border-b"
           style={{ width: contentWidth }}
@@ -1697,7 +1700,7 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
   return (
     <SelectionContext.Provider value={{ selectedId, select: setSelectedId }}>
       {aggregate ? (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
           <StatCard
             icon={<BrainIcon className="size-3.5" style={{ color: TYPE_COLORS.llm }} />}
             label="LLM calls"
