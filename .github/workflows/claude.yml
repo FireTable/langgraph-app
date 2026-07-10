@@ -21,6 +21,7 @@ jobs:
       pull-requests: write
       issues: write
       actions: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,6 +52,7 @@ jobs:
       pull-requests: write
       issues: write
       actions: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
