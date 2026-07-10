@@ -424,7 +424,7 @@ export function MemoryView({ className }: { className?: string }) {
                           </div>
                           <div className="mt-0.5">
                             {isPrimitive ? (
-                              <div className="text-sm">
+                              <div className="wrap-break-word text-sm">
                                 {row.value || (
                                   <span className="text-muted-foreground">(empty)</span>
                                 )}
@@ -537,7 +537,7 @@ export function MemoryView({ className }: { className?: string }) {
                           </Tooltip>
                           <div className="min-w-0">
                             <div className="truncate text-sm font-medium">{title}</div>
-                            <div className="text-muted-foreground mt-0.5 text-xs">
+                            <div className="text-muted-foreground mt-0.5 wrap-break-word text-xs">
                               {hasTitle ? group.threadId : null}
                             </div>
                           </div>
