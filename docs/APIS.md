@@ -94,6 +94,16 @@ Best-effort cleanup of a composer chip. Removes the row + the R2 object. Idempot
 | Response      | `204 No Content`                                                       |
 | Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND`. 503 `ATTACHMENTS_NOT_CONFIGURED`. |
 
+### `POST /api/avatar/presign`
+
+Presign a 5-minute PUT for a user avatar (issue #28). Same R2 backing as attachments (`withAuth`, 503 when `R2_*` unset), but **no DB row** — avatars aren't chat attachments. Key is `u/<userId>/avatar/<id>-<safe-name>`. The browser PUTs the file, then calls Better Auth `updateUser({ image: publicUrl })` — we store only the URL, never base64 (a base64 data URL in `user.image` flowed through the memory auth-overlay into every `<memory>` block uncapped; that was the 372K-token blow-up). Client gate: the Settings avatar upload is disabled unless `window.__CONFIG__.ATTACHMENTS_ENABLED === "true"`.
+
+|               |                                                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0) }`. `contentType` must start with `image/`; `sizeBytes` ≤ `R2_MAX_BYTES`.                  |
+| 201 response  | `{ key, uploadUrl, publicUrl, uploadHeaders: { "Content-Type", "Content-Disposition": "inline" } }`. Presigned URL expires in 300s.                                       |
+| Failure codes | 400 `BAD_REQUEST`. 400 `CONTENT_TYPE_NOT_ALLOWED` (non-image). 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `AVATAR_UPLOADS_NOT_CONFIGURED`. |
+
 ## Observability
 
 Per-thread captured LLM / Tool / Chain / Node / Human spans — written at every End hook by the callback handler attached to the compiled graph in `backend/agent.ts` via `compile({ checkpointer }).withConfig({ callbacks: [capturingHandler] })`. Attaching at the compile layer (not per-model) ensures ToolNode spans are captured too. Design doc: [`docs/OBSERVABILITY.md`](./OBSERVABILITY.md) (storage, retention, FORBIDDEN regex, trade-offs).

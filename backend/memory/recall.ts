@@ -53,7 +53,7 @@ export async function loadMemory(userId: string): Promise<LoadedMemory> {
     getAuthInfo(userId).catch(() => ({
       name: null,
       email: null,
-      image: null,
+      avatar: null,
       socials: [] as Array<{ provider: string }>,
     })),
   ]);

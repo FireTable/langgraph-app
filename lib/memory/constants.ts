@@ -52,5 +52,5 @@ export const MEMORY_PROFILE_MAX_BYTES = positiveInt(
 // Better Auth) when the user-saved doc doesn't have them. Listed
 // once so mergeMemory iterates them — the UI's "(from account)"
 // hint and the LLM's system-prompt overlay use the same set.
-export const AUTH_OVERLAY_KEYS = ["name", "email", "image", "socials"] as const;
+export const AUTH_OVERLAY_KEYS = ["name", "email", "avatar", "socials"] as const;
 export type AuthOverlayKey = (typeof AUTH_OVERLAY_KEYS)[number];

@@ -33,7 +33,7 @@ function extractUserId(config?: { configurable?: { userId?: unknown } }): string
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
-const EMPTY_AUTH: AuthInfo = { name: null, email: null, image: null, socials: [] };
+const EMPTY_AUTH: AuthInfo = { name: null, email: null, avatar: null, socials: [] };
 
 async function impl(
   input: SaveMemoryInput,

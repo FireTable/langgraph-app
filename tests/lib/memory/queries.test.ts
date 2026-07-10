@@ -150,14 +150,14 @@ describe("lib/memory/queries", () => {
   });
 
   describe("getAuthInfo", () => {
-    it("returns name/email/image from user + providers from account", async () => {
+    it("returns name/email/avatar from user + providers from account", async () => {
       mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
       mockSelectAll.mockResolvedValueOnce([{ provider: "github" }, { provider: "google" }]);
       const info = await getAuthInfo(USER);
       expect(info).toEqual({
         name: "Lin",
         email: "lin@x.com",
-        image: null,
+        avatar: null,
         socials: [{ provider: "github" }, { provider: "google" }],
       });
     });
@@ -166,7 +166,7 @@ describe("lib/memory/queries", () => {
       mockSelectLimit.mockResolvedValueOnce([]);
       mockSelectAll.mockResolvedValueOnce([]);
       const info = await getAuthInfo(USER);
-      expect(info).toEqual({ name: null, email: null, image: null, socials: [] });
+      expect(info).toEqual({ name: null, email: null, avatar: null, socials: [] });
     });
 
     it("filters out the credential provider (email+password account)", async () => {
@@ -174,6 +174,28 @@ describe("lib/memory/queries", () => {
       mockSelectAll.mockResolvedValueOnce([{ provider: "credential" }, { provider: "github" }]);
       const info = await getAuthInfo(USER);
       expect(info.socials).toEqual([{ provider: "github" }]);
+    });
+
+    it("decodes the email claim from an OIDC idToken (issue #10)", async () => {
+      const payload = Buffer.from(JSON.stringify({ email: "lin@gmail.com" })).toString("base64url");
+      const idToken = `h.${payload}.sig`;
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([
+        { provider: "google", idToken },
+        { provider: "github", idToken: null },
+      ]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([
+        { provider: "google", email: "lin@gmail.com" },
+        { provider: "github" },
+      ]);
+    });
+
+    it("ignores a malformed idToken instead of throwing", async () => {
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([{ provider: "google", idToken: "not-a-jwt" }]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([{ provider: "google" }]);
     });
   });
 

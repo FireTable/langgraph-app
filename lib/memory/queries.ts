@@ -148,17 +148,34 @@ export async function writeSummary(
   return full;
 }
 
-// ponytail: explicit `.select({ provider: account.providerId })` keeps
-// `accountId` / tokens out of the recall payload (FR-020). Filter out
-// better-auth's `"credential"` provider — that's the email+password
-// account, not a social login; showing it in the Memory view as a
-// "linked account" is misleading.
+// ponytail: we read `idToken` only to extract its `email` claim — the
+// token itself never leaves this function (FR-020 keeps accountId / raw
+// tokens out of the recall payload). Filter out better-auth's
+// `"credential"` provider — that's the email+password account, not a
+// social login; showing it in the Memory view as a "linked account" is
+// misleading.
 export type AuthInfo = {
   name: string | null;
   email: string | null;
-  image: string | null;
-  socials: Array<{ provider: string }>;
+  avatar: string | null;
+  socials: Array<{ provider: string; email?: string }>;
 };
+
+// ponytail: read the `email` claim out of an OIDC idToken. Google is OIDC
+// so its idToken is a JWT (header.payload.signature) with an email claim.
+// GitHub is plain OAuth2 — no idToken — so github rows stay email-less.
+// We only READ our own stored token, so no signature verify: base64url-
+// decode the middle segment. Malformed / missing → undefined, never throws.
+function emailFromIdToken(idToken: string | null): string | undefined {
+  const payload = idToken?.split(".")[1];
+  if (!payload) return undefined;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return typeof claims?.email === "string" ? claims.email : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function getAuthInfo(userId: string): Promise<AuthInfo> {
   const [u] = await db
@@ -167,15 +184,18 @@ export async function getAuthInfo(userId: string): Promise<AuthInfo> {
     .where(eq(user.id, userId))
     .limit(1);
   const accounts = await db
-    .select({ provider: account.providerId })
+    .select({ provider: account.providerId, idToken: account.idToken })
     .from(account)
     .where(eq(account.userId, userId));
   return {
     name: u?.name ?? null,
     email: u?.email ?? null,
-    image: u?.image ?? null,
+    avatar: u?.image ?? null,
     socials: accounts
       .filter((r) => r.provider !== "credential")
-      .map((r) => ({ provider: r.provider })),
+      .map((r) => {
+        const email = emailFromIdToken(r.idToken);
+        return email ? { provider: r.provider, email } : { provider: r.provider };
+      }),
   };
 }

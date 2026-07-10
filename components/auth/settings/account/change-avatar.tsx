@@ -1,6 +1,5 @@
 "use client";
 
-import { fileToBase64 } from "@better-auth-ui/core";
 import { useAuth, useSession, useUpdateUser } from "@better-auth-ui/react";
 import { Trash2, Upload } from "lucide-react";
 import { type ChangeEvent, useRef, useState } from "react";
@@ -22,6 +21,36 @@ export type ChangeAvatarProps = {
   className?: string;
 };
 
+// ponytail: avatars upload to R2 and we store ONLY the public URL. The
+// old base64 fallback wrote a data URL into user.image, which the memory
+// auth-overlay injected into every <memory> system block uncapped —
+// issue #28's 372K-token blow-up. Gated on ATTACHMENTS_ENABLED (same R2
+// backing as chat attachments — no separate flag). Off → uploads disabled.
+// Read at render (matches app/assistant.tsx) — window.__CONFIG__ is
+// injected beforeInteractive.
+function avatarUploadsEnabled(): boolean {
+  return typeof window !== "undefined" && window.__CONFIG__?.ATTACHMENTS_ENABLED === "true";
+}
+
+// ponytail: presign → PUT → return the public URL. Errors bubble to the
+// caller's try/catch, which toasts them.
+async function uploadAvatarToR2(file: File): Promise<string> {
+  const presignRes = await fetch("/api/avatar/presign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: file.name, contentType: file.type, sizeBytes: file.size }),
+  });
+  if (!presignRes.ok) {
+    throw new Error("Avatar upload is not available right now.");
+  }
+  const { uploadUrl, publicUrl, uploadHeaders } = await presignRes.json();
+  const putRes = await fetch(uploadUrl, { method: "PUT", headers: uploadHeaders, body: file });
+  if (!putRes.ok) {
+    throw new Error("Failed to upload avatar.");
+  }
+  return publicUrl;
+}
+
 export function ChangeAvatar({ className }: ChangeAvatarProps) {
   const { authClient, localization, avatar } = useAuth();
   const { data: session } = useSession(authClient);
@@ -33,6 +62,7 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const isPending = updatePending || isUploading || isDeleting;
+  const canUpload = avatarUploadsEnabled();
 
   async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -40,12 +70,14 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
 
     e.target.value = "";
 
+    if (!canUpload) return;
+
     setIsUploading(true);
 
     try {
       const resized = (await avatar.resize?.(file, avatar.size, avatar.extension)) || file;
 
-      const image = (await avatar.upload?.(resized)) || (await fileToBase64(resized));
+      const image = await uploadAvatarToR2(resized);
 
       updateUser(
         { image },
@@ -101,7 +133,7 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
           type="button"
           variant="ghost"
           className="p-0 h-auto w-auto rounded-full"
-          disabled={isPending}
+          disabled={isPending || !canUpload}
           onClick={() => fileInputRef.current?.click()}
         >
           <UserAvatar className="size-12" isPending={isPending} />
@@ -118,7 +150,7 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
           </DropdownMenuTrigger>
 
           <DropdownMenuContent className="min-w-fit">
-            <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+            <DropdownMenuItem disabled={!canUpload} onClick={() => fileInputRef.current?.click()}>
               <Upload className="text-muted-foreground" />
 
               {localization.settings.uploadAvatar}

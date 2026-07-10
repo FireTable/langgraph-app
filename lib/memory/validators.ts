@@ -100,7 +100,7 @@ export const SummaryEntrySchema = z
 
 export const MemoryResponseSchema = z.object({
   // ponytail: `memory` is the user-saved doc overlaid with live auth
-  // (name/email/image/socials from drizzle user+account tables). Model
+  // (name/email/avatar/socials from drizzle user+account tables). Model
   // and UI both see the same merged shape — one function (`loadMemory`)
   // is the single source of truth.
   memory: z.record(z.string(), z.unknown()),

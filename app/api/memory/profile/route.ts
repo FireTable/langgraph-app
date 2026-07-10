@@ -22,7 +22,7 @@ export const GET = withAuth(async (_req, { user }) => {
       getAuthInfo(user.id).catch(() => ({
         name: null,
         email: null,
-        image: null,
+        avatar: null,
         socials: [] as Array<{ provider: string }>,
       })),
       getRecentThreadSummaries(user.id).catch(() => []),

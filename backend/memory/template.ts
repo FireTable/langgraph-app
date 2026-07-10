@@ -14,7 +14,7 @@ import { formatSummaryText } from "@/lib/langgraph/format-summary";
 
 // ponytail: the system prompt carries TWO dynamic blocks:
 //   <memory>    = the user's saved profile (keys + values), plus OAuth
-//                 overlay (name / email / image / socials) when set.
+//                 overlay (name / email / avatar / socials) when set.
 //   <threads>   = compressed Q&A history for THIS thread, pulled from
 //                 the store at invoke time. Mounts the historical
 //                 content the model would otherwise lose when older
