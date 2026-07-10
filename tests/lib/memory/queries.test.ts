@@ -197,6 +197,41 @@ describe("lib/memory/queries", () => {
       const info = await getAuthInfo(USER);
       expect(info.socials).toEqual([{ provider: "google" }]);
     });
+
+    it("fetches the GitHub email via the stored access token (issue #10)", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [
+          { email: "old@x.com", primary: false, verified: true },
+          { email: "lin@users.noreply.github.com", primary: true, verified: true },
+        ],
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([
+        { provider: "github", idToken: null, accessToken: "gho_x" },
+      ]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([{ provider: "github", email: "lin@users.noreply.github.com" }]);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.github.com/user/emails",
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: "Bearer gho_x" }),
+        }),
+      );
+      vi.unstubAllGlobals();
+    });
+
+    it("leaves github email-less when the API call fails", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([
+        { provider: "github", idToken: null, accessToken: "gho_x" },
+      ]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([{ provider: "github" }]);
+      vi.unstubAllGlobals();
+    });
   });
 
   describe("writeSummary", () => {

@@ -51,6 +51,18 @@ async function uploadAvatarToR2(file: File): Promise<string> {
   return publicUrl;
 }
 
+// ponytail: delete the R2 object behind a previous avatar URL. Owner-scoped
+// + idempotent server-side; external (OAuth-hosted) URLs are a no-op there.
+// Best-effort — a failed cleanup shouldn't block the user's action.
+async function deleteAvatarFromR2(url: string | null | undefined): Promise<void> {
+  if (!url) return;
+  await fetch("/api/avatar", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  }).catch(() => undefined);
+}
+
 export function ChangeAvatar({ className }: ChangeAvatarProps) {
   const { authClient, localization, avatar } = useAuth();
   const { data: session } = useSession(authClient);
@@ -70,8 +82,14 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
 
     e.target.value = "";
 
-    if (!canUpload) return;
+    if (!canUpload) {
+      toast.error(
+        "Avatar uploads are disabled — set the R2_* env vars and ATTACHMENTS_ENABLED=true.",
+      );
+      return;
+    }
 
+    const previousImage = session?.user.image;
     setIsUploading(true);
 
     try {
@@ -82,7 +100,10 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
       updateUser(
         { image },
         {
-          onSuccess: () => toast.success(localization.settings.avatarChangedSuccess),
+          onSuccess: () => {
+            void deleteAvatarFromR2(previousImage);
+            toast.success(localization.settings.avatarChangedSuccess);
+          },
         },
       );
     } catch (error) {
@@ -104,7 +125,7 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
           if (currentImage) {
             setIsDeleting(true);
             try {
-              await avatar.delete?.(currentImage);
+              await deleteAvatarFromR2(currentImage);
             } finally {
               setIsDeleting(false);
             }

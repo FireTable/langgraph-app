@@ -17,6 +17,7 @@ vi.mock("@/lib/memory/queries", () => ({
   getMemoryDoc: mockGetMemoryDoc,
   getAuthInfo: mockGetAuthInfo,
   getRecentThreadSummaries: mockGetRecentThreadSummaries,
+  EMPTY_AUTH_INFO: { name: null, email: null, avatar: null, socials: [] },
 }));
 
 describe("GET /api/memory/profile", () => {

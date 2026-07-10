@@ -98,11 +98,23 @@ Best-effort cleanup of a composer chip. Removes the row + the R2 object. Idempot
 
 Presign a 5-minute PUT for a user avatar (issue #28). Same R2 backing as attachments (`withAuth`, 503 when `R2_*` unset), but **no DB row** — avatars aren't chat attachments. Key is `u/<userId>/avatar/<id>-<safe-name>`. The browser PUTs the file, then calls Better Auth `updateUser({ image: publicUrl })` — we store only the URL, never base64 (a base64 data URL in `user.image` flowed through the memory auth-overlay into every `<memory>` block uncapped; that was the 372K-token blow-up). Client gate: the Settings avatar upload is disabled unless `window.__CONFIG__.ATTACHMENTS_ENABLED === "true"`.
 
-|               |                                                                                                                                                                           |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0) }`. `contentType` must start with `image/`; `sizeBytes` ≤ `R2_MAX_BYTES`.                  |
-| 201 response  | `{ key, uploadUrl, publicUrl, uploadHeaders: { "Content-Type", "Content-Disposition": "inline" } }`. Presigned URL expires in 300s.                                       |
-| Failure codes | 400 `BAD_REQUEST`. 400 `CONTENT_TYPE_NOT_ALLOWED` (non-image). 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `AVATAR_UPLOADS_NOT_CONFIGURED`. |
+`contentType` must start with `image/` **and is not `image/svg+xml`** — unlike attachments (which uses `R2_ALLOWED_CONTENT_TYPES`), this route hardcodes the image check, and SVG is rejected because it can carry inline script and renders `inline` from a public bucket (XSS in the bucket origin).
+
+|               |                                                                                                                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0) }`. `contentType` must start with `image/` and not be `image/svg+xml`; `sizeBytes` ≤ `R2_MAX_BYTES`. |
+| 201 response  | `{ key, uploadUrl, publicUrl, uploadHeaders: { "Content-Type", "Content-Disposition": "inline" } }`. Presigned URL expires in 300s.                                                 |
+| Failure codes | 400 `BAD_REQUEST`. 400 `CONTENT_TYPE_NOT_ALLOWED` (non-image or svg). 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `AVATAR_UPLOADS_NOT_CONFIGURED`.    |
+
+### `DELETE /api/avatar`
+
+Delete the R2 object behind a previous avatar URL — avatars have no DB row, so nothing else sweeps the old object when the user deletes or replaces one. Called by the Settings UI on delete and after a successful replace. Owner-scoped: the key must live under `u/<user.id>/avatar/`.
+
+|               |                                                                                                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ url: string }` — the avatar's public URL.                                                                                                                     |
+| Response      | `204 No Content`. Idempotent (R2 404 swallowed). An external / non-R2 URL is a no-op 204.                                                                        |
+| Failure codes | 400 `BAD_REQUEST` (invalid JSON / missing url). 401 `UNAUTHORIZED`. 403 `FORBIDDEN` (key outside the caller's avatar path). 503 `AVATAR_UPLOADS_NOT_CONFIGURED`. |
 
 ## Observability
 

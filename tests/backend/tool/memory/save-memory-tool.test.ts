@@ -10,6 +10,7 @@ vi.mock("@/lib/memory/queries", () => ({
   getMemoryDoc: mockGetMemoryDoc,
   putMemoryDoc: mockPutMemoryDoc,
   getAuthInfo: mockGetAuthInfo,
+  EMPTY_AUTH_INFO: { name: null, email: null, avatar: null, socials: [] },
 }));
 
 import { saveMemoryTool } from "@/backend/tool/memory/save-memory-tool";

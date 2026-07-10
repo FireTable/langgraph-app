@@ -64,7 +64,7 @@ does the heavy lifting. It:
 2. Hits `getCachedMemory(userId)` (`backend/memory/recall.ts`) —
    LRU-cached, max 1000 entries, 60s TTL, keyed by `userId`.
 3. Loads the user's profile doc (`[userId, "memory"] main`) and the
-   auth record (name / email / image / socials from drizzle `user` +
+   auth record (name / email / avatar / socials from drizzle `user` +
    `account` tables), merges them via `mergeMemory`, and renders the
    SystemMessage through the `MEMORY_AUGMENTED_PROMPT_TEMPLATE`
    mustache template.
@@ -95,7 +95,7 @@ The merged view from `mergeMemory(doc, auth)` (`lib/memory/merge.ts`):
   in the merged view (regardless of whether the auth overlay has a value
   for them).
 - Auth overlay fills the gaps. For each `AUTH_OVERLAY_KEYS` entry
-  (`name`, `email`, `image`, `socials`), if the user-saved doc doesn't
+  (`name`, `email`, `avatar`, `socials`), if the user-saved doc doesn't
   have that key AND the auth value isn't `null`/`undefined`/`[]`, the
   auth value fills the slot.
 - `socials` is the list of OAuth providers linked to the user
@@ -382,14 +382,14 @@ visual classes:
 - **"Summarized by AI"** (Bot icon) — keys present in the store doc
   (`save_memory` wrote them, or they predate the auth overlay).
 - **"From account"** (User icon) — keys only present in the auth
-  overlay (name / email / image / socials). Read-only — clicking
+  overlay (name / email / avatar / socials). Read-only — clicking
   shows a tooltip explaining the user should edit these in account
   settings.
 
 Rows sort by:
 
 1. Auth-overlay rows first, in the order they appear in
-   `AUTH_OVERLAY_KEYS` (`name`, `email`, `image`, `socials`).
+   `AUTH_OVERLAY_KEYS` (`name`, `email`, `avatar`, `socials`).
 2. Store rows alphabetically by key.
 
 `Delete` opens a confirmation dialog (`Delete this memory?`). On

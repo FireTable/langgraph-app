@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { withAuth } from "@/lib/auth/with-auth";
-import { getAuthInfo, getMemoryDoc, getRecentThreadSummaries } from "@/lib/memory/queries";
+import {
+  EMPTY_AUTH_INFO,
+  getAuthInfo,
+  getMemoryDoc,
+  getRecentThreadSummaries,
+} from "@/lib/memory/queries";
 
 // ponytail: rule #9 — withAuth wraps every handler. The handler
 // returns store and auth as separate fields so the frontend can
@@ -19,12 +24,7 @@ export const GET = withAuth(async (_req, { user }) => {
   try {
     const [store, auth, threads] = await Promise.all([
       getMemoryDoc(user.id).catch(() => ({})),
-      getAuthInfo(user.id).catch(() => ({
-        name: null,
-        email: null,
-        avatar: null,
-        socials: [] as Array<{ provider: string }>,
-      })),
+      getAuthInfo(user.id).catch(() => EMPTY_AUTH_INFO),
       getRecentThreadSummaries(user.id).catch(() => []),
     ]);
     return NextResponse.json({ store, auth, threads });

@@ -2,8 +2,8 @@ import { tool } from "@langchain/core/tools";
 import { immutableJSONPatch } from "immutable-json-patch";
 
 import { MEMORY_PROFILE_MAX_BYTES } from "@/lib/memory/constants";
-import { getAuthInfo, getMemoryDoc, putMemoryDoc } from "@/lib/memory/queries";
-import { mergeMemory, type AuthInfo, type MemoryDoc } from "@/lib/memory/merge";
+import { getAuthInfo, getMemoryDoc, putMemoryDoc, EMPTY_AUTH_INFO } from "@/lib/memory/queries";
+import { mergeMemory, type MemoryDoc } from "@/lib/memory/merge";
 import { SaveMemoryInputSchema, type SaveMemoryInput } from "@/lib/memory/validators";
 import { assertProfileSize, MemorySizeError } from "@/backend/memory/profile-size";
 import { invalidateMemory } from "@/backend/memory/recall";
@@ -48,8 +48,6 @@ function containsBase64(value: unknown): boolean {
   return false;
 }
 
-const EMPTY_AUTH: AuthInfo = { name: null, email: null, avatar: null, socials: [] };
-
 async function impl(
   input: SaveMemoryInput,
   config?: { configurable?: { userId?: unknown } },
@@ -61,7 +59,7 @@ async function impl(
 
   const [storeDoc, auth] = await Promise.all([
     getMemoryDoc(userId),
-    getAuthInfo(userId).catch(() => EMPTY_AUTH),
+    getAuthInfo(userId).catch(() => EMPTY_AUTH_INFO),
   ]);
   // ponytail: patches operate on the merged view (store + auth
   // overlay) — same shape the model sees in <memory>. Validating

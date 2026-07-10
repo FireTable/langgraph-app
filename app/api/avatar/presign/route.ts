@@ -51,8 +51,13 @@ export const POST = withAuth(async (req, { user }) => {
     return NextResponse.json({ code: "BAD_REQUEST", error: parsed.error.issues }, { status: 400 });
   }
 
+  // ponytail: image/* only, and explicitly NOT svg — an SVG can carry
+  // inline <script>/<foreignObject>, and with Content-Disposition: inline
+  // on a public bucket a leaked URL becomes an XSS page in the bucket
+  // origin. (attachments enforces R2_ALLOWED_CONTENT_TYPES, which omits
+  // svg by default; we mirror that intent here.)
   const contentType = parsed.data.contentType.toLowerCase();
-  if (!contentType.startsWith("image/")) {
+  if (!contentType.startsWith("image/") || contentType === "image/svg+xml") {
     return NextResponse.json({ code: "CONTENT_TYPE_NOT_ALLOWED", contentType }, { status: 400 });
   }
 
