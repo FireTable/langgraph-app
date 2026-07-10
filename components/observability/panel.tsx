@@ -273,9 +273,9 @@ const StatCard: FC<{ icon: React.ReactNode; label: string; value: string }> = ({
   value,
 }) => (
   <div className="border-border bg-muted/30 flex min-w-[5.5rem] flex-col gap-0.5 rounded-md border px-2.5 py-1.5">
-    <div className="text-muted-foreground flex items-center gap-1 text-[10px] tracking-wide uppercase">
+    <div className="text-muted-foreground flex items-center gap-1 text-[10px] tracking-wide uppercase s line-clamp-1">
       {icon}
-      <span>{label}</span>
+      <span className="overflow-hidden whitespace-nowrap text-ellipsis">{label}</span>
     </div>
     <div className="text-foreground tabular-nums text-sm leading-tight font-semibold">{value}</div>
   </div>
@@ -361,7 +361,7 @@ const WaterfallRow: FC = () => {
       <SpanPrimitive.Indent
         baseIndent={8}
         indentPerLevel={12}
-        className="border-border group-hover:bg-accent/50 sticky left-0 z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2 max-w-[50%] md:max-w-none"
+        className="border-border group-hover:bg-accent/50 sticky left-0 bg-background z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2 max-w-[50%] md:max-w-none"
         style={{ width: LABEL_WIDTH, height: BAR_HEIGHT }}
       >
         <AuiIf
@@ -507,7 +507,7 @@ const WaterfallTimeline: FC<{ retentionDays: number | null; stillRunning: boolea
           </div>
         </WaterfallLayoutContext.Provider>
 
-        <div className="border-border text-muted-foreground border-t text-xs">
+        <div className="border-border text-muted-foreground border-t text-xs sticky left-0 ">
           <div className="flex items-center gap-2 px-2 py-2">
             {LEGEND_TYPE_ORDER.map((t) => (
               <TypeChip key={t} type={t} />
@@ -1706,7 +1706,7 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
   return (
     <SelectionContext.Provider value={{ selectedId, select: setSelectedId }}>
       {aggregate ? (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+        <div className="grid grid-cols-4 gap-2 sm:grid-cols-4 md:grid-cols-4">
           <StatCard
             icon={<BrainIcon className="size-3.5" style={{ color: TYPE_COLORS.llm }} />}
             label="LLM calls"
@@ -1730,17 +1730,17 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
           <StatCard
             icon={<ArrowDownIcon className="text-muted-foreground size-3.5" />}
             label="Input"
-            value={`${fmt(aggregate.totalInput)} token`}
+            value={`${fmt(aggregate.totalInput)} tok`}
           />
           <StatCard
             icon={<ArrowUpIcon className="text-muted-foreground size-3.5" />}
             label="Output"
-            value={`${fmt(aggregate.totalOutput)} token`}
+            value={`${fmt(aggregate.totalOutput)} tok`}
           />
           <StatCard
             icon={<DatabaseIcon className="text-muted-foreground size-3.5" />}
             label="Total"
-            value={`${fmt(aggregate.totalTokens)} token`}
+            value={`${fmt(aggregate.totalTokens)} tok`}
           />
           <StatCard
             icon={<ClockIcon className="text-muted-foreground size-3.5" />}
