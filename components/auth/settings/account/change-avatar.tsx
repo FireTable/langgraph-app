@@ -76,6 +76,13 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
   const isPending = updatePending || isUploading || isDeleting;
   const canUpload = avatarUploadsEnabled();
 
+  // ponytail: pending upload URL — if a SECOND upload starts before the
+  // first's `updateUser` lands, the first upload's URL lands here and the
+  // second upload's onSuccess cleans IT up (instead of the original avatar).
+  // Without this, rapid re-uploads would all race on `previousImage` and
+  // every prior in-flight upload would orphan in R2.
+  const pendingUploadRef = useRef<string | null>(null);
+
   async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -96,23 +103,39 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
       const resized = (await avatar.resize?.(file, avatar.size, avatar.extension)) || file;
 
       const image = await uploadAvatarToR2(resized);
+      pendingUploadRef.current = image;
 
       updateUser(
         { image },
         {
           onSuccess: () => {
-            void deleteAvatarFromR2(previousImage);
+            // ponytail: clean up whatever was the avatar BEFORE this upload
+            // succeeded. If a second upload raced us, that's the one
+            // pendingUploadRef now points to — we delete it instead of
+            // the user's actual current avatar.
+            const toDelete =
+              pendingUploadRef.current === image ? previousImage : pendingUploadRef.current;
+            pendingUploadRef.current = null;
+            void deleteAvatarFromR2(toDelete);
             toast.success(localization.settings.avatarChangedSuccess);
+          },
+          onError: () => {
+            // ponytail: Better Auth refused the update — the new R2 object
+            // has no DB row pointing at it and the retention sweep excludes
+            // avatars, so we MUST clean it up ourselves or it orphans.
+            if (pendingUploadRef.current === image) pendingUploadRef.current = null;
+            void deleteAvatarFromR2(image);
           },
         },
       );
     } catch (error) {
+      pendingUploadRef.current = null;
       if (error instanceof Error) {
         toast.error(error.message);
       }
+    } finally {
+      setIsUploading(false);
     }
-
-    setIsUploading(false);
   }
 
   async function handleDelete() {
