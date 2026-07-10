@@ -299,7 +299,7 @@ export function MemoryView({ className }: { className?: string }) {
                   </div>
                   <Skeleton className="h-8 w-16 rounded-md" />
                 </div>
-                <div className="space-y-3 px-4 pb-4 ps-[calc(theme(spacing.7)+theme(spacing.3)+theme(spacing.4))]">
+                <div className="space-y-3 px-4 pb-2">
                   {[0, 1].map((i) => (
                     <div key={i} className="space-y-1.5">
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -392,7 +392,7 @@ export function MemoryView({ className }: { className?: string }) {
                   return (
                     <div key={`${row.kind}-${row.key}`}>
                       {index > 0 && <Separator />}
-                      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-2 px-4 py-3">
+                      <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 px-4 py-3 md:grid-cols-[auto_1fr_auto]">
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button
@@ -437,7 +437,7 @@ export function MemoryView({ className }: { className?: string }) {
                         {row.kind === "store" ? (
                           <Button
                             type="button"
-                            className="ml-auto shrink-0"
+                            className="col-span-2 ml-auto shrink-0 w-fit md:col-span-1 md:w-auto"
                             variant="outline"
                             size="sm"
                             onClick={() => openProfileDialog(row.key)}
@@ -573,24 +573,11 @@ export function MemoryView({ className }: { className?: string }) {
                                 {isThreadCollapsed ? "Expand" : "Collapse"}
                               </Button>
                             </CollapsibleTrigger>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openThreadDialog(group.threadId)}
-                              aria-label={`Delete this thread summaries for ${title}`}
-                              className="shrink-0 w-full md:w-auto"
-                            >
-                              <Trash2 aria-hidden />
-                              Delete
-                            </Button>
                           </div>
                         </div>
                         <CollapsibleContent
                           // ponytail: each compression is its own row under
-                          // the thread header, indented to the content
-                          // column so the Q&A reads as belonging to the
-                          // pass above it. Header reads "Summary · N"
+                          // the thread header. Header reads "Summary · N"
                           // (not "Compression #N" — "summary" reads as a
                           // noun to a non-engineer, the middot matches
                           // the timestamp separator that follows). The
@@ -604,7 +591,7 @@ export function MemoryView({ className }: { className?: string }) {
                           // pinpoints the body for tests without coupling
                           // to class churn.
                           data-slot="thread-body"
-                          className="space-y-3 overflow-hidden px-4 pb-4 ps-[calc(theme(spacing.7)+theme(spacing.3)+theme(spacing.4))] data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up"
+                          className="space-y-3 overflow-hidden px-4 pb-2 data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up"
                         >
                           {group.summaries.map((s) => (
                             <div key={`${s.threadId}:${s.sequence}`} className="space-y-1.5">
@@ -630,6 +617,20 @@ export function MemoryView({ className }: { className?: string }) {
                             </div>
                           ))}
                         </CollapsibleContent>
+                        <div className="border-border border-t px-4 py-3 md:flex md:justify-end">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openThreadDialog(group.threadId)}
+                            aria-label={`Delete this thread summaries for ${title}`}
+                            className="shrink-0 w-full md:w-auto"
+                            data-hint="thread-delete"
+                          >
+                            <Trash2 aria-hidden />
+                            Delete
+                          </Button>
+                        </div>
                       </div>
                     </Collapsible>
                   );
