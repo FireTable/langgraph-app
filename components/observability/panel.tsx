@@ -361,7 +361,7 @@ const WaterfallRow: FC = () => {
       <SpanPrimitive.Indent
         baseIndent={8}
         indentPerLevel={12}
-        className="border-border group-hover:bg-accent/50 sticky left-0 z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2"
+        className="border-border group-hover:bg-accent/50 sticky left-0 z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2 max-w-[50%] md:max-w-none"
         style={{ width: LABEL_WIDTH, height: BAR_HEIGHT }}
       >
         <AuiIf
@@ -382,7 +382,10 @@ const WaterfallRow: FC = () => {
         <SpanPrimitive.Name className="truncate text-sm" />
       </SpanPrimitive.Indent>
 
-      <div className="group-hover:bg-accent/30" style={{ width: barWidth, height: BAR_HEIGHT }}>
+      <div
+        className="group-hover:bg-accent/30 overflow-hidden md:overflow-visible max-w-[50%] md:max-w-none"
+        style={{ width: barWidth, height: BAR_HEIGHT }}
+      >
         <svg aria-hidden width={barWidth} height={BAR_HEIGHT}>
           <WaterfallBar />
         </svg>
@@ -400,7 +403,7 @@ const RunningSkeletonRow: FC = () => {
       aria-label="Background agent still running"
     >
       <div
-        className="border-border flex shrink-0 items-center gap-1.5 border-r px-2"
+        className="border-border flex shrink-0 items-center gap-1.5 overflow-hidden border-r px-2 max-w-[50%] md:max-w-none"
         style={{ width: LABEL_WIDTH, height: BAR_HEIGHT }}
       >
         <div className="bg-muted/60 size-6 shrink-0 rounded-sm" />
@@ -480,16 +483,19 @@ const WaterfallTimeline: FC<{ retentionDays: number | null; stillRunning: boolea
         className="border-border relative overflow-x-auto overflow-y-hidden rounded-lg border"
       >
         <div
-          className="border-border bg-background sticky top-0 z-20 flex border-b"
+          className="border-border bg-background md:sticky md:top-0 md:z-20 flex border-b"
           style={{ width: contentWidth }}
         >
           <div
-            className="border-border bg-background text-muted-foreground sticky left-0 z-30 shrink-0 border-r px-2 py-1.5 text-xs"
+            className="border-border bg-background text-muted-foreground sticky left-0 z-30 shrink-0 overflow-hidden border-r px-2 py-1.5 text-xs max-w-[50%] md:max-w-none"
             style={{ width: LABEL_WIDTH }}
           >
             Span
           </div>
-          <div style={{ width: barWidth, height: 28 }}>
+          <div
+            className="overflow-hidden md:overflow-visible max-w-[50%] md:max-w-none"
+            style={{ width: barWidth, height: 28 }}
+          >
             <TimeAxisTicks timeRange={renderTimeRange} barWidth={barWidth} />
           </div>
         </div>
@@ -572,7 +578,7 @@ const TooltipPopup: FC = () => {
     <div
       ref={ref}
       role="tooltip"
-      className="border-border bg-popover text-popover-foreground pointer-events-none fixed z-50 max-w-xs rounded-md border px-3 py-2.5 text-xs shadow-md"
+      className="border-border bg-popover text-popover-foreground pointer-events-none fixed z-50 hidden max-w-xs rounded-md border px-3 py-2.5 text-xs shadow-md md:block"
       style={style}
     >
       <div className="flex items-center gap-1.5 pb-1.5">
