@@ -150,14 +150,14 @@ describe("lib/memory/queries", () => {
   });
 
   describe("getAuthInfo", () => {
-    it("returns name/email/image from user + providers from account", async () => {
+    it("returns name/email/avatar from user + providers from account", async () => {
       mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
       mockSelectAll.mockResolvedValueOnce([{ provider: "github" }, { provider: "google" }]);
       const info = await getAuthInfo(USER);
       expect(info).toEqual({
         name: "Lin",
         email: "lin@x.com",
-        image: null,
+        avatar: null,
         socials: [{ provider: "github" }, { provider: "google" }],
       });
     });
@@ -166,7 +166,21 @@ describe("lib/memory/queries", () => {
       mockSelectLimit.mockResolvedValueOnce([]);
       mockSelectAll.mockResolvedValueOnce([]);
       const info = await getAuthInfo(USER);
-      expect(info).toEqual({ name: null, email: null, image: null, socials: [] });
+      expect(info).toEqual({ name: null, email: null, avatar: null, socials: [] });
+    });
+
+    it("surfaces an http avatar but drops a legacy base64 data-URL (issue #28)", async () => {
+      mockSelectLimit.mockResolvedValueOnce([
+        { name: "Lin", email: "lin@x.com", image: "https://cdn.example/a.png" },
+      ]);
+      mockSelectAll.mockResolvedValueOnce([]);
+      expect((await getAuthInfo(USER)).avatar).toBe("https://cdn.example/a.png");
+
+      mockSelectLimit.mockResolvedValueOnce([
+        { name: "Lin", email: "lin@x.com", image: "data:image/png;base64,AAAA" },
+      ]);
+      mockSelectAll.mockResolvedValueOnce([]);
+      expect((await getAuthInfo(USER)).avatar).toBeNull();
     });
 
     it("filters out the credential provider (email+password account)", async () => {
@@ -174,6 +188,75 @@ describe("lib/memory/queries", () => {
       mockSelectAll.mockResolvedValueOnce([{ provider: "credential" }, { provider: "github" }]);
       const info = await getAuthInfo(USER);
       expect(info.socials).toEqual([{ provider: "github" }]);
+    });
+
+    it("decodes the email claim from an OIDC idToken (issue #10)", async () => {
+      const payload = Buffer.from(
+        JSON.stringify({ email: "lin@gmail.com", email_verified: true }),
+      ).toString("base64url");
+      const idToken = `h.${payload}.sig`;
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([
+        { provider: "google", idToken },
+        { provider: "github", idToken: null },
+      ]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([
+        { provider: "google", email: "lin@gmail.com" },
+        { provider: "github" },
+      ]);
+    });
+
+    it("drops an unverified idToken email", async () => {
+      const payload = Buffer.from(
+        JSON.stringify({ email: "spoof@x.com", email_verified: false }),
+      ).toString("base64url");
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([{ provider: "google", idToken: `h.${payload}.sig` }]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([{ provider: "google" }]);
+    });
+
+    it("ignores a malformed idToken instead of throwing", async () => {
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([{ provider: "google", idToken: "not-a-jwt" }]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([{ provider: "google" }]);
+    });
+
+    it("fetches the GitHub email via the stored access token (issue #10)", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [
+          { email: "old@x.com", primary: false, verified: true },
+          { email: "lin@users.noreply.github.com", primary: true, verified: true },
+        ],
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([
+        { provider: "github", idToken: null, accessToken: "gho_x" },
+      ]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([{ provider: "github", email: "lin@users.noreply.github.com" }]);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.github.com/user/emails",
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: "Bearer gho_x" }),
+        }),
+      );
+      vi.unstubAllGlobals();
+    });
+
+    it("leaves github email-less when the API call fails", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([
+        { provider: "github", idToken: null, accessToken: "gho_x" },
+      ]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([{ provider: "github" }]);
+      vi.unstubAllGlobals();
     });
   });
 

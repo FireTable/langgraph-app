@@ -49,7 +49,7 @@ function buildRows(store: MemoryDoc, auth: AuthInfo): Row[] {
   const storeKeys = new Set(Object.keys(store));
   const storeKeyList = [...storeKeys].sort();
   // ponytail: account rows first in AUTH_OVERLAY_KEYS order (stable:
-  // name, email, image, socials), then store rows alphabetically.
+  // name, email, avatar, socials), then store rows alphabetically.
   const accountOrder = new Map<AuthOverlayKey, number>(AUTH_OVERLAY_KEYS.map((k, i) => [k, i]));
   const rows: Row[] = Object.entries(merged).map(([key, value]) => ({
     key,

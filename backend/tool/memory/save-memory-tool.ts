@@ -2,8 +2,8 @@ import { tool } from "@langchain/core/tools";
 import { immutableJSONPatch } from "immutable-json-patch";
 
 import { MEMORY_PROFILE_MAX_BYTES } from "@/lib/memory/constants";
-import { getAuthInfo, getMemoryDoc, putMemoryDoc } from "@/lib/memory/queries";
-import { mergeMemory, type AuthInfo, type MemoryDoc } from "@/lib/memory/merge";
+import { getAuthInfo, getMemoryDoc, putMemoryDoc, EMPTY_AUTH_INFO } from "@/lib/memory/queries";
+import { mergeMemory, type MemoryDoc } from "@/lib/memory/merge";
 import { SaveMemoryInputSchema, type SaveMemoryInput } from "@/lib/memory/validators";
 import { assertProfileSize, MemorySizeError } from "@/backend/memory/profile-size";
 import { invalidateMemory } from "@/backend/memory/recall";
@@ -33,7 +33,21 @@ function extractUserId(config?: { configurable?: { userId?: unknown } }): string
   return typeof raw === "string" && raw.length > 0 ? raw : null;
 }
 
-const EMPTY_AUTH: AuthInfo = { name: null, email: null, image: null, socials: [] };
+// ponytail: base64 blobs (esp. `data:...;base64,` avatars/images) are the
+// exact payload that blew the context window in issue #28 — a single one
+// dwarfs the whole profile. Reject any string value that's a data URL or a
+// long uninterrupted base64 run. Walks arrays/objects too so it can't slip
+// in nested. Threshold 512 avoids flagging wallet addresses / hashes / IDs.
+const DATA_URL_RE = /data:[^,]*;base64,/i;
+// Covers both standard (+/) and url-safe (-_) base64 alphabets.
+const LONG_BASE64_RE = /[A-Za-z0-9+/_-]{512,}={0,2}/;
+
+function containsBase64(value: unknown): boolean {
+  if (typeof value === "string") return DATA_URL_RE.test(value) || LONG_BASE64_RE.test(value);
+  if (Array.isArray(value)) return value.some(containsBase64);
+  if (value && typeof value === "object") return Object.values(value).some(containsBase64);
+  return false;
+}
 
 async function impl(
   input: SaveMemoryInput,
@@ -46,7 +60,7 @@ async function impl(
 
   const [storeDoc, auth] = await Promise.all([
     getMemoryDoc(userId),
-    getAuthInfo(userId).catch(() => EMPTY_AUTH),
+    getAuthInfo(userId).catch(() => EMPTY_AUTH_INFO),
   ]);
   // ponytail: patches operate on the merged view (store + auth
   // overlay) — same shape the model sees in <memory>. Validating
@@ -56,6 +70,11 @@ async function impl(
   // model.
   const effective = mergeMemory(storeDoc, auth);
   for (const patch of patches) {
+    if (patch.op !== "remove" && containsBase64(patch.value)) {
+      throw new MemoryPatchError(
+        `path ${patch.path} value looks like base64 / data-URL content; save_memory does not store binary blobs`,
+      );
+    }
     if ((patch.op === "replace" || patch.op === "remove") && !(patch.path.slice(1) in effective)) {
       throw new MemoryPatchError(`path ${patch.path} not found in memory`);
     }
@@ -159,6 +178,7 @@ CONSTRAINTS (DO NOT):
 - DO NOT save model inferences or questions about the user.
 - DO NOT save sensitive content the user wouldn't want surfaced later (passwords, financial details, medical info, intimate relationships) — use judgment.
 - DO NOT save external data returned by tools (weather, prices, balances, fetched URLs) — only the user's input portion.
+- DO NOT save base64 / data-URL blobs, images, or any large binary-encoded string (avatars, file contents) — they blow up the context window; store a URL or short reference instead.
 - DO NOT call more than once per turn (group multiple updates into one patch set).
 - DO NOT save the same or similar content under two keys (e.g. use "ask_location_cache" instead of both "ask_location_cache" and "ask_location_result").
 

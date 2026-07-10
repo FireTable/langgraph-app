@@ -1,7 +1,7 @@
 import { LRUCache } from "lru-cache";
 import type { RunnableConfig } from "@langchain/core/runnables";
 
-import { getAuthInfo, getMemoryDoc } from "@/lib/memory/queries";
+import { EMPTY_AUTH_INFO, getAuthInfo, getMemoryDoc } from "@/lib/memory/queries";
 import { mergeMemory } from "@/lib/memory/merge";
 import type { MemoryDoc } from "@/lib/memory/queries";
 
@@ -50,12 +50,7 @@ export function extractThreadId(
 export async function loadMemory(userId: string): Promise<LoadedMemory> {
   const [doc, auth] = await Promise.all([
     getMemoryDoc(userId).catch(() => ({})),
-    getAuthInfo(userId).catch(() => ({
-      name: null,
-      email: null,
-      image: null,
-      socials: [] as Array<{ provider: string }>,
-    })),
+    getAuthInfo(userId).catch(() => EMPTY_AUTH_INFO),
   ]);
   return { memory: mergeMemory(doc, auth) };
 }

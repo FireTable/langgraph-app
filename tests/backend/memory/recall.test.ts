@@ -9,6 +9,7 @@ const { mockGetMemoryDoc, mockGetAuthInfo } = vi.hoisted(() => ({
 vi.mock("@/lib/memory/queries", () => ({
   getMemoryDoc: mockGetMemoryDoc,
   getAuthInfo: mockGetAuthInfo,
+  EMPTY_AUTH_INFO: { name: null, email: null, avatar: null, socials: [] },
 }));
 
 import {

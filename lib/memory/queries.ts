@@ -148,17 +148,72 @@ export async function writeSummary(
   return full;
 }
 
-// ponytail: explicit `.select({ provider: account.providerId })` keeps
-// `accountId` / tokens out of the recall payload (FR-020). Filter out
-// better-auth's `"credential"` provider — that's the email+password
-// account, not a social login; showing it in the Memory view as a
-// "linked account" is misleading.
+// ponytail: we read `idToken` / `accessToken` only to derive a per-provider
+// email — the raw tokens never leave this function (FR-020 keeps accountId /
+// tokens out of the recall payload). Google's email comes from the OIDC
+// idToken; GitHub's from one API call spending the stored access token.
+// Filter out better-auth's `"credential"` provider — that's the
+// email+password account, not a social login.
 export type AuthInfo = {
   name: string | null;
   email: string | null;
-  image: string | null;
-  socials: Array<{ provider: string }>;
+  avatar: string | null;
+  socials: Array<{ provider: string; email?: string }>;
 };
+
+// ponytail: single source of truth for the "auth lookup failed" fallback —
+// `.catch(() => EMPTY_AUTH_INFO)` at every call site. Keeps the socials
+// element shape (`email?`) in one place so it can't drift.
+export const EMPTY_AUTH_INFO: AuthInfo = { name: null, email: null, avatar: null, socials: [] };
+
+// ponytail: read the `email` claim out of an OIDC idToken. Google is OIDC
+// so its idToken is a JWT (header.payload.signature) with an email claim.
+// We only READ our own stored token, so no signature verify: base64url-
+// decode the middle segment. Only surface a VERIFIED email (Google always
+// stamps email_verified) so the Memory view can't show an unverified
+// address. Malformed / missing / unverified → undefined, never throws.
+function emailFromIdToken(idToken: string | null): string | undefined {
+  const payload = idToken?.split(".")[1];
+  if (!payload) return undefined;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (typeof claims?.email !== "string") return undefined;
+    const verified = claims.email_verified;
+    return verified === true || verified === "true" ? claims.email : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// ponytail: GitHub is OAuth2, not OIDC — no idToken to decode. Its email
+// lives behind the API, so we spend the user's own stored access token
+// (default scope already includes `user:email`) on one GET. Best-effort:
+// any failure (revoked token, rate limit, network) → undefined, the row
+// just stays email-less. This is the only network hop in getAuthInfo, so
+// it rides the recall LRU (getCachedMemory) on the prompt path.
+async function fetchGithubEmail(accessToken: string | null): Promise<string | undefined> {
+  if (!accessToken) return undefined;
+  try {
+    const res = await fetch("https://api.github.com/user/emails", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "langgraph-app",
+      },
+    });
+    if (!res.ok) return undefined;
+    const emails = (await res.json()) as Array<{
+      email: string;
+      primary: boolean;
+      verified: boolean;
+    }>;
+    const pick =
+      emails.find((e) => e.primary && e.verified) ?? emails.find((e) => e.verified) ?? emails[0];
+    return typeof pick?.email === "string" ? pick.email : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function getAuthInfo(userId: string): Promise<AuthInfo> {
   const [u] = await db
@@ -167,15 +222,30 @@ export async function getAuthInfo(userId: string): Promise<AuthInfo> {
     .where(eq(user.id, userId))
     .limit(1);
   const accounts = await db
-    .select({ provider: account.providerId })
+    .select({
+      provider: account.providerId,
+      idToken: account.idToken,
+      accessToken: account.accessToken,
+    })
     .from(account)
     .where(eq(account.userId, userId));
   return {
     name: u?.name ?? null,
     email: u?.email ?? null,
-    image: u?.image ?? null,
-    socials: accounts
-      .filter((r) => r.provider !== "credential")
-      .map((r) => ({ provider: r.provider })),
+    // ponytail: never overlay a legacy base64 `data:` avatar — those are
+    // exactly the blobs that blew the <memory> block (issue #28). Existing
+    // rows go harmless immediately (treated as no avatar) without waiting
+    // for a re-upload or a one-off DB cleanup.
+    avatar: u?.image && !u.image.startsWith("data:") ? u.image : null,
+    socials: await Promise.all(
+      accounts
+        .filter((r) => r.provider !== "credential")
+        .map(async (r) => {
+          const email =
+            emailFromIdToken(r.idToken) ??
+            (r.provider === "github" ? await fetchGithubEmail(r.accessToken) : undefined);
+          return email ? { provider: r.provider, email } : { provider: r.provider };
+        }),
+    ),
   };
 }
