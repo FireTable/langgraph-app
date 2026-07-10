@@ -26,7 +26,6 @@ import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
 import { R2AttachmentAdapter } from "@/lib/attachments/r2-adapter";
 import { cn } from "@/lib/utils";
-import { LOCAL_THREAD_PREFIX, ACTIVE_THREAD_ID } from "@/lib/constants";
 import { createLangGraphStream } from "@/lib/langgraph/create-stream";
 
 // Provider-scoped values (api, mainThreadId) bridged into a ref so the
@@ -216,6 +215,12 @@ export function Assistant() {
     unstable_allowCancellation: true,
     unstable_enableMessageQueue: true,
     unstable_threadListAdapter: threadListAdapter,
+    // ponytail: aUI's built-in thread-change hook fires once per
+    // _mainThreadRemoteId transition, deduped internally — see
+    // RemoteThreadListThreadListRuntimeCore._notifyThreadIdChange.
+    // We push the URL via plain history.pushState (no Next router), so
+    // thread nav doesn't RSC-refetch the page.
+    onThreadIdChange: writeUrlForThread,
     stream,
     eventHandlers,
     ...(attachments ? { adapters: { attachments } } : {}),
@@ -307,7 +312,7 @@ export function Assistant() {
   return (
     <AssistantRuntimeProvider aui={aui} runtime={runtime}>
       <AuiRefCapture bridgeRef={bridgeRef} />
-      <ThreadPersistence />
+      <ThreadUrlShadow />
       <div className="bg-muted/30 flex h-dvh w-full">
         <Sidebar collapsed={sidebarCollapsed} />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden p-2 md:pl-0">
@@ -335,45 +340,73 @@ const AuiRefCapture: FC<{ bridgeRef: RefObject<RuntimeBridge> }> = ({ bridgeRef 
   return null;
 };
 
-// Persists the active thread id to localStorage so the chat reopens on the
-// same thread after a refresh. We write the runtime's externalId (our
-// Postgres uuid) rather than mainThreadId, because the runtime keeps
-// _mainThreadId on the placeholder __LOCALID_* until the user
-// explicitly switches threads — see assistant-ui #2577 and PR #3855
-// for the related ExternalStore fix; RemoteThreadList is still affected.
-const ThreadPersistence: FC = () => {
+// ponytail: the URL is a shadow of the active aUI thread (issue #27).
+// We deliberately bypass `next/router` for thread nav: `router.push` on
+// this page re-fires the dynamic route's RSC, which double-fires `load()`
+// and the adapter `fetch()` — aUI's runtime assumes ONE mount per active
+// thread, so the second call hits the network again. Instead we:
+//   - push URL via `history.pushState` (URL bar updates; no RSC roundtrip)
+//   - hook the runtime's `onThreadIdChange` (passed in `useLangGraphRuntime`
+//     below) so user-driven thread switches write the URL automatically.
+//   - listen to `popstate` so browser back/forward syncs aUI without a
+//     Next.js route change.
+// `lastSyncedIdRef` prevents the popstate → switchToThread → onThreadIdChange
+// echo from re-pushing.
+// ponytail: trust the URL. /chat → aUI's default (placeholder, new
+// thread welcome). /chat/<id> → "the active thread is this id".
+// React to URL changes (mount, back/forward) by switching aUI; react
+// to aUI's `onThreadIdChange` by writing the URL back. No clever
+// precheck, no parallel placeholder effect, no lastSyncedIdRef —
+// `switchToThread` is idempotent and `onThreadIdChange` already dedupes
+// internally. The only failure path is aUI's Promise reject on a
+// genuinely-bogus id (404 / cross-user), which we redirect to /chat.
+const ThreadUrlShadow: FC = () => {
   const api = useAui();
-  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
-  const activeExternalId = useAuiState(
-    (s) => s.threads.threadItems.find((t) => t.id === s.threads.mainThreadId)?.externalId,
-  );
-  const hasHydratedRef = useRef(false);
 
-  // Runs before the write effect on first commit so hasHydratedRef
-  // suppresses the placeholder write below.
-  useEffect(() => {
-    const savedId = localStorage.getItem(ACTIVE_THREAD_ID);
-    if (savedId) {
-      // switchToThread is typed void but returns a Promise at runtime.
-      void Promise.resolve(api.threads().switchToThread(savedId) as unknown as Promise<void>).catch(
-        () => {
-          localStorage.removeItem(ACTIVE_THREAD_ID);
-        },
-      );
-    }
-    hasHydratedRef.current = true;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Read thread id off the current path. /chat/<id> → id. /chat (or
+  // anything else) → null. window.location (NOT useParams/usePathname)
+  // because Next.js's router cache doesn't observe our pushState writes.
+  const readUrlThreadId = (): string | null => {
+    if (typeof window === "undefined") return null;
+    const m = window.location.pathname.match(/^\/chat\/([^/]+)$/);
+    return m ? decodeURIComponent(m[1]) : null;
+  };
 
+  // URL → aUI: on mount + on browser back/forward. `switchToThread`
+  // is idempotent (aUI returns early when already on the target id)
+  // and resolves to a Promise that rejects for unknown / cross-user
+  // ids — that's our "this URL was bogus" signal, no inference needed.
   useEffect(() => {
-    if (!hasHydratedRef.current) return;
-    const id = activeExternalId ?? mainThreadId;
-    if (!id || id.startsWith(LOCAL_THREAD_PREFIX)) {
-      localStorage.removeItem(ACTIVE_THREAD_ID);
-      return;
-    }
-    localStorage.setItem(ACTIVE_THREAD_ID, id);
-  }, [activeExternalId, mainThreadId]);
+    const syncFromUrl = () => {
+      const urlThreadId = readUrlThreadId();
+      if (!urlThreadId) return;
+      void Promise.resolve(
+        api.threads().switchToThread(urlThreadId) as unknown as Promise<void>,
+      ).catch(() => {
+        if (typeof window === "undefined" || window.location.pathname === "/chat") return;
+        window.history.replaceState({ threadId: null }, "", "/chat");
+      });
+    };
+    syncFromUrl();
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
+  }, [api]);
 
   return null;
+};
+
+// aUI → URL: write side. Module-scope closure passed to
+// `useLangGraphRuntime`'s `onThreadIdChange`; the runtime already
+// dedupes internally (_notifyThreadIdChange keeps a lastNotifiedThreadId
+// ref), so we just sync the URL on every notify.
+//
+// `remoteId === undefined` → push /chat (placeholder / cleared state,
+// e.g. immediately after +New before adapter.initialize resolves;
+// we treat that as "user wants /chat for now"). Real uuid → push
+// /chat/<uuid>. No preconditions, no reads of aUI's state.
+const writeUrlForThread = (remoteId: string | undefined): void => {
+  if (typeof window === "undefined") return;
+  const target = remoteId ? `/chat/${remoteId}` : "/chat";
+  if (window.location.pathname === target) return;
+  window.history.pushState(remoteId ? { threadId: remoteId } : { threadId: null }, "", target);
 };

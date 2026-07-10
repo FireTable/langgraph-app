@@ -1,13 +1,10 @@
 // Placeholder mainThreadId assigned to a freshly-created "new thread" that
-// hasn't been persisted yet. Filter it out before writing to localStorage —
-// we don't want to "remember" a thread id that has no backing record on
-// the server, otherwise the next page load would try to switchToThread a
-// ghost and hit 404.
+// hasn't been persisted yet. Filter it out before writing to anything
+// (URL, telemetry, etc.) — the placeholder has no backing record on the
+// server, so anything that points back at it would 404 on the next page
+// load. (Used to gate localStorage; the localStorage write itself was
+// removed in issue #27 once URL became the source of truth.)
 export const LOCAL_THREAD_PREFIX = "__LOCALID_";
-
-// localStorage key for the active thread id. Must match the string the
-// runtime reads on hydration.
-export const ACTIVE_THREAD_ID = "ACTIVE_THREAD_ID";
 
 // User-facing product name. Don't hardcode "LangGraph" / "assistant-ui"
 // strings elsewhere; import this so the brand is one-line to change.
