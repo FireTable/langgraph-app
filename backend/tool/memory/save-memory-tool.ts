@@ -39,7 +39,8 @@ function extractUserId(config?: { configurable?: { userId?: unknown } }): string
 // long uninterrupted base64 run. Walks arrays/objects too so it can't slip
 // in nested. Threshold 512 avoids flagging wallet addresses / hashes / IDs.
 const DATA_URL_RE = /data:[^,]*;base64,/i;
-const LONG_BASE64_RE = /[A-Za-z0-9+/]{512,}={0,2}/;
+// Covers both standard (+/) and url-safe (-_) base64 alphabets.
+const LONG_BASE64_RE = /[A-Za-z0-9+/_-]{512,}={0,2}/;
 
 function containsBase64(value: unknown): boolean {
   if (typeof value === "string") return DATA_URL_RE.test(value) || LONG_BASE64_RE.test(value);

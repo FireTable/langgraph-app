@@ -169,13 +169,17 @@ export const EMPTY_AUTH_INFO: AuthInfo = { name: null, email: null, avatar: null
 // ponytail: read the `email` claim out of an OIDC idToken. Google is OIDC
 // so its idToken is a JWT (header.payload.signature) with an email claim.
 // We only READ our own stored token, so no signature verify: base64url-
-// decode the middle segment. Malformed / missing → undefined, never throws.
+// decode the middle segment. Only surface a VERIFIED email (Google always
+// stamps email_verified) so the Memory view can't show an unverified
+// address. Malformed / missing / unverified → undefined, never throws.
 function emailFromIdToken(idToken: string | null): string | undefined {
   const payload = idToken?.split(".")[1];
   if (!payload) return undefined;
   try {
     const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return typeof claims?.email === "string" ? claims.email : undefined;
+    if (typeof claims?.email !== "string") return undefined;
+    const verified = claims.email_verified;
+    return verified === true || verified === "true" ? claims.email : undefined;
   } catch {
     return undefined;
   }
@@ -228,7 +232,11 @@ export async function getAuthInfo(userId: string): Promise<AuthInfo> {
   return {
     name: u?.name ?? null,
     email: u?.email ?? null,
-    avatar: u?.image ?? null,
+    // ponytail: never overlay a legacy base64 `data:` avatar — those are
+    // exactly the blobs that blew the <memory> block (issue #28). Existing
+    // rows go harmless immediately (treated as no avatar) without waiting
+    // for a re-upload or a one-off DB cleanup.
+    avatar: u?.image && !u.image.startsWith("data:") ? u.image : null,
     socials: await Promise.all(
       accounts
         .filter((r) => r.provider !== "credential")

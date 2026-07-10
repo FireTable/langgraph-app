@@ -73,6 +73,15 @@ describe("saveMemoryTool — patch matrix (FR-001..003)", () => {
     expect(mockPutMemoryDoc).not.toHaveBeenCalled();
   });
 
+  it("rejects a url-safe (base64url) blob with -_ chars", async () => {
+    mockGetMemoryDoc.mockResolvedValueOnce({});
+    const blob = `${"a-b_".repeat(150)}`; // 600 chars of [a-z-_]
+    await expect(
+      saveMemoryTool.invoke({ patches: [{ op: "add", path: "/pic", value: blob }] }, cfg("u1")),
+    ).rejects.toThrow(/base64/i);
+    expect(mockPutMemoryDoc).not.toHaveBeenCalled();
+  });
+
   it("does not flag short normal values (wallet address / hash)", async () => {
     mockGetMemoryDoc.mockResolvedValueOnce({});
     mockPutMemoryDoc.mockResolvedValueOnce(undefined);

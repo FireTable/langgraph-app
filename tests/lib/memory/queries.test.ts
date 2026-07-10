@@ -169,6 +169,20 @@ describe("lib/memory/queries", () => {
       expect(info).toEqual({ name: null, email: null, avatar: null, socials: [] });
     });
 
+    it("surfaces an http avatar but drops a legacy base64 data-URL (issue #28)", async () => {
+      mockSelectLimit.mockResolvedValueOnce([
+        { name: "Lin", email: "lin@x.com", image: "https://cdn.example/a.png" },
+      ]);
+      mockSelectAll.mockResolvedValueOnce([]);
+      expect((await getAuthInfo(USER)).avatar).toBe("https://cdn.example/a.png");
+
+      mockSelectLimit.mockResolvedValueOnce([
+        { name: "Lin", email: "lin@x.com", image: "data:image/png;base64,AAAA" },
+      ]);
+      mockSelectAll.mockResolvedValueOnce([]);
+      expect((await getAuthInfo(USER)).avatar).toBeNull();
+    });
+
     it("filters out the credential provider (email+password account)", async () => {
       mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
       mockSelectAll.mockResolvedValueOnce([{ provider: "credential" }, { provider: "github" }]);
@@ -177,7 +191,9 @@ describe("lib/memory/queries", () => {
     });
 
     it("decodes the email claim from an OIDC idToken (issue #10)", async () => {
-      const payload = Buffer.from(JSON.stringify({ email: "lin@gmail.com" })).toString("base64url");
+      const payload = Buffer.from(
+        JSON.stringify({ email: "lin@gmail.com", email_verified: true }),
+      ).toString("base64url");
       const idToken = `h.${payload}.sig`;
       mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
       mockSelectAll.mockResolvedValueOnce([
@@ -189,6 +205,16 @@ describe("lib/memory/queries", () => {
         { provider: "google", email: "lin@gmail.com" },
         { provider: "github" },
       ]);
+    });
+
+    it("drops an unverified idToken email", async () => {
+      const payload = Buffer.from(
+        JSON.stringify({ email: "spoof@x.com", email_verified: false }),
+      ).toString("base64url");
+      mockSelectLimit.mockResolvedValueOnce([{ name: "Lin", email: "lin@x.com", image: null }]);
+      mockSelectAll.mockResolvedValueOnce([{ provider: "google", idToken: `h.${payload}.sig` }]);
+      const info = await getAuthInfo(USER);
+      expect(info.socials).toEqual([{ provider: "google" }]);
     });
 
     it("ignores a malformed idToken instead of throwing", async () => {

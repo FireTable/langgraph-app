@@ -103,7 +103,7 @@ Presign a 5-minute PUT for a user avatar (issue #28). Same R2 backing as attachm
 |               |                                                                                                                                                                                     |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0) }`. `contentType` must start with `image/` and not be `image/svg+xml`; `sizeBytes` ≤ `R2_MAX_BYTES`. |
-| 201 response  | `{ key, uploadUrl, publicUrl, uploadHeaders: { "Content-Type", "Content-Disposition": "inline" } }`. Presigned URL expires in 300s.                                                 |
+| 201 response  | `{ key, uploadUrl, publicUrl, uploadHeaders: { "Content-Type": contentType, "Content-Disposition": "inline" } }`. Presigned URL expires in 300s.                                    |
 | Failure codes | 400 `BAD_REQUEST`. 400 `CONTENT_TYPE_NOT_ALLOWED` (non-image or svg). 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `AVATAR_UPLOADS_NOT_CONFIGURED`.    |
 
 ### `DELETE /api/avatar`
