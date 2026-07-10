@@ -372,30 +372,64 @@ const ThreadUrlShadow: FC = () => {
   // popstate does NOT fire — that's the whole point of bypassing the router.
   // ponytail: /chat root has no thread id to hydrate from the URL; we let
   // the runtime's own constructor `switchToNewThread()` run and the
-  // placeholder effect below pushes the URL accordingly. (Removed the
-  // localStorage fallback in #27 — URL is canonical now and a stale tab
-  // is best resumed from the actual /chat/<id> URL, not a persisted
-  // copy that might point at a deleted thread.)
+  // placeholder effect below pushes the URL accordingly.
+  //
+  // For /chat/<id> we pre-validate against the threads list before calling
+  // switchToThread. aUI's switchToThread does its own adapter.fetch on
+  // the id; if that fetch 404s the function rejects but the runtime's
+  // `_state.isLoading` flag stays stuck mid-transition, leaving the
+  // sidebar pinned at the 5× ThreadListSkeleton even after the URL
+  // redirects to /chat. Gate the call with a list() lookup so bogus
+  // ids never reach aUI in the first place — switching on a confirmed
+  // id is the clean path.
   useEffect(() => {
-    const syncFromUrl = () => {
+    const syncFromUrl = async () => {
       const urlThreadId = readUrlThreadId();
       const currentExternalId = typeof activeExternalId === "string" ? activeExternalId : null;
-      if (
-        urlThreadId &&
-        urlThreadId !== currentExternalId &&
-        urlThreadId !== lastSyncedIdRef.current
-      ) {
-        // switchToThread is typed void but returns a Promise at runtime.
-        void Promise.resolve(
-          api.threads().switchToThread(urlThreadId) as unknown as Promise<void>,
-        ).catch(() => {});
-      } else if (urlThreadId) {
-        lastSyncedIdRef.current = urlThreadId;
+      if (!urlThreadId || urlThreadId === currentExternalId) {
+        if (urlThreadId) lastSyncedIdRef.current = urlThreadId;
+        return;
       }
+      if (urlThreadId === lastSyncedIdRef.current) return;
+
+      // Pre-validate against the threads list so a bogus id never reaches
+      // switchToThread. The adapter re-fetches the item anyway, but
+      // that fetch's 404 leaves aUI's loading state stuck. Skipping
+      // switchToThread keeps the runtime state clean.
+      try {
+        const { threads } = await threadListAdapter.list();
+        if (!threads.some((t) => t.remoteId === urlThreadId)) {
+          if (window.location.pathname !== "/chat") {
+            window.history.replaceState({ threadId: null }, "", "/chat");
+          }
+          lastSyncedIdRef.current = null;
+          return;
+        }
+      } catch {
+        // list() failed — let switchToThread attempt it; if that also
+        // fails the catch below handles the redirect.
+      }
+
+      // switchToThread is typed void but returns a Promise at runtime.
+      void Promise.resolve(
+        api.threads().switchToThread(urlThreadId) as unknown as Promise<void>,
+      ).catch(() => {
+        // ponytail: covers the cross-user race (list() returned a stale
+        // "yes" but the per-thread fetch 404'd between calls). Same
+        // redirect as the precheck path; safe to re-run.
+        if (typeof window !== "undefined" && window.location.pathname !== "/chat") {
+          window.history.replaceState({ threadId: null }, "", "/chat");
+          lastSyncedIdRef.current = null;
+        }
+      });
     };
-    syncFromUrl();
-    window.addEventListener("popstate", syncFromUrl);
-    return () => window.removeEventListener("popstate", syncFromUrl);
+    // Stable handler reference for addEventListener / removeEventListener
+    // symmetry — a fresh `() => ...` arrow would not match the listener
+    // we registered, leaking the original on every re-mount.
+    const onPopState = () => void syncFromUrl();
+    void syncFromUrl();
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
