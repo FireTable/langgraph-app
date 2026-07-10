@@ -514,7 +514,7 @@ export function MemoryView({ className }: { className?: string }) {
                     >
                       <div>
                         {index > 0 && <Separator />}
-                        <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-x-3 gap-y-2 px-4 py-3">
+                        <div className="grid grid-cols-[auto_1fr] items-start gap-x-3 gap-y-2 px-4 py-3 md:grid-cols-[auto_1fr_auto_auto] md:items-center">
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <button
@@ -541,47 +541,50 @@ export function MemoryView({ className }: { className?: string }) {
                               {hasTitle ? group.threadId : null}
                             </div>
                           </div>
-                          <CollapsibleTrigger asChild>
+                          <div className="col-span-2 flex flex-col gap-2 md:col-span-1 md:contents">
+                            <CollapsibleTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                // ponytail: aria-label flips with state so a
+                                // screen reader announces the action that
+                                // will fire on next click ("Collapse" when
+                                // expanded, "Expand" when collapsed).
+                                aria-label={
+                                  isThreadCollapsed ? `Expand ${title}` : `Collapse ${title}`
+                                }
+                                className="shrink-0 w-full md:w-auto"
+                                data-hint="thread-collapse"
+                              >
+                                {/* ponytail: chevron points right when
+                                    collapsed (▶ → "open me, content is to
+                                    the right / below") and left when expanded
+                                    (◀ → "close me, content has moved left /
+                                    up"). Mirrors the Delete button style:
+                                    outline variant + size sm + label. */}
+                                <ChevronRight
+                                  aria-hidden
+                                  className={cn(
+                                    "size-4 transition-transform duration-200",
+                                    !isThreadCollapsed && "rotate-180",
+                                  )}
+                                />
+                                {isThreadCollapsed ? "Expand" : "Collapse"}
+                              </Button>
+                            </CollapsibleTrigger>
                             <Button
                               type="button"
                               variant="outline"
                               size="sm"
-                              // ponytail: aria-label flips with state so a
-                              // screen reader announces the action that
-                              // will fire on next click ("Collapse" when
-                              // expanded, "Expand" when collapsed).
-                              aria-label={
-                                isThreadCollapsed ? `Expand ${title}` : `Collapse ${title}`
-                              }
-                              className="shrink-0"
-                              data-hint="thread-collapse"
+                              onClick={() => openThreadDialog(group.threadId)}
+                              aria-label={`Delete this thread summaries for ${title}`}
+                              className="shrink-0 w-full md:w-auto"
                             >
-                              {/* ponytail: chevron points right when
-                                  collapsed (▶ → "open me, content is to
-                                  the right / below") and left when expanded
-                                  (◀ → "close me, content has moved left /
-                                  up"). Mirrors the Delete button style:
-                                  outline variant + size sm + label. */}
-                              <ChevronRight
-                                aria-hidden
-                                className={cn(
-                                  "size-4 transition-transform duration-200",
-                                  !isThreadCollapsed && "rotate-180",
-                                )}
-                              />
-                              {isThreadCollapsed ? "Expand" : "Collapse"}
+                              <Trash2 aria-hidden />
+                              Delete
                             </Button>
-                          </CollapsibleTrigger>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openThreadDialog(group.threadId)}
-                            aria-label={`Delete this thread summaries for ${title}`}
-                          >
-                            <Trash2 aria-hidden />
-                            Delete
-                          </Button>
+                          </div>
                         </div>
                         <CollapsibleContent
                           // ponytail: each compression is its own row under
