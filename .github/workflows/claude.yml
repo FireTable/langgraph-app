@@ -9,13 +9,12 @@ on:
     types: [created]
   pull_request_review:
     types: [submitted]
-  issues:
-    types: [opened, assigned, labeled]
 
 jobs:
   auto-review:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: write
@@ -47,6 +46,7 @@ jobs:
   interact:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write
