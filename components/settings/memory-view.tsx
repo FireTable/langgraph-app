@@ -437,7 +437,7 @@ export function MemoryView({ className }: { className?: string }) {
                         {row.kind === "store" ? (
                           <Button
                             type="button"
-                            className="col-span-2 ml-auto shrink-0 w-fit md:col-span-1 md:w-auto"
+                            className="col-span-2 ml-auto shrink-0 w-full md:col-span-1 md:w-auto"
                             variant="outline"
                             size="sm"
                             onClick={() => openProfileDialog(row.key)}
@@ -493,6 +493,52 @@ export function MemoryView({ className }: { className?: string }) {
                   const title = group.threadTitle ?? group.threadId;
                   const hasTitle = group.threadTitle !== null;
                   const isThreadCollapsed = !expandedThreads.has(group.threadId);
+
+                  const SummaryContent = (
+                    <CollapsibleContent
+                      // ponytail: each compression is its own row under
+                      // the thread header. Header reads "Summary · N"
+                      // (not "Compression #N" — "summary" reads as a
+                      // noun to a non-engineer, the middot matches
+                      // the timestamp separator that follows). The
+                      // sequence + timestamp together tell the user
+                      // which pass produced what without exposing
+                      // the internal counter.
+                      //
+                      // data-state (open|closed) and the CSS variables
+                      // Radix writes (`--radix-collapsible-content-height`)
+                      // drive the height animation. data-slot
+                      // pinpoints the body for tests without coupling
+                      // to class churn.
+                      data-slot="thread-body"
+                      className="space-y-3 mb-2 md:mb-3 mt-2 md:mt-0 overflow-hidden pb-2 data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up"
+                    >
+                      {group.summaries.map((s) => (
+                        <div key={`${s.threadId}:${s.sequence}`} className="space-y-1.5">
+                          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                            <span className="text-muted-foreground text-xs font-medium capitalize tracking-wide">
+                              Summary · {s.sequence}
+                            </span>
+                            <time
+                              dateTime={s.createdAt}
+                              className="text-muted-foreground text-xs tabular-nums"
+                            >
+                              · {formatTimestamp(s.createdAt)}
+                            </time>
+                          </div>
+                          {/* ponytail: cap height so a deep summary
+                                  (many Q&A pairs in one compression) can't
+                                  push the rest of the card off-screen —
+                                  overflow scrolls inside the block, same
+                                  pattern as the JSON block in About-you. */}
+                          <pre className="bg-muted/50 text-foreground overflow-auto rounded-md p-2.5 text-foreground max-h-30 overflow-y-auto whitespace-pre-wrap font-sans text-sm">
+                            {formatSummaryText(s.summary.entries)}
+                          </pre>
+                        </div>
+                      ))}
+                    </CollapsibleContent>
+                  );
+
                   return (
                     <Collapsible
                       key={group.threadId}
@@ -541,7 +587,7 @@ export function MemoryView({ className }: { className?: string }) {
                               {hasTitle ? group.threadId : null}
                             </div>
                           </div>
-                          <div className="col-span-2 flex flex-col gap-2 md:col-span-1 md:contents">
+                          <div className="col-span-2 flex flex-col gap-1 md:col-span-1 md:contents">
                             <CollapsibleTrigger asChild>
                               <Button
                                 type="button"
@@ -567,70 +613,34 @@ export function MemoryView({ className }: { className?: string }) {
                                   aria-hidden
                                   className={cn(
                                     "size-4 transition-transform duration-200",
-                                    !isThreadCollapsed && "rotate-180",
+                                    !isThreadCollapsed && "rotate-90",
                                   )}
                                 />
                                 {isThreadCollapsed ? "Expand" : "Collapse"}
                               </Button>
                             </CollapsibleTrigger>
+                            <div className="md:hidden">{SummaryContent}</div>
+                            {/* Delete lives in the SAME wrapper as Collapse
+                                on mobile so the two buttons read as one
+                                action group above the summary content
+                                (no summary sandwiched between them). On
+                                md+ the wrapper is display:contents and the
+                                Delete becomes the col 4 grid item. */}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openThreadDialog(group.threadId)}
+                              aria-label={`Delete this thread summaries for ${title}`}
+                              className="shrink-0 w-full md:w-auto"
+                              data-hint="thread-delete"
+                            >
+                              <Trash2 aria-hidden />
+                              Delete
+                            </Button>
                           </div>
                         </div>
-                        <CollapsibleContent
-                          // ponytail: each compression is its own row under
-                          // the thread header. Header reads "Summary · N"
-                          // (not "Compression #N" — "summary" reads as a
-                          // noun to a non-engineer, the middot matches
-                          // the timestamp separator that follows). The
-                          // sequence + timestamp together tell the user
-                          // which pass produced what without exposing
-                          // the internal counter.
-                          //
-                          // data-state (open|closed) and the CSS variables
-                          // Radix writes (`--radix-collapsible-content-height`)
-                          // drive the height animation. data-slot
-                          // pinpoints the body for tests without coupling
-                          // to class churn.
-                          data-slot="thread-body"
-                          className="space-y-3 overflow-hidden px-4 pb-2 data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up"
-                        >
-                          {group.summaries.map((s) => (
-                            <div key={`${s.threadId}:${s.sequence}`} className="space-y-1.5">
-                              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                                <span className="text-muted-foreground text-xs font-medium capitalize tracking-wide">
-                                  Summary · {s.sequence}
-                                </span>
-                                <time
-                                  dateTime={s.createdAt}
-                                  className="text-muted-foreground text-xs tabular-nums"
-                                >
-                                  · {formatTimestamp(s.createdAt)}
-                                </time>
-                              </div>
-                              {/* ponytail: cap height so a deep summary
-                                  (many Q&A pairs in one compression) can't
-                                  push the rest of the card off-screen —
-                                  overflow scrolls inside the block, same
-                                  pattern as the JSON block in About-you. */}
-                              <pre className="bg-muted/50 text-foreground overflow-auto rounded-md p-2.5 text-foreground max-h-30 overflow-y-auto whitespace-pre-wrap font-sans text-sm">
-                                {formatSummaryText(s.summary.entries)}
-                              </pre>
-                            </div>
-                          ))}
-                        </CollapsibleContent>
-                        <div className="border-border border-t px-4 py-3 md:flex md:justify-end">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openThreadDialog(group.threadId)}
-                            aria-label={`Delete this thread summaries for ${title}`}
-                            className="shrink-0 w-full md:w-auto"
-                            data-hint="thread-delete"
-                          >
-                            <Trash2 aria-hidden />
-                            Delete
-                          </Button>
-                        </div>
+                        <div className="hidden md:block px-4">{SummaryContent}</div>
                       </div>
                     </Collapsible>
                   );
@@ -659,6 +669,7 @@ export function MemoryView({ className }: { className?: string }) {
           <DialogFooter>
             <Button
               variant="outline"
+              className="w-full md:w-auto"
               onClick={() => setPendingProfileKey(null)}
               disabled={deleting}
             >
@@ -666,6 +677,7 @@ export function MemoryView({ className }: { className?: string }) {
             </Button>
             <Button
               variant="destructive"
+              className="w-full md:w-auto"
               onClick={() => void confirmRemoveRow()}
               disabled={deleting}
               aria-busy={deleting}
@@ -699,10 +711,16 @@ export function MemoryView({ className }: { className?: string }) {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingThreadId(null)} disabled={deleting}>
+            <Button
+              className="w-full md:w-auto"
+              variant="outline"
+              onClick={() => setPendingThreadId(null)}
+              disabled={deleting}
+            >
               Cancel
             </Button>
             <Button
+              className="w-full md:w-auto"
               variant="destructive"
               onClick={() => void confirmRemoveThread()}
               disabled={deleting}

@@ -100,9 +100,10 @@ function DialogFooter({
       className={cn(
         // ponytail: items-stretch is flex default — on mobile that made
         // each button fill the modal width edge-to-edge, easy to mis-tap
-        // on a destructive action. Pin cross-axis to start so buttons
-        // take intrinsic width on mobile and stay right-aligned on desktop.
-        "flex flex-col-reverse items-start gap-2 sm:flex-row sm:items-center sm:justify-end",
+        // on a destructive action. Pin cross-axis to end on mobile so
+        // buttons take intrinsic width and sit right-aligned (same as
+        // the desktop row); keep desktop row + justify-end via sm:.
+        "flex flex-col-reverse items-end gap-2 sm:flex-row sm:items-center sm:justify-end",
         className,
       )}
       {...props}
