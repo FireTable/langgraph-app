@@ -206,8 +206,8 @@ const BentoShell = ({ card, children }: { card: BentoCard; children?: ReactNode 
       className={cn(
         "text-card-foreground flex flex-col gap-3 rounded-2xl border p-5 transition-colors",
         HUE[card.hue].card,
-        card.span === "big" && "gap-4 p-6 min-h-[260px]",
-        card.span === "wide" && "gap-3 p-6 min-h-[140px]",
+        card.span === "big" && "gap-4 p-6 lg:min-h-[260px]",
+        card.span === "wide" && "gap-3 p-6 lg:min-h-[140px]",
         layout[card.span],
       )}
     >
@@ -269,7 +269,7 @@ export const Features: FC = () => (
       </div>
 
       <div className="flex flex-col gap-4">
-        <div className="grid auto-rows-fr grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 lg:auto-rows-fr lg:grid-cols-4">
           {BENTO.map((card, i) => (
             <BentoShell key={card.title} card={card}>
               {i === 0 && <StreamingHint />}

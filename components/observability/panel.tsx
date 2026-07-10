@@ -273,9 +273,9 @@ const StatCard: FC<{ icon: React.ReactNode; label: string; value: string }> = ({
   value,
 }) => (
   <div className="border-border bg-muted/30 flex min-w-[5.5rem] flex-col gap-0.5 rounded-md border px-2.5 py-1.5">
-    <div className="text-muted-foreground flex items-center gap-1 text-[10px] tracking-wide uppercase">
+    <div className="text-muted-foreground flex items-center gap-1 text-[10px] tracking-wide uppercase s line-clamp-1">
       {icon}
-      <span>{label}</span>
+      <span className="overflow-hidden whitespace-nowrap text-ellipsis">{label}</span>
     </div>
     <div className="text-foreground tabular-nums text-sm leading-tight font-semibold">{value}</div>
   </div>
@@ -361,7 +361,7 @@ const WaterfallRow: FC = () => {
       <SpanPrimitive.Indent
         baseIndent={8}
         indentPerLevel={12}
-        className="border-border group-hover:bg-accent/50 sticky left-0 z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2"
+        className="border-border group-hover:bg-accent/50 sticky left-0 bg-background z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2 max-w-[50%] md:max-w-none"
         style={{ width: LABEL_WIDTH, height: BAR_HEIGHT }}
       >
         <AuiIf
@@ -382,7 +382,10 @@ const WaterfallRow: FC = () => {
         <SpanPrimitive.Name className="truncate text-sm" />
       </SpanPrimitive.Indent>
 
-      <div className="group-hover:bg-accent/30" style={{ width: barWidth, height: BAR_HEIGHT }}>
+      <div
+        className="group-hover:bg-accent/30 overflow-hidden md:overflow-visible max-w-[50%] md:max-w-none"
+        style={{ width: barWidth, height: BAR_HEIGHT }}
+      >
         <svg aria-hidden width={barWidth} height={BAR_HEIGHT}>
           <WaterfallBar />
         </svg>
@@ -400,7 +403,7 @@ const RunningSkeletonRow: FC = () => {
       aria-label="Background agent still running"
     >
       <div
-        className="border-border flex shrink-0 items-center gap-1.5 border-r px-2"
+        className="border-border flex shrink-0 items-center gap-1.5 overflow-hidden border-r px-2 max-w-[50%] md:max-w-none"
         style={{ width: LABEL_WIDTH, height: BAR_HEIGHT }}
       >
         <div className="bg-muted/60 size-6 shrink-0 rounded-sm" />
@@ -475,18 +478,24 @@ const WaterfallTimeline: FC<{ retentionDays: number | null; stillRunning: boolea
 
   return (
     <TooltipContext.Provider value={{ tooltip, setTooltip }}>
-      <div ref={outerRef} className="border-border relative overflow-hidden rounded-lg border">
+      <div
+        ref={outerRef}
+        className="border-border relative overflow-x-auto overflow-y-hidden rounded-lg border"
+      >
         <div
-          className="border-border bg-background sticky top-0 z-20 flex border-b"
+          className="border-border bg-background md:sticky md:top-0 md:z-20 flex border-b"
           style={{ width: contentWidth }}
         >
           <div
-            className="border-border bg-background text-muted-foreground sticky left-0 z-30 shrink-0 border-r px-2 py-1.5 text-xs"
+            className="border-border bg-background text-muted-foreground sticky left-0 z-30 shrink-0 overflow-hidden border-r px-2 py-1.5 text-xs max-w-[50%] md:max-w-none"
             style={{ width: LABEL_WIDTH }}
           >
             Span
           </div>
-          <div style={{ width: barWidth, height: 28 }}>
+          <div
+            className="overflow-hidden md:overflow-visible max-w-[50%] md:max-w-none"
+            style={{ width: barWidth, height: 28 }}
+          >
             <TimeAxisTicks timeRange={renderTimeRange} barWidth={barWidth} />
           </div>
         </div>
@@ -498,7 +507,7 @@ const WaterfallTimeline: FC<{ retentionDays: number | null; stillRunning: boolea
           </div>
         </WaterfallLayoutContext.Provider>
 
-        <div className="border-border text-muted-foreground border-t text-xs">
+        <div className="border-border text-muted-foreground border-t text-xs sticky left-0 ">
           <div className="flex items-center gap-2 px-2 py-2">
             {LEGEND_TYPE_ORDER.map((t) => (
               <TypeChip key={t} type={t} />
@@ -569,7 +578,7 @@ const TooltipPopup: FC = () => {
     <div
       ref={ref}
       role="tooltip"
-      className="border-border bg-popover text-popover-foreground pointer-events-none fixed z-50 max-w-xs rounded-md border px-3 py-2.5 text-xs shadow-md"
+      className="border-border bg-popover text-popover-foreground pointer-events-none fixed z-50 hidden max-w-xs rounded-md border px-3 py-2.5 text-xs shadow-md md:block"
       style={style}
     >
       <div className="flex items-center gap-1.5 pb-1.5">
@@ -1697,7 +1706,7 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
   return (
     <SelectionContext.Provider value={{ selectedId, select: setSelectedId }}>
       {aggregate ? (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-4 gap-2 sm:grid-cols-4 md:grid-cols-4">
           <StatCard
             icon={<BrainIcon className="size-3.5" style={{ color: TYPE_COLORS.llm }} />}
             label="LLM calls"
@@ -1721,17 +1730,17 @@ export const ObservabilityPanel: FC<ObservabilityPanelProps> = ({
           <StatCard
             icon={<ArrowDownIcon className="text-muted-foreground size-3.5" />}
             label="Input"
-            value={`${fmt(aggregate.totalInput)} token`}
+            value={`${fmt(aggregate.totalInput)} tok`}
           />
           <StatCard
             icon={<ArrowUpIcon className="text-muted-foreground size-3.5" />}
             label="Output"
-            value={`${fmt(aggregate.totalOutput)} token`}
+            value={`${fmt(aggregate.totalOutput)} tok`}
           />
           <StatCard
             icon={<DatabaseIcon className="text-muted-foreground size-3.5" />}
             label="Total"
-            value={`${fmt(aggregate.totalTokens)} token`}
+            value={`${fmt(aggregate.totalTokens)} tok`}
           />
           <StatCard
             icon={<ClockIcon className="text-muted-foreground size-3.5" />}

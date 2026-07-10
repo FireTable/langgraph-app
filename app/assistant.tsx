@@ -111,11 +111,7 @@ const MobileSidebar: FC = () => {
           <ThreadList />
         </div>
         <div className="shrink-0 p-2">
-          <UserButton
-            className="border-border bg-card w-full border"
-            hideSettings
-            links={memoryLink}
-          />
+          <UserButton className="border-border bg-card w-full border" links={memoryLink} />
         </div>
       </SheetContent>
     </Sheet>

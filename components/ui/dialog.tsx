@@ -53,7 +53,10 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
+          // ponytail: leave extra breathing room on small viewports so
+          // destructive buttons don't sit near the edge where mis-taps
+          // happen. sm+ caps at lg max-width (desktop unchanged).
+          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[min(calc(100%-3rem),28rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
           className,
         )}
         {...props}
@@ -94,7 +97,15 @@ function DialogFooter({
   return (
     <div
       data-slot="dialog-footer"
-      className={cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)}
+      className={cn(
+        // ponytail: items-stretch is flex default — on mobile that made
+        // each button fill the modal width edge-to-edge, easy to mis-tap
+        // on a destructive action. Pin cross-axis to end on mobile so
+        // buttons take intrinsic width and sit right-aligned (same as
+        // the desktop row); keep desktop row + justify-end via sm:.
+        "flex flex-col-reverse items-end gap-2 sm:flex-row sm:items-center sm:justify-end",
+        className,
+      )}
       {...props}
     >
       {children}

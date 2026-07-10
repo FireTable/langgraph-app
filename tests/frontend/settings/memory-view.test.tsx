@@ -92,6 +92,12 @@ function setupFetchOnce() {
 // data-hint (not aria-label) because the aria-label embeds the
 // thread title, which differs across fixtures (real title vs raw
 // threadId fallback).
+//
+// As of the mobile UI batch: SummaryContent is rendered into two
+// DOM slots (mobile `md:hidden` copy + desktop `hidden md:block`
+// copy) so the same Q&A text shows up twice in the rendered DOM
+// in jsdom. findAllByText is used instead of findByText for the
+// post-click check.
 async function expandFirstThread() {
   const toggle = await waitFor(() => {
     const el = document.querySelector('[data-hint="thread-collapse"]');
@@ -99,7 +105,9 @@ async function expandFirstThread() {
     return el;
   });
   fireEvent.click(toggle);
-  await screen.findByText(/intro question/);
+  await waitFor(() => {
+    expect(screen.queryAllByText(/intro question/).length).toBeGreaterThan(0);
+  });
 }
 
 beforeEach(() => {
@@ -181,7 +189,10 @@ describe("MemoryView", () => {
     // ponytail: rows default to collapsed. Expand to verify the Q&A
     // body renders under the thread header (not the meta line).
     await expandFirstThread();
-    expect(screen.getByText(/intro question/)).toBeInTheDocument();
+    // SummaryContent is rendered into mobile + desktop DOM slots, so
+    // the Q&A text shows up twice in jsdom — assert presence, not
+    // exact count.
+    expect(screen.queryAllByText(/intro question/).length).toBeGreaterThan(0);
   });
 
   it("renders each compression as its own sub-row with iteration label + timestamp", async () => {
@@ -189,10 +200,12 @@ describe("MemoryView", () => {
     // ponytail: rows default to collapsed. Expand first, then the
     // Summary · N labels + per-summary Q&A both render.
     await expandFirstThread();
-    expect(screen.getByText(/Summary · 1/)).toBeInTheDocument();
-    expect(screen.getByText(/Summary · 2/)).toBeInTheDocument();
-    expect(screen.getByText(/intro question/)).toBeInTheDocument();
-    expect(screen.getByText(/follow-up/)).toBeInTheDocument();
+    // SummaryContent is rendered into mobile + desktop slots; the
+    // per-summary text shows up twice in jsdom, so assert >= 1.
+    expect(screen.queryAllByText(/Summary · 1/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/Summary · 2/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/intro question/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/follow-up/).length).toBeGreaterThan(0);
   });
 
   it("falls back to the raw threadId when threadTitle is null", async () => {
@@ -212,7 +225,7 @@ describe("MemoryView", () => {
     });
     render(<MemoryView />);
     await expandFirstThread();
-    expect(screen.getByText(/Summary · 1/)).toBeInTheDocument();
+    expect(screen.queryAllByText(/Summary · 1/).length).toBeGreaterThan(0);
     // ponytail: with no title, `t1` shows once as the header fallback
     // and the meta line under it is suppressed (no duplicate id).
     // When title IS present (the other tests) it shows twice — once as
@@ -354,7 +367,12 @@ describe("MemoryView", () => {
 
     render(<MemoryView />);
     await expandFirstThread();
-    fireEvent.click(screen.getByRole("button", { name: /^Delete this thread summaries for/ }));
+    // mobile + desktop each render a Delete (different DOM positions);
+    // either one opens the same dialog.
+    const threadDeleteBtns = screen.getAllByRole("button", {
+      name: /^Delete this thread summaries for/,
+    });
+    fireEvent.click(threadDeleteBtns[0]);
     await screen.findByText(/Delete this thread summaries/i);
 
     const cancelBtn = screen.getByRole("button", { name: /^Cancel$/ });
@@ -440,8 +458,11 @@ describe("MemoryView", () => {
     // ponytail: the thread's Q&A bodies appear, but the header
     // (title + threadId meta + Delete) stays as it was.
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText(/intro question/)).toBeInTheDocument();
-    expect(screen.getByText(/follow-up/)).toBeInTheDocument();
+    // SummaryContent renders into mobile + desktop DOM slots — the
+    // same Q&A text shows up twice in the rendered tree. Assert
+    // presence (≥ 1) rather than the historical getByText contract.
+    expect(screen.queryAllByText(/intro question/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/follow-up/).length).toBeGreaterThan(0);
 
     // ponytail: the toggle's aria-label flips to "Collapse …" so the
     // screen-reader announcement describes the next-click action.
@@ -454,10 +475,15 @@ describe("MemoryView", () => {
       name: /Expand Weather chat/i,
     });
     fireEvent.click(expandToggle);
-    expect(screen.getByText(/intro question/)).toBeInTheDocument();
+    // SummaryContent renders twice (mobile + desktop DOM slots); Q&A
+    // text shows up in both. Assert presence rather than single match.
+    expect(screen.queryAllByText(/intro question/).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: /Collapse Weather chat/i }));
     expect(expandToggle).toHaveAttribute("aria-expanded", "false");
+    // Closed → both SummaryContent copies hide, neither retains
+    // `intro question`. queryByText (singular) still works when
+    // nothing matches.
     expect(screen.queryByText(/intro question/)).toBeNull();
   });
 
@@ -503,5 +529,103 @@ describe("MemoryView", () => {
     await waitFor(() => {
       expect(body.getAttribute("data-state")).toBe("closed");
     });
+  });
+
+  // ─── mobile UI batch 1 — regression tests ──────────────────────────
+  // Tests below pin the responsive layout decisions for issues #21/26.
+  // They match via className (Tailwind responsive prefixes) so a
+  // regression that drops the responsive utility surfaces here.
+
+  it("mobile (#21): Profile store Delete button is full-width + col-span-2 (lands below the value)", async () => {
+    render(<MemoryView />);
+    await screen.findByText(/Yongzhuo/);
+    // ponytail: store rows are tagged with data-hint="summarized-by-ai"
+    // and have a Delete button whose aria-label starts with "Delete "
+    // followed by a Capitalized key (vs the thread-summary Delete
+    // which is "Delete this thread summaries for ...").
+    const deletes = screen.getAllByRole("button", { name: /^Delete [A-Z]/ });
+    expect(deletes.length).toBeGreaterThan(0);
+    for (const btn of deletes) {
+      const cls = btn.className;
+      expect(cls).toContain("w-full");
+      expect(cls).toContain("col-span-2");
+      // ponytail: desktop should revert to inline col 3 + auto width.
+      expect(cls).toContain("md:col-span-1");
+      expect(cls).toContain("md:w-auto");
+    }
+  });
+
+  it("mobile (#21): Thread-summarize Delete button is full-width on mobile + w-auto at md+", async () => {
+    render(<MemoryView />);
+    await screen.findByText("Weather chat");
+    await expandFirstThread();
+    const btn = screen.getByRole("button", { name: /^Delete this thread summaries for/ });
+    expect(btn.className).toContain("w-full");
+    expect(btn.className).toContain("md:w-auto");
+  });
+
+  it("mobile (#21): Thread body is rendered twice (mobile `md:hidden` copy + desktop `hidden md:block` copy), one per breakpoint", async () => {
+    // ponytail: the SummaryContent element is conditionally placed
+    // by media query — only one copy is visible at any viewport,
+    // but the React tree has both (they share the parent <Collapsible>
+    // `open` prop, so the body animates consistently). In jsdom
+    // both copies are in the DOM regardless of media query.
+    render(<MemoryView />);
+    await screen.findByText("Weather chat");
+    const bodies = document.querySelectorAll('[data-slot="thread-body"]');
+    // PROFILE_WITH_THREADS has exactly one thread, so 2 copies total.
+    expect(bodies.length).toBe(2);
+    // ponytail: the mobile copy sits inside an md:hidden ancestor,
+    // the desktop one inside a hidden md:block ancestor.
+    const mobileAncestor = (bodies[0] as HTMLElement | null)?.closest(".md\\:hidden");
+    const desktopAncestor = (bodies[1] as HTMLElement | null)?.closest(".hidden.md\\:block");
+    expect(mobileAncestor).not.toBeNull();
+    expect(desktopAncestor).not.toBeNull();
+  });
+
+  it("mobile (#26): Dialog footer is right-aligned on mobile (items-end, no items-start)", async () => {
+    render(<MemoryView />);
+    await screen.findByText(/Yongzhuo/);
+    const profileDelete = screen.getAllByRole("button", { name: /^Delete [A-Z]/ })[0];
+    if (profileDelete) fireEvent.click(profileDelete);
+    await screen.findByText(/Delete this memory/i);
+    const footer = document.querySelector('[data-slot="dialog-footer"]');
+    expect(footer).not.toBeNull();
+    const cls = footer?.className ?? "";
+    expect(cls).toContain("items-end");
+    // ponytail: items-stretch is the flex default; items-start was
+    // the v1 fix, items-end the v2 fix. Guard against reverting.
+    expect(cls).not.toContain("items-start");
+  });
+
+  it("mobile (#26): Profile dialog Cancel + Delete buttons are full-width on mobile, auto on md+", async () => {
+    render(<MemoryView />);
+    await screen.findByText(/Yongzhuo/);
+    const profileDelete = screen.getAllByRole("button", { name: /^Delete [A-Z]/ })[0];
+    if (profileDelete) fireEvent.click(profileDelete);
+    await screen.findByText(/Delete this memory/i);
+    const cancel = screen.getByRole("button", { name: /^Cancel$/ });
+    const confirm = screen.getByRole("button", { name: /^Delete$/ });
+    for (const btn of [cancel, confirm]) {
+      const cls = btn.className;
+      expect(cls).toContain("w-full");
+      expect(cls).toContain("md:w-auto");
+    }
+  });
+
+  it("mobile (#26): Thread dialog Cancel + Delete buttons are full-width on mobile, auto on md+", async () => {
+    render(<MemoryView />);
+    await screen.findByText("Weather chat");
+    await expandFirstThread();
+    const deleteBtn = screen.getByRole("button", { name: /^Delete this thread summaries for/ });
+    fireEvent.click(deleteBtn);
+    await screen.findByText(/Delete this thread summaries/i);
+    const cancel = screen.getByRole("button", { name: /^Cancel$/ });
+    const confirm = screen.getByRole("button", { name: /^Delete$/ });
+    for (const btn of [cancel, confirm]) {
+      const cls = btn.className;
+      expect(cls).toContain("w-full");
+      expect(cls).toContain("md:w-auto");
+    }
   });
 });

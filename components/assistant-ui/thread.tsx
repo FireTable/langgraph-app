@@ -223,6 +223,15 @@ const Composer: FC = () => {
   // here changes the message that handleSend eventually receives —
   // the actual wire payload and the on-screen composer drift apart.
   const isUploading = useUploadStore((s) => s.count > 0);
+  // ponytail: don't autofocus on mobile — the soft keyboard pops up the
+  // moment the page loads and eats half the viewport before the user
+  // taps anything. Coarse-pointer (touch) heuristic skips desktop auto-focus
+  // for users on hybrid devices; maxTouchPoints covers tablets in laptop
+  // mode that matchMedia("(pointer: coarse)") misses.
+  const shouldAutoFocus =
+    typeof window !== "undefined" &&
+    window.matchMedia("(pointer: fine)").matches &&
+    navigator.maxTouchPoints === 0;
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <ComposerPrimitive.AttachmentDropzone asChild>
@@ -235,7 +244,7 @@ const Composer: FC = () => {
             placeholder="Send a message..."
             className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none disabled:opacity-60 disabled:cursor-not-allowed"
             rows={1}
-            autoFocus
+            autoFocus={shouldAutoFocus}
             aria-label="Message input"
             disabled={isUploading}
           />
