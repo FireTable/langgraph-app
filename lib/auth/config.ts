@@ -69,8 +69,20 @@ export const auth =
       },
     },
     emailVerification: {
+      // ponytail: Better Auth 1.6.x defaults this to falsy — verified users
+      // land on /login/verified without a session cookie AND without a token
+      // query param (Better Auth's 302 carries just the callbackURL value).
+      // Our success page then has no signal to render against and the
+      // !token && !session fallback bounces them back to /login. Flip this
+      // on so the verified user gets a real session and the success page is
+      // reachable. Email link is the auth token either way, so this doesn't
+      // widen the threat model meaningfully.
+      autoSignInAfterVerification: true,
       sendVerificationEmail: async ({ user, url }) => {
-        const result = await sendVerificationEmail({ to: user.email, url });
+        const result = await sendVerificationEmail({
+          to: user.email,
+          url: verificationRedirectUrl(url),
+        });
         if (!result.ok) {
           // Translate our internal codes to the Better Auth error shape so
           // the route can return the FR-025 EMAIL_QUOTA_EXCEEDED contract.
@@ -87,3 +99,22 @@ export const auth =
 if (process.env.NODE_ENV !== "production") globalThis.__auth = auth;
 
 export type Session = typeof auth.$Infer.Session;
+
+/**
+ * Re-point Better Auth's verification-link `callbackURL` at our success page.
+ *
+ * Better Auth constructs the verification link as
+ * `${baseURL}/verify-email?token=...&callbackURL=...`. After the user clicks
+ * the link, Better Auth consumes the token at `/verify-email` and 302s to
+ * the `callbackURL`. The default callbackURL is `/`, which silently drops
+ * the user on the landing page with no feedback that verification succeeded.
+ *
+ * We only touch the `callbackURL` query param — the path MUST stay
+ * `/verify-email`, otherwise the token is never consumed and the user is
+ * never verified.
+ */
+export function verificationRedirectUrl(rawUrl: string): string {
+  const u = new URL(rawUrl);
+  u.searchParams.set("callbackURL", "/login/verified");
+  return u.toString();
+}
