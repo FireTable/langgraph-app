@@ -104,14 +104,17 @@ export type Session = typeof auth.$Infer.Session;
  * Re-point Better Auth's verification-link `callbackURL` at our success page.
  *
  * Better Auth constructs the verification link as
- * `${baseURL}/verify-email?token=...&callbackURL=...`. After the user clicks
- * the link, Better Auth consumes the token at `/verify-email` and 302s to
- * the `callbackURL`. The default callbackURL is `/`, which silently drops
- * the user on the landing page with no feedback that verification succeeded.
+ * `${baseURL}/api/auth/verify-email?token=...&callbackURL=...` (the
+ * `/api/auth` prefix comes from the catch-all proxy in
+ * `app/api/auth/[...all]/route.ts`). After the user clicks the link,
+ * Better Auth consumes the token at that endpoint and 302s to the
+ * `callbackURL`. The default callbackURL is `/`, which silently drops
+ * the user on the landing page with no feedback that verification
+ * succeeded.
  *
- * We only touch the `callbackURL` query param — the path MUST stay
- * `/verify-email`, otherwise the token is never consumed and the user is
- * never verified.
+ * We only touch the `callbackURL` query param — the verification endpoint
+ * path MUST stay intact, otherwise the token is never consumed and the
+ * user is never verified.
  */
 export function verificationRedirectUrl(rawUrl: string): string {
   const u = new URL(rawUrl);
