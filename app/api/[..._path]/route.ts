@@ -72,10 +72,24 @@ async function proxyRequest(
         if (parsed && typeof parsed === "object") {
           const config = (parsed.config ?? {}) as Record<string, unknown>;
           const configurable = (config.configurable ?? {}) as Record<string, unknown>;
+          const metadata = (config.metadata ?? {}) as Record<string, unknown>;
+
           // append userId to the langgraph context
           configurable.userId = ctx.user.id;
-          config.configurable = configurable;
+          metadata.userId = ctx.user.id;
+
           parsed.config = config;
+          if (!parsed.metadata) {
+            parsed.metadata = metadata;
+          }
+
+          if (!parsed.configurable) {
+            parsed.configurable = configurable;
+          }
+
+          parsed.config.configurable = configurable;
+          parsed.config.metadata = metadata;
+
           options.body = JSON.stringify(parsed);
         } else {
           options.body = raw;

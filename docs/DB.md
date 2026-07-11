@@ -4,30 +4,36 @@ Source of truth: `db/migrations/0000_*.sql` (drizzle-kit generated). This doc de
 
 ## Tables
 
-| Table          | Owner | Purpose                                               |
-| -------------- | ----- | ----------------------------------------------------- |
-| `user`         | app   | Better Auth user rows; FK target for owned rows       |
-| `session`      | app   | Better Auth DB sessions (cookie → userId)             |
-| `account`      | app   | Better Auth credentials / OAuth links per user        |
-| `verification` | app   | One-time tokens (email verify, password reset)        |
-| `threads`      | app   | Chat threads; one row per assistant-ui thread         |
-| `attachments`  | app   | Chat attachment metadata; bytes live in Cloudflare R2 |
+| Table              | Owner | Purpose                                                                |
+| ------------------ | ----- | ---------------------------------------------------------------------- |
+| `user`             | app   | Better Auth user rows; FK target for owned rows                        |
+| `session`          | app   | Better Auth DB sessions (cookie → userId)                              |
+| `account`          | app   | Better Auth credentials / OAuth links per user                         |
+| `verification`     | app   | One-time tokens (email verify, password reset)                         |
+| `role`             | app   | Per-role credit cap + rolling window length                            |
+| `threads`          | app   | Chat threads; one row per assistant-ui thread                          |
+| `attachments`      | app   | Chat attachment metadata; bytes live in Cloudflare R2                  |
+| `provider`         | app   | LLM provider registry (API keys, model rates)                          |
+| `credit_usage_log` | app   | Append-only per-LLM-call log; drives cap enforcement + call history UI |
 
 ## Cascade behavior
 
-`user.id` is the cascade root. Deleting a user removes every `session`, `account`, `thread`, and `attachment` they own. `attachments` has no FK to `threads` (Q3 — see `docs/ATTACHMENTS.md` for why), so thread deletion does NOT clean up attachment rows. Use the retention sweep if those accumulate. No soft delete; CASCADE only.
+`user.id` is the cascade root. Deleting a user removes every `session`, `account`, `thread`, `attachment`, and `credit_usage_log` row they own. `attachments` has no FK to `threads` (Q3 — see `docs/ATTACHMENTS.md` for why), so thread deletion does NOT clean up attachment rows. Use the retention sweep if those accumulate. No soft delete; CASCADE only.
+
+`role` deletion is refused at the API layer (`409 ROLE_IN_USE`) while any user row still references it — the schema's FK is `ON DELETE NO ACTION`, so the API check is what surfaces the conflict before the constraint trips. `provider` deletion is unconstrained (no FK from `credit_usage_log.provider_id` — see `provider` notes above).
 
 ## `user`
 
-| Column           | Type        | Notes                     |
-| ---------------- | ----------- | ------------------------- |
-| `id`             | text PK     | Better Auth user id       |
-| `name`           | text NULL   | Display name              |
-| `email`          | text UNIQUE | Login + verify target     |
-| `email_verified` | bool        | Gates redirect to `/chat` |
-| `image`          | text NULL   | Avatar URL                |
-| `created_at`     | timestamptz |                           |
-| `updated_at`     | timestamptz | `$onUpdate`               |
+| Column           | Type         | Notes                                                                                    |
+| ---------------- | ------------ | ---------------------------------------------------------------------------------------- |
+| `id`             | text PK      | Better Auth user id                                                                      |
+| `name`           | text NULL    | Display name                                                                             |
+| `email`          | text UNIQUE  | Login + verify target                                                                    |
+| `email_verified` | bool         | Gates redirect to `/chat`                                                                |
+| `image`          | text NULL    | Avatar URL                                                                               |
+| `role_id`        | text FK→role | `DEFAULT 'user'`; Better Auth exposes it on `session.user.roleId` via `additionalFields` |
+| `created_at`     | timestamptz  |                                                                                          |
+| `updated_at`     | timestamptz  | `$onUpdate`                                                                              |
 
 ## `session`
 
@@ -116,16 +122,96 @@ Indexes:
 
 - `attachments_user_created_idx` `(user_id, created_at DESC)` — "list this user's recent uploads" + retention sweep target
 
+## `role`
+
+Per-tier credit cap. Referenced by `user.role_id` (FK) and read on every LLM call by `lib/credit/check.ts:checkQuota`. Three rows ship in the migration seed: `guest` (20 credits / 24h), `user` (200 credits / 24h), `admin` (`null` credit limit = unlimited, 24h window). Migration adds the FK AFTER the seed INSERT so existing user rows have a target.
+
+| Column         | Type         | Notes                                                   |
+| -------------- | ------------ | ------------------------------------------------------- |
+| `id`           | text PK      | `^[a-z0-9_-]+$` (e.g. `"guest"`, `"user"`, `"admin"`)   |
+| `name`         | text         | Human-readable display name                             |
+| `credit_limit` | integer NULL | `null` = unlimited (admin). Otherwise non-negative int. |
+| `window_hours` | integer      | `DEFAULT 24`, rolling-window length in hours (max 720)  |
+| `created_at`   | timestamptz  |                                                         |
+| `updated_at`   | timestamptz  | `$onUpdate` (admin edits bump this)                     |
+
+Notes:
+
+- `creditLimit IS NULL` short-circuits the cap check in `lib/credit/check.ts` — admins never see `QuotaExceededError`.
+- DELETE refuses with 409 `ROLE_IN_USE` from `app/api/admin/roles/[id]/route.ts` while any user row still references the role.
+- Window slides continuously — there is no fixed UTC-day reset.
+
+## `provider`
+
+LLM provider registry — one row per upstream (openai / anthropic / ...). Holds the encrypted API key pool + per-model rate config. All edits go through `/api/admin/providers/**`.
+
+| Column       | Type        | Notes                                                                                   |
+| ------------ | ----------- | --------------------------------------------------------------------------------------- |
+| `id`         | text PK     | `^[a-z0-9_-]+$` (e.g. `"openai"`, `"anthropic"`)                                        |
+| `name`       | text        | Display name                                                                            |
+| `enabled`    | bool        | `DEFAULT true`; a top-level kill-switch (model-level `enabled` lives inside `models[]`) |
+| `api_keys`   | jsonb       | `DEFAULT '[]'::jsonb`; array of `{ encryptedKey, iv, name, baseUrl? }` (see below)      |
+| `models`     | jsonb       | `DEFAULT '[]'::jsonb`; array of `{ name, enabled, inputPer1k, outputPer1k }`            |
+| `created_at` | timestamptz |                                                                                         |
+| `updated_at` | timestamptz | `$onUpdate`                                                                             |
+
+`api_keys[]` entry shape (`lib/provider/schema.ts:ProviderApiKey`):
+
+- `encryptedKey` — AES-256-GCM ciphertext + GCM auth tag, base64-packed. **Never** returned on the wire.
+- `iv` — 12-byte nonce, base64. **Never** returned on the wire.
+- `name` — `"...xyz9"`, auto-derived from the plaintext tail at create time. The only persistent identifier exposed to clients.
+- `baseUrl?` — optional override URL for OpenAI-compatible endpoints.
+
+`models[]` entry shape (`ModelConfig`):
+
+- `name` (e.g. `"gpt-4o-mini"`), `enabled` (bool), `inputPer1k` / `outputPer1k` (number ≥ 0; credits-per-1k-tokens).
+
+Notes:
+
+- No FK from `credit_usage_log.provider_id` to `provider.id` — historical call rows survive a provider delete.
+- `buildChatModel` (`lib/credit/build-model.ts`) decrypts `api_keys[0]` at LLM-call time. The `apiKeys` array is forward-compatible with priority-based fallback; today only the first entry is consulted.
+
+## `credit_usage_log`
+
+Append-only per-LLM-call log. Source of truth for two things: cap enforcement (the rolling-window SUM in `lib/credit/check.ts`) and the user-facing Settings → Credits history panel (`GET /api/credit/history`). Written only by `lib/credit/callback.ts` (`CreditTrackingHandler`).
+
+| Column          | Type               | Notes                                                                                       |
+| --------------- | ------------------ | ------------------------------------------------------------------------------------------- |
+| `id`            | text PK            | UUIDv4 (matches the project row-id convention used everywhere else)                         |
+| `user_id`       | text FK→user       | CASCADE on user delete; the composite index below assumes this                              |
+| `provider_id`   | text               | `"openai"` / `"anthropic"` / ... (free-form text, NOT a FK — see `provider` notes)          |
+| `model_name`    | text               | `"gpt-4o-mini"` / ...                                                                       |
+| `agent_name`    | text               | `"router"` / `"crypto"` / `"summarize"` / ... (or `"unknown"` when the metadata is missing) |
+| `input_tokens`  | integer            | From `LLMResult.llmOutput.tokenUsage` / `generation[0][0].message.usage_metadata`           |
+| `output_tokens` | integer            | Same                                                                                        |
+| `credits`       | numeric(12,4)      | `(input/1000)*inputPer1k + (output/1000)*outputPer1k`, frozen at call time                  |
+| `status`        | enum `call_status` | `success` \| `error`. Errors excluded from the cap SUM.                                     |
+| `error_message` | text NULL          | Populated when `status = 'error'` (the thrown error's message)                              |
+| `created_at`    | timestamptz        | `DEFAULT now()` — drives the rolling window                                                 |
+| `updated_at`    | timestamptz        | `DEFAULT now()` + `$onUpdate`; lets backfill scripts identify touched rows                  |
+
+Indexes:
+
+- `credit_usage_log_userId_createdAt_idx` `(user_id, created_at)` — composite btree. Covers BOTH the cap-check `WHERE user_id = ? AND status = 'success' AND created_at >= ?` (with a status filter applied after) AND the history pagination `WHERE user_id = ? ORDER BY created_at DESC LIMIT/OFFSET`. Single index, two workloads.
+
+Notes:
+
+- The `updated_at` is intentional — backfill scripts (e.g. after a model rate correction) can rewrite historical rows in place, and `updated_at` lets an audit identify which rows were touched. Rate changes after the fact are NOT retroactively applied automatically.
+- Successful rows write `credits > 0`; errored rows write `credits = 0` (token counts default to `0` on the error path). The cap SUM only counts `status = 'success'`, so users don't pay for upstream flakiness.
+
 ## Code → table map
 
-| Table          | Reads                                           | Writes                                                                                                           |
-| -------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `user`         | `lib/auth/queries.ts` (`getSessionFromHeaders`) | Better Auth handlers in `app/api/auth/[...all]`                                                                  |
-| `session`      | `withAuth` (`lib/auth/with-auth.ts`)            | Better Auth sign-in / sign-out / refresh                                                                         |
-| `account`      | Better Auth internal                            | Sign-up (credential provider writes password hash)                                                               |
-| `verification` | Better Auth internal                            | Better Auth on email verify / password reset request                                                             |
-| `threads`      | `lib/threads/queries.ts` (UI list + adapter)    | API routes under `app/api/threads/`                                                                              |
-| `attachments`  | `lib/attachments/queries.ts`                    | API routes under `app/api/attachments/` (presign → row, confirm → `status='uploaded'`, DELETE → row + R2 object) |
+| Table              | Reads                                                                                        | Writes                                                                                                                                             |
+| ------------------ | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user`             | `lib/auth/queries.ts` (`getSessionFromHeaders`)                                              | Better Auth handlers in `app/api/auth/[...all]`                                                                                                    |
+| `session`          | `withAuth` (`lib/auth/with-auth.ts`)                                                         | Better Auth sign-in / sign-out / refresh                                                                                                           |
+| `account`          | Better Auth internal                                                                         | Sign-up (credential provider writes password hash)                                                                                                 |
+| `verification`     | Better Auth internal                                                                         | Better Auth on email verify / password reset request                                                                                               |
+| `role`             | `lib/credit/check.ts` (`checkQuota`), `lib/auth/role-queries.ts` (`getUserWithRole`)         | `app/api/admin/roles/**`                                                                                                                           |
+| `threads`          | `lib/threads/queries.ts` (UI list + adapter)                                                 | API routes under `app/api/threads/`                                                                                                                |
+| `attachments`      | `lib/attachments/queries.ts`                                                                 | API routes under `app/api/attachments/` (presign → row, confirm → `status='uploaded'`, DELETE → row + R2 object)                                   |
+| `provider`         | `lib/credit/build-model.ts` (`buildChatModel`, `getModelRate`)                               | `app/api/admin/providers/**` (encrypt at POST/PATCH; rotate re-encrypts in place; `stripProviderSecrets` on every response)                        |
+| `credit_usage_log` | `lib/credit/check.ts` (cap SUM + `MIN(created_at)` for `resetAt`), `GET /api/credit/history` | `lib/credit/callback.ts` (`CreditTrackingHandler.handleLLMEnd` writes `success`, `handleLLMError` writes `error`; `QuotaExceededError` is skipped) |
 
 ## Tooling
 

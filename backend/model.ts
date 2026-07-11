@@ -4,7 +4,11 @@ const commonOptions = {
   model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
   apiKey: process.env.OPENAI_API_KEY,
   ...(process.env.OPENAI_BASE_URL
-    ? { configuration: { baseURL: process.env.OPENAI_BASE_URL } }
+    ? {
+        configuration: {
+          baseURL: process.env.OPENAI_BASE_URL,
+        },
+      }
     : {}),
   streaming: true,
 };

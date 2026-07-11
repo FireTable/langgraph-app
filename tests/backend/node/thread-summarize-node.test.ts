@@ -11,7 +11,8 @@ vi.mock("@/lib/memory/queries", () => ({
   writeSummary: mockWriteSummary,
 }));
 
-vi.mock("@/backend/model", () => ({
+vi.mock("@/backend/model", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/backend/model")>()),
   chatModel: {
     withStructuredOutput: () => ({ invoke: mockInvoke }),
   },

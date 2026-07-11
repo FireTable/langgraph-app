@@ -1,4 +1,4 @@
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { CapturedSpan } from "@/lib/observability/callback";
 
 // ponytail: shared aggregate computation. Used by the API route
 // (server-side pre-compute) AND by the panel for tests / type imports.

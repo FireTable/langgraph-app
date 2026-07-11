@@ -57,18 +57,63 @@ If only one provider is configured, the other button still renders but Better Au
 
 Every `/api/threads/*` route requires a session cookie and filters by `session.user.id`. Cross-user access returns 404 (not 403) to avoid leaking the existence of other users' threads. Deleting a user cascades through `ON DELETE CASCADE` and removes their threads (FR-021).
 
+## Roles
+
+Every user has a `roleId` FK pointing at the `role` table (`lib/auth/schema.ts`). The role controls the **credit quota** — the rolling-window cap on LLM usage enforced at call time (see [`docs/CREDIT.md`](./CREDIT.md)). Three roles ship in the migration seed:
+
+| `id`    | `name` | `creditLimit` | `windowHours` |
+| ------- | ------ | ------------- | ------------- |
+| `guest` | Guest  | 20            | 24            |
+| `user`  | User   | 200           | 24            |
+| `admin` | Admin  | `null`        | 24            |
+
+`admin` has `creditLimit = null` (= unlimited). The default for new signups is `"user"`. The admin UI ([`docs/ADMIN.md`](./ADMIN.md)) lets an existing admin edit `creditLimit` / `windowHours` per role and create new tiers (`pro`, `vip`, ...).
+
+### How `roleId` reaches the session
+
+Better Auth's `additionalFields` config (`lib/auth/config.ts`) exposes `roleId` on the session payload:
+
+```ts
+user: {
+  additionalFields: {
+    roleId: {
+      type: "string",
+      defaultValue: "user",
+      input: false, // client signup / update payloads can't set it — promotion
+                    // goes through the INITIAL_ADMIN_EMAIL hook, not the wire
+    },
+  },
+}
+```
+
+`input: false` is the safety belt: even if a malicious client crafts a sign-up body with `roleId: "admin"`, Better Auth rejects it. Promotion only happens server-side via the bootstrap hook.
+
+`withAuth` (`lib/auth/with-auth.ts`) reads `session.user.roleId` to gate routes — `withAuth({ role: "admin" }, handler)` returns 403 to anyone whose parsed roleId isn't `"admin"`. The runtime Zod-validate via `roleIdSchema` is the second safety belt: any FK-corrupt value falls back to `"user"` and a true admin route rejects the call.
+
+### Bootstrap admin
+
+The first admin is bootstrapped by `INITIAL_ADMIN_EMAIL` (see the env table below for full mechanics). In short: sign up a user whose email matches the env var, and the `databaseHooks.user.create.after` hook promotes them to `admin`. Subsequent signups by the same email stay `"user"` (Better Auth's uniqueness constraint on `user.email` makes that a non-event anyway, but the hook short-circuits the UPDATE either way).
+
+To add a second admin later: sign them up with a different email, then either flip their `roleId` via the DB (`UPDATE "user" SET role_id = 'admin' WHERE email = '<email>';`) or use the admin UI's Roles tab once one admin exists. There is no in-UI "make this user an admin" affordance today.
+
+### Removed env knobs
+
+`INITIAL_ADMIN_EMAIL` replaces an earlier env-quota knob (the pre-roles prototype had per-user `creditLimit` env values). The migration to the `role` table is the only place this is configured today.
+
 ## Environment variables
 
 See `.env.example` for the full list. Required for auth:
 
-| Variable                                    | Required                                       | Notes                                                                      |
-| ------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------- |
-| `BETTER_AUTH_SECRET`                        | Yes                                            | 32-byte hex string (`openssl rand -hex 32`). Used to sign session cookies. |
-| `BETTER_AUTH_URL`                           | Yes (defaults to `http://localhost:3000`)      | Base URL of the Next.js app. Used for OAuth callback construction.         |
-| `RESEND_API_KEY`                            | Yes                                            | From <https://resend.com/api-keys>.                                        |
-| `RESEND_FROM_EMAIL`                         | Optional (defaults to `onboarding@resend.dev`) | Must be a verified domain in production.                                   |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | Optional                                       | Enable the GitHub button.                                                  |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional                                       | Enable the Google button.                                                  |
+| Variable                                    | Required                                       | Notes                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`                        | Yes                                            | 32-byte hex string (`openssl rand -hex 32`). Used to sign session cookies.                                                                                                                                                                                                                                                                                                  |
+| `BETTER_AUTH_URL`                           | Yes (defaults to `http://localhost:3000`)      | Base URL of the Next.js app. Used for OAuth callback construction.                                                                                                                                                                                                                                                                                                          |
+| `RESEND_API_KEY`                            | Yes                                            | From <https://resend.com/api-keys>.                                                                                                                                                                                                                                                                                                                                         |
+| `RESEND_FROM_EMAIL`                         | Optional (defaults to `onboarding@resend.dev`) | Must be a verified domain in production.                                                                                                                                                                                                                                                                                                                                    |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | Optional                                       | Enable the GitHub button.                                                                                                                                                                                                                                                                                                                                                   |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional                                       | Enable the Google button.                                                                                                                                                                                                                                                                                                                                                   |
+| `LLM_KEY_ENCRYPTION_KEY`                    | Yes                                            | 32-byte hex string (`openssl rand -hex 32`). AES-256-GCM KEK that wraps every entry in `provider.apiKeys[]`. Required to start the server — the admin UI returns 503 on first request if this is missing or malformed (no silent "no encryption" fallback). Rotating it is out of scope (would need a one-shot re-encryption script over every row in `provider.api_keys`). |
+| `INITIAL_ADMIN_EMAIL`                       | Optional                                       | Bootstrap the first admin. On signup, if `user.email.toLowerCase() === INITIAL_ADMIN_EMAIL.toLowerCase()`, the user's `role_id` is set to `'admin'`. Idempotent — leave set forever; only the FIRST signup with this email is promoted. To add a second admin later, use the admin UI role management tab or a direct DB update.                                            |
 
 ## Troubleshooting
 

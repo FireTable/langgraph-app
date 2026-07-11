@@ -1,4 +1,5 @@
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import { RunnableConfig } from "@langchain/core/runnables";
 import { z } from "zod";
 
 import { chatModel } from "@/backend/model";
@@ -20,17 +21,16 @@ const RouteDecisionSchema = z.object({
 
 export type RouterDecision = z.infer<typeof RouteDecisionSchema>;
 
-export async function routerAgentNode({
-  messages,
-}: {
-  messages: BaseMessage[];
-}): Promise<{ routerDecision: RouterDecision }> {
+export async function routerAgentNode(
+  state: { messages: BaseMessage[] },
+  config?: RunnableConfig,
+): Promise<{ routerDecision: RouterDecision }> {
   // ponytail: router is a yes/no classifier on the CURRENT turn. Full
   // history is a token-cost move AND can distract the classifier into
   // routing off a stale topic. The trailing HumanMessage is always the
   // current turn — the router runs before any AI reply for this turn
   // exists.
-  const lastUserMessage = messages.findLast((m) => m instanceof HumanMessage);
+  const lastUserMessage = state.messages.findLast((m) => m instanceof HumanMessage);
   const system = new SystemMessage(ROUTER_AGENT_PROMPT);
   const invokeMessages = lastUserMessage ? [system, lastUserMessage] : [system];
 
@@ -40,7 +40,8 @@ export async function routerAgentNode({
       method: "jsonSchema",
     })
     .invoke(invokeMessages, {
-      tags: ["nostream"],
+      ...config,
+      tags: [...(config?.tags ?? []), "nostream"],
     })) as RouterDecision;
 
   return { routerDecision: decision };

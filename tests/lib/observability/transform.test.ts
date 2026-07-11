@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { transformCapturedToSpanData } from "@/lib/observability/transform";
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { CapturedSpan } from "@/lib/observability/callback";
 
 function makeSpan(overrides: Partial<CapturedSpan>): CapturedSpan {
   // ponytail: every test span gets a default run_id. Production

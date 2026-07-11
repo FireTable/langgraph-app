@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import * as authSchema from "@/lib/auth/schema";
 import { sendVerificationEmail } from "@/lib/email/send-verification";
@@ -43,6 +44,41 @@ export const auth =
       enabled: true,
       requireEmailVerification: true,
       minPasswordLength: 8,
+    },
+    user: {
+      additionalFields: {
+        // Exposed on session.user.roleId via Better Auth's additionalFields
+        // plumbing; client-side reads only (`input: false` blocks signup/
+        // update payloads from setting it — promotion goes through the
+        // INITIAL_ADMIN_EMAIL hook in lib/auth/config.ts, not the wire).
+        roleId: {
+          type: "string",
+          defaultValue: "user",
+          input: false,
+        },
+      },
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          // ponytail: bootstrap the first admin via env. Idempotent — only
+          // the FIRST signup with a matching email is promoted; subsequent
+          // signups by the same email stay `user` (Better Auth's uniqueness
+          // constraint on `user.email` makes that a non-event anyway).
+          // Leave INITIAL_ADMIN_EMAIL set forever; it costs nothing on
+          // every other signup (one short-circuit before the UPDATE).
+          after: async (created) => {
+            const adminEmail = process.env.INITIAL_ADMIN_EMAIL?.toLowerCase();
+            if (!adminEmail || !created.email) return;
+            if (created.email.toLowerCase() !== adminEmail) return;
+            if (created.roleId === "admin") return;
+            await db
+              .update(authSchema.user)
+              .set({ roleId: "admin" })
+              .where(eq(authSchema.user.id, created.id));
+          },
+        },
+      },
     },
     session: {
       expiresIn: 60 * 60 * 24 * 7,

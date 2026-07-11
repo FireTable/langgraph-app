@@ -6,7 +6,7 @@ import { langGraphClient } from "@/lib/langgraph/client";
 import { db } from "@/db/client";
 import { observabilitySpans } from "@/lib/observability/schema";
 import { and, eq } from "drizzle-orm";
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { CapturedSpan } from "@/lib/observability/callback";
 
 type Params = { id: string; parentMessageId: string; spanId: string };
 

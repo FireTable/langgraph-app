@@ -2,7 +2,7 @@
 // extracted from panel.tsx so the isNew logic can be unit-tested without
 // spinning up the AUI runtime.
 
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { CapturedSpan } from "@/lib/observability/callback";
 
 export type MessageEntry = { role: string; body: string; isNew?: boolean };
 

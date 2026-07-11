@@ -1,17 +1,19 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Serialized } from "@langchain/core/load/serializable";
 import { HumanMessage } from "@langchain/core/messages";
-import { CapturingHandler } from "@/backend/observability/callback-collector";
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import { CapturingHandler } from "@/lib/observability/callback";
+import type { CapturedSpan } from "@/lib/observability/callback";
 
-// ponytail: regression guard for the deleted fire-and-forget DB lookup
-// in start(). Mock the queries module so a re-introduction of an async
-// `findLatestParentMessageId` call from a sync Start hook would fail
-// this assertion. The DB fallback now lives entirely in
-// `bulkInsertSpans` (queries.ts::backfillParentMessageIds), which is
-// covered by its own tests under tests/lib/observability/.
+// ponytail: CapturingHandler calls `bulkInsertSpans` directly (no
+// constructor injection). Mock the queries module so we can verify
+// the wiring without touching the real DB.
+const { bulkInsertSpansMock, findLatestParentMessageIdMock } = vi.hoisted(() => ({
+  bulkInsertSpansMock: vi.fn(async () => {}),
+  findLatestParentMessageIdMock: vi.fn(async () => null),
+}));
 vi.mock("@/lib/observability/queries", () => ({
-  findLatestParentMessageId: vi.fn(async () => null),
+  bulkInsertSpans: bulkInsertSpansMock,
+  findLatestParentMessageId: findLatestParentMessageIdMock,
 }));
 
 // ponytail: stub isGraphInterrupt so handleToolError can dispatch to
@@ -27,6 +29,21 @@ vi.mock("@langchain/langgraph", () => ({
   isGraphInterrupt: isGraphInterruptMock,
 }));
 
+// ponytail: reset the hoisted mocks between tests so call counts are
+// per-test. Without this, expect.toHaveBeenCalledTimes(N) accumulates
+// across the file's tests and fails the second test that fires >1 calls.
+beforeEach(() => {
+  bulkInsertSpansMock.mockReset();
+  bulkInsertSpansMock.mockResolvedValue(undefined);
+  findLatestParentMessageIdMock.mockReset();
+  findLatestParentMessageIdMock.mockResolvedValue(null);
+  isGraphInterruptMock.mockReset();
+  isGraphInterruptMock.mockImplementation((err: unknown): boolean => {
+    const e = err as { name?: string } | null | undefined;
+    return !!e && (e.name === "GraphInterrupt" || e.name === "NodeInterrupt");
+  });
+});
+
 // ponytail: Serialized is a structural union; tests only need an object
 // with an `id` array so the handler can pull the class-name tail. Cast
 // through unknown to bypass the union discriminator.
@@ -34,14 +51,13 @@ function fakeSerialized(name: string): Serialized {
   return { id: [name] } as unknown as Serialized;
 }
 
-function makeHandler(bulkInsert: (spans: CapturedSpan[]) => Promise<void>) {
-  return new CapturingHandler({ bulkInsert });
+function makeHandler() {
+  return new CapturingHandler();
 }
 
 describe("CapturingHandler — bulkInsert wiring", () => {
   it("calls bulkInsert with the span when its handleChainEnd fires", async () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("RunnableSequence"),
       {},
@@ -53,18 +69,16 @@ describe("CapturingHandler — bulkInsert wiring", () => {
       },
     );
     handler.handleChainEnd({ result: "ok" }, "run-1");
-    expect(bulkInsert).toHaveBeenCalledTimes(1);
-    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(bulkInsertSpansMock).toHaveBeenCalledTimes(1);
+    const flushed = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
     expect(flushed).toHaveLength(1);
     expect(flushed[0]?.span_id).toBe("run-1");
     expect(flushed[0]?.status).toBe("completed");
   });
 
   it("swallows bulkInsert errors and does not throw out of handleChainEnd", async () => {
-    const bulkInsert = vi.fn(async () => {
-      throw new Error("db down");
-    });
-    const handler = makeHandler(bulkInsert);
+    bulkInsertSpansMock.mockRejectedValueOnce(new Error("db down"));
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("RunnableSequence"),
       {},
@@ -79,8 +93,7 @@ describe("CapturingHandler — bulkInsert wiring", () => {
   });
 
   it("fires bulkInsert once per chain end (not once per buffer entry)", async () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(fakeSerialized("outer"), {}, "outer", undefined, undefined, {
       langgraph_thread_id: "t-1",
     });
@@ -89,14 +102,13 @@ describe("CapturingHandler — bulkInsert wiring", () => {
     });
     handler.handleChainEnd({ ok: true }, "inner");
     handler.handleChainEnd({ ok: true }, "outer");
-    expect(bulkInsert).toHaveBeenCalledTimes(2);
+    expect(bulkInsertSpansMock).toHaveBeenCalledTimes(2);
   });
 
   it("does not call bulkInsert when handleChainEnd is invoked without a matching Start", () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainEnd({ ok: true }, "unknown-run");
-    expect(bulkInsert).not.toHaveBeenCalled();
+    expect(bulkInsertSpansMock).not.toHaveBeenCalled();
   });
 
   it("still works without a bulkInsert configured (default no-op)", () => {
@@ -117,8 +129,7 @@ describe("CapturingHandler — bulkInsert wiring", () => {
 
 describe("CapturingHandler — parent_message_id extraction", () => {
   it("tags every span with the last HumanMessage id from the outermost chain's inputs", async () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
       {
@@ -148,8 +159,8 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     // comes first → mock.calls[0] is [llm-1 span]. ChainEnd for outer
     // comes second → mock.calls[1] is [outer span]. Both should carry
     // the same parent_message_id since they're in the same invoke.
-    const llmCall = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
-    const chainCall = (bulkInsert.mock.calls[1] as unknown as [CapturedSpan[]])[0];
+    const llmCall = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const chainCall = (bulkInsertSpansMock.mock.calls[1] as unknown as [CapturedSpan[]])[0];
     expect(llmCall[0]?.span_id).toBe("llm-1");
     expect(llmCall[0]?.meta.parent_message_id).toBe("h-2");
     expect(chainCall[0]?.span_id).toBe("outer");
@@ -163,8 +174,7 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     // the parent_message_id column from DB on INSERT, so the eventual
     // span row still tags correctly. See lib/langgraph/last-human-
     // message-id.ts docstring for the trade-off.
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
       {
@@ -184,13 +194,12 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     );
     handler.handleChainEnd({ ok: true }, "outer-2");
 
-    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const flushed = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
     expect(flushed[0]?.meta.parent_message_id).toBeNull();
   });
 
   it("sets parent_message_id to null when the outermost chain has no human messages", async () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
       { messages: [] },
@@ -200,13 +209,12 @@ describe("CapturingHandler — parent_message_id extraction", () => {
       { langgraph_thread_id: "t-3" },
     );
     handler.handleChainEnd({ ok: true }, "outer-3");
-    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const flushed = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
     expect(flushed[0]?.meta.parent_message_id).toBeNull();
   });
 
   it("clears parent_message_id after the outermost chain ends so the next invoke recomputes", async () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     // First invoke: human message h-A
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
@@ -229,10 +237,10 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     handler.handleChainEnd({ ok: true }, "run-B");
 
     // First call: outer-A end → span meta has h-A
-    const callA = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const callA = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
     expect(callA[0]?.meta.parent_message_id).toBe("h-A");
     // Second call: outer-B end → span meta has h-B (not stuck on h-A)
-    const callB = (bulkInsert.mock.calls[1] as unknown as [CapturedSpan[]])[0];
+    const callB = (bulkInsertSpansMock.mock.calls[1] as unknown as [CapturedSpan[]])[0];
     expect(callB[0]?.meta.parent_message_id).toBe("h-B");
   });
 });
@@ -246,8 +254,7 @@ describe("CapturingHandler — sync Start hooks stay sync", () => {
   // it's never called locks the invariant.
   it("does not call findLatestParentMessageId from handleChainStart when inputs has no HumanMessage", async () => {
     const { findLatestParentMessageId } = await import("@/lib/observability/queries");
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
       { messages: [] },
@@ -262,8 +269,7 @@ describe("CapturingHandler — sync Start hooks stay sync", () => {
 
   it("does not schedule async work from handleLLMStart even when parent pmid is null", async () => {
     const { findLatestParentMessageId } = await import("@/lib/observability/queries");
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
       { messages: [] },
@@ -300,8 +306,7 @@ describe("CapturingHandler — interrupt / human span", () => {
   }
 
   it("flips the tool span to status=completed + clears error + ended_at when interrupt() fires", () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
       {},
@@ -317,7 +322,7 @@ describe("CapturingHandler — interrupt / human span", () => {
     handler.handleToolError(interruptError(), "tool-1");
 
     // bulkInsert calls: [0] = tool span re-persisted as completed, [1] = human span
-    const toolFlushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const toolFlushed = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
     expect(toolFlushed[0]?.span_id).toBe("tool-1");
     expect(toolFlushed[0]?.status).toBe("completed");
     expect(toolFlushed[0]?.error).toBeNull();
@@ -330,8 +335,7 @@ describe("CapturingHandler — interrupt / human span", () => {
   });
 
   it("inserts a child human span with kind=human, status=waiting, parented to the tool", () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
       {},
@@ -345,8 +349,8 @@ describe("CapturingHandler — interrupt / human span", () => {
     });
     handler.handleToolError(interruptError(), "tool-2");
 
-    const toolFlushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
-    const humanFlushed = (bulkInsert.mock.calls[1] as unknown as [CapturedSpan[]])[0];
+    const toolFlushed = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const humanFlushed = (bulkInsertSpansMock.mock.calls[1] as unknown as [CapturedSpan[]])[0];
     const human = humanFlushed[0];
     expect(human?.span_id).toBe("tool-2-interrupt");
     expect(human?.name).toBe("interrupt");
@@ -361,8 +365,7 @@ describe("CapturingHandler — interrupt / human span", () => {
   });
 
   it("treats a regular tool error as failed (does not insert a human span)", () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
       {},
@@ -376,8 +379,8 @@ describe("CapturingHandler — interrupt / human span", () => {
     });
     handler.handleToolError(new Error("boom"), "tool-x");
 
-    expect(bulkInsert).toHaveBeenCalledTimes(1);
-    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(bulkInsertSpansMock).toHaveBeenCalledTimes(1);
+    const flushed = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
     expect(flushed[0]?.status).toBe("failed");
     expect(flushed[0]?.error).toBe("boom");
   });
@@ -400,8 +403,7 @@ describe("CapturingHandler — interrupt / human span", () => {
     // handleChainEnd fires (after the user resumes and the chain
     // actually finishes); bulkInsertSpans' backfill only handles the
     // synthetic human span — chains wait for their own end.
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("RunnableSequence"),
       {},
@@ -412,7 +414,7 @@ describe("CapturingHandler — interrupt / human span", () => {
     );
     handler.handleChainError(interruptError(), "tools-wrapper");
 
-    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const flushed = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
     expect(flushed[0]?.span_id).toBe("tools-wrapper");
     expect(flushed[0]?.status).toBe("waiting");
     expect(flushed[0]?.error).toBeNull();
@@ -427,8 +429,7 @@ describe("CapturingHandler — interrupt / human span", () => {
     // ponytail: regression guard — only GraphInterrupt should bypass
     // the failed status. A regular chain error (e.g. a downstream tool
     // threw something other than interrupt) must still surface as failed.
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("RunnableSequence"),
       {},
@@ -439,7 +440,7 @@ describe("CapturingHandler — interrupt / human span", () => {
     );
     handler.handleChainError(new Error("downstream boom"), "chain-fail");
 
-    const flushed = (bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const flushed = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
     expect(flushed[0]?.status).toBe("failed");
     expect(flushed[0]?.error).toBe("downstream boom");
   });
@@ -447,8 +448,7 @@ describe("CapturingHandler — interrupt / human span", () => {
 
 describe("CapturingHandler — payload trims (Phase 1)", () => {
   it("strips redundant fields from incoming meta before persisting", async () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("RunnableSequence"),
       {},
@@ -480,7 +480,7 @@ describe("CapturingHandler — payload trims (Phase 1)", () => {
       },
     );
     handler.handleChainEnd({ ok: true }, "run-meta");
-    const [spans] = bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]];
+    const [spans] = bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]];
     const kept = spans[0].meta as Record<string, unknown>;
     expect(kept.langgraph_node).toBe("chatModel");
     expect(kept.langgraph_step).toBe(2);
@@ -503,8 +503,7 @@ describe("CapturingHandler — payload trims (Phase 1)", () => {
   });
 
   it("strips duplicate prompt/completion counters from LLM output response_metadata", async () => {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChatModelStart(
       fakeSerialized("ChatOpenAI"),
       [[{ getType: () => "human", content: "" } as never]],
@@ -531,7 +530,7 @@ describe("CapturingHandler — payload trims (Phase 1)", () => {
       } as never,
       "run-out",
     );
-    const [spans] = bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]];
+    const [spans] = bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]];
     const out = spans[0].output as {
       generations: Array<Array<Record<string, unknown>>>;
       llmOutput?: unknown;
@@ -549,11 +548,10 @@ describe("CapturingHandler — AIMessage with tool_calls renders body", () => {
   // and the matching handleLLMEnd flushes it through bulkInsert. Going
   // through both hooks is the only way to inspect the captured input.
   function capturePrompt(messages: Array<Record<string, unknown>>, runId: string) {
-    const bulkInsert = vi.fn(async () => {});
-    const handler = makeHandler(bulkInsert);
+    const handler = makeHandler();
     handler.handleChatModelStart(fakeSerialized("ChatOpenAI"), [messages] as never, runId);
     handler.handleLLMEnd({ generations: [] } as never, runId);
-    const [spans] = bulkInsert.mock.calls[0] as unknown as [CapturedSpan[]];
+    const [spans] = bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]];
     return (spans[0].input as { prompts: string[] }).prompts[0];
   }
 

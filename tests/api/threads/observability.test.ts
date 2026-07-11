@@ -9,7 +9,7 @@ import { bulkInsertSpans } from "@/lib/observability/queries";
 import { GET, DELETE } from "@/app/api/threads/[id]/observability/route";
 import { setCurrentUser } from "@/tests/helpers/session";
 import { TEST_USER, ensureTestUser, makeUser, cleanupUsers } from "@/tests/helpers/auth";
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { CapturedSpan } from "@/lib/observability/callback";
 
 function makeSpan(overrides: Partial<CapturedSpan> = {}): CapturedSpan {
   return {

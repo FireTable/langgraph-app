@@ -41,7 +41,7 @@ import {
   WrenchIcon,
 } from "lucide-react";
 
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { CapturedSpan } from "@/lib/observability/callback";
 import { CopyButton } from "@/components/ui/copy-button";
 import type { AggregateDTO } from "@/lib/observability/validators";
 import { buildLlmMessages, type MessageEntry } from "@/components/observability/llm-messages";

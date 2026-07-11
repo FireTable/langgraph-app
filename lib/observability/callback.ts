@@ -6,6 +6,7 @@ import type { Serialized } from "@langchain/core/load/serializable";
 import type { LLMResult } from "@langchain/core/outputs";
 import { isGraphInterrupt } from "@langchain/langgraph";
 import { lastHumanMessageId } from "@/lib/langgraph/last-human-message-id";
+import { bulkInsertSpans } from "@/lib/observability/queries";
 
 // Subset of §9.1 columns that a callback handler can populate. Some
 // (thread_id, user_id, turn_no) are fill-in fields — the handler leaves
@@ -208,8 +209,6 @@ function deepUnwrapLC(v: unknown): unknown {
   return v;
 }
 
-type BulkInsert = (spans: CapturedSpan[]) => Promise<void>;
-
 export class CapturingHandler extends BaseCallbackHandler {
   name = "capturing";
   // runId → in-flight record. End hooks look up, mutate, leave behind.
@@ -242,14 +241,8 @@ export class CapturingHandler extends BaseCallbackHandler {
   // thread's most recent non-null parent_message_id.
   private currentParentMessageId: string | null = null;
 
-  // ponytail: bulkInsert is injected by the model wiring layer so this
-  // file stays free of DB imports. Default no-op keeps the demo
-  // runner and tests work without a live Postgres.
-  private bulkInsert: BulkInsert;
-
-  constructor(opts: { bulkInsert?: BulkInsert } = {}) {
+  constructor() {
     super();
-    this.bulkInsert = opts.bulkInsert ?? (async () => {});
   }
 
   // ---- Start hooks: every Start allocates a span, every End mutates it. ----
@@ -580,7 +573,7 @@ export class CapturingHandler extends BaseCallbackHandler {
   private persistSpan(runId: string) {
     const span = this.spans.get(runId);
     if (!span) return;
-    this.bulkInsert([span]).catch((err: unknown) => {
+    bulkInsertSpans([span]).catch((err: unknown) => {
       console.error(`[CapturingHandler] bulkInsert failed for ${runId}:`, err);
     });
   }
