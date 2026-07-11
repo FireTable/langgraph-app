@@ -36,14 +36,20 @@ async function codeModelNode({ messages }: { messages: BaseMessage[] }, config?:
   return { messages: [response] };
 }
 
+function codeModelRoute(state: { messages: BaseMessage[] }) {
+  return toolsCondition(state) === END ? END : "codeTools";
+}
+
 const codeToolNode = new ToolNode(CODE_TOOLS);
 
+
+
 const builder = new StateGraph(CommonAgentState)
-  .addNode("model", codeModelNode)
-  .addNode("tools", codeToolNode)
-  .addEdge(START, "model")
-  .addConditionalEdges("model", toolsCondition, ["tools", END])
-  .addEdge("tools", "model");
+  .addNode("codeModel", codeModelNode)
+  .addNode("codeTools", codeToolNode)
+  .addEdge(START, "codeModel")
+  .addConditionalEdges("codeModel", codeModelRoute, ["codeTools", END])
+  .addEdge("codeTools", "codeModel");
 
 export const codeAgent = builder.compile({
   ...subgraphCheckpointerConfig,

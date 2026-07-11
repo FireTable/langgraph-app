@@ -45,22 +45,19 @@ async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?:
   return { messages: [response] };
 }
 
-// ponytail: loadThreadSummariesForPrompt lives in backend/memory/template.ts
-// so weatherAgent / cryptoAgent / codeAgent share the same helper.
-// toolsCondition returns END for the no-tool path; that END becomes the
-// subgraph's exit point and the parent routes chatAgent → afterAgent.
 function chatModelRoute(state: { messages: BaseMessage[] }) {
-  return toolsCondition(state) === END ? END : "tools";
+  return toolsCondition(state) === END ? END : "chatTools";
 }
+
 
 const chatToolNode = new ToolNode(ALL_TOOLS);
 
 const builder = new StateGraph(CommonAgentState)
-  .addNode("model", chatModelNode)
-  .addNode("tools", chatToolNode)
-  .addEdge(START, "model")
-  .addConditionalEdges("model", chatModelRoute, ["tools", END])
-  .addEdge("tools", "model");
+  .addNode("chatModel", chatModelNode)
+  .addNode("chatTools", chatToolNode)
+  .addEdge(START, "chatModel")
+  .addConditionalEdges("chatModel", chatModelRoute, ["chatTools", END])
+  .addEdge("chatTools", "chatModel");
 
 export const chatAgent = builder.compile({
   ...subgraphCheckpointerConfig,

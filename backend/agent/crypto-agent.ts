@@ -32,14 +32,18 @@ async function cryptoModelNode({ messages }: { messages: BaseMessage[] }, config
   return { messages: [response] };
 }
 
+function cryptoModelRoute(state: { messages: BaseMessage[] }) {
+  return toolsCondition(state) === END ? END : "cryptoTools";
+}
+
 const cryptoToolNode = new ToolNode(CRYPTO_TOOLS);
 
 const builder = new StateGraph(CommonAgentState)
-  .addNode("model", cryptoModelNode)
-  .addNode("tools", cryptoToolNode)
-  .addEdge(START, "model")
-  .addConditionalEdges("model", toolsCondition, ["tools", END])
-  .addEdge("tools", "model");
+  .addNode("cryptoModel", cryptoModelNode)
+  .addNode("cryptoTools", cryptoToolNode)
+  .addEdge(START, "cryptoModel")
+  .addConditionalEdges("cryptoModel", cryptoModelRoute, ["cryptoTools", END])
+  .addEdge("cryptoTools", "cryptoModel");
 
 export const cryptoAgent = builder.compile({
   ...subgraphCheckpointerConfig,

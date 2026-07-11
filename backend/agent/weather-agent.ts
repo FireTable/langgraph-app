@@ -40,14 +40,18 @@ async function weatherModelNode(
   return { messages: [response] };
 }
 
+function weatherModelRoute(state: { messages: BaseMessage[] }) {
+  return toolsCondition(state) === END ? END : "weatherTools";
+}
+
 const weatherToolNode = new ToolNode(WEATHER_TOOLS);
 
 const builder = new StateGraph(CommonAgentState)
-  .addNode("model", weatherModelNode)
-  .addNode("tools", weatherToolNode)
-  .addEdge(START, "model")
-  .addConditionalEdges("model", toolsCondition, ["tools", END])
-  .addEdge("tools", "model");
+  .addNode("weatherModel", weatherModelNode)
+  .addNode("weatherTools", weatherToolNode)
+  .addEdge(START, "weatherModel")
+  .addConditionalEdges("weatherModel", weatherModelRoute, ["weatherTools", END])
+  .addEdge("weatherTools", "weatherModel");
 
 export const weatherAgent = builder.compile({
   ...subgraphCheckpointerConfig,
