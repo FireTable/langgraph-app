@@ -22,14 +22,17 @@ function SlotSkeleton(): React.JSX.Element {
   // when status lands. Cache hits skip this — peekCachedStatus
   // returns non-null and we render straight away.
   return (
-    <div className="flex flex-col gap-1 px-2 py-1.5">
-      <Skeleton className="mb-1.5 h-4 w-16" />
-      <Skeleton className="ml-6 h-3 w-28" />
-      <div className="ml-6 flex items-center gap-2">
-        <Skeleton className="h-1.5 flex-1 rounded-full" />
+    <div className="flex flex-col gap-2 px-2 py-1.5">
+      <div className="flex items-center gap-2 text-sm font-normal">
+        <CoinsIcon className="size-4 text-muted-foreground" />
+        <span>Usage</span>
+      </div>
+      <Skeleton className="ml-6 h-3 w-32" />
+      <div className="ml-6 flex items-center gap-2 w-50">
+        <Skeleton className="h-2 flex-1 rounded-full" />
         <Skeleton className="h-3 w-7" />
       </div>
-      <Skeleton className="ml-6 h-3 w-36" />
+      <Skeleton className="ml-6 h-3 w-42" />
     </div>
   );
 }
