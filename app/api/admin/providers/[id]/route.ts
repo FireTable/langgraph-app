@@ -41,6 +41,16 @@ export const PATCH = withAuth<IdParams>({ role: "admin" }, async (req, { params 
 });
 
 export const DELETE = withAuth<IdParams>({ role: "admin" }, async (_req, { params }) => {
+  // ponytail: the "default" provider is the seed row — at least one
+  // provider must always exist for the system to boot, so deleting it
+  // is rejected with 409. Frontend disables the button on the same
+  // id, but server-side is the source of truth.
+  if (params.id === "default") {
+    return NextResponse.json(
+      { code: "PROTECTED", message: "the default provider cannot be deleted" },
+      { status: 409 },
+    );
+  }
   const existing = await loadProvider(params.id);
   if (!existing) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   await db.delete(provider).where(eq(provider.id, params.id));

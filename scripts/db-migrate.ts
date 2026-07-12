@@ -92,7 +92,6 @@ async function applyContent(sql: postgres.Sql, content: string) {
  * Replace `__VAR__` placeholders in migration SQL with `process.env.VAR`
  * values. Pure-SQL migrations can't read process.env, so the runner
  * interpolates a few well-known placeholders:
- *   - `__SEED_PROVIDER_ID__`     → 'openai' (or OPENAI_SEED_PROVIDER_ID env)
  *   - `__OPENAI_BASE_URL__`      → env or 'https://api.openai.com/v1'
  *   - `__OPENAI_API_KEY_ENCRYPTED__` → AES-256-GCM blob jsonb literal
  *                                    (empty array when OPENAI_API_KEY is unset)
@@ -108,7 +107,6 @@ async function interpolateEnv(content: string): Promise<string> {
   const { encryptApiKey } = await import("@/lib/provider/admin");
 
   const baseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
-  const providerId = process.env.OPENAI_SEED_PROVIDER_ID ?? "openai";
 
   const apiKeyJson = (() => {
     const plain = process.env.OPENAI_API_KEY;
@@ -127,7 +125,6 @@ async function interpolateEnv(content: string): Promise<string> {
   })();
 
   return content
-    .replaceAll("__SEED_PROVIDER_ID__", providerId.replace(/'/g, "''"))
     .replaceAll("__OPENAI_BASE_URL__", baseUrl.replace(/'/g, "''"))
     .replaceAll("__OPENAI_API_KEY_ENCRYPTED__", apiKeyJson)
     .replaceAll("__OPENAI_MODEL_JSON__", modelJson)
@@ -155,7 +152,7 @@ const WORKAROUND_29 = [
 
 async function main() {
   // Single connection — sequential statements, no pool needed for migrations.
-  const sql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
+  const sql = postgres(databaseUrl, { max: 1, onnotice: () => { } });
   try {
     // 1. Drizzle migrations — Better Auth schema + observability_spans.
     //    postgres-js sends each chunk as a simple-query string;

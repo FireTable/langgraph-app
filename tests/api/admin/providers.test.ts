@@ -83,7 +83,7 @@ describe("GET /api/admin/providers", () => {
           {
             encryptedKey: "blob-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             iv: "iv-bbbbbbbbbbbb",
-            name: "...1234",
+            name: "sk-…1234",
           },
         ],
       })
@@ -97,7 +97,7 @@ describe("GET /api/admin/providers", () => {
     expect(text).not.toContain("iv");
     expect(text).not.toContain(PLAINTEXT);
 
-    expect(body.providers[0].apiKeys[0]).toEqual({ name: "...1234" });
+    expect(body.providers[0].apiKeys[0]).toEqual({ name: "sk-…1234" });
   });
 });
 
@@ -194,7 +194,7 @@ describe("POST /api/admin/providers/[id]/keys (encryption)", () => {
     expect(text).not.toContain(PLAINTEXT);
     expect(text).not.toContain("encryptedKey");
     expect(text).not.toContain("iv");
-    expect(body.apiKeys[0].name).toBe("...1234");
+    expect(body.apiKeys[0].name).toBe("sk-…1234");
 
     const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
     expect(row?.apiKeys[0].encryptedKey).toBeTruthy();
@@ -214,7 +214,7 @@ describe("POST /api/admin/providers/[id]/keys (encryption)", () => {
 });
 
 describe("PATCH /api/admin/providers/[id]/keys/[keyName] (rotate)", () => {
-  it("re-encrypts and keeps the same name; never leaks the new plaintext", async () => {
+  it("re-encrypts and re-derives name from new plaintext; never leaks plaintext", async () => {
     await db
       .insert(provider)
       .values({ id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" })
@@ -224,15 +224,53 @@ describe("PATCH /api/admin/providers/[id]/keys/[keyName] (rotate)", () => {
     const beforeBlob = before!.apiKeys[0].encryptedKey;
 
     const NEW = "sk-test-rotated-secret-9999";
-    const res = await RotateKey(jsonRequest({ plaintext: NEW }), ctxKey("openai", "...1234"));
+    const res = await RotateKey(jsonRequest({ plaintext: NEW }), ctxKey("openai", "sk-…1234"));
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).not.toContain(NEW);
     expect(text).not.toContain(PLAINTEXT);
 
     const after = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
-    expect(after!.apiKeys[0].name).toBe("...1234");
+    // ponytail: deriveKeyName("sk-test-rotated-secret-9999") = "sk-…9999"
+    // (first3 "sk-" + ellipsis + last4 "9999"). Display stays in sync
+    // with what's actually encrypted.
+    expect(after!.apiKeys[0].name).toBe("sk-…9999");
     expect(after!.apiKeys[0].encryptedKey).not.toBe(beforeBlob);
+  });
+
+  it("explicit body.name overrides the derived name on rotate", async () => {
+    await db
+      .insert(provider)
+      .values({ id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" })
+      .onConflictDoNothing();
+    await AddKey(jsonRequest({ plaintext: PLAINTEXT }), ctxId("openai"));
+
+    const NEW = "sk-test-rotated-secret-9999";
+    const res = await RotateKey(
+      jsonRequest({ plaintext: NEW, name: "primary" }),
+      ctxKey("openai", "sk-…1234"),
+    );
+    expect(res.status).toBe(200);
+
+    const after = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
+    expect(after!.apiKeys[0].name).toBe("primary");
+    expect(after!.apiKeys[0].encryptedKey).not.toBe("");
+  });
+
+  it("rotating to a plaintext whose tail matches another key returns 409", async () => {
+    await db
+      .insert(provider)
+      .values({ id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" })
+      .onConflictDoNothing();
+    await AddKey(jsonRequest({ plaintext: PLAINTEXT }), ctxId("openai"));
+    await AddKey(jsonRequest({ plaintext: "sk-different-secret-9999" }), ctxId("openai"));
+
+    const res = await RotateKey(
+      jsonRequest({ plaintext: "sk-whatever-collides-9999" }),
+      ctxKey("openai", "sk-…1234"),
+    );
+    if (res.status !== 409) console.log("body:", await res.text());
+    expect(res.status).toBe(409);
   });
 
   it("returns 404 when the keyName does not exist", async () => {
@@ -242,6 +280,59 @@ describe("PATCH /api/admin/providers/[id]/keys/[keyName] (rotate)", () => {
       .onConflictDoNothing();
     const res = await RotateKey(jsonRequest({ plaintext: "x" }), ctxKey("openai", "...zzzz"));
     expect(res.status).toBe(404);
+  });
+
+  it("renames a key when body.name is provided and unique", async () => {
+    await db
+      .insert(provider)
+      .values({ id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" })
+      .onConflictDoNothing();
+    await AddKey(jsonRequest({ plaintext: PLAINTEXT }), ctxId("openai"));
+
+    const res = await RotateKey(
+      jsonRequest({ name: "primary" }),
+      ctxKey("openai", "sk-…1234"),
+    );
+    expect(res.status).toBe(200);
+
+    const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
+    expect(row?.apiKeys).toHaveLength(1);
+    expect(row?.apiKeys[0].name).toBe("primary");
+  });
+
+  it("returns 409 on rename collision", async () => {
+    await db
+      .insert(provider)
+      .values({ id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" })
+      .onConflictDoNothing();
+    await AddKey(jsonRequest({ plaintext: PLAINTEXT }), ctxId("openai"));
+    await AddKey(jsonRequest({ plaintext: PLAINTEXT + "-other" }), ctxId("openai"));
+
+    const names = (await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") }))
+      ?.apiKeys.map((k) => k.name);
+    // deriveKeyName is `${first3}…${last4}` — the second plaintext ends
+    // in "-other" so its name is "sk-…ther".
+    expect(names).toEqual(["sk-…1234", "sk-…ther"]);
+
+    const res = await RotateKey(
+      jsonRequest({ name: "sk-…ther" }),
+      ctxKey("openai", "sk-…1234"),
+    );
+    if (res.status !== 409) console.log("body:", await res.text());
+    expect(res.status).toBe(409);
+  });
+
+  it("returns 400 on rename with invalid chars", async () => {
+    await db
+      .insert(provider)
+      .values({ id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" })
+      .onConflictDoNothing();
+    await AddKey(jsonRequest({ plaintext: PLAINTEXT }), ctxId("openai"));
+    const res = await RotateKey(
+      jsonRequest({ name: "bad name!" }),
+      ctxKey("openai", "sk-…1234"),
+    );
+    expect(res.status).toBe(400);
   });
 });
 

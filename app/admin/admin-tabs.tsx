@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Loader2 } from "lucide-react";
@@ -8,8 +8,10 @@ import { Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -18,6 +20,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { FormDialog } from "@/components/ui/form-dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { toast } from "sonner";
 
 type PublicProviderApiKey = { name: string };
@@ -93,62 +102,26 @@ export function AdminTabs({
 
 function ProvidersPanel({ initial }: { initial: PublicProviderRow[] }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
-  const [newId, setNewId] = useState("");
-  const [newName, setNewName] = useState("");
-
-  const create = () => {
-    if (!newId.trim() || !newName.trim()) {
-      toast.error("id and name are required");
-      return;
-    }
-    start(async () => {
-      const r = await jsonFetch("/api/admin/providers", {
-        method: "POST",
-        body: JSON.stringify({ id: newId.trim(), name: newName.trim(), enabled: true }),
-      });
-      if (!r.ok) {
-        toast.error(errMsg(r.body));
-        return;
-      }
-      setNewId("");
-      setNewName("");
-      toast.success("provider created");
-      router.refresh();
-    });
-  };
+  const [adding, setAdding] = useState(false);
 
   return (
     <div className="flex flex-col gap-4">
-      <Card className="border-dashed bg-muted/20">
-        <CardHeader>
-          <CardTitle>New Provider</CardTitle>
-          <CardDescription>
-            Add a new provider to the system.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <Input
-            className="flex-1"
-            placeholder="Provider id (e.g. openai)"
-            value={newId}
-            onChange={(e) => setNewId(e.target.value)}
-            disabled={pending}
-            aria-label="New provider id"
-          />
-          <Input
-            className="flex-1"
-            placeholder="Display name (e.g. OpenAI)"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            disabled={pending}
-            aria-label="New provider name"
-          />
-          <Button onClick={create} disabled={pending}>
-            Create
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="flex items-center justify-between gap-3">
+        <div className="mt-2">
+          <h2 className="font-semibold">Providers</h2>
+          <p className="text-muted-foreground text-xs mt-1">
+            LLM providers, their base URL, models, and API keys.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setAdding(true)}
+        >
+          Add provider
+        </Button>
+      </div>
 
       {initial.length === 0 ? (
         <Card>
@@ -159,6 +132,16 @@ function ProvidersPanel({ initial }: { initial: PublicProviderRow[] }) {
       ) : (
         initial.map((p) => <ProviderCard key={p.id} provider={p} />)
       )}
+
+      <ProviderDialog
+        mode="add"
+        open={adding}
+        onClose={() => setAdding(false)}
+        onSaved={() => {
+          setAdding(false);
+          router.refresh();
+        }}
+      />
     </div>
   );
 }
@@ -166,29 +149,8 @@ function ProvidersPanel({ initial }: { initial: PublicProviderRow[] }) {
 function ProviderCard({ provider }: { provider: PublicProviderRow }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [editingBaseUrl, setEditingBaseUrl] = useState(false);
-  const [baseUrlDraft, setBaseUrlDraft] = useState(provider.baseUrl);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-
-  const saveBaseUrl = () => {
-    if (!baseUrlDraft.trim()) {
-      toast.error("baseUrl is required");
-      return;
-    }
-    start(async () => {
-      const r = await jsonFetch(`/api/admin/providers/${encodeURIComponent(provider.id)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ baseUrl: baseUrlDraft.trim() }),
-      });
-      if (!r.ok) {
-        toast.error(errMsg(r.body));
-        return;
-      }
-      setEditingBaseUrl(false);
-      toast.success("baseUrl updated");
-      router.refresh();
-    });
-  };
+  const [editing, setEditing] = useState(false);
 
   const confirmRemove = () => {
     start(async () => {
@@ -209,71 +171,93 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
     <Card>
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle>{provider.name}</CardTitle>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <CardTitle>{provider.name}</CardTitle>
+              <Badge variant={provider.enabled ? "success" : "muted"}>
+                {provider.enabled ? "Enabled" : "Disabled"}
+              </Badge>
+            </div>
             <CardDescription>
-              id: <span className="font-mono">{provider.id}</span> ·{" "}
-              {provider.enabled ? "enabled" : "disabled"}
+              <span className="font-mono">{provider.id}</span>
+              <span className="mx-1.5">·</span>
+              {new Date(provider.createdAt).toLocaleDateString("en-CA")}
             </CardDescription>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setConfirmingDelete(true)}
-            disabled={pending}
-          >
-            Delete
-          </Button>
+          <div className="flex gap-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setEditing(true)}
+              disabled={pending}
+            >
+              Edit
+            </Button>
+            {/* ponytail: the default provider is the seed row — at least
+                one provider must always exist for the system to boot,
+                so we hard-disable Delete on id="default". The backend
+                enforces the same rule (DELETE /[id]/route returns 409
+                for default) so a tampered client can't slip past. */}
+            {provider.id === "default" ? (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={0}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled
+                        aria-label="Default provider cannot be deleted"
+                      >
+                        Delete
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Default provider — at least one is required.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmingDelete(true)}
+                disabled={pending}
+              >
+                Delete
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
         <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">Base URL</h3>
-          {editingBaseUrl ? (
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-              <Input
-                value={baseUrlDraft}
-                onChange={(e) => setBaseUrlDraft(e.target.value)}
-                disabled={pending}
-                placeholder="https://api.openai.com/v1"
-              />
-              <div className="flex gap-1">
-                <Button size="sm" onClick={saveBaseUrl} disabled={pending}>
-                  Save
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setBaseUrlDraft(provider.baseUrl);
-                    setEditingBaseUrl(false);
-                  }}
-                  disabled={pending}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between gap-2">
-              <code className="text-muted-foreground text-xs">{provider.baseUrl}</code>
-              <Button
-                variant="outline"
-                size="xs"
-                onClick={() => setEditingBaseUrl(true)}
-                disabled={pending}
-              >
-                Edit
-              </Button>
-            </div>
-          )}
+          <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            Base URL
+          </span>
+          <code className="text-foreground text-xs break-all">{provider.baseUrl}</code>
         </div>
         <Separator />
         <ModelsSection providerId={provider.id} models={provider.models} />
         <Separator />
         <KeysSection providerId={provider.id} keys={provider.apiKeys} />
       </CardContent>
+
+      <ProviderDialog
+        mode="edit"
+        open={editing}
+        provider={provider}
+        pending={pending}
+        onClose={() => setEditing(false)}
+        onSaved={() => {
+          setEditing(false);
+          router.refresh();
+        }}
+      />
 
       <Dialog open={confirmingDelete} onOpenChange={(open) => !open && setConfirmingDelete(false)}>
         <DialogContent>
@@ -319,55 +303,9 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
 function ModelsSection({ providerId, models }: { providerId: string; models: PublicModel[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [name, setName] = useState("");
-  const [inputPer1k, setInputPer1k] = useState("0.001");
-  const [outputPer1k, setOutputPer1k] = useState("0.002");
   const [pendingDelete, setPendingDelete] = useState<PublicModel | null>(null);
-
-  const add = () => {
-    if (!name.trim()) {
-      toast.error("model name required");
-      return;
-    }
-    const inp = Number(inputPer1k);
-    const out = Number(outputPer1k);
-    if (!Number.isFinite(inp) || inp < 0 || !Number.isFinite(out) || out < 0) {
-      toast.error("rates must be non-negative numbers");
-      return;
-    }
-    start(async () => {
-      const r = await jsonFetch(`/api/admin/providers/${encodeURIComponent(providerId)}/models`, {
-        method: "POST",
-        body: JSON.stringify({
-          name: name.trim(),
-          enabled: true,
-          inputPer1k: inp,
-          outputPer1k: out,
-        }),
-      });
-      if (!r.ok) {
-        toast.error(errMsg(r.body));
-        return;
-      }
-      setName("");
-      toast.success("model added");
-      router.refresh();
-    });
-  };
-
-  const toggle = (m: PublicModel, enabled: boolean) => {
-    start(async () => {
-      const r = await jsonFetch(
-        `/api/admin/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(m.name)}`,
-        { method: "PATCH", body: JSON.stringify({ enabled }) },
-      );
-      if (!r.ok) {
-        toast.error(errMsg(r.body));
-        return;
-      }
-      router.refresh();
-    });
-  };
+  const [editing, setEditing] = useState<PublicModel | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const confirmRemove = () => {
     if (!pendingDelete) return;
@@ -388,7 +326,18 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
 
   return (
     <div className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">Models</h3>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-medium">Models</h3>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={() => setAdding(true)}
+          disabled={pending}
+        >
+          Add model
+        </Button>
+      </div>
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-muted-foreground text-xs">
@@ -412,76 +361,39 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
                 <tr key={m.name} className="border-t">
                   <td className="px-3 py-2 font-mono text-xs">{m.name}</td>
                   <td className="px-3 py-2">
-                    <button
-                      type="button"
-                      className="text-xs underline"
-                      onClick={() => toggle(m, !m.enabled)}
-                      disabled={pending}
-                    >
-                      {m.enabled ? "Yes" : "No"}
-                    </button>
+                    <Badge variant={m.enabled ? "success" : "muted"}>
+                      {m.enabled ? "Enabled" : "Disabled"}
+                    </Badge>
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{m.inputPer1k}</td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{m.outputPer1k}</td>
                   <td className="px-3 py-2 text-right">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="xs"
-                      onClick={() => setPendingDelete(m)}
-                      disabled={pending}
-                      aria-label={`Delete ${m.name}`}
-                    >
-                      Delete
-                    </Button>
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => setEditing(m)}
+                        disabled={pending}
+                        aria-label={`Edit ${m.name}`}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => setPendingDelete(m)}
+                        disabled={pending}
+                        aria-label={`Delete ${m.name}`}
+                      >
+                        Delete
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))
             )}
-            <tr className="border-t">
-              <td className="px-3 py-1.5">
-                <Input
-                  placeholder="gpt-4o-mini"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  disabled={pending}
-                  className="h-5 px-1.5 font-mono text-[11px]"
-                  aria-label="New model name"
-                />
-              </td>
-              <td className="text-muted-foreground px-3 py-1.5 text-center text-xs">—</td>
-              <td className="px-3 py-1.5">
-                <Input
-                  placeholder="input / 1k"
-                  value={inputPer1k}
-                  onChange={(e) => setInputPer1k(e.target.value)}
-                  disabled={pending}
-                  className="h-5 px-1.5 text-right font-mono text-[11px]"
-                  aria-label="New model input rate"
-                />
-              </td>
-              <td className="px-3 py-1.5">
-                <Input
-                  placeholder="output / 1k"
-                  value={outputPer1k}
-                  onChange={(e) => setOutputPer1k(e.target.value)}
-                  disabled={pending}
-                  className="h-5 px-1.5 text-right font-mono text-[11px]"
-                  aria-label="New model output rate"
-                />
-              </td>
-              <td className="px-3 py-2 text-right">
-                <Button
-                  type="button"
-                  size="xs"
-                  onClick={add}
-                  disabled={pending}
-                  aria-label="Add model"
-                >
-                  Add
-                </Button>
-              </td>
-            </tr>
           </tbody>
         </table>
       </div>
@@ -525,52 +437,173 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {editing ? (
+        <ModelDialog
+          mode="edit"
+          open={editing !== null}
+          model={editing}
+          providerId={providerId}
+          pending={pending}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
+
+      <ModelDialog
+        mode="add"
+        open={adding}
+        providerId={providerId}
+        pending={pending}
+        onClose={() => setAdding(false)}
+        onSaved={() => {
+          setAdding(false);
+          router.refresh();
+        }}
+      />
     </div>
+  );
+}
+
+function ModelDialog(
+  props:
+    | {
+      mode: "add";
+      open: boolean;
+      providerId: string;
+      pending: boolean;
+      onClose: () => void;
+      onSaved: () => void;
+    }
+    | {
+      mode: "edit";
+      open?: boolean;
+      model: PublicModel;
+      providerId: string;
+      pending: boolean;
+      onClose: () => void;
+      onSaved: () => void;
+    },
+) {
+  const isEdit = props.mode === "edit";
+  const initialName = isEdit ? props.model.name : "";
+  const initialEnabled = isEdit ? props.model.enabled : true;
+  const initialIn = isEdit ? String(props.model.inputPer1k) : "0.001";
+  const initialOut = isEdit ? String(props.model.outputPer1k) : "0.002";
+
+  const [name, setName] = useState(initialName);
+  const [enabled, setEnabled] = useState(initialEnabled);
+  const [inputPer1k, setInputPer1k] = useState(initialIn);
+  const [outputPer1k, setOutputPer1k] = useState(initialOut);
+  const [saving, start] = useTransition();
+
+  useEffect(() => {
+    setName(initialName);
+    setEnabled(initialEnabled);
+    setInputPer1k(initialIn);
+    setOutputPer1k(initialOut);
+  }, [initialName, initialEnabled, initialIn, initialOut]);
+
+  const save = () => {
+    if (!name.trim()) {
+      toast.error("model name required");
+      return;
+    }
+    const inp = Number(inputPer1k);
+    const out = Number(outputPer1k);
+    if (!Number.isFinite(inp) || inp < 0 || !Number.isFinite(out) || out < 0) {
+      toast.error("rates must be non-negative numbers");
+      return;
+    }
+    const path = isEdit
+      ? `/api/admin/providers/${encodeURIComponent(props.providerId)}/models/${encodeURIComponent(props.model.name)}`
+      : `/api/admin/providers/${encodeURIComponent(props.providerId)}/models`;
+    const method = isEdit ? "PATCH" : "POST";
+    const body = isEdit
+      ? { enabled, inputPer1k: inp, outputPer1k: out }
+      : { name: name.trim(), enabled, inputPer1k: inp, outputPer1k: out };
+    start(async () => {
+      const r = await jsonFetch(path, { method, body: JSON.stringify(body) });
+      if (!r.ok) {
+        toast.error(errMsg(r.body));
+        return;
+      }
+      toast.success(isEdit ? "model updated" : "model added");
+      props.onSaved();
+    });
+  };
+
+  return (
+    <FormDialog
+      open={isEdit ? (props.open ?? false) : props.open}
+      onOpenChange={(o: boolean) => !o && props.onClose()}
+      title={isEdit ? "Edit model" : "Add model"}
+      description={
+        isEdit
+          ? `${props.model.name} — the name is the identifier and can’t be changed here. Delete + recreate to rename.`
+          : "Register a new model for this provider. The name is the JSONB-array key and can’t be changed later — delete + recreate to rename."
+      }
+      submitLabel={isEdit ? "Save" : "Add"}
+      pending={saving || props.pending}
+      onSubmit={save}
+      onCancel={props.onClose}
+    >
+      <div className="flex flex-col gap-4">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Name</span>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={isEdit || saving || props.pending}
+            placeholder="gpt-4o-mini"
+            className="font-mono"
+          />
+        </label>
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium">Enabled</span>
+          <Switch
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            disabled={saving || props.pending}
+            aria-label="Model enabled"
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Input / 1k</span>
+          <Input
+            type="number"
+            step="0.001"
+            min={0}
+            value={inputPer1k}
+            onChange={(e) => setInputPer1k(e.target.value)}
+            disabled={saving || props.pending}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Output / 1k</span>
+          <Input
+            type="number"
+            step="0.001"
+            min={0}
+            value={outputPer1k}
+            onChange={(e) => setOutputPer1k(e.target.value)}
+            disabled={saving || props.pending}
+          />
+        </label>
+      </div>
+    </FormDialog>
   );
 }
 
 function KeysSection({ providerId, keys }: { providerId: string; keys: PublicProviderApiKey[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [plain, setPlain] = useState("");
   const [pendingDelete, setPendingDelete] = useState<PublicProviderApiKey | null>(null);
-
-  const add = () => {
-    if (!plain.trim()) {
-      toast.error("api key required");
-      return;
-    }
-    start(async () => {
-      const r = await jsonFetch(`/api/admin/providers/${encodeURIComponent(providerId)}/keys`, {
-        method: "POST",
-        body: JSON.stringify({ plaintext: plain }),
-      });
-      if (!r.ok) {
-        toast.error(errMsg(r.body));
-        return;
-      }
-      setPlain("");
-      toast.success("key added");
-      router.refresh();
-    });
-  };
-
-  const rotate = (k: PublicProviderApiKey) => {
-    const next = window.prompt(`Rotate ${k.name} — paste the new key value`);
-    if (!next) return;
-    start(async () => {
-      const r = await jsonFetch(
-        `/api/admin/providers/${encodeURIComponent(providerId)}/keys/${encodeURIComponent(k.name)}`,
-        { method: "PATCH", body: JSON.stringify({ plaintext: next }) },
-      );
-      if (!r.ok) {
-        toast.error(errMsg(r.body));
-        return;
-      }
-      toast.success("key rotated");
-      router.refresh();
-    });
-  };
+  const [editing, setEditing] = useState<PublicProviderApiKey | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const confirmRemove = () => {
     if (!pendingDelete) return;
@@ -589,15 +622,26 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
     });
   };
 
+
   return (
     <div className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">API keys</h3>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-medium">API keys</h3>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={() => setAdding(true)}
+          disabled={pending}
+        >
+          Add key
+        </Button>
+      </div>
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-muted-foreground text-xs">
             <tr>
-              <th className="px-3 py-2 text-left font-medium">Name</th>
-              <th className="px-3 py-2 text-right font-medium">Created</th>
+              <th className="px-3 py-2 text-left font-medium">Key</th>
               <th className="px-3 py-2 text-right font-medium" />
             </tr>
           </thead>
@@ -612,17 +656,16 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
               keys.map((k) => (
                 <tr key={k.name} className="border-t">
                   <td className="px-3 py-2 font-mono text-xs">{k.name}</td>
-                  <td className="text-muted-foreground px-3 py-2 text-right text-xs">—</td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex justify-end gap-1">
                       <Button
                         type="button"
                         variant="outline"
                         size="xs"
-                        onClick={() => rotate(k)}
+                        onClick={() => setEditing(k)}
                         disabled={pending}
                       >
-                        Rotate
+                        Edit
                       </Button>
                       <Button
                         type="button"
@@ -639,30 +682,6 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
                 </tr>
               ))
             )}
-            <tr className="border-t">
-              <td colSpan={2} className="px-3 py-1.5">
-                <Input
-                  type="password"
-                  placeholder="sk-…xyz"
-                  value={plain}
-                  onChange={(e) => setPlain(e.target.value)}
-                  disabled={pending}
-                  className="h-5 px-1.5 font-mono text-[11px]"
-                  aria-label="New API key"
-                />
-              </td>
-              <td className="px-3 py-1.5 text-right">
-                <Button
-                  type="button"
-                  size="xs"
-                  onClick={add}
-                  disabled={pending}
-                  aria-label="Add API key"
-                >
-                  Add
-                </Button>
-              </td>
-            </tr>
           </tbody>
         </table>
       </div>
@@ -707,71 +726,179 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {editing ? (
+        <KeyDialog
+          mode="edit"
+          open={editing !== null}
+          keyEntry={editing}
+          providerId={providerId}
+          pending={pending}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
+
+      <KeyDialog
+        mode="add"
+        open={adding}
+        providerId={providerId}
+        pending={pending}
+        onClose={() => setAdding(false)}
+        onSaved={() => {
+          setAdding(false);
+          router.refresh();
+        }}
+      />
     </div>
+  );
+}
+
+function KeyDialog(
+  props:
+    | {
+      mode: "add";
+      open: boolean;
+      providerId: string;
+      pending: boolean;
+      onClose: () => void;
+      onSaved: () => void;
+    }
+    | {
+      mode: "edit";
+      open?: boolean;
+      keyEntry: PublicProviderApiKey;
+      providerId: string;
+      pending: boolean;
+      onClose: () => void;
+      onSaved: () => void;
+    },
+) {
+  const isEdit = props.mode === "edit";
+
+  const [plain, setPlain] = useState("");
+  const [saving, start] = useTransition();
+
+  // ponytail: re-seed `plain` on each dialog re-open so the new secret
+  // field starts blank (the edit-mode hint says "required to update",
+  // so a leftover from a previous attempt is misleading).
+  useEffect(() => {
+    setPlain("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isEdit ? props.mode === "edit" && props.keyEntry?.name : props.mode === "add" && props.open,
+  ]);
+
+  const save = () => {
+    const trimmedPlain = plain.trim();
+    if (!trimmedPlain) {
+      toast.error("key value required");
+      return;
+    }
+    start(async () => {
+      // ponytail: both add and edit send plaintext only — the display
+      // name is derived server-side from the ciphertext tail via
+      // deriveKeyName (POST) or stays the same on PATCH (which keeps
+      // the path-bound keyName and only re-encrypts the blob). The
+      // backend's optional `name` field is left for SQL-direct edits
+      // and is intentionally not exposed in the UI.
+      const path = isEdit
+        ? `/api/admin/providers/${encodeURIComponent(props.providerId)}/keys/${encodeURIComponent(props.keyEntry.name)}`
+        : `/api/admin/providers/${encodeURIComponent(props.providerId)}/keys`;
+      const method = isEdit ? "PATCH" : "POST";
+      const r = await jsonFetch(path, {
+        method,
+        body: JSON.stringify({ plaintext: trimmedPlain }),
+      });
+      if (!r.ok) {
+        if (r.status === 409) {
+          toast.error("a key with this tail already exists");
+        } else {
+          toast.error(errMsg(r.body));
+        }
+        return;
+      }
+      toast.success(isEdit ? "key updated" : "key added");
+      props.onSaved();
+    });
+  };
+
+  return (
+    <FormDialog
+      open={isEdit ? (props.open ?? false) : props.open}
+      onOpenChange={(o: boolean) => !o && props.onClose()}
+      title={isEdit ? "Edit API key" : "Add API key"}
+      description={
+        isEdit
+          ? "Paste the new secret — the same key entry is re-encrypted in place. The display name (derived from the ciphertext) updates automatically."
+          : "Paste the key value to add it. The display name is derived from the ciphertext — both the value and the visible name are produced by the same secret."
+      }
+      submitLabel={isEdit ? "Save" : "Add"}
+      pending={saving || props.pending}
+      onSubmit={save}
+      onCancel={props.onClose}
+    >
+      <div className="flex flex-col gap-4">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">
+            {isEdit ? "New key value" : "Key value"}
+          </span>
+          <Input
+            type="password"
+            value={plain}
+            onChange={(e) => setPlain(e.target.value)}
+            disabled={saving || props.pending}
+            placeholder={isEdit ? "required to update" : "sk-…xyz"}
+            className="font-mono"
+          />
+        </label>
+        {isEdit ? (
+          <p className="text-muted-foreground text-xs">
+            Display name <span className="font-mono">{props.keyEntry.name}</span> is derived
+            from the key value — paste the new secret to regenerate.
+          </p>
+        ) : null}
+      </div>
+    </FormDialog>
   );
 }
 
 function RolesPanel({ initial }: { initial: RoleRow[] }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
-  const [id, setId] = useState("");
-  const [name, setName] = useState("");
-  const [limit, setLimit] = useState("");
-  const [hours, setHours] = useState("24");
-
-  const create = () => {
-    if (!id.trim() || !name.trim()) {
-      toast.error("id and name required");
-      return;
-    }
-    const h = Number(hours);
-    if (!Number.isInteger(h) || h < 1) {
-      toast.error("windowHours must be a positive integer");
-      return;
-    }
-    const limitNum = limit.trim() === "" ? null : Number(limit);
-    if (limitNum !== null && (!Number.isFinite(limitNum) || limitNum < 0)) {
-      toast.error("creditLimit must be a non-negative number or blank for unlimited");
-      return;
-    }
-    start(async () => {
-      const r = await jsonFetch("/api/admin/roles", {
-        method: "POST",
-        body: JSON.stringify({
-          id: id.trim(),
-          name: name.trim(),
-          creditLimit: limitNum,
-          windowHours: h,
-        }),
-      });
-      if (!r.ok) {
-        toast.error(errMsg(r.body));
-        return;
-      }
-      setId("");
-      setName("");
-      setLimit("");
-      setHours("24");
-      toast.success("role created");
-      router.refresh();
-    });
-  };
+  const [adding, setAdding] = useState(false);
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="mt-2">
+          <h2 className="font-semibold">Roles</h2>
+          <p className="text-muted-foreground text-xs mt-1">
+            Roles set the per-window credit cap for users. A blank credit limit means
+            unlimited.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setAdding(true)}
+        >
+          Add role
+        </Button>
+      </div>
+
+
       <Card>
-        <CardHeader>
-          <CardTitle>Roles</CardTitle>
-          <CardDescription>
-            Roles set the per-window credit cap for users. A blank credit limit means unlimited.
-          </CardDescription>
-        </CardHeader>
+
         <CardContent>
           <div className="overflow-x-auto rounded-md border">
             <table className="w-full text-sm">
               <thead className="bg-muted/50 text-muted-foreground text-xs">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium">Id</th>
+                  <th className="px-3 py-2 text-left font-medium">ID</th>
                   <th className="px-3 py-2 text-left font-medium">Name</th>
                   <th className="px-3 py-2 text-right font-medium">Credit limit</th>
                   <th className="px-3 py-2 text-right font-medium">Window (h)</th>
@@ -782,59 +909,21 @@ function RolesPanel({ initial }: { initial: RoleRow[] }) {
                 {initial.map((r) => (
                   <RoleRowView key={r.id} role={r} />
                 ))}
-                <tr className="border-t">
-                  <td className="px-3 py-1.5">
-                    <Input
-                      placeholder="editor"
-                      value={id}
-                      onChange={(e) => setId(e.target.value)}
-                      disabled={pending}
-                      className="h-5 px-1.5 font-mono text-[11px]"
-                      aria-label="New role id"
-                    />
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <Input
-                      placeholder="Editor"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      disabled={pending}
-                      className="h-5 px-1.5 text-[11px]"
-                      aria-label="New role name"
-                    />
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <Input
-                      placeholder="blank = unlimited"
-                      value={limit}
-                      onChange={(e) => setLimit(e.target.value)}
-                      disabled={pending}
-                      className="h-5 px-1.5 text-right font-mono text-[11px]"
-                      aria-label="New role credit limit"
-                    />
-                  </td>
-                  <td className="px-3 py-1.5">
-                    <Input
-                      type="number"
-                      min={1}
-                      value={hours}
-                      onChange={(e) => setHours(e.target.value)}
-                      disabled={pending}
-                      className="h-5 px-1.5 text-right font-mono text-[11px]"
-                      aria-label="New role window hours"
-                    />
-                  </td>
-                  <td className="px-3 py-1.5 text-right">
-                    <Button size="xs" onClick={create} disabled={pending} aria-label="Add role">
-                      Add
-                    </Button>
-                  </td>
-                </tr>
               </tbody>
             </table>
           </div>
         </CardContent>
       </Card>
+
+      <RoleDialog
+        mode="add"
+        open={adding}
+        onClose={() => setAdding(false)}
+        onSaved={() => {
+          setAdding(false);
+          router.refresh();
+        }}
+      />
     </div>
   );
 }
@@ -843,36 +932,7 @@ function RoleRowView({ role }: { role: RoleRow }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(role.name);
-  const [limit, setLimit] = useState(role.creditLimit === null ? "" : String(role.creditLimit));
-  const [hours, setHours] = useState(String(role.windowHours));
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-
-  const save = () => {
-    const h = Number(hours);
-    if (!Number.isInteger(h) || h < 1) {
-      toast.error("windowHours must be a positive integer");
-      return;
-    }
-    const limitNum = limit.trim() === "" ? null : Number(limit);
-    if (limitNum !== null && (!Number.isFinite(limitNum) || limitNum < 0)) {
-      toast.error("creditLimit must be non-negative or blank");
-      return;
-    }
-    start(async () => {
-      const r = await jsonFetch(`/api/admin/roles/${encodeURIComponent(role.id)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ name: name.trim(), creditLimit: limitNum, windowHours: h }),
-      });
-      if (!r.ok) {
-        toast.error(errMsg(r.body));
-        return;
-      }
-      setEditing(false);
-      toast.success("role updated");
-      router.refresh();
-    });
-  };
 
   const remove = () => {
     start(async () => {
@@ -888,44 +948,6 @@ function RoleRowView({ role }: { role: RoleRow }) {
       router.refresh();
     });
   };
-
-  if (editing) {
-    return (
-      <tr className="border-t">
-        <td className="px-3 py-2 font-mono text-xs">{role.id}</td>
-        <td className="px-3 py-2">
-          <Input value={name} onChange={(e) => setName(e.target.value)} disabled={pending} />
-        </td>
-        <td className="px-3 py-2">
-          <Input
-            placeholder="blank = unlimited"
-            value={limit}
-            onChange={(e) => setLimit(e.target.value)}
-            disabled={pending}
-          />
-        </td>
-        <td className="px-3 py-2">
-          <Input
-            type="number"
-            min={1}
-            value={hours}
-            onChange={(e) => setHours(e.target.value)}
-            disabled={pending}
-          />
-        </td>
-        <td className="px-3 py-2 text-right">
-          <div className="flex justify-end gap-1">
-            <Button size="xs" onClick={save} disabled={pending}>
-              Save
-            </Button>
-            <Button variant="outline" size="xs" onClick={() => setEditing(false)} disabled={pending}>
-              Cancel
-            </Button>
-          </div>
-        </td>
-      </tr>
-    );
-  }
 
   return (
     <tr className="border-t">
@@ -993,6 +1015,325 @@ function RoleRowView({ role }: { role: RoleRow }) {
           </DialogContent>
         </Dialog>
       </td>
+      <RoleDialog
+        mode="edit"
+        open={editing}
+        role={role}
+        onClose={() => setEditing(false)}
+        onSaved={() => {
+          setEditing(false);
+          router.refresh();
+        }}
+      />
     </tr>
+  );
+}
+
+function RoleDialog(
+  props:
+    | {
+      mode: "add";
+      open: boolean;
+      onClose: () => void;
+      onSaved: () => void;
+    }
+    | {
+      mode: "edit";
+      open?: boolean;
+      role: RoleRow;
+      onClose: () => void;
+      onSaved: () => void;
+    },
+) {
+  const isEdit = props.mode === "edit";
+  const initialName = isEdit ? props.role.name : "";
+  const initialLimit = isEdit
+    ? props.role.creditLimit === null
+      ? ""
+      : String(props.role.creditLimit)
+    : "";
+  const initialHours = isEdit ? String(props.role.windowHours) : "24";
+
+  const [id, setId] = useState(isEdit ? props.role.id : "");
+  const [name, setName] = useState(initialName);
+  const [limit, setLimit] = useState(initialLimit);
+  const [hours, setHours] = useState(initialHours);
+  const [saving, start] = useTransition();
+
+  useEffect(() => {
+    setName(initialName);
+    setLimit(initialLimit);
+    setHours(initialHours);
+  }, [initialName, initialLimit, initialHours]);
+
+  const save = () => {
+    if (!name.trim()) {
+      toast.error("name required");
+      return;
+    }
+    if (!isEdit && !id.trim()) {
+      toast.error("id required");
+      return;
+    }
+    if (!isEdit && !/^[a-z][a-z0-9_-]*$/.test(id.trim())) {
+      toast.error("id must be lowercase alphanumeric / dash / underscore");
+      return;
+    }
+    const h = Number(hours);
+    if (!Number.isInteger(h) || h < 1) {
+      toast.error("windowHours must be a positive integer");
+      return;
+    }
+    const limitNum = limit.trim() === "" ? null : Number(limit);
+    if (limitNum !== null && (!Number.isFinite(limitNum) || limitNum < 0)) {
+      toast.error("creditLimit must be a non-negative number or blank for unlimited");
+      return;
+    }
+    start(async () => {
+      let r;
+      if (isEdit) {
+        r = await jsonFetch(`/api/admin/roles/${encodeURIComponent(props.role.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name: name.trim(), creditLimit: limitNum, windowHours: h }),
+        });
+      } else {
+        r = await jsonFetch("/api/admin/roles", {
+          method: "POST",
+          body: JSON.stringify({
+            id: id.trim(),
+            name: name.trim(),
+            creditLimit: limitNum,
+            windowHours: h,
+          }),
+        });
+      }
+      if (!r.ok) {
+        toast.error(errMsg(r.body));
+        return;
+      }
+      toast.success(isEdit ? "role updated" : "role created");
+      props.onSaved();
+    });
+  };
+
+  return (
+    <FormDialog
+      open={isEdit ? (props.open ?? false) : props.open}
+      onOpenChange={(o: boolean) => !o && props.onClose()}
+      title={isEdit ? `Edit role: ${props.role.id}` : "Add role"}
+      description={
+        isEdit
+          ? "ID is the FK identifier and can’t be changed here. Delete + recreate to rename."
+          : "Roles set the per-window credit cap for users. A blank credit limit means unlimited."
+      }
+      submitLabel={isEdit ? "Save" : "Add"}
+      pending={saving}
+      onSubmit={save}
+      onCancel={props.onClose}
+    >
+      <div className="flex flex-col gap-4">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">ID</span>
+          <Input
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            disabled={isEdit || saving}
+            placeholder="editor"
+            className="font-mono"
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Name</span>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={saving}
+            placeholder="Editor"
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Credit limit</span>
+          <Input
+            value={limit}
+            onChange={(e) => setLimit(e.target.value)}
+            disabled={saving}
+            placeholder="blank = unlimited"
+            type="number"
+            step="1"
+            min={0}
+            className="font-mono"
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Window (hours)</span>
+          <Input
+            type="number"
+            min={1}
+            value={hours}
+            onChange={(e) => setHours(e.target.value)}
+            disabled={saving}
+            className="font-mono"
+          />
+        </label>
+      </div>
+    </FormDialog>
+  );
+}
+
+// ponytail: provider add + edit share fields (display name, enabled,
+// baseUrl). Mode flips the title, submit label, and whether the auto-
+// generated id is shown. `id` is the DB primary key — PATCH doesn't
+// accept a rename, so the edit dialog locks it. Add mode hides it
+// entirely (server picks one from `crypto.randomUUID()`).
+type ProviderDialogProps =
+  | {
+    mode: "add";
+    open: boolean;
+    onClose: () => void;
+    onSaved: () => void;
+  }
+  | {
+    mode: "edit";
+    open?: boolean;
+    provider: PublicProviderRow;
+    pending: boolean;
+    onClose: () => void;
+    onSaved: () => void;
+  };
+
+function ProviderDialog(props: ProviderDialogProps) {
+  const isEdit = props.mode === "edit";
+  const initialName = isEdit ? props.provider.name : "";
+  const initialEnabled = isEdit ? props.provider.enabled : true;
+  const initialBaseUrl = isEdit ? props.provider.baseUrl : "";
+
+  const [name, setName] = useState(initialName);
+  const [enabled, setEnabled] = useState(initialEnabled);
+  const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
+  const [saving, start] = useTransition();
+
+  useEffect(() => {
+    setName(initialName);
+    setEnabled(initialEnabled);
+    setBaseUrl(initialBaseUrl);
+  }, [initialName, initialEnabled, initialBaseUrl]);
+
+  const save = () => {
+    if (!name.trim()) {
+      toast.error("display name is required");
+      return;
+    }
+    if (!baseUrl.trim()) {
+      toast.error("base URL is required");
+      return;
+    }
+    try {
+      // ponytail: trust the user but validate the URL parses — admin
+      // will hit 4xx from the upstream if they paste a typo, but a
+      // frontend check keeps the error next to the field.
+      // eslint-disable-next-line no-new
+      new URL(baseUrl.trim());
+    } catch {
+      toast.error("base URL must be a valid URL");
+      return;
+    }
+    start(async () => {
+      let r;
+      if (isEdit) {
+        r = await jsonFetch(
+          `/api/admin/providers/${encodeURIComponent(props.provider.id)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              name: name.trim(),
+              enabled,
+              baseUrl: baseUrl.trim(),
+            }),
+          },
+        );
+      } else {
+        // ponytail: id is auto-generated server-side — we send a UUID
+        // with a "prov_" prefix so the URL space is unmistakable.
+        // Collisions are astronomically unlikely but POST returns 409
+        // with a "DUPLICATE" code if it ever happens; the toast
+        // surfaces that as a fallback.
+        const newId = `prov_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+        r = await jsonFetch("/api/admin/providers", {
+          method: "POST",
+          body: JSON.stringify({
+            id: newId,
+            name: name.trim(),
+            enabled,
+            baseUrl: baseUrl.trim(),
+          }),
+        });
+      }
+      if (!r.ok) {
+        if (r.status === 409) {
+          toast.error("a provider with this id already exists");
+        } else {
+          toast.error(errMsg(r.body));
+        }
+        return;
+      }
+      toast.success(isEdit ? "provider updated" : "provider created");
+      props.onSaved();
+    });
+  };
+
+  return (
+    <FormDialog
+      open={isEdit ? (props.open ?? false) : props.open}
+      onOpenChange={(o: boolean) => !o && props.onClose()}
+      title={isEdit ? "Edit provider" : "Add provider"}
+      description={
+        isEdit
+          ? `ID ${props.provider.id} is the FK identifier and can’t be changed here. Delete + recreate to rename.`
+          : "Register a new LLM provider. The id is auto-generated; provide a display name, enabled toggle, and base URL."
+      }
+      submitLabel={isEdit ? "Save" : "Add"}
+      pending={saving || (isEdit ? props.pending : false)}
+      onSubmit={save}
+      onCancel={props.onClose}
+    >
+      <div className="flex flex-col gap-4">
+        {isEdit ? (
+          <div className="bg-muted/40 flex flex-col gap-1 rounded-md px-3 py-2">
+            <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              ID
+            </span>
+            <span className="font-mono text-xs">{props.provider.id}</span>
+          </div>
+        ) : null}
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Display name</span>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={saving || (isEdit ? props.pending : false)}
+            placeholder="OpenAI"
+          />
+        </label>
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium">Enabled</span>
+          <Switch
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            disabled={saving || (isEdit ? props.pending : false)}
+            aria-label="Provider enabled"
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Base URL</span>
+          <Input
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            disabled={saving || (isEdit ? props.pending : false)}
+            placeholder="https://api.openai.com/v1"
+            className="font-mono"
+          />
+        </label>
+      </div>
+    </FormDialog>
   );
 }

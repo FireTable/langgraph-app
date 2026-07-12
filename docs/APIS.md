@@ -338,13 +338,13 @@ Remove a key by its `name` (the derived tail).
 
 ### `PATCH /api/admin/providers/[id]/keys/[keyName]`
 
-Rotate an existing key. The `name` (UI identifier) is preserved — only the encrypted blob + IV are re-encrypted from the new plaintext.
+Rotate (new plaintext) and/or rename an existing key. Rotation re-derives `name` from the new plaintext via `deriveKeyName()` so the displayed tail stays in sync with what's encrypted. An explicit `name` in the body overrides the derived one (rename wins over rotate). Collision check excludes the entry being patched — a rotate-to-same-tail is a no-op rename with a fresh ciphertext.
 
-|               |                                                                         |
-| ------------- | ----------------------------------------------------------------------- |
-| Request body  | `{ plaintext: string (1..2048) }`                                       |
-| 200 response  | `PublicProvider`                                                        |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or key missing). |
+|               |                                                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | Any subset of `{ plaintext?: string (1..2048), name?: string (1..64, `^[a-zA-Z0-9_-…]+$`) }`. Empty body returns 400 `BAD_REQUEST`. |
+| 200 response  | `PublicProvider`                                                                                                                 |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or key missing), 409 `DUPLICATE` (renamed / derived name matches another). |
 
 ### `POST /api/admin/providers/[id]/models`
 

@@ -54,8 +54,8 @@ ALTER TABLE "user" ADD CONSTRAINT "user_role_id_role_id_fk" FOREIGN KEY ("role_i
 -- ON CONFLICT keeps the seed idempotent across re-runs.
 INSERT INTO "provider" ("id", "name", "enabled", "base_url", "api_keys", "models", "created_at", "updated_at")
 VALUES (
-  '__SEED_PROVIDER_ID__',
-  'OpenAI',
+  'default',
+  'Default Provider',
   true,
   '__OPENAI_BASE_URL__',
   '__OPENAI_API_KEY_ENCRYPTED__'::jsonb,
