@@ -16,18 +16,19 @@ Three roles ship in the migration seed (`db/migrations/0003_*.sql`):
 
 `user.roleId` (`lib/auth/schema.ts`) points at `role.id` via FK; Better Auth exposes `roleId` on the session via `additionalFields` (see [`docs/AUTH.md`](./AUTH.md) § Role mechanism). The default for new signups is `"user"`. The first admin is bootstrapped via `INITIAL_ADMIN_EMAIL` (see [`docs/AUTH.md`](./AUTH.md) § Bootstrap admin).
 
-### Rolling-window model
+### Calendar-aligned rolling-window model
 
-`creditLimit` is **per `windowHours`**, not a fixed UTC day. On every LLM call, `lib/credit/check.ts` runs:
+`creditLimit` is **per `windowHours`**, with windows bucketed at UTC-aligned multiples of `windowHours` from the Unix epoch. For `windowHours=24` the bucket is the UTC day; for `windowHours=8` the buckets are UTC 00:00 / 08:00 / 16:00; for any other `N` they're UTC 00:00 / N / 2N / ... On every LLM call, `lib/credit/check.ts` runs:
 
-```
-SELECT COALESCE(SUM(credits), 0), MIN(created_at)
+```sql
+-- windowStart = floor(now() / windowHours-hours) * windowHours-hours
+SELECT COALESCE(SUM(credits), 0) AS used
 FROM   credit_usage_log
 WHERE  user_id = $1 AND status = 'success'
-       AND created_at >= now() - interval '<windowHours> hours'
+       AND created_at >= $windowStart  -- bound by JS-side floor
 ```
 
-The cap holds iff `SUM(credits) < creditLimit`. The window slides continuously — there's no "midnight reset", no per-day token bucket. When the user goes over, the next call throws `CreditExceededError` carrying `resetAt = oldestInWindow.createdAt + windowHours` (i.e. "when the oldest call ages out of the window"), surfaced to the user via a friendly assistant message written by the graph node that caught the throw.
+The cap holds iff `SUM(credits) < creditLimit`. `resetAt` is `windowStart + windowHours` — the next UTC-aligned boundary. Display renders in the user's local timezone (`toLocaleTimeString`), so the "08:00 / 16:00" cycle reads as 16:00 / 00:00 for a UTC+8 user. When the user goes over, the next call throws `CreditExceededError` carrying that `resetAt`, surfaced to the user via a friendly assistant message written by the graph node that caught the throw.
 
 `windowHours` is capped at `720` (30 days) in the Zod schema. `0` is rejected; `null` is rejected. The `admin` role ships with `creditLimit = null` (= unlimited, see [`lib/credit/check.ts:checkCredit`](./../lib/credit/check.ts) — short-circuits the SUM entirely).
 

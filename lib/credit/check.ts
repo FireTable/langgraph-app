@@ -12,14 +12,14 @@ export type CreditStatus = {
   roleName: string;
 };
 
-// ponytail: the credit window is a fixed calendar day in **server
-// time (UTC)**, not a rolling 24h-from-first-call window. Every user
-// sees the same resetAt (next UTC 00:00), which makes "resets at
-// 14:06" stop drifting per-user depending on when they happened to
-// place their first in-window call. windowHours stays on the role
-// row for now but is treated as the count of hours the window stays
-// open (24 = a full UTC day; smaller values could mean shorter
-// multi-reset windows — see the TODO in the SQL).
+// ponytail: calendar-aligned rolling window in **UTC**. Windows are
+// fixed N-hour buckets starting at UTC 00:00 — for windowHours=8 the
+// boundaries are 00:00 / 08:00 / 16:00, for windowHours=24 it's just
+// 00:00. The SQL predicate `created_at >= windowStart` and the
+// displayed resetAt (`windowStart + windowHours`) are computed from
+// the same JS-side windowStart so they can't drift. Reset times
+// display in the user's local timezone via `toLocaleTimeString` in
+// the progress components.
 //
 // Admin role: creditLimit IS NULL → unlimited, skip the SUM entirely.
 export async function checkCredit(userId: string): Promise<CreditStatus> {
@@ -44,24 +44,20 @@ export async function checkCredit(userId: string): Promise<CreditStatus> {
     };
   }
 
-  // Fixed calendar window in UTC. We pick the start of the current
-  // UTC day as the window floor; resetAt is start-of-next-UTC-day.
-  // SUM is bounded by the same predicate so `used` never sees
-  // out-of-window rows.
-  //
-  // Note: windowHours is read but currently unused on the SQL side
-  // — the schema supports sub-day windows but only the 24h case is
-  // wired in. To honor a shorter windowHours, replace
-  // `date_trunc('day', now() AT TIME ZONE 'UTC')` with
-  // `now() - (windowHours || ' hours')::interval` and compute
-  // resetAt in JS. Out of scope for this MVP — keeping the window
-  // floor on a UTC day boundary matches the chat-surface copy.
+  // UTC-aligned window floor: bucket Date.now() into a multiple of
+  // windowHours from the Unix epoch. epoch=0 falls on a UTC midnight
+  // boundary, so the floors land on 00:00 / 08:00 / 16:00 UTC for
+  // windowHours=8.
+  const windowMs = windowHours * 60 * 60 * 1000;
+  const windowStart = new Date(Math.floor(Date.now() / windowMs) * windowMs);
+  const resetAt = new Date(windowStart.getTime() + windowMs);
+
   const [{ used }] = await db.execute<{ used: string }>(sql`
     SELECT COALESCE(SUM(${creditUsageLog.credits}), 0) AS used
     FROM ${creditUsageLog}
     WHERE ${creditUsageLog.userId} = ${userId}
       AND ${creditUsageLog.status} = 'success'
-      AND ${creditUsageLog.createdAt} >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+      AND ${creditUsageLog.createdAt} >= ${windowStart}
   `);
 
   const usedNum = Number(used);
@@ -71,17 +67,7 @@ export async function checkCredit(userId: string): Promise<CreditStatus> {
     used: usedNum,
     limit: creditLimit,
     windowHours,
-    resetAt: nextUtcMidnight(),
+    resetAt,
     roleName,
   };
-}
-
-// ponytail: independent of DB — keeps the SQL path to one round-trip
-// and lets the proxy / UserButton display a stable "resets at HH:MM"
-// even when the user has spent nothing in the current window.
-function nextUtcMidnight(): Date {
-  const now = new Date();
-  return new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0),
-  );
 }

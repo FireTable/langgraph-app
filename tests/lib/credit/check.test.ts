@@ -67,7 +67,7 @@ describe("checkCredit + recordLlmCall integration", () => {
     expect(status.used).toBe(0);
   });
 
-  it("user role: at cap → not allowed, resetAt computed from oldest in-window call", async () => {
+  it("user role: at cap → not allowed, resetAt is the next windowHours boundary", async () => {
     const userId = await makeUser("user");
     const rate = { inputPer1k: 1, outputPer1k: 1 };
     for (let i = 0; i < 200; i++) {
