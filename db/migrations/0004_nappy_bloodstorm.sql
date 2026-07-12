@@ -1,0 +1,16 @@
+-- ponytail: per-user ban flag so admins can revoke login access without
+-- deleting the row. Better Auth's own admin plugin adds this column too,
+-- but we skip the plugin (see `feat/15-user-credit-quota` discussion):
+-- it brings a parallel `role` text column that conflicts with our
+-- existing `role_id` FK to the `role` table. A boolean on our schema is
+-- half the surface and stays consistent with the default-provider /
+-- last-admin guards elsewhere in the admin API.
+--
+-- Ban semantics:
+--   1. New signins are blocked at session.create.before (see
+--      lib/auth/config.ts) — the hook throws if user.banned is true.
+--   2. Ban takes effect IMMEDIATELY for already-signed-in users:
+--      PATCH /api/admin/users/[id] with banned=true also DELETEs every
+--      row in `session` where userId matches. The next request hits no
+--      session row → 401 → client is signed out.
+ALTER TABLE "user" ADD COLUMN "banned" boolean DEFAULT false NOT NULL;

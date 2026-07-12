@@ -79,6 +79,25 @@ export const auth =
           },
         },
       },
+      session: {
+        // ponytail: block new sessions for banned users. Existing sessions
+        // stay valid (the admin can revoke them explicitly via Better Auth's
+        // listUserSessions / revokeUserSessions when immediate cutoff is
+        // needed). Cheap because `select { banned }` is a covering query
+        // and the hook runs only at signin, not on every authenticated call.
+        create: {
+          before: async (sessionData) => {
+            const [row] = await db
+              .select({ banned: authSchema.user.banned })
+              .from(authSchema.user)
+              .where(eq(authSchema.user.id, sessionData.userId));
+            if (row?.banned) {
+              throw new Error("BANNED");
+            }
+            return { data: sessionData };
+          },
+        },
+      },
     },
     session: {
       expiresIn: 60 * 60 * 24 * 7,

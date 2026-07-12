@@ -414,6 +414,43 @@ Hard-delete. Refuses with 409 `ROLE_IN_USE` if any user still references the rol
 | Response      | `204 No Content`                                                                                            |
 | Failure codes | 401, 403, 404 `NOT_FOUND`, 409 `ROLE_IN_USE` (body carries `message: "role is referenced by <N> user(s)"`). |
 
+## Users
+
+Admin user management. Backing table is `user` in `lib/auth/schema.ts` (FK on `role_id` → `role.id`). The `banned` column was added in migration 0004 alongside a `databaseHooks.session.create.before` gate in `lib/auth/config.ts` — banned users cannot mint new sessions, and `PATCH ... { banned: true }` DELETEs every existing session row so the cutoff is immediate on the next request.
+
+Better Auth's built-in `admin` plugin was considered and skipped: it brings a parallel `role` text column that conflicts with our `role_id` FK to the `role` table. A boolean on our schema is half the surface and stays consistent with the `default`-provider / last-admin guards elsewhere.
+
+### `GET /api/admin/users`
+
+List every user with a left-joined role snapshot. The admin /admin → Users tab renders this as the table source.
+
+|               |                                                                                                                                                                                                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | (none)                                                                                                                                                                                                                                                           |
+| 200 response  | `{ users: { id, name, email, emailVerified, roleId, roleName, banned, createdAt, updatedAt }[] }`. `roleName` is `null` if the FK target is missing (defensive — FK prevents it on a healthy DB; a leftJoin can still null it on race).                                |
+| Failure codes | 401, 403.                                                                                                                                                                                                                                                       |
+
+### `PATCH /api/admin/users/[id]`
+
+Partial update. `roleId` / `banned` flip the same-name columns. The last-admin guard mirrors the `default`-provider protection — demoting or banning the only remaining admin returns 409 `LAST_ADMIN`.
+
+When `banned: true` is sent, every row in `session` where `userId` matches is DELETEd in the same handler so the ban takes effect immediately on the next request (the client loses its session cookie → 401 → redirect to /login). Unban does NOT touch sessions — the user signs in fresh.
+
+|               |                                                                                                                                                                                                                                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | Any subset of `{ roleId?: string, banned?: boolean }`. Empty body returns 400 `BAD_REQUEST`.                                                                                                                                                                                                                                                                |
+| 200 response  | The updated `user` row.                                                                                                                                                                                                                                                                                                                                     |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (user missing OR `ROLE_NOT_FOUND` for unknown `roleId`), 409 `LAST_ADMIN` (would leave no admin).                                                                                                                                                                                                                |
+
+### `DELETE /api/admin/users/[id]`
+
+Hard-delete. FK cascade removes `session` + `account` rows automatically. The last-admin guard fires with 409 `LAST_ADMIN` if the target is admin and no other admin exists.
+
+|               |                                                              |
+| ------------- | ------------------------------------------------------------ |
+| Response      | `204 No Content`                                             |
+| Failure codes | 401, 403, 404 `NOT_FOUND`, 409 `LAST_ADMIN`. |
+
 ## Credit history
 
 Per-LLM-call log surfaced to the end user. Source of truth is `credit_usage_log` in `lib/credit/schema.ts` (see [`docs/CREDIT.md`](./CREDIT.md) for the cap-enforcement side, [`docs/DB.md`](./DB.md) for the schema). The user-facing Settings → Credits tab renders this; the panel is a react-query `useInfiniteQuery` on top of this endpoint.

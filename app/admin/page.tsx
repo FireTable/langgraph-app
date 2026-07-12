@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
+import { asc, eq } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { provider } from "@/lib/provider/schema";
-import { role } from "@/lib/auth/schema";
+import { role, user } from "@/lib/auth/schema";
 import { auth } from "@/lib/auth/config";
 import { BrandMarkLink } from "@/components/brand-mark";
 import { AdminTabs } from "@/app/admin/admin-tabs";
@@ -17,9 +18,24 @@ export default async function AdminPage() {
   // fallback to "user"). A non-admin lands on / with no flash of admin UI.
   if (session.user.roleId !== "admin") redirect("/");
 
-  const [providerRows, roleRows] = await Promise.all([
+  const [providerRows, roleRows, userRows] = await Promise.all([
     db.select().from(provider).orderBy(provider.id),
     db.select().from(role).orderBy(role.id),
+    db
+      .select({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        roleId: user.roleId,
+        roleName: role.name,
+        banned: user.banned,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      })
+      .from(user)
+      .leftJoin(role, eq(user.roleId, role.id))
+      .orderBy(asc(user.createdAt)),
   ]);
 
   const providers: PublicProvider[] = providerRows.map((row) => ({
@@ -54,6 +70,17 @@ export default async function AdminPage() {
             ...r,
             createdAt: r.createdAt.toISOString(),
             updatedAt: r.updatedAt.toISOString(),
+          }))}
+          users={userRows.map((u) => ({
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            emailVerified: u.emailVerified,
+            roleId: u.roleId,
+            roleName: u.roleName,
+            banned: u.banned,
+            createdAt: u.createdAt.toISOString(),
+            updatedAt: u.updatedAt.toISOString(),
           }))}
         />
       </div>

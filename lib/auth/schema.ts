@@ -23,6 +23,12 @@ export const user = pgTable("user", {
     .notNull()
     .default("user")
     .references(() => role.id),
+  // ponytail: ban flag — signin is gated in lib/auth/config.ts via
+  // session.create.before, so a banned user can't mint new sessions.
+  // The PATCH /api/admin/users/[id] handler also DELETEs every session
+  // row for that user when banned flips to true, so the cutoff is
+  // immediate rather than waiting for the 7d session expiry.
+  banned: boolean("banned").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

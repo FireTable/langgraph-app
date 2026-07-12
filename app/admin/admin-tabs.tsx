@@ -22,6 +22,13 @@ import {
 } from "@/components/ui/dialog";
 import { FormDialog } from "@/components/ui/form-dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -54,6 +61,21 @@ type RoleRow = {
   createdAt: string;
   updatedAt: string;
 };
+// ponytail: server-side join shape — user + role name inlined so the
+// table can render "Admin" / "User" labels without a second round-trip.
+// `roleName` is null when the FK points at a missing role (defensive —
+// FK prevents it, but a leftJoin can still null it on race).
+type UserRow = {
+  id: string;
+  name: string | null;
+  email: string;
+  emailVerified: boolean;
+  roleId: string;
+  roleName: string | null;
+  banned: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
 
 async function jsonFetch<T>(
   url: string,
@@ -80,21 +102,27 @@ function errMsg(body: unknown): string {
 export function AdminTabs({
   providers,
   roles,
+  users,
 }: {
   providers: PublicProviderRow[];
   roles: RoleRow[];
+  users: UserRow[];
 }) {
   return (
     <Tabs defaultValue="providers">
       <TabsList>
         <TabsTrigger value="providers">Providers</TabsTrigger>
         <TabsTrigger value="roles">Roles</TabsTrigger>
+        <TabsTrigger value="users">Users</TabsTrigger>
       </TabsList>
       <TabsContent value="providers">
         <ProvidersPanel initial={providers} />
       </TabsContent>
       <TabsContent value="roles">
         <RolesPanel initial={roles} />
+      </TabsContent>
+      <TabsContent value="users">
+        <UsersPanel initial={users} roles={roles} />
       </TabsContent>
     </Tabs>
   );
@@ -876,8 +904,7 @@ function RolesPanel({ initial }: { initial: RoleRow[] }) {
         <div className="mt-2">
           <h2 className="font-semibold">Roles</h2>
           <p className="text-muted-foreground text-xs mt-1">
-            Roles set the per-window credit cap for users. A blank credit limit means
-            unlimited.
+            Roles set the per-window credit cap for users. A blank credit limit means unlimited.
           </p>
         </div>
         <Button
@@ -891,29 +918,26 @@ function RolesPanel({ initial }: { initial: RoleRow[] }) {
       </div>
 
 
-      <Card>
 
-        <CardContent>
-          <div className="overflow-x-auto rounded-md border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-muted-foreground text-xs">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">ID</th>
-                  <th className="px-3 py-2 text-left font-medium">Name</th>
-                  <th className="px-3 py-2 text-right font-medium">Credit limit</th>
-                  <th className="px-3 py-2 text-right font-medium">Window (h)</th>
-                  <th className="px-3 py-2 text-right font-medium" />
-                </tr>
-              </thead>
-              <tbody>
-                {initial.map((r) => (
-                  <RoleRowView key={r.id} role={r} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="overflow-x-auto rounded-md border">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 text-muted-foreground text-xs">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">ID</th>
+              <th className="px-3 py-2 text-left font-medium">Name</th>
+              <th className="px-3 py-2 text-right font-medium">Credit limit</th>
+              <th className="px-3 py-2 text-right font-medium">Window (h)</th>
+              <th className="px-3 py-2 text-right font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {initial.map((r) => (
+              <RoleRowView key={r.id} role={r} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
 
       <RoleDialog
         mode="add"
@@ -1173,6 +1197,294 @@ function RoleDialog(
             onChange={(e) => setHours(e.target.value)}
             disabled={saving}
             className="font-mono"
+          />
+        </label>
+      </div>
+    </FormDialog>
+  );
+}
+
+function UsersPanel({ initial, roles }: { initial: UserRow[]; roles: RoleRow[] }) {
+  const total = initial.length;
+  const admins = initial.filter((u) => u.roleId === "admin").length;
+  const banned = initial.filter((u) => u.banned).length;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="mt-2">
+        <h2 className="font-semibold">Users</h2>
+        <p className="text-muted-foreground text-xs mt-1">
+          Registered accounts, their role, and ban status. Banning immediately revokes every active
+          session for that user — they’re signed out on the next request.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <UserStat label="Total" value={total} hint="users" />
+        <UserStat label="Admins" value={admins} hint="privileged" />
+        <UserStat label="Banned" value={banned} hint="signin blocked" />
+      </div>
+
+
+      <div className="overflow-x-auto rounded-md border">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 text-muted-foreground text-xs">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">User</th>
+              <th className="px-3 py-2 text-left font-medium">Role</th>
+              <th className="px-3 py-2 text-center font-medium">Status</th>
+              <th className="px-3 py-2 text-right font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {initial.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="text-muted-foreground px-3 py-3 text-center text-xs">
+                  No users yet.
+                </td>
+              </tr>
+            ) : (
+              initial.map((u) => <UserRowView key={u.id} user={u} roles={roles} />)
+            )}
+          </tbody>
+        </table>
+      </div>
+
+    </div >
+  );
+}
+
+// ponytail: mirrors the credit page's StatCard pattern (bg-transparent,
+// uppercase 10px label, lg font-semibold tabular-nums value) so the
+// visual rhythm matches across admin and settings.
+function UserStat({ label, value, hint }: { label: string; value: number; hint?: string }) {
+  return (
+    <Card className="bg-transparent py-3">
+      <CardContent className="flex flex-col gap-1 px-3">
+        <div className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+          {label}
+        </div>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-foreground text-lg font-semibold tabular-nums">{value}</span>
+          {hint ? <span className="text-muted-foreground text-[11px]">{hint}</span> : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function UserRowView({ user, roles }: { user: UserRow; roles: RoleRow[] }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  const remove = () => {
+    start(async () => {
+      const r = await jsonFetch(`/api/admin/users/${encodeURIComponent(user.id)}`, {
+        method: "DELETE",
+      });
+      if (!r.ok) {
+        if (r.status === 409) {
+          toast.error("cannot delete the last admin");
+        } else {
+          toast.error(errMsg(r.body));
+        }
+        return;
+      }
+      setConfirmingDelete(false);
+      toast.success("user deleted");
+      router.refresh();
+    });
+  };
+
+  return (
+    <tr className="border-t">
+      <td className="px-3 py-2">
+        <div className="flex flex-col">
+          <span className="text-sm">{user.name ?? "—"}</span>
+          <span className="text-muted-foreground font-mono text-[11px]">{user.email}</span>
+        </div>
+      </td>
+      <td className="px-3 py-2">
+        <Badge variant={user.roleId === "admin" ? "default" : "secondary"}>
+          {user.roleName ?? user.roleId}
+        </Badge>
+      </td>
+      <td className="px-3 py-2 text-center">
+        {user.banned ? (
+          <Badge variant="muted">Banned</Badge>
+        ) : user.emailVerified ? (
+          <Badge variant="success">Verified</Badge>
+        ) : (
+          <Badge variant="muted">Unverified</Badge>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right">
+        <div className="flex justify-end gap-1">
+          <Button variant="outline" size="xs" onClick={() => setEditing(true)} disabled={pending}>
+            Edit
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => setConfirmingDelete(true)}
+            disabled={pending}
+            aria-label={`Delete ${user.email}`}
+          >
+            Delete
+          </Button>
+        </div>
+
+        <Dialog
+          open={confirmingDelete}
+          onOpenChange={(open) => !open && setConfirmingDelete(false)}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete this user?</DialogTitle>
+              <DialogDescription>
+                “{user.email}” and all of their sessions, accounts, and threads will be removed.
+                This cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                className="w-full md:w-auto"
+                onClick={() => setConfirmingDelete(false)}
+                disabled={pending}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                className="w-full md:w-auto"
+                onClick={remove}
+                disabled={pending}
+                aria-busy={pending}
+              >
+                {pending ? (
+                  <>
+                    <Loader2 className="animate-spin" aria-hidden />
+                    Deleting…
+                  </>
+                ) : (
+                  "Delete"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <UserDialog
+          mode="edit"
+          open={editing}
+          user={user}
+          roles={roles}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            router.refresh();
+          }}
+        />
+      </td>
+    </tr>
+  );
+}
+
+type UserDialogProps = {
+  mode: "edit";
+  open: boolean;
+  user: UserRow;
+  roles: RoleRow[];
+  onClose: () => void;
+  onSaved: () => void;
+};
+
+// ponytail: role is a Select (dropdown), never a free-text input — the
+// FK target list comes from the roles prop, so the dropdown is the
+// authoritative surface and there's no risk of typing a typo that
+// 404s on save. Server still validates (404 ROLE_NOT_FOUND) as a
+// defense-in-depth in case the role list goes stale.
+function UserDialog(props: UserDialogProps) {
+  const initialRoleId = props.user.roleId;
+  const initialBanned = props.user.banned;
+
+  const [roleId, setRoleId] = useState(initialRoleId);
+  const [banned, setBanned] = useState(initialBanned);
+  const [saving, start] = useTransition();
+
+  useEffect(() => {
+    setRoleId(initialRoleId);
+    setBanned(initialBanned);
+  }, [initialRoleId, initialBanned]);
+
+  const save = () => {
+    if (!roleId) {
+      toast.error("role required");
+      return;
+    }
+    start(async () => {
+      const r = await jsonFetch(`/api/admin/users/${encodeURIComponent(props.user.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ roleId, banned }),
+      });
+      if (!r.ok) {
+        if (r.status === 409) {
+          toast.error("cannot demote or ban the last admin");
+        } else if (r.status === 404) {
+          toast.error("role not found");
+        } else {
+          toast.error(errMsg(r.body));
+        }
+        return;
+      }
+      toast.success("user updated");
+      props.onSaved();
+    });
+  };
+
+  return (
+    <FormDialog
+      open={props.open}
+      onOpenChange={(o) => !o && props.onClose()}
+      title={`Edit user: ${props.user.email}`}
+      description="Pick a role from the list — FK is validated server-side. Banning immediately revokes every active session for this user."
+      submitLabel="Save"
+      pending={saving}
+      onSubmit={save}
+      onCancel={props.onClose}
+    >
+      <div className="flex flex-col gap-4">
+        <div className="bg-muted/40 flex flex-col gap-1 rounded-md px-3 py-2">
+          <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            Email
+          </span>
+          <span className="font-mono text-xs">{props.user.email}</span>
+        </div>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Role</span>
+          <Select value={roleId} onValueChange={setRoleId} disabled={saving}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select role" />
+            </SelectTrigger>
+            <SelectContent>
+              {props.roles.map((r) => (
+                <SelectItem key={r.id} value={r.id}>
+                  {`${r.name} (${r.id})`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium">Banned</span>
+          <Switch
+            checked={banned}
+            onCheckedChange={setBanned}
+            disabled={saving}
+            aria-label="User banned"
           />
         </label>
       </div>
