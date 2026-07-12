@@ -41,7 +41,7 @@ export async function sendVerificationEmail({
       html,
     });
     if (error) {
-      // 429 = quota; anything else is an upstream error.
+      // 429 = email provider rate limit; anything else is an upstream error.
       if ("statusCode" in error && error.statusCode === 429) {
         return { ok: false, code: "EMAIL_QUOTA_EXCEEDED" };
       }
