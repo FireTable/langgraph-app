@@ -40,7 +40,11 @@ async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?:
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
 
   const sysMsg = await buildSystemMessageWithMemory(CHAT_AGENT_PROMPT, config, threads);
-  const response = await (await getChatModel()).bindTools(ALL_TOOLS).invoke([sysMsg, ...history], config);
+  const response = await (
+    await getChatModel()
+  )
+    .bindTools(ALL_TOOLS)
+    .invoke([sysMsg, ...history], config);
 
   return { messages: [response] };
 }
@@ -48,7 +52,6 @@ async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?:
 function chatModelRoute(state: { messages: BaseMessage[] }) {
   return toolsCondition(state) === END ? END : "chatTools";
 }
-
 
 const chatToolNode = new ToolNode(ALL_TOOLS);
 

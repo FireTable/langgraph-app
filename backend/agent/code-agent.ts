@@ -32,7 +32,11 @@ async function codeModelNode({ messages }: { messages: BaseMessage[] }, config?:
   const threads = await loadThreadSummariesForPrompt(config);
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
   const sysMsg = await buildSystemMessageWithMemory(CODE_AGENT_PROMPT, config, threads);
-  const response = await (await getChatModel()).bindTools(CODE_TOOLS).invoke([sysMsg, ...history], config);
+  const response = await (
+    await getChatModel()
+  )
+    .bindTools(CODE_TOOLS)
+    .invoke([sysMsg, ...history], config);
   return { messages: [response] };
 }
 
@@ -41,8 +45,6 @@ function codeModelRoute(state: { messages: BaseMessage[] }) {
 }
 
 const codeToolNode = new ToolNode(CODE_TOOLS);
-
-
 
 const builder = new StateGraph(CommonAgentState)
   .addNode("codeModel", codeModelNode)

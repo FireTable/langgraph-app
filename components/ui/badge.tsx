@@ -10,10 +10,8 @@ import { cn } from "@/lib/utils";
 type BadgeVariant = "default" | "secondary" | "outline" | "success" | "muted";
 
 const variantClasses: Record<BadgeVariant, string> = {
-  default:
-    "border-transparent bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
-  secondary:
-    "border-transparent bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
+  default: "border-transparent bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
+  secondary: "border-transparent bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
   outline: "text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
   success:
     "border-transparent bg-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-300",

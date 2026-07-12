@@ -46,7 +46,8 @@ async function interpolateEnv(content: string): Promise<string> {
     // let the migration's `enabled=true, api_keys=[]` row be a harmless
     // stub rather than crashing the entire global setup.
     const kekHex = process.env.LLM_KEY_ENCRYPTION_KEY;
-    const kekOk = !!kekHex && kekHex.length === KEK_LENGTH_BYTES * 2 && /^[0-9a-fA-F]+$/.test(kekHex);
+    const kekOk =
+      !!kekHex && kekHex.length === KEK_LENGTH_BYTES * 2 && /^[0-9a-fA-F]+$/.test(kekHex);
     if (!plain || !kekOk) return "[]";
     const blob = encryptApiKey(plain);
     return JSON.stringify([blob]).replace(/'/g, "''");

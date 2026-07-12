@@ -8,10 +8,7 @@ import {
   type ProviderApiKey,
 } from "@/lib/provider/schema";
 import { aesGcmEncrypt, loadKek } from "@/lib/auth/encryption";
-import {
-  getChatModelFromDB,
-  invalidateModelCache,
-} from "@/lib/provider/model-registry";
+import { getChatModelFromDB, invalidateModelCache } from "@/lib/provider/model-registry";
 
 function encryptFixtureKey(plain: string): ProviderApiKey {
   const blob = aesGcmEncrypt(plain, loadKek());
@@ -81,7 +78,7 @@ describe("getChatModelFromDB", () => {
 
     expect(first).toBe(second);
     expect(callsAfterFirst).toBe(callsAfterSpy + 1); // first call hits DB exactly once
-    expect(callsAfterSecond).toBe(callsAfterFirst);  // second call hits DB zero times
+    expect(callsAfterSecond).toBe(callsAfterFirst); // second call hits DB zero times
     dbSpy.mockRestore();
   });
 
@@ -149,10 +146,7 @@ describe("invalidateModelCache", () => {
     await seedProvider({
       id: "primary",
       apiKeys: [encryptFixtureKey("sk-test-1234")],
-      models: [
-        ENABLED_MODEL("gpt-4o"),
-        ENABLED_MODEL("gpt-4o-mini"),
-      ],
+      models: [ENABLED_MODEL("gpt-4o"), ENABLED_MODEL("gpt-4o-mini")],
     });
 
     const a = await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o" });

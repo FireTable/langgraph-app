@@ -4,10 +4,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { LRUCache } from "lru-cache";
 
 import { db } from "@/db/client";
-import {
-  provider as providerTable,
-  type ProviderApiKey,
-} from "@/lib/provider/schema";
+import { provider as providerTable, type ProviderApiKey } from "@/lib/provider/schema";
 import { aesGcmDecrypt, loadKek } from "@/lib/auth/encryption";
 
 // ponytail: 60s TTL — admin writes call invalidateModelCache() in the
@@ -47,9 +44,7 @@ export type GetChatModelOpts = {
  * an env-var fallback on top of this — call that one from runtime code,
  * not this one.
  */
-export async function getChatModelFromDB(
-  opts: GetChatModelOpts = {},
-): Promise<BaseChatModel> {
+export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<BaseChatModel> {
   const key = `${opts.providerId ?? "*"}:${opts.modelName ?? "*"}`;
   const cached = cache.get(key);
 
@@ -62,9 +57,7 @@ export async function getChatModelFromDB(
   const model = new ChatOpenAI({
     model: modelName,
     apiKey,
-    configuration: provider.baseUrl
-      ? { baseURL: provider.baseUrl }
-      : undefined,
+    configuration: provider.baseUrl ? { baseURL: provider.baseUrl } : undefined,
     streaming: true,
     // ponytail: only minimax reads this — keeping it hard-coded keeps the
     // DB schema free of a one-off knob that no other provider honors.
@@ -91,26 +84,23 @@ async function resolveProviderAndModel(opts: GetChatModelOpts): Promise<{
 }> {
   const providerRows = opts.providerId
     ? await db
-      .select()
-      .from(providerTable)
-      .where(
-        and(eq(providerTable.id, opts.providerId), eq(providerTable.enabled, true)),
-      )
-      .limit(1)
+        .select()
+        .from(providerTable)
+        .where(and(eq(providerTable.id, opts.providerId), eq(providerTable.enabled, true)))
+        .limit(1)
     : await db
-      .select()
-      .from(providerTable)
-      .where(eq(providerTable.enabled, true))
-      .orderBy(asc(providerTable.id))
-      .limit(1);
+        .select()
+        .from(providerTable)
+        .where(eq(providerTable.enabled, true))
+        .orderBy(asc(providerTable.id))
+        .limit(1);
 
   if (providerRows.length === 0) {
     throw new Error("no enabled provider in DB");
   }
   const provider = providerRows[0];
 
-  const modelName =
-    opts.modelName ?? provider.models.find((m) => m.enabled)?.name;
+  const modelName = opts.modelName ?? provider.models.find((m) => m.enabled)?.name;
   if (!modelName) {
     throw new Error(`no enabled model in provider "${provider.id}"`);
   }

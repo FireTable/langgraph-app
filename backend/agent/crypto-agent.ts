@@ -28,7 +28,11 @@ async function cryptoModelNode({ messages }: { messages: BaseMessage[] }, config
   const threads = await loadThreadSummariesForPrompt(config);
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
   const sysMsg = await buildSystemMessageWithMemory(CRYPTO_AGENT_PROMPT, config, threads);
-  const response = await (await getChatModel()).bindTools(CRYPTO_TOOLS).invoke([sysMsg, ...history], config);
+  const response = await (
+    await getChatModel()
+  )
+    .bindTools(CRYPTO_TOOLS)
+    .invoke([sysMsg, ...history], config);
   return { messages: [response] };
 }
 

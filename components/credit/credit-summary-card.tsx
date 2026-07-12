@@ -123,9 +123,7 @@ export function CreditSummaryCard(): React.JSX.Element | null {
 export function CreditSummarySection(): React.JSX.Element {
   return (
     <section>
-      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
-        Window credits
-      </h2>
+      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">Window credits</h2>
       <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
         Credits charged to your account in the last rolling window. Resets when the oldest in-window
         call ages out.

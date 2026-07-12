@@ -10,10 +10,9 @@ export async function renameThreadAgentNode(
   const firstUserMessage = state.messages.find((m): m is HumanMessage => m instanceof HumanMessage);
   if (!firstUserMessage) return undefined;
 
-  const response = await (await getChatModel()).invoke(
-    [new SystemMessage(RENAME_THREAD_PROMPT), firstUserMessage],
-    { tags: ["nostream"] },
-  );
+  const response = await (
+    await getChatModel()
+  ).invoke([new SystemMessage(RENAME_THREAD_PROMPT), firstUserMessage], { tags: ["nostream"] });
   const trimmed = (typeof response.content === "string" ? response.content : "").trim();
 
   const threadId = config.configurable?.thread_id;

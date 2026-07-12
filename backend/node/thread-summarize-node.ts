@@ -316,7 +316,9 @@ export async function threadSummarizeNode(
     // ponytail: "nostream" tag so partial tokens don't leak into the
     // chat stream — the summary is a side-effect, not a user-visible
     // reply.
-    out = await (await getChatModel())
+    out = await (
+      await getChatModel()
+    )
       .withStructuredOutput(summaryOutputSchema, { method: "jsonSchema" })
       .invoke(
         [

@@ -36,9 +36,7 @@ function buildEnvModel(): ChatOpenAI {
  * wider type. The registry hard-codes ChatOpenAI today; if a non-OpenAI
  * provider lands, this cast moves to a typed adapter at that boundary.
  */
-export async function getChatModel(
-  opts: GetChatModelOpts = {},
-): Promise<ChatOpenAI> {
+export async function getChatModel(opts: GetChatModelOpts = {}): Promise<ChatOpenAI> {
   try {
     return (await getChatModelFromDB(opts)) as ChatOpenAI;
   } catch {

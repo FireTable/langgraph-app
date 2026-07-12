@@ -24,7 +24,9 @@ function jsonRequest(body: unknown): Request {
 const ctx = { params: Promise.resolve(undefined as never) };
 const ctxId = (id: string) => ({ params: Promise.resolve({ id }) });
 const ctxKey = (id: string, keyName: string) => ({ params: Promise.resolve({ id, keyName }) });
-const ctxModel = (id: string, modelName: string) => ({ params: Promise.resolve({ id, modelName }) });
+const ctxModel = (id: string, modelName: string) => ({
+  params: Promise.resolve({ id, modelName }),
+});
 
 const ADMIN = { id: TEST_USER.id, email: TEST_USER.email, roleId: "admin" };
 const PLAINTEXT = "sk-test-plaintext-secret-1234";
@@ -291,10 +293,7 @@ describe("PATCH /api/admin/providers/[id]/keys/[keyName] (rotate)", () => {
       .onConflictDoNothing();
     await AddKey(jsonRequest({ plaintext: PLAINTEXT }), ctxId("openai"));
 
-    const res = await RotateKey(
-      jsonRequest({ name: "primary" }),
-      ctxKey("openai", "sk-…1234"),
-    );
+    const res = await RotateKey(jsonRequest({ name: "primary" }), ctxKey("openai", "sk-…1234"));
     expect(res.status).toBe(200);
 
     const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
@@ -310,16 +309,14 @@ describe("PATCH /api/admin/providers/[id]/keys/[keyName] (rotate)", () => {
     await AddKey(jsonRequest({ plaintext: PLAINTEXT }), ctxId("openai"));
     await AddKey(jsonRequest({ plaintext: PLAINTEXT + "-other" }), ctxId("openai"));
 
-    const names = (await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") }))
-      ?.apiKeys.map((k) => k.name);
+    const names = (
+      await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") })
+    )?.apiKeys.map((k) => k.name);
     // deriveKeyName is `${first3}…${last4}` — the second plaintext ends
     // in "-other" so its name is "sk-…ther".
     expect(names).toEqual(["sk-…1234", "sk-…ther"]);
 
-    const res = await RotateKey(
-      jsonRequest({ name: "sk-…ther" }),
-      ctxKey("openai", "sk-…1234"),
-    );
+    const res = await RotateKey(jsonRequest({ name: "sk-…ther" }), ctxKey("openai", "sk-…1234"));
     if (res.status !== 409) console.log("body:", await res.text());
     expect(res.status).toBe(409);
   });
@@ -330,10 +327,7 @@ describe("PATCH /api/admin/providers/[id]/keys/[keyName] (rotate)", () => {
       .values({ id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" })
       .onConflictDoNothing();
     await AddKey(jsonRequest({ plaintext: PLAINTEXT }), ctxId("openai"));
-    const res = await RotateKey(
-      jsonRequest({ name: "bad name!" }),
-      ctxKey("openai", "sk-…1234"),
-    );
+    const res = await RotateKey(jsonRequest({ name: "bad name!" }), ctxKey("openai", "sk-…1234"));
     expect(res.status).toBe(400);
   });
 });
@@ -420,19 +414,13 @@ describe("PATCH /api/admin/providers/[id]/models/[modelName] (rename + edit)", (
 
   it("returns 409 on rename collision with another model", async () => {
     await seedTwoModels();
-    const res = await EditModel(
-      jsonRequest({ name: "gpt-4o" }),
-      ctxModel("openai", "gpt-4o-mini"),
-    );
+    const res = await EditModel(jsonRequest({ name: "gpt-4o" }), ctxModel("openai", "gpt-4o-mini"));
     expect(res.status).toBe(409);
   });
 
   it("returns 400 on empty name", async () => {
     await seedTwoModels();
-    const res = await EditModel(
-      jsonRequest({ name: "" }),
-      ctxModel("openai", "gpt-4o-mini"),
-    );
+    const res = await EditModel(jsonRequest({ name: "" }), ctxModel("openai", "gpt-4o-mini"));
     expect(res.status).toBe(400);
   });
 });

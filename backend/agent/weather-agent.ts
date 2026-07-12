@@ -35,7 +35,11 @@ async function weatherModelNode(
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
   const sysMsg = await buildSystemMessageWithMemory(WEATHER_AGENT_PROMPT, config, threads);
 
-  const response = await (await getChatModel()).bindTools(WEATHER_TOOLS).invoke([sysMsg, ...history], config);
+  const response = await (
+    await getChatModel()
+  )
+    .bindTools(WEATHER_TOOLS)
+    .invoke([sysMsg, ...history], config);
 
   return { messages: [response] };
 }

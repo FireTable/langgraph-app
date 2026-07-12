@@ -28,12 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 
 type PublicProviderApiKey = { name: string };
@@ -141,12 +136,7 @@ function ProvidersPanel({ initial }: { initial: PublicProviderRow[] }) {
             LLM providers, their base URL, models, and API keys.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setAdding(true)}
-        >
+        <Button type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
           Add provider
         </Button>
       </div>
@@ -243,9 +233,7 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
                       </Button>
                     </span>
                   </TooltipTrigger>
-                  <TooltipContent>
-                    Default provider — at least one is required.
-                  </TooltipContent>
+                  <TooltipContent>Default provider — at least one is required.</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             ) : (
@@ -308,7 +296,7 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
             <Button
               variant="destructive"
               className="w-full md:w-auto"
-              onClick={() => void confirmRemove()}
+              onClick={confirmRemove}
               disabled={pending}
               aria-busy={pending}
             >
@@ -449,7 +437,7 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
             <Button
               variant="destructive"
               className="w-full md:w-auto"
-              onClick={() => void confirmRemove()}
+              onClick={confirmRemove}
               disabled={pending}
               aria-busy={pending}
             >
@@ -499,22 +487,22 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
 function ModelDialog(
   props:
     | {
-      mode: "add";
-      open: boolean;
-      providerId: string;
-      pending: boolean;
-      onClose: () => void;
-      onSaved: () => void;
-    }
+        mode: "add";
+        open: boolean;
+        providerId: string;
+        pending: boolean;
+        onClose: () => void;
+        onSaved: () => void;
+      }
     | {
-      mode: "edit";
-      open?: boolean;
-      model: PublicModel;
-      providerId: string;
-      pending: boolean;
-      onClose: () => void;
-      onSaved: () => void;
-    },
+        mode: "edit";
+        open?: boolean;
+        model: PublicModel;
+        providerId: string;
+        pending: boolean;
+        onClose: () => void;
+        onSaved: () => void;
+      },
 ) {
   const isEdit = props.mode === "edit";
   const initialName = isEdit ? props.model.name : "";
@@ -650,7 +638,6 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
     });
   };
 
-
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
@@ -738,7 +725,7 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
             <Button
               variant="destructive"
               className="w-full md:w-auto"
-              onClick={() => void confirmRemove()}
+              onClick={confirmRemove}
               disabled={pending}
               aria-busy={pending}
             >
@@ -788,22 +775,22 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
 function KeyDialog(
   props:
     | {
-      mode: "add";
-      open: boolean;
-      providerId: string;
-      pending: boolean;
-      onClose: () => void;
-      onSaved: () => void;
-    }
+        mode: "add";
+        open: boolean;
+        providerId: string;
+        pending: boolean;
+        onClose: () => void;
+        onSaved: () => void;
+      }
     | {
-      mode: "edit";
-      open?: boolean;
-      keyEntry: PublicProviderApiKey;
-      providerId: string;
-      pending: boolean;
-      onClose: () => void;
-      onSaved: () => void;
-    },
+        mode: "edit";
+        open?: boolean;
+        keyEntry: PublicProviderApiKey;
+        providerId: string;
+        pending: boolean;
+        onClose: () => void;
+        onSaved: () => void;
+      },
 ) {
   const isEdit = props.mode === "edit";
 
@@ -816,9 +803,7 @@ function KeyDialog(
   useEffect(() => {
     setPlain("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    isEdit ? props.mode === "edit" && props.keyEntry?.name : props.mode === "add" && props.open,
-  ]);
+  }, [isEdit ? props.mode === "edit" && props.keyEntry?.name : props.mode === "add" && props.open]);
 
   const save = () => {
     const trimmedPlain = plain.trim();
@@ -871,9 +856,7 @@ function KeyDialog(
     >
       <div className="flex flex-col gap-4">
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">
-            {isEdit ? "New key value" : "Key value"}
-          </span>
+          <span className="text-sm font-medium">{isEdit ? "New key value" : "Key value"}</span>
           <Input
             type="password"
             value={plain}
@@ -885,8 +868,8 @@ function KeyDialog(
         </label>
         {isEdit ? (
           <p className="text-muted-foreground text-xs">
-            Display name <span className="font-mono">{props.keyEntry.name}</span> is derived
-            from the key value — paste the new secret to regenerate.
+            Display name <span className="font-mono">{props.keyEntry.name}</span> is derived from
+            the key value — paste the new secret to regenerate.
           </p>
         ) : null}
       </div>
@@ -907,17 +890,10 @@ function RolesPanel({ initial }: { initial: RoleRow[] }) {
             Roles set the per-window credit cap for users. A blank credit limit means unlimited.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setAdding(true)}
-        >
+        <Button type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
           Add role
         </Button>
       </div>
-
-
 
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
@@ -937,7 +913,6 @@ function RolesPanel({ initial }: { initial: RoleRow[] }) {
           </tbody>
         </table>
       </div>
-
 
       <RoleDialog
         mode="add"
@@ -1056,18 +1031,18 @@ function RoleRowView({ role }: { role: RoleRow }) {
 function RoleDialog(
   props:
     | {
-      mode: "add";
-      open: boolean;
-      onClose: () => void;
-      onSaved: () => void;
-    }
+        mode: "add";
+        open: boolean;
+        onClose: () => void;
+        onSaved: () => void;
+      }
     | {
-      mode: "edit";
-      open?: boolean;
-      role: RoleRow;
-      onClose: () => void;
-      onSaved: () => void;
-    },
+        mode: "edit";
+        open?: boolean;
+        role: RoleRow;
+        onClose: () => void;
+        onSaved: () => void;
+      },
 ) {
   const isEdit = props.mode === "edit";
   const initialName = isEdit ? props.role.name : "";
@@ -1225,7 +1200,6 @@ function UsersPanel({ initial, roles }: { initial: UserRow[]; roles: RoleRow[] }
         <UserStat label="Banned" value={banned} hint="signin blocked" />
       </div>
 
-
       <div className="overflow-x-auto rounded-md border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-muted-foreground text-xs">
@@ -1249,8 +1223,7 @@ function UsersPanel({ initial, roles }: { initial: UserRow[]; roles: RoleRow[] }
           </tbody>
         </table>
       </div>
-
-    </div >
+    </div>
   );
 }
 
@@ -1499,19 +1472,19 @@ function UserDialog(props: UserDialogProps) {
 // entirely (server picks one from `crypto.randomUUID()`).
 type ProviderDialogProps =
   | {
-    mode: "add";
-    open: boolean;
-    onClose: () => void;
-    onSaved: () => void;
-  }
+      mode: "add";
+      open: boolean;
+      onClose: () => void;
+      onSaved: () => void;
+    }
   | {
-    mode: "edit";
-    open?: boolean;
-    provider: PublicProviderRow;
-    pending: boolean;
-    onClose: () => void;
-    onSaved: () => void;
-  };
+      mode: "edit";
+      open?: boolean;
+      provider: PublicProviderRow;
+      pending: boolean;
+      onClose: () => void;
+      onSaved: () => void;
+    };
 
 function ProviderDialog(props: ProviderDialogProps) {
   const isEdit = props.mode === "edit";
@@ -1552,17 +1525,14 @@ function ProviderDialog(props: ProviderDialogProps) {
     start(async () => {
       let r;
       if (isEdit) {
-        r = await jsonFetch(
-          `/api/admin/providers/${encodeURIComponent(props.provider.id)}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify({
-              name: name.trim(),
-              enabled,
-              baseUrl: baseUrl.trim(),
-            }),
-          },
-        );
+        r = await jsonFetch(`/api/admin/providers/${encodeURIComponent(props.provider.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: name.trim(),
+            enabled,
+            baseUrl: baseUrl.trim(),
+          }),
+        });
       } else {
         // ponytail: id is auto-generated server-side — we send a UUID
         // with a "prov_" prefix so the URL space is unmistakable.

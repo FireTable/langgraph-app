@@ -152,7 +152,7 @@ const WORKAROUND_29 = [
 
 async function main() {
   // Single connection — sequential statements, no pool needed for migrations.
-  const sql = postgres(databaseUrl, { max: 1, onnotice: () => { } });
+  const sql = postgres(databaseUrl, { max: 1, onnotice: () => {} });
   try {
     // 1. Drizzle migrations — Better Auth schema + observability_spans.
     //    postgres-js sends each chunk as a simple-query string;

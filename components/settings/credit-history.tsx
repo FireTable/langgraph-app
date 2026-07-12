@@ -162,7 +162,8 @@ export function CreditHistory({ className }: { className?: string }) {
                             {call.modelName}
                           </td>
                           <td className="text-muted-foreground px-4 py-2 text-right tabular-nums">
-                            {call.inputTokens.toLocaleString()} / {call.outputTokens.toLocaleString()}
+                            {call.inputTokens.toLocaleString()} /{" "}
+                            {call.outputTokens.toLocaleString()}
                           </td>
                           <td className="px-4 py-2 text-right font-mono tabular-nums">
                             {formatCredits(call.credits)}

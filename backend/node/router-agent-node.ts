@@ -34,7 +34,9 @@ export async function routerAgentNode(
   const system = new SystemMessage(ROUTER_AGENT_PROMPT);
   const invokeMessages = lastUserMessage ? [system, lastUserMessage] : [system];
 
-  const decision = (await (await getChatModel())
+  const decision = (await (
+    await getChatModel()
+  )
     .withStructuredOutput(RouteDecisionSchema, {
       name: "route_decision",
       method: "jsonSchema",
@@ -43,7 +45,6 @@ export async function routerAgentNode(
       ...config,
       tags: [...(config?.tags ?? []), "nostream"],
     })) as RouterDecision;
-
 
   return { routerDecision: decision };
 }
