@@ -10,9 +10,13 @@ import {
 } from "@/lib/provider/schema";
 import { aesGcmDecrypt, loadKek } from "@/lib/auth/encryption";
 
-// ponytail: 1h TTL — admin writes bust via invalidateModelCache(); the
-// TTL is the fallback for replicas that don't see the bust signal.
-const CACHE_TTL_MS = 60 * 60 * 1000;
+// ponytail: 60s TTL — admin writes call invalidateModelCache() in the
+// Next.js process, but LangGraph.js is a SEPARATE process (port 2024)
+// with its own in-memory LRU. The Next-side invalidate can't reach it.
+// 60s bounds how long an admin change can stay invisible to a fresh
+// LangGraph.js request. Short enough to feel live, long enough that
+// hot nodes don't hammer the DB.
+const CACHE_TTL_MS = 60 * 1000;
 const CACHE_MAX = 10;
 
 // ponytail: cache key is derived from the caller-supplied opts alone, so
