@@ -24,16 +24,17 @@ Source of truth: `db/migrations/0000_*.sql` (drizzle-kit generated). This doc de
 
 ## `user`
 
-| Column           | Type         | Notes                                                                                    |
-| ---------------- | ------------ | ---------------------------------------------------------------------------------------- |
-| `id`             | text PK      | Better Auth user id                                                                      |
-| `name`           | text NULL    | Display name                                                                             |
-| `email`          | text UNIQUE  | Login + verify target                                                                    |
-| `email_verified` | bool         | Gates redirect to `/chat`                                                                |
-| `image`          | text NULL    | Avatar URL                                                                               |
-| `role_id`        | text FK→role | `DEFAULT 'user'`; Better Auth exposes it on `session.user.roleId` via `additionalFields` |
-| `created_at`     | timestamptz  |                                                                                          |
-| `updated_at`     | timestamptz  | `$onUpdate`                                                                              |
+| Column           | Type         | Notes                                                                                                                                                                                 |
+| ---------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`             | text PK      | Better Auth user id                                                                                                                                                                   |
+| `name`           | text NULL    | Display name                                                                                                                                                                          |
+| `email`          | text UNIQUE  | Login + verify target                                                                                                                                                                 |
+| `email_verified` | bool         | Gates redirect to `/chat`                                                                                                                                                             |
+| `image`          | text NULL    | Avatar URL                                                                                                                                                                            |
+| `role_id`        | text FK→role | `DEFAULT 'user'`; Better Auth exposes it on `session.user.roleId` via `additionalFields`                                                                                              |
+| `banned`         | bool         | `DEFAULT false` (migration 0004). New signins blocked at `session.create.before`; ban toggle in admin UI DELETEs all sessions for the user so the cutoff is immediate on next request |
+| `created_at`     | timestamptz  |                                                                                                                                                                                       |
+| `updated_at`     | timestamptz  | `$onUpdate`                                                                                                                                                                           |
 
 ## `session`
 
@@ -137,20 +138,21 @@ Per-tier credit cap. Referenced by `user.role_id` (FK) and read on every LLM cal
 
 Notes:
 
-- `creditLimit IS NULL` short-circuits the cap check in `lib/credit/check.ts` — admins never see `CreditExceededError`.
+- `creditLimit IS NULL` short-circuits the cap check in `lib/credit/check.ts` — admins never see a credit-blocked response.
 - DELETE refuses with 409 `ROLE_IN_USE` from `app/api/admin/roles/[id]/route.ts` while any user row still references the role.
-- Window slides continuously — there is no fixed UTC-day reset.
+- `windowHours` is **UTC-aligned** — the cap window is bucketed at multiples of `windowHours` from the Unix epoch (which lands on UTC midnight), so `windowHours=24` gives the UTC-day boundary and `windowHours=8` gives UTC 00:00 / 08:00 / 16:00. See [`docs/CREDIT.md`](./CREDIT.md) § Calendar-aligned rolling-window model.
 
 ## `provider`
 
-LLM provider registry — one row per upstream (openai / anthropic / ...). Holds the encrypted API key pool + per-model rate config. All edits go through `/api/admin/providers/**`.
+LLM provider registry — one row per upstream (openai / anthropic / ...). Holds the encrypted API key pool + per-model rate config. All edits go through `/api/admin/providers/**`. The migration seeds one `default` row, encrypted-blob-prefilled from `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` by the migration runner (see `scripts/db-migrate.ts`).
 
 | Column       | Type        | Notes                                                                                   |
 | ------------ | ----------- | --------------------------------------------------------------------------------------- |
 | `id`         | text PK     | `^[a-z0-9_-]+$` (e.g. `"openai"`, `"anthropic"`)                                        |
 | `name`       | text        | Display name                                                                            |
 | `enabled`    | bool        | `DEFAULT true`; a top-level kill-switch (model-level `enabled` lives inside `models[]`) |
-| `api_keys`   | jsonb       | `DEFAULT '[]'::jsonb`; array of `{ encryptedKey, iv, name, baseUrl? }` (see below)      |
+| `base_url`   | text        | OpenAI-compatible endpoint URL — one per provider, shared across all apiKeys            |
+| `api_keys`   | jsonb       | `DEFAULT '[]'::jsonb`; array of `{ encryptedKey, iv, name }` (see below)                |
 | `models`     | jsonb       | `DEFAULT '[]'::jsonb`; array of `{ name, enabled, inputPer1k, outputPer1k }`            |
 | `created_at` | timestamptz |                                                                                         |
 | `updated_at` | timestamptz | `$onUpdate`                                                                             |
@@ -160,7 +162,6 @@ LLM provider registry — one row per upstream (openai / anthropic / ...). Holds
 - `encryptedKey` — AES-256-GCM ciphertext + GCM auth tag, base64-packed. **Never** returned on the wire.
 - `iv` — 12-byte nonce, base64. **Never** returned on the wire.
 - `name` — `"sk-…xyz9"`, auto-derived from the plaintext first-3 + last-4 chars at create time. The only persistent identifier exposed to clients.
-- `baseUrl?` — optional override URL for OpenAI-compatible endpoints.
 
 `models[]` entry shape (`ModelConfig`):
 
@@ -168,8 +169,10 @@ LLM provider registry — one row per upstream (openai / anthropic / ...). Holds
 
 Notes:
 
+- The seeded `id = "default"` row is **protected** at the API layer — `DELETE /api/admin/providers/default` returns 409 `PROTECTED` because the system needs at least one provider to boot.
 - No FK from `credit_usage_log.provider_id` to `provider.id` — historical call rows survive a provider delete.
-- `buildChatModel` (`lib/credit/build-model.ts`) decrypts `api_keys[0]` at LLM-call time. The `apiKeys` array is forward-compatible with priority-based fallback; today only the first entry is consulted.
+- `buildChatModel` / `getChatModelFromDB` decrypt `api_keys[0]` (random pick when there are multiple) at LLM-call time. The `apiKeys` array is forward-compatible with priority-based fallback; today the first non-empty entry is consulted.
+- See [`docs/PROVIDERS.md`](./PROVIDERS.md) for how the runtime resolves which provider to call (DB registry + LRU + cross-process TTL + env fallback).
 
 ## `credit_usage_log`
 
@@ -201,17 +204,17 @@ Notes:
 
 ## Code → table map
 
-| Table              | Reads                                                                                        | Writes                                                                                                                                             |
-| ------------------ | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `user`             | `lib/auth/queries.ts` (`getSessionFromHeaders`)                                              | Better Auth handlers in `app/api/auth/[...all]`                                                                                                    |
-| `session`          | `withAuth` (`lib/auth/with-auth.ts`)                                                         | Better Auth sign-in / sign-out / refresh                                                                                                           |
-| `account`          | Better Auth internal                                                                         | Sign-up (credential provider writes password hash)                                                                                                 |
-| `verification`     | Better Auth internal                                                                         | Better Auth on email verify / password reset request                                                                                               |
-| `role`             | `lib/credit/check.ts` (`checkCredit`), `lib/auth/role-queries.ts` (`getUserWithRole`)        | `app/api/admin/roles/**`                                                                                                                           |
-| `threads`          | `lib/threads/queries.ts` (UI list + adapter)                                                 | API routes under `app/api/threads/`                                                                                                                |
-| `attachments`      | `lib/attachments/queries.ts`                                                                 | API routes under `app/api/attachments/` (presign → row, confirm → `status='uploaded'`, DELETE → row + R2 object)                                   |
-| `provider`         | `lib/credit/build-model.ts` (`buildChatModel`, `getModelRate`)                               | `app/api/admin/providers/**` (encrypt at POST/PATCH; rotate re-encrypts in place; `stripProviderSecrets` on every response)                        |
-| `credit_usage_log` | `lib/credit/check.ts` (cap SUM + `MIN(created_at)` for `resetAt`), `GET /api/credit/history` | `lib/credit/callback.ts` (`CreditTrackingHandler.handleLLMEnd` writes `success`, `handleLLMError` writes `error`; `CreditExceededError` is skipped) |
+| Table              | Reads                                                                                                                   | Writes                                                                                                                                                              |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user`             | `lib/auth/queries.ts` (`getSessionFromHeaders`), `withAuth` (`lib/auth/with-auth.ts`)                                   | Better Auth handlers in `app/api/auth/[...all]`; `app/api/admin/users/[id]` for ban/roleId/delete                                                                   |
+| `session`          | `withAuth` (`lib/auth/with-auth.ts`)                                                                                    | Better Auth sign-in / sign-out / refresh; `app/api/admin/users/[id]` DELETE on ban                                                                                  |
+| `account`          | Better Auth internal                                                                                                    | Sign-up (credential provider writes password hash)                                                                                                                  |
+| `verification`     | Better Auth internal                                                                                                    | Better Auth on email verify / password reset request                                                                                                                |
+| `role`             | `lib/credit/check.ts` (`checkCredit`), `lib/auth/role-queries.ts` (`getUserWithRole`)                                   | `app/api/admin/roles/**`                                                                                                                                            |
+| `threads`          | `lib/threads/queries.ts` (UI list + adapter)                                                                            | API routes under `app/api/threads/`                                                                                                                                 |
+| `attachments`      | `lib/attachments/queries.ts`                                                                                            | API routes under `app/api/attachments/` (presign → row, confirm → `status='uploaded'`, DELETE → row + R2 object)                                                    |
+| `provider`         | `lib/provider/model-registry.ts` (`getChatModelFromDB`), `lib/credit/build-model.ts` (`findProviderId`, `getModelRate`) | `app/api/admin/providers/**` (encrypt at POST/PATCH; rotate re-encrypts in place; `stripProviderSecrets` on every response); all CUD calls `invalidateModelCache()` |
+| `credit_usage_log` | `lib/credit/check.ts` (cap SUM), `app/api/credit/status` (read), `GET /api/credit/history`                              | `lib/credit/callback.ts` (`CreditTrackingHandler.handleLLMEnd` writes `success`, `handleLLMError` writes `error`; no row written when proxy short-circuits)         |
 
 ## Tooling
 

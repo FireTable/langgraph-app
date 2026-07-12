@@ -42,11 +42,13 @@ Partial update. Whole-array replacement is used for `apiKeys` / `models` when pr
 
 Hard-delete the row. The FK to `credit_usage_log` is intentionally absent — historical call rows stay even after a provider is deleted (they reference `provider_id` as a free-form text column, not a FK). Be sure before deleting: there's no soft-delete.
 
-|               |                           |
-| ------------- | ------------------------- |
-| Request body  | (none)                    |
-| Response      | `204 No Content`          |
-| Failure codes | 401, 403, 404 `NOT_FOUND` |
+The seeded `default` provider (migration `0003_*`) is **protected**: deleting it returns 409 `PROTECTED` because at least one provider must always exist for the system to boot. The admin UI disables the corresponding button.
+
+|               |                                                         |
+| ------------- | ------------------------------------------------------- |
+| Request body  | (none)                                                  |
+| Response      | `204 No Content`                                        |
+| Failure codes | 401, 403, 404 `NOT_FOUND`, 409 `PROTECTED` (default id) |
 
 ### `POST /api/admin/providers/[id]/keys`
 
@@ -148,6 +150,41 @@ Hard-delete a role. Refuses with 409 if any user still references it — re-assi
 | Response      | `204 No Content`                                                                                            |
 | Failure codes | 401, 403, 404 `NOT_FOUND`, 409 `ROLE_IN_USE` (body carries `message: "role is referenced by <N> user(s)"`). |
 
+## User management
+
+Admin operations on the `user` table. Backs the admin UI's Users tab — promote / demote between roles, ban / unban, delete. Better Auth's built-in admin plugin was considered and skipped because it adds a parallel `role` text column that conflicts with our `role_id` FK to `role.id`. A boolean `banned` column on our schema (migration `0004`) is half the surface and stays consistent with the `default`-provider / last-admin guards elsewhere.
+
+### `GET /api/admin/users`
+
+List every user with a left-joined `role` snapshot. The admin /admin → Users tab renders this as the table source.
+
+|               |                                                                                                                                                                                                                                           |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | (none)                                                                                                                                                                                                                                    |
+| 200 response  | `{ users: { id, name, email, emailVerified, roleId, roleName, banned, createdAt, updatedAt }[] }`. `roleName` is `null` if the FK target is missing (defensive — FK prevents it on a healthy DB; a `leftJoin` can still null it on race). |
+| Failure codes | 401, 403.                                                                                                                                                                                                                                 |
+
+### `PATCH /api/admin/users/[id]`
+
+Partial update. `roleId` / `banned` flip the same-name columns. The last-admin guard mirrors the `default`-provider protection — demoting or banning the only remaining admin returns 409 `LAST_ADMIN`.
+
+When `banned: true` is sent, every row in `session` where `userId` matches is DELETEd in the same handler so the ban takes effect immediately on the next request (the client loses its session cookie → 401 → redirect to /login). Unban does NOT touch sessions — the user signs in fresh.
+
+|               |                                                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | Any subset of `{ roleId?: string, banned?: boolean }`. Empty body returns 400 `BAD_REQUEST`.                                                   |
+| 200 response  | The updated `user` row.                                                                                                                        |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (user missing OR `ROLE_NOT_FOUND` for unknown `roleId`), 409 `LAST_ADMIN` (would leave no admin). |
+
+### `DELETE /api/admin/users/[id]`
+
+Hard-delete. FK cascade removes `session` + `account` rows automatically. The last-admin guard fires with 409 `LAST_ADMIN` if the target is admin and no other admin exists.
+
+|               |                                              |
+| ------------- | -------------------------------------------- |
+| Response      | `204 No Content`                             |
+| Failure codes | 401, 403, 404 `NOT_FOUND`, 409 `LAST_ADMIN`. |
+
 ## Secrets handling
 
 API keys stored in `provider.apiKeys[]` are encrypted at rest with **AES-256-GCM** (`lib/auth/encryption.ts`). The encryption is keyed by `LLM_KEY_ENCRYPTION_KEY` (the KEK), read lazily per-operation so a process restart isn't needed for key rotation in principle (though rotation of the KEK itself is out of scope — re-encrypting every row in place is its own project).
@@ -168,7 +205,6 @@ type ProviderApiKey = {
   encryptedKey: string; // AES-256-GCM ciphertext+tag, base64
   iv: string; // 12-byte nonce, base64
   name: string; // "sk-…xyz9", auto-derived
-  baseUrl?: string;
 };
 
 type ModelConfig = {
@@ -182,6 +218,7 @@ type Provider = {
   id: string; // "openai" / "anthropic" — PK
   name: string;
   enabled: boolean;
+  baseUrl: string; // OpenAI-compatible endpoint (one per provider, not per key)
   apiKeys: ProviderApiKey[]; // jsonb
   models: ModelConfig[]; // jsonb
   createdAt: Date;
@@ -202,7 +239,7 @@ Three roles ship in the migration seed:
 | `admin` | Admin  | `null`        | 24            |
 
 - **`creditLimit`**: total credits allowed in the rolling window. `null` = **unlimited** (the admin role). Non-null values are non-negative integers — a value of `0` is technically valid and means "no LLM calls allowed".
-- **`windowHours`**: the rolling-window length in hours. The cap is `(credits sum over the last N hours) < creditLimit`, where N is this value. Default `24`, max `720` (30 days). The window slides on every `checkCredit` call — there's no fixed UTC-day reset.
+- **`windowHours`**: the rolling-window length in hours. Windows are **UTC-aligned**, bucketed at multiples of `windowHours` from the Unix epoch — for `windowHours=24` the boundary is UTC 00:00; for `windowHours=8` the boundaries are UTC 00:00 / 08:00 / 16:00; for any other `N` they're UTC 00:00 / N / 2N / ... Default `24`, max `720` (30 days). See [`docs/CREDIT.md`](./CREDIT.md) § Calendar-aligned rolling-window model for the SQL + display-localization details.
 - **DELETE refusal**: 409 `ROLE_IN_USE` is the only way to "delete" a role with active references; the API route counts `user.roleId = <id>` and rejects the delete rather than dropping the FK.
 
 Changing `creditLimit` or `windowHours` takes effect immediately on the next LLM call — there is no caching layer.
@@ -214,9 +251,9 @@ The first admin is bootstrapped by setting `INITIAL_ADMIN_EMAIL` in `.env` / `.e
 Subsequent admins:
 
 1. Sign up a new account with a different email.
-2. Promote via DB update (no UI affordance yet): `UPDATE "user" SET role_id = 'admin' WHERE email = '<email>';`.
+2. Promote via the admin UI's **Users** tab: change the user's `roleId` dropdown from `"user"` to `"admin"` (issues `PATCH /api/admin/users/[id]`).
 
-After the first admin exists, the admin UI's Roles tab manages the credit caps for the existing roles and creates new ones (e.g. `pro`, `vip`), but it doesn't currently expose a user-list to flip individual users' `roleId` — that's a follow-up.
+Direct DB promotion still works as a last resort: `UPDATE "user" SET role_id = 'admin' WHERE email = '<email>';`. The admin UI Roles tab manages the credit caps for the existing roles and creates new tiers (e.g. `pro`, `vip`).
 
 ## UI
 
@@ -226,13 +263,14 @@ After the first admin exists, the admin UI's Roles tab manages the credit caps f
 2. Redirects to `/login` if no session, to `/` if `roleId !== "admin"`.
 3. Loads `provider` + `role` rows in parallel (`Promise.all`) and passes them as props to the client component.
 
-The client component (`app/admin/admin-tabs.tsx`) renders two tabs:
+The client component (`app/admin/admin-tabs.tsx`) renders three tabs:
 
 - **Providers** — list of `ProviderCard` rows, each with:
-  - A header showing `name`, `id`, enabled/disabled status, and a destructive Delete button.
-  - **Models** section: a table of `name / enabled / input / output / 1k` rows with a per-row enable toggle (PATCH `enabled`) and delete (DELETE). An inline form appends a new model with `name`, `inputPer1k` (default `0.001`), `outputPer1k` (default `0.002`).
-  - **API keys** section: a table of `name / baseUrl` rows with per-row rotate (PATCH) + delete (DELETE). The plaintext input uses `type="password"` (see "UI quirks" below). An inline form appends a new key with optional `baseUrl`.
-- **Roles** — list of role rows with editable `name`, `creditLimit` (blank = unlimited), `windowHours`. Add-role form above. Delete refuses with the API's 409 message surfaced via `toast.error`.
+  - A header showing `name`, `id`, enabled/disabled status, and a destructive Delete button. The seeded `default` provider cannot be deleted — both the UI disables the button and the API rejects with 409 `PROTECTED`.
+  - **Models** section: a table of `name / enabled / input / output / 1k` rows with a per-row enable toggle (PATCH `enabled`), rename (PATCH `name`), and delete (DELETE). An inline form appends a new model with `name`, `inputPer1k` (default `0.001`), `outputPer1k` (default `0.002`). Renames are in-place array swaps — the URL path stays keyed on the original model name; only the `models[]` row updates.
+  - **API keys** section: a table of `name` rows with per-row rotate (PATCH — new plaintext re-derives `name`) and delete (DELETE). The plaintext input uses `type="password"` (see "UI quirks" below). An inline form appends a new key.
+- **Roles** — list of role rows with editable `name`, `creditLimit` (blank = unlimited), `windowHours`. Add-role form above. Delete refuses with the API's 409 `ROLE_IN_USE` surfaced via `toast.error`.
+- **Users** — list of `user` rows with role dropdown (`PATCH /api/admin/users/[id]` with `roleId`), ban toggle (PATCH `banned`), and delete. The last-admin guard is enforced server-side and surfaced via `toast.error` — demoting / banning / deleting the only remaining admin returns 409 `LAST_ADMIN` and the UI reverts the optimistic change.
 
 After every successful mutation, the UI calls `router.refresh()` so the server component re-fetches the rows. Pending state is managed by `useTransition` per panel; `Button disabled={pending}` blocks double-submits.
 

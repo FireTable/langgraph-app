@@ -340,11 +340,11 @@ Remove a key by its `name` (the derived tail).
 
 Rotate (new plaintext) and/or rename an existing key. Rotation re-derives `name` from the new plaintext via `deriveKeyName()` so the displayed tail stays in sync with what's encrypted. An explicit `name` in the body overrides the derived one (rename wins over rotate). Collision check excludes the entry being patched — a rotate-to-same-tail is a no-op rename with a fresh ciphertext.
 
-|               |                                                                                                                                  |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+|               |                                                                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Request body  | Any subset of `{ plaintext?: string (1..2048), name?: string (1..64, `^[a-zA-Z0-9_-…]+$`) }`. Empty body returns 400 `BAD_REQUEST`. |
-| 200 response  | `PublicProvider`                                                                                                                 |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or key missing), 409 `DUPLICATE` (renamed / derived name matches another). |
+| 200 response  | `PublicProvider`                                                                                                                    |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or key missing), 409 `DUPLICATE` (renamed / derived name matches another).   |
 
 ### `POST /api/admin/providers/[id]/models`
 
@@ -414,7 +414,7 @@ Hard-delete. Refuses with 409 `ROLE_IN_USE` if any user still references the rol
 | Response      | `204 No Content`                                                                                            |
 | Failure codes | 401, 403, 404 `NOT_FOUND`, 409 `ROLE_IN_USE` (body carries `message: "role is referenced by <N> user(s)"`). |
 
-## Users
+## Admin — Users
 
 Admin user management. Backing table is `user` in `lib/auth/schema.ts` (FK on `role_id` → `role.id`). The `banned` column was added in migration 0004 alongside a `databaseHooks.session.create.before` gate in `lib/auth/config.ts` — banned users cannot mint new sessions, and `PATCH ... { banned: true }` DELETEs every existing session row so the cutoff is immediate on the next request.
 
@@ -424,11 +424,11 @@ Better Auth's built-in `admin` plugin was considered and skipped: it brings a pa
 
 List every user with a left-joined role snapshot. The admin /admin → Users tab renders this as the table source.
 
-|               |                                                                                                                                                                                                                                                                  |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Request body  | (none)                                                                                                                                                                                                                                                           |
-| 200 response  | `{ users: { id, name, email, emailVerified, roleId, roleName, banned, createdAt, updatedAt }[] }`. `roleName` is `null` if the FK target is missing (defensive — FK prevents it on a healthy DB; a leftJoin can still null it on race).                                |
-| Failure codes | 401, 403.                                                                                                                                                                                                                                                       |
+|               |                                                                                                                                                                                                                                         |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | (none)                                                                                                                                                                                                                                  |
+| 200 response  | `{ users: { id, name, email, emailVerified, roleId, roleName, banned, createdAt, updatedAt }[] }`. `roleName` is `null` if the FK target is missing (defensive — FK prevents it on a healthy DB; a leftJoin can still null it on race). |
+| Failure codes | 401, 403.                                                                                                                                                                                                                               |
 
 ### `PATCH /api/admin/users/[id]`
 
@@ -436,19 +436,19 @@ Partial update. `roleId` / `banned` flip the same-name columns. The last-admin g
 
 When `banned: true` is sent, every row in `session` where `userId` matches is DELETEd in the same handler so the ban takes effect immediately on the next request (the client loses its session cookie → 401 → redirect to /login). Unban does NOT touch sessions — the user signs in fresh.
 
-|               |                                                                                                                                                                                                                                                                                                                                                              |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Request body  | Any subset of `{ roleId?: string, banned?: boolean }`. Empty body returns 400 `BAD_REQUEST`.                                                                                                                                                                                                                                                                |
-| 200 response  | The updated `user` row.                                                                                                                                                                                                                                                                                                                                     |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (user missing OR `ROLE_NOT_FOUND` for unknown `roleId`), 409 `LAST_ADMIN` (would leave no admin).                                                                                                                                                                                                                |
+|               |                                                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | Any subset of `{ roleId?: string, banned?: boolean }`. Empty body returns 400 `BAD_REQUEST`.                                                   |
+| 200 response  | The updated `user` row.                                                                                                                        |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (user missing OR `ROLE_NOT_FOUND` for unknown `roleId`), 409 `LAST_ADMIN` (would leave no admin). |
 
 ### `DELETE /api/admin/users/[id]`
 
 Hard-delete. FK cascade removes `session` + `account` rows automatically. The last-admin guard fires with 409 `LAST_ADMIN` if the target is admin and no other admin exists.
 
-|               |                                                              |
-| ------------- | ------------------------------------------------------------ |
-| Response      | `204 No Content`                                             |
+|               |                                              |
+| ------------- | -------------------------------------------- |
+| Response      | `204 No Content`                             |
 | Failure codes | 401, 403, 404 `NOT_FOUND`, 409 `LAST_ADMIN`. |
 
 ## Credit history
@@ -486,6 +486,16 @@ Returns the signed-in user's `credit_usage_log` rows, ordered by `createdAt DESC
 | Query params  | `limit` (1..200, default 50), `offset` (>= 0, default 0). Coerced from strings. |
 | 200 response  | the payload above                                                               |
 | Failure codes | 400 `BAD_REQUEST` (invalid limit/offset). 401 `UNAUTHORIZED`.                   |
+
+### `GET /api/credit/status`
+
+Returns the signed-in user's current cap state. Backs the user-button dropdown's `CreditUsageSlot` and the Settings → Credits summary card. The client (`lib/credit/status.ts`) caches for 1s and collapses in-flight requests — see the module header for why that cadence matches the realistic "I want to see fresh data" need.
+
+|               |                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | (none)                                                                                                                               |
+| 200 response  | `{ used, limit \| null, windowHours \| null, resetAt, unlimited, roleName }` — `limit` and `windowHours` are `null` when `unlimited` |
+| Failure codes | 401 `UNAUTHORIZED`                                                                                                                   |
 
 ## Proxy
 
