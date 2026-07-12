@@ -99,7 +99,7 @@ export function CreditProgress({
           <span className="shrink-0 text-[11px] tabular-nums">{pct}%</span>
         </div>
         <div className="text-muted-foreground/80 pl-6 text-[11px]">
-          Reached {windowHours}h window · resets at {resetTime}
+          Reset every {windowHours} hours, next reset at {resetTime}
         </div>
       </div>
     );
@@ -127,7 +127,7 @@ export function CreditProgress({
         <span className="shrink-0 text-xs tabular-nums">{pct}%</span>
       </div>
       <p className="text-muted-foreground text-xs">
-        Reached {windowHours}h rolling window · resets at {resetTime}. Try again when the window
+        Reset every {windowHours} hours, next reset at {resetTime}. Try again when the window
         rolls forward, or contact your admin to raise the limit.
       </p>
     </div>

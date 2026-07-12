@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -121,6 +121,12 @@ function ProvidersPanel({ initial }: { initial: PublicProviderRow[] }) {
   return (
     <div className="flex flex-col gap-4">
       <Card className="border-dashed bg-muted/20">
+        <CardHeader>
+          <CardTitle>New Provider</CardTitle>
+          <CardDescription>
+            Add a new provider to the system.
+          </CardDescription>
+        </CardHeader>
         <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <Input
             className="flex-1"
@@ -139,7 +145,6 @@ function ProvidersPanel({ initial }: { initial: PublicProviderRow[] }) {
             aria-label="New provider name"
           />
           <Button onClick={create} disabled={pending}>
-            <Plus aria-hidden />
             Create
           </Button>
         </CardContent>
@@ -218,7 +223,6 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
             onClick={() => setConfirmingDelete(true)}
             disabled={pending}
           >
-            <Trash2 aria-hidden />
             Delete
           </Button>
         </div>
@@ -428,7 +432,6 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
                       disabled={pending}
                       aria-label={`Delete ${m.name}`}
                     >
-                      <Trash2 aria-hidden />
                       Delete
                     </Button>
                   </td>
@@ -629,7 +632,6 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
                         disabled={pending}
                         aria-label={`Delete ${k.name}`}
                       >
-                        <Trash2 aria-hidden />
                         Delete
                       </Button>
                     </div>
@@ -641,7 +643,7 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
               <td colSpan={2} className="px-3 py-1.5">
                 <Input
                   type="password"
-                  placeholder="sk-…"
+                  placeholder="sk-…xyz"
                   value={plain}
                   onChange={(e) => setPlain(e.target.value)}
                   disabled={pending}
@@ -946,7 +948,6 @@ function RoleRowView({ role }: { role: RoleRow }) {
             disabled={pending}
             aria-label={`Delete ${role.id}`}
           >
-            <Trash2 aria-hidden />
             Delete
           </Button>
         </div>

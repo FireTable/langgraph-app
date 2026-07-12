@@ -18,7 +18,7 @@ Three roles ship in the migration seed (`db/migrations/0003_*.sql`):
 
 ### Calendar-aligned rolling-window model
 
-`creditLimit` is **per `windowHours`**, with windows bucketed at UTC-aligned multiples of `windowHours` from the Unix epoch. For `windowHours=24` the bucket is the UTC day; for `windowHours=8` the buckets are UTC 00:00 / 08:00 / 16:00; for any other `N` they're UTC 00:00 / N / 2N / ... On every LLM call, `lib/credit/check.ts` runs:
+`creditLimit` is **per `windowHours`**, with windows bucketed at UTC multiples of `windowHours` from the Unix epoch. For `windowHours=24` the bucket is the UTC day; for `windowHours=8` the buckets are UTC 00:00 / 08:00 / 16:00; for any other `N` they're UTC 00:00 / N / 2N / ... On every LLM call, `lib/credit/check.ts` runs:
 
 ```sql
 -- windowStart = floor(now() / windowHours-hours) * windowHours-hours
@@ -28,7 +28,7 @@ WHERE  user_id = $1 AND status = 'success'
        AND created_at >= $windowStart  -- bound by JS-side floor
 ```
 
-The cap holds iff `SUM(credits) < creditLimit`. `resetAt` is `windowStart + windowHours` — the next UTC-aligned boundary. Display renders in the user's local timezone (`toLocaleTimeString`), so the "08:00 / 16:00" cycle reads as 16:00 / 00:00 for a UTC+8 user. When the user goes over, the next call throws `CreditExceededError` carrying that `resetAt`, surfaced to the user via a friendly assistant message written by the graph node that caught the throw.
+The cap holds iff `SUM(credits) < creditLimit`. `resetAt` is `windowStart + windowHours` — the next UTC-aligned boundary. Both `windowStart` (the SQL bound) and `resetAt` (the API payload) are derived from the same JS-side moment so they can't drift. Display components (`toLocaleTimeString` on the client) render `resetAt` in the user's **browser** timezone, so a UTC+8 user sees the UTC 16:00 boundary as "00:00", a UTC-8 user sees it as "08:00", etc. — same moment, localized. When the user goes over, the next call throws `CreditExceededError` carrying that `resetAt`, surfaced to the user via a friendly assistant message written by the graph node that caught the throw.
 
 `windowHours` is capped at `720` (30 days) in the Zod schema. `0` is rejected; `null` is rejected. The `admin` role ships with `creditLimit = null` (= unlimited, see [`lib/credit/check.ts:checkCredit`](./../lib/credit/check.ts) — short-circuits the SUM entirely).
 
