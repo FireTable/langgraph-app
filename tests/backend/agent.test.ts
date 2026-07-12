@@ -13,7 +13,7 @@ vi.mock("@/backend/model", () => {
     return { invoke: boundInvoke };
   };
   return {
-    chatModel: {
+    getChatModel: async () => ({
       stream: (...args: unknown[]) => mockStream(...args),
       invoke: boundInvoke,
       bindTools: boundBind,
@@ -22,7 +22,7 @@ vi.mock("@/backend/model", () => {
       withStructuredOutput: () => ({
         invoke: (...args: unknown[]) => mockInvokeStructured(...args),
       }),
-    },
+    }),
   };
 });
 

@@ -2,7 +2,7 @@ import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import type { BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { chatModel } from "@/backend/model";
+import { getChatModel } from "@/backend/model";
 import { CRYPTO_TOOLS } from "@/backend/tool";
 import { CRYPTO_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
@@ -28,18 +28,26 @@ async function cryptoModelNode({ messages }: { messages: BaseMessage[] }, config
   const threads = await loadThreadSummariesForPrompt(config);
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
   const sysMsg = await buildSystemMessageWithMemory(CRYPTO_AGENT_PROMPT, config, threads);
-  const response = await chatModel.bindTools(CRYPTO_TOOLS).invoke([sysMsg, ...history], config);
+  const response = await (
+    await getChatModel()
+  )
+    .bindTools(CRYPTO_TOOLS)
+    .invoke([sysMsg, ...history], config);
   return { messages: [response] };
+}
+
+function cryptoModelRoute(state: { messages: BaseMessage[] }) {
+  return toolsCondition(state) === END ? END : "cryptoTools";
 }
 
 const cryptoToolNode = new ToolNode(CRYPTO_TOOLS);
 
 const builder = new StateGraph(CommonAgentState)
-  .addNode("model", cryptoModelNode)
-  .addNode("tools", cryptoToolNode)
-  .addEdge(START, "model")
-  .addConditionalEdges("model", toolsCondition, ["tools", END])
-  .addEdge("tools", "model");
+  .addNode("cryptoModel", cryptoModelNode)
+  .addNode("cryptoTools", cryptoToolNode)
+  .addEdge(START, "cryptoModel")
+  .addConditionalEdges("cryptoModel", cryptoModelRoute, ["cryptoTools", END])
+  .addEdge("cryptoTools", "cryptoModel");
 
 export const cryptoAgent = builder.compile({
   ...subgraphCheckpointerConfig,

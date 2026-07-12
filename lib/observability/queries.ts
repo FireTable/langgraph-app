@@ -1,7 +1,7 @@
 import { and, desc, eq, isNotNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { observabilitySpans, type NewObservabilitySpanRow } from "./schema";
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { CapturedSpan } from "@/lib/observability/callback";
 
 // ponytail: FORBIDDEN regex flags fields that often hold secrets
 // (api_key, baseURL, organization, Bearer tokens). Spec FR-009 bans

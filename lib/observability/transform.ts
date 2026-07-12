@@ -3,10 +3,10 @@
 // "wrapper" node names (subgraphs) for the chip label.
 //
 // Parent chain comes from the backend (CapturingHandler in
-// backend/observability/callback-collector.ts), which derives it from
+// backend/observability/callback.ts), which derives it from
 // langgraph_checkpoint_ns. The frontend does not recompute parents.
 import type { SpanData } from "@assistant-ui/react-o11y";
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { CapturedSpan } from "@/lib/observability/callback";
 
 // ponytail: extend the @assistant-ui/react-o11y SpanData with our
 // per-turn id. The upstream type is strict (no extra fields), so we
@@ -178,7 +178,7 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): WireSpanD
     // `runName` arg of handleChainStart is what we'd ideally use
     // (compile({ name: "agent" }) sets Pregel.this.name upstream),
     // but the wrapper doesn't carry it through yet — CapturingHandler
-    // (see backend/observability/callback-collector.ts) needs to
+    // (see backend/observability/callback.ts) needs to
     // stamp meta.run_name when the param order is fixed. Until then
     // we render whatever LC gave us, with `graph.invoke` as the
     // last-resort label for dev fixtures / partial captures.

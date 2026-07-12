@@ -2,7 +2,7 @@ import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import type { BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { chatModel } from "@/backend/model";
+import { getChatModel } from "@/backend/model";
 import { WEATHER_TOOLS } from "@/backend/tool";
 import { WEATHER_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
@@ -35,19 +35,27 @@ async function weatherModelNode(
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
   const sysMsg = await buildSystemMessageWithMemory(WEATHER_AGENT_PROMPT, config, threads);
 
-  const response = await chatModel.bindTools(WEATHER_TOOLS).invoke([sysMsg, ...history], config);
+  const response = await (
+    await getChatModel()
+  )
+    .bindTools(WEATHER_TOOLS)
+    .invoke([sysMsg, ...history], config);
 
   return { messages: [response] };
+}
+
+function weatherModelRoute(state: { messages: BaseMessage[] }) {
+  return toolsCondition(state) === END ? END : "weatherTools";
 }
 
 const weatherToolNode = new ToolNode(WEATHER_TOOLS);
 
 const builder = new StateGraph(CommonAgentState)
-  .addNode("model", weatherModelNode)
-  .addNode("tools", weatherToolNode)
-  .addEdge(START, "model")
-  .addConditionalEdges("model", toolsCondition, ["tools", END])
-  .addEdge("tools", "model");
+  .addNode("weatherModel", weatherModelNode)
+  .addNode("weatherTools", weatherToolNode)
+  .addEdge(START, "weatherModel")
+  .addConditionalEdges("weatherModel", weatherModelRoute, ["weatherTools", END])
+  .addEdge("weatherTools", "weatherModel");
 
 export const weatherAgent = builder.compile({
   ...subgraphCheckpointerConfig,

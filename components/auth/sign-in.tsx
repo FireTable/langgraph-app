@@ -4,6 +4,7 @@ import { authMutationKeys } from "@better-auth-ui/core";
 import { useAuth, useFetchOptions, useSignInEmail } from "@better-auth-ui/react";
 import { useIsMutating } from "@tanstack/react-query";
 import { type SyntheticEvent, useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,6 +57,17 @@ export function SignIn({ className, socialLayout, socialPosition = "bottom" }: S
   const { mutate: signInEmail, isPending: signInEmailPending } = useSignInEmail(authClient, {
     onError: (error, { email }) => {
       setPassword("");
+
+      // ponytail: belt-and-suspenders — ErrorToaster (mutationCache hook)
+      // should already toast this, but it sometimes doesn't fire when the
+      // mutation has its own onError in react-query v5. Surface the message
+      // here too so the user always sees WHY the signin failed (banned,
+      // wrong password, etc.). EMAIL_NOT_VERIFIED is special-cased below
+      // to redirect instead of toast.
+      if (error.error?.code !== "EMAIL_NOT_VERIFIED") {
+        const message = error.error?.message || error.message || "Sign-in failed";
+        toast.error(message);
+      }
 
       if (error.error?.code === "EMAIL_NOT_VERIFIED") {
         sessionStorage.setItem("better-auth-ui.verify-email", email);

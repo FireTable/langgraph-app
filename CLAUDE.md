@@ -17,7 +17,6 @@ Guidance for Claude Code in this repo. Features, layout, env vars, tech stack â†
 | Auth setup, OAuth, troubleshooting              | `docs/AUTH.md`          |
 | DB schema, ownership, indexes                   | `docs/DB.md`            |
 | CI/CD, Docker, deploys                          | `docs/CI.md`            |
-| Open follow-ups / parked decisions              | `docs/TODOS.md`         |
 
 API changes update `docs/APIS.md` in the same commit (rule 1). Tool changes update `docs/TOOLS.md` (rule 10).
 

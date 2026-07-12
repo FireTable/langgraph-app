@@ -13,6 +13,7 @@ declare global {
       WALLET_CONNECT_PROJECT_ID?: string;
       R2_ALLOWED_CONTENT_TYPES?: string;
       ATTACHMENTS_ENABLED?: string;
+      USER_ROLE_NAME?: string;
     };
   }
 }

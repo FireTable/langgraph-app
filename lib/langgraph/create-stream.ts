@@ -2,7 +2,7 @@
 // `unstable_createLangGraphStream` from `@assistant-ui/react-langgraph`.
 // We were going to thread `parentMessageId` via `config.configurable`
 // here, but the backend derives the same id from `inputs.messages`
-// directly (lastHumanMessageId in callback-collector.ts), and the
+// directly (lastHumanMessageId in callback.ts), and the
 // configurable path is missed on interrupt resume (useSendCommand
 // bypasses stream). Dropping the thread-through — single source of
 // truth stays in the backend.

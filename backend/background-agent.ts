@@ -30,7 +30,7 @@ import { CommonAgentState } from "@/backend/state";
 import { store } from "@/backend/store";
 import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
 import { touchLastMessageAt } from "@/lib/threads/queries";
-import { capturingHandler } from "@/backend/callbacks";
+import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
 
 // ponytail: separate file → easier to mock in tests. Each node follows
 // the same shape as the sub-agent nodes (in backend/agent/chat-agent.ts
@@ -74,5 +74,5 @@ const compiled = builder.compile({ checkpointer, store, name: "backgroundAgent" 
 // can't pick for a bare callbacks object.
 type WithConfigPregel = (config: Record<string, unknown>) => typeof compiled;
 export const graph = (compiled.withConfig as unknown as WithConfigPregel)({
-  callbacks: [capturingHandler],
+  callbacks: [capturingHandler, creditTrackingHandler],
 });

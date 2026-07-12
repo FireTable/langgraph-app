@@ -14,7 +14,7 @@ import {
   findLatestParentMessageId,
 } from "@/lib/observability/queries";
 import { TEST_USER, ensureTestUser } from "@/tests/helpers/auth";
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { CapturedSpan } from "@/lib/observability/callback";
 
 async function seedThread(id: string, userId = TEST_USER.id): Promise<void> {
   await db.insert(threads).values({ id, userId, title: "obs-test" });

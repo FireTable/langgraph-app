@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { type NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
 import { withAuth } from "@/lib/auth/with-auth";
+import { checkCredit } from "@/lib/credit/check";
 
 // ponytail: edge catch-all proxy to LANGGRAPH_API_URL. The browser
 // sends `ANY /api/<rest>`; we forward to `${LANGGRAPH_API_URL}/<rest>`
@@ -25,6 +27,86 @@ function getCorsHeaders() {
   };
 }
 
+// ponytail: every POST/PUT/PATCH is checked against the rolling-window
+// credit cap. The check is cheap (single SUM over an indexed window) and
+// avoids the path-prefix branch's surface area — the proxy's job is to
+// gate token spend, not to know exactly which endpoints spend it. GET
+// stays unchecked (reads only).
+//
+// ponytail: the proxy fabricates a tiny SSE stream that mirrors the
+// shape LangGraph emits for a real run. We emit `event: messages/partial`
+// carrying the new credit-blocked AI message — NOT `event: values`,
+// which carries the full state and would replace (wipe) the client's
+// existing message cache. `messages/partial` is append-only: the SDK
+// adds the new message to whatever the user already sees in the thread,
+// so prior turns stay visible alongside the CreditCard.
+//
+// We do NOT call the LangGraph API in this branch — `checkCredit`
+// already decided the turn is blocked, so no model invocation happens
+// and no recordLlmCall INSERT is queued.
+function creditBlockedResponse(status: {
+  used: number;
+  limit: number;
+  windowHours: number;
+  resetAt: Date;
+}): Response {
+  const runId = `credit-blocked-${randomUUID()}`;
+  const messageId = `msg-credit-block-${randomUUID()}`;
+
+  const aiMessage = {
+    id: messageId,
+    type: "ai",
+    content: "",
+    tool_calls: [
+      {
+        id: `tc-credit-${randomUUID()}`,
+        name: "show_credit_card",
+        args: {
+          resetAt: status.resetAt.toISOString(),
+          limit: status.limit,
+          used: status.used,
+          windowHours: status.windowHours,
+        },
+        type: "tool_call",
+      },
+    ],
+    additional_kwargs: { credit_blocked: true },
+    response_metadata: {},
+  };
+
+  const events: Array<{ event: string; data: string; id: string }> = [
+    { event: "metadata", id: "0", data: JSON.stringify({ run_id: runId, attempt: 1 }) },
+    {
+      event: "messages/partial",
+      id: "1",
+      data: JSON.stringify([aiMessage]),
+    },
+    { event: "end", id: "2", data: "{}" },
+  ];
+
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const evt of events) {
+        controller.enqueue(
+          encoder.encode(`event: ${evt.event}\ndata: ${evt.data}\nid: ${evt.id}\n\n`),
+        );
+      }
+      controller.close();
+    },
+  });
+
+  return new NextResponse(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no",
+      ...getCorsHeaders(),
+    },
+  });
+}
+
 async function proxyRequest(
   req: NextRequest | Request,
   ctx: { user: { id: string } },
@@ -39,6 +121,18 @@ async function proxyRequest(
   searchParams.delete("_path");
   searchParams.delete("nxtP_path");
   const queryString = searchParams.toString() ? `?${searchParams.toString()}` : "";
+
+  // ponytail: per-turn credit gate. Runs before any upstream fetch so a
+  // blocked turn never burns a model invocation. checkCredit is a single
+  // DB round-trip (role join + SUM over a window) — no need to cache at
+  // this layer because LangGraph's ToolNode still records any LLM call
+  // it does end up making, and the proxy only blocks once per turn.
+  if (["POST", "PUT", "PATCH"].includes(nextReq.method)) {
+    const credit = await checkCredit(ctx.user.id);
+    if (!credit.allowed) {
+      return creditBlockedResponse(credit);
+    }
+  }
 
   const upstreamHeaders: Record<string, string> = {
     "x-api-key": process.env.LANGCHAIN_API_KEY || "",
@@ -72,10 +166,24 @@ async function proxyRequest(
         if (parsed && typeof parsed === "object") {
           const config = (parsed.config ?? {}) as Record<string, unknown>;
           const configurable = (config.configurable ?? {}) as Record<string, unknown>;
+          const metadata = (config.metadata ?? {}) as Record<string, unknown>;
+
           // append userId to the langgraph context
           configurable.userId = ctx.user.id;
-          config.configurable = configurable;
+          metadata.userId = ctx.user.id;
+
           parsed.config = config;
+          if (!parsed.metadata) {
+            parsed.metadata = metadata;
+          }
+
+          if (!parsed.configurable) {
+            parsed.configurable = configurable;
+          }
+
+          parsed.config.configurable = configurable;
+          parsed.config.metadata = metadata;
+
           options.body = JSON.stringify(parsed);
         } else {
           options.body = raw;

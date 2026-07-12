@@ -15,7 +15,7 @@ type Params = { id: string; parentMessageId: string };
 // auth + 404-on-cross-user contract; the only difference is the path
 // carries the assistant-ui human-message id so the panel renders only
 // the spans produced for THAT turn (see backend/observability/
-// callback-collector.ts `currentParentMessageId`).
+// callback.ts `currentParentMessageId`).
 //
 // ponytail: data shape — server-side only. transformCapturedToSpanData +
 // aggregateRoot run here so the panel receives SpanData[] + a pre-computed
@@ -31,7 +31,7 @@ export const GET = withAuth<Params>(async (_req, { user, params }) => {
     }),
     // ponytail: the persisted spans cover anything whose Start hook has
     // fired (CapturingHandler now persists on Start — see
-    // backend/observability/callback-collector.ts). runs.list covers the
+    // backend/observability/callback.ts). runs.list covers the
     // earlier window — runs enqueued by runs.create but whose first
     // callback hasn't fired yet — and surfaces pending vs running state
     // (the persisted row is stuck on "running" until End). Two SDK

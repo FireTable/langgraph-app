@@ -1,5 +1,17 @@
 import { relations } from "drizzle-orm";
-import { pgTable, text, timestamp, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, integer, index } from "drizzle-orm/pg-core";
+
+export const role = pgTable("role", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  creditLimit: integer("credit_limit"), // null = unlimited
+  windowHours: integer("window_hours").notNull().default(24),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -7,6 +19,16 @@ export const user = pgTable("user", {
   email: text("email").notNull().unique(),
   emailVerified: boolean("email_verified").default(false).notNull(),
   image: text("image"),
+  roleId: text("role_id")
+    .notNull()
+    .default("user")
+    .references(() => role.id),
+  // ponytail: ban flag — signin is gated in lib/auth/config.ts via
+  // session.create.before, so a banned user can't mint new sessions.
+  // The PATCH /api/admin/users/[id] handler also DELETEs every session
+  // row for that user when banned flips to true, so the cutoff is
+  // immediate rather than waiting for the 7d session expiry.
+  banned: boolean("banned").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildLlmMessages } from "@/components/observability/llm-messages";
-import type { CapturedSpan } from "@/backend/observability/callback-collector";
+import type { CapturedSpan } from "@/lib/observability/callback";
 
 function makeSpan(input: unknown, output: unknown): CapturedSpan {
   return {

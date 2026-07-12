@@ -6,6 +6,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { AuthShell } from "@/app/auth-shell";
 import { Web3Providers } from "@/app/web3-providers";
 import { APP_NAME } from "@/lib/constants";
+import { getSessionFromHeaders } from "@/lib/auth/queries";
+import { getUserWithRole } from "@/lib/auth/role-queries";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -23,11 +25,21 @@ export const metadata: Metadata = {
   description: `${APP_NAME} — streaming chat backed by a LangGraph StateGraph agent`,
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // ponytail: resolve the current user's role display name once per
+  // render so the chat dropdown pill (UserView) can read it off
+  // window.__CONFIG__ without a round-trip. Anonymous renders get
+  // undefined — components are expected to hide the pill in that
+  // case. Single DB JOIN, same shape /api/credit/status returns,
+  // so the two surfaces can't disagree.
+  const session = await getSessionFromHeaders();
+  const userWithRole = session?.user?.id ? await getUserWithRole(session.user.id) : null;
+  const userRoleName = userWithRole?.role?.name ?? null;
+
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
@@ -44,6 +56,7 @@ export default function RootLayout({
             WALLET_CONNECT_PROJECT_ID: process.env.WALLET_CONNECT_PROJECT_ID,
             R2_ALLOWED_CONTENT_TYPES: process.env.R2_ALLOWED_CONTENT_TYPES,
             ATTACHMENTS_ENABLED: process.env.ATTACHMENTS_ENABLED,
+            USER_ROLE_NAME: userRoleName ?? undefined,
           })};`}
         </Script>
         <AuthShell>

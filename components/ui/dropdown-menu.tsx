@@ -27,11 +27,39 @@ function DropdownMenuContent({
   sideOffset = 4,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+  // ponytail: when the trigger sits at the bottom of the screen, the
+  // menu opens upward and the LAST menu item ends up directly under
+  // the trigger. The same physical press that opened the menu then
+  // fires its pointerup on the content, and the browser dispatches a
+  // compatibility click after that pointerup — the click "tunnels
+  // through" to the last item and fires its onClick (e.g. Sign Out).
+  //
+  // Fix: per the Pointer Events spec, preventDefault on pointerup
+  // suppresses the compatibility click. We swallow it iff the pointer
+  // hasn't moved since the content mounted — i.e. the release is the
+  // same press that opened the menu. Real clicks after the user moves
+  // the mouse pass through untouched.
+  //
+  // hasMovedRef starts at false on every mount; in Radix's default
+  // (non-forceMount) mode the content mounts/unmounts with the menu,
+  // so each open is a fresh ref. We can't reset on open via
+  // onOpenAutoFocus because Radix omits it from
+  // DropdownMenuContentProps.
+  const hasMovedRef = React.useRef(false);
+
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}
+        onPointerMove={() => {
+          hasMovedRef.current = true;
+        }}
+        onPointerUp={(e) => {
+          if (!hasMovedRef.current) {
+            e.preventDefault();
+          }
+        }}
         className={cn(
           "z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
           className,

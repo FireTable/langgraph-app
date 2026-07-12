@@ -108,7 +108,7 @@ function writeCollapsedSet(set: Set<string>): void {
   try {
     window.localStorage.setItem(NFT_GALLERY_COLLAPSED_STORAGE_KEY, JSON.stringify(Array.from(set)));
   } catch {
-    // Quota exceeded or storage disabled — silently ignore. The in-memory
+    // Storage cap exceeded or localStorage disabled — silently ignore. The in-memory
     // state still updates; only the persistence is lost.
   }
 }

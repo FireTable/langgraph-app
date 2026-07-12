@@ -2,7 +2,7 @@ import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import type { BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { chatModel } from "@/backend/model";
+import { getChatModel } from "@/backend/model";
 import { ALL_TOOLS } from "@/backend/tool";
 import { CHAT_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
@@ -40,27 +40,27 @@ async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?:
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
 
   const sysMsg = await buildSystemMessageWithMemory(CHAT_AGENT_PROMPT, config, threads);
-  const response = await chatModel.bindTools(ALL_TOOLS).invoke([sysMsg, ...history], config);
+  const response = await (
+    await getChatModel()
+  )
+    .bindTools(ALL_TOOLS)
+    .invoke([sysMsg, ...history], config);
 
   return { messages: [response] };
 }
 
-// ponytail: loadThreadSummariesForPrompt lives in backend/memory/template.ts
-// so weatherAgent / cryptoAgent / codeAgent share the same helper.
-// toolsCondition returns END for the no-tool path; that END becomes the
-// subgraph's exit point and the parent routes chatAgent → afterAgent.
 function chatModelRoute(state: { messages: BaseMessage[] }) {
-  return toolsCondition(state) === END ? END : "tools";
+  return toolsCondition(state) === END ? END : "chatTools";
 }
 
 const chatToolNode = new ToolNode(ALL_TOOLS);
 
 const builder = new StateGraph(CommonAgentState)
-  .addNode("model", chatModelNode)
-  .addNode("tools", chatToolNode)
-  .addEdge(START, "model")
-  .addConditionalEdges("model", chatModelRoute, ["tools", END])
-  .addEdge("tools", "model");
+  .addNode("chatModel", chatModelNode)
+  .addNode("chatTools", chatToolNode)
+  .addEdge(START, "chatModel")
+  .addConditionalEdges("chatModel", chatModelRoute, ["chatTools", END])
+  .addEdge("chatTools", "chatModel");
 
 export const chatAgent = builder.compile({
   ...subgraphCheckpointerConfig,

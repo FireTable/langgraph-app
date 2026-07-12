@@ -17,6 +17,7 @@ card — same rule as `docs/APIS.md`.
 | Code    | `backend/tool/code/`   | `components/tool-ui/code/`                                                        |
 | Web     | `backend/tool/` (root) | — (plain tool messages)                                                           |
 | Memory  | `backend/tool/memory/` | `components/tool-ui/memory/` (SaveMemoryCard diff + the settings/memory-view tab) |
+| Credit  | — (no backend tool)    | `components/tool-ui/credit/credit-card.tsx` (proxy-injected tool_call)            |
 
 ## Weather
 
@@ -91,6 +92,12 @@ payload the `SaveMemoryCard` renders as a per-row diff.
 | ------------ | --------------- | ------------- | ---------------------------------------------------------- |
 | `search_web` | `web-search.ts` | —             | Jina `s.jina.ai`, key-pool auth via `lib/jina.ts`.         |
 | `fetch_url`  | `web-fetch.ts`  | —             | Jina `r.jina.ai`, returns `{ title, content, url }` as MD. |
+
+## Credit
+
+| Tool               | Backend file | Frontend card            | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------ | ------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `show_credit_card` | —            | `credit/credit-card.tsx` | **Client-only render — no backend tool.** The `/api/[..._path]` proxy synthesizes a tiny SSE stream carrying an AI message with a single `show_credit_card` tool_call when `checkCredit()` rejects the turn (UTC-aligned rolling-window cap reached). The card renders inline in the thread, displays `used / limit / windowHours / resetAt`, and updates the user-button dropdown slot on next refresh. Args ride on the tool_call itself — no ToolMessage is emitted. See `docs/CREDIT.md` § Where the cap is enforced. |
 
 ## Frontend wiring
 

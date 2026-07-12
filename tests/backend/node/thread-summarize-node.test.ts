@@ -11,10 +11,11 @@ vi.mock("@/lib/memory/queries", () => ({
   writeSummary: mockWriteSummary,
 }));
 
-vi.mock("@/backend/model", () => ({
-  chatModel: {
+vi.mock("@/backend/model", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/backend/model")>()),
+  getChatModel: async () => ({
     withStructuredOutput: () => ({ invoke: mockInvoke }),
-  },
+  }),
 }));
 
 import {

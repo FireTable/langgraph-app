@@ -16,6 +16,10 @@ for the local build commands. Everything else here applies identically.
   external RDS / managed instance — see [External Postgres](#external-postgres-optional))
 - An OpenAI-compatible API key (`OPENAI_API_KEY`)
 - A long random string for `BETTER_AUTH_SECRET` — `openssl rand -hex 32`
+- A long random string for `LLM_KEY_ENCRYPTION_KEY` — `openssl rand -hex 32`
+  (AES-256-GCM KEK that wraps every API key in the provider registry; the
+  admin UI returns 503 without it — no silent fallback to "no encryption")
+- The email you'll sign up with as the first admin (`INITIAL_ADMIN_EMAIL`)
 
 Ports the stack exposes:
 
@@ -85,9 +89,27 @@ POSTGRES_DB=langgraph_app
 # App
 BETTER_AUTH_SECRET=$(openssl rand -hex 32)
 BETTER_AUTH_URL=https://chat.example.com      # public URL of the app
-OPENAI_API_KEY=sk-...                         # required
+OPENAI_API_KEY=sk-...                         # required (env fallback; the DB registry
+                                              #  takes over once migration 0003 seeds
+                                              #  the 'default' provider)
 OPENAI_BASE_URL=                              # leave empty for stock OpenAI
 OPENAI_MODEL=                                 # leave empty for provider default
+
+# Provider encryption KEK — AES-256-GCM key that wraps every apiKey in the
+# provider registry (admin UI's Providers tab). REQUIRED for the admin UI
+# to start: every /api/admin/providers/** request hits loadKek() lazily and
+# returns 503 if the KEK is missing or malformed (no silent fallback to
+# "no encryption" mode). 32 bytes hex.
+# Generate once, set-and-forget; rotating it is out of scope.
+LLM_KEY_ENCRYPTION_KEY=$(openssl rand -hex 32)
+
+# Bootstrap admin — the first signup matching this email (case-insensitive)
+# is promoted to roleId: "admin" via the Better Auth user.create.after hook.
+# Idempotent — leave set forever; only the FIRST match is promoted. To add
+# a second admin later, use the admin UI Users tab (PATCH /api/admin/users/[id])
+# or a direct DB update. Optional — without it, no admin is bootstrapped
+# and you have to promote someone via DB before /admin is reachable.
+INITIAL_ADMIN_EMAIL=you@example.com
 
 # RainbowKit / WalletConnect — required for the crypto sub-agent's wallet UI.
 # Get one at https://cloud.walletconnect.com

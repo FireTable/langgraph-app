@@ -22,6 +22,20 @@
       "when": 1783571084726,
       "tag": "0002_sparkling_bloodstrike",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783791952319,
+      "tag": "0003_melted_bedlam",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783867112864,
+      "tag": "0004_nappy_bloodstorm",
+      "breakpoints": true
     }
   ]
 }

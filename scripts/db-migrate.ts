@@ -68,7 +68,7 @@ function step(name: string, fn: () => Promise<void> | void) {
 // Postgres error codes that mean "object already exists" — safe to
 // ignore on idempotent re-runs (start.sh calls this on every container
 // start; tests/setup.ts re-runs against a possibly-stale DB).
-const SWALLOW = new Set(["42P07", "42710", "42P06"]); // duplicate_table / duplicate_object / duplicate_schema
+const SWALLOW = new Set(["42P07", "42710", "42P06", "42701"]); // duplicate_table / duplicate_object / duplicate_schema / duplicate_column
 
 async function applyContent(sql: postgres.Sql, content: string) {
   // Drizzle SQL files are written with `--> statement-breakpoint`
@@ -86,6 +86,53 @@ async function applyContent(sql: postgres.Sql, content: string) {
       if (!code || !SWALLOW.has(code)) throw e;
     }
   }
+}
+
+/**
+ * Replace `__VAR__` placeholders in migration SQL with `process.env.VAR`
+ * values. Pure-SQL migrations can't read process.env, so the runner
+ * interpolates a few well-known placeholders:
+ *   - `__OPENAI_BASE_URL__`      → env or 'https://api.openai.com/v1'
+ *   - `__OPENAI_API_KEY_ENCRYPTED__` → AES-256-GCM blob jsonb literal
+ *                                    (empty array when OPENAI_API_KEY is unset)
+ *   - `__OPENAI_MODEL_JSON__`    → model entry jsonb literal
+ *                                    (empty array when OPENAI_MODEL is unset)
+ *   - any other `__FOO__`        → process.env.FOO if set, else left as-is
+ *
+ * Unknown placeholders (env var unset for a generic `__FOO__`) are left
+ * as-is so the SQL parser surfaces the missing config loudly rather than
+ * silently dropping it. All values are escaped for SQL string literals.
+ */
+async function interpolateEnv(content: string): Promise<string> {
+  const { encryptApiKey } = await import("@/lib/provider/admin");
+
+  const baseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+
+  const apiKeyJson = (() => {
+    const plain = process.env.OPENAI_API_KEY;
+    if (!plain) return "[]";
+    const blob = encryptApiKey(plain);
+    return JSON.stringify([blob]).replace(/'/g, "''");
+  })();
+
+  const modelJson = (() => {
+    const name = process.env.OPENAI_MODEL;
+    if (!name) return "[]";
+    return JSON.stringify([{ name, enabled: true, inputPer1k: 0.25, outputPer1k: 1 }]).replace(
+      /'/g,
+      "''",
+    );
+  })();
+
+  return content
+    .replaceAll("__OPENAI_BASE_URL__", baseUrl.replace(/'/g, "''"))
+    .replaceAll("__OPENAI_API_KEY_ENCRYPTED__", apiKeyJson)
+    .replaceAll("__OPENAI_MODEL_JSON__", modelJson)
+    .replace(/__([A-Z][A-Z0-9_]+)__/g, (m, name) => {
+      const v = process.env[name];
+      if (v === undefined) return m;
+      return v.replace(/'/g, "''");
+    });
 }
 
 // langgraph-api 0.10.x hardcodes column `prefix` in migration 29's
@@ -121,7 +168,7 @@ async function main() {
       for (const f of sqlFiles) {
         const path = join(dir, f);
         process.stdout.write(`\n    ${f}`);
-        const content = readFileSync(path, "utf-8");
+        const content = await interpolateEnv(readFileSync(path, "utf-8"));
         await applyContent(sql, content);
       }
     });

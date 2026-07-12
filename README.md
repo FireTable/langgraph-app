@@ -16,6 +16,8 @@ A self-hostable chat app (this repo: `langgraph-app`) that streams tokens from a
 - **Crypto sub-agent**: price, NFT holdings (5-chain gallery via Alchemy Portfolio), and a simulated swap flow against an auto-funded Mock Coin balance.
 - **Observability panel**: every LLM / Tool / Chain / Node span is captured by a `BaseCallbackHandler` and persisted to a `observability_spans` Postgres table. Each assistant message shows an icon button that opens a per-turn waterfall — duration, token usage, nested parent/child spans. The list endpoint is server-transformed (panel never carries the raw collector payload); per-row click lazy-loads the full span via a dedicated detail endpoint. See [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
 - **Chat attachments**: assistant-ui's `AttachmentAdapter` plus a presigned PUT to Cloudflare R2 — the browser uploads bytes directly to R2, nothing traverses Next.js. Lazy-register on missing env (mirrors DENO / ALCHEMY). See [docs/ATTACHMENTS.md](docs/ATTACHMENTS.md) for the key convention, messageId-deferred decision, and Content-Disposition XSS guard.
+- **Per-LLM-call credit quota**: every successful call is metered against a UTC-aligned rolling-window cap read from `role.creditLimit` / `role.windowHours`. Enforcement lives at the `/api/[..._path]` proxy — when the cap is hit, the proxy synthesizes a `show_credit_card` SSE stream and the chat UI renders the credit-limit-reached card inline. The call log backs a per-user history (Settings → Credits) and an admin-managed rate config. See [docs/CREDIT.md](docs/CREDIT.md).
+- **Admin console**: a single `/admin` page with three tabs — Providers (registry + encrypted API keys + per-model rates), Roles (credit caps + window length), Users (role assignment, ban with immediate session revoke, delete). The first admin is bootstrapped via `INITIAL_ADMIN_EMAIL`. See [docs/ADMIN.md](docs/ADMIN.md).
 
 ## Tech stack
 
@@ -29,6 +31,11 @@ A self-hostable chat app (this repo: `langgraph-app`) that streams tokens from a
 | API validation | Zod (schemas derived from Drizzle via `drizzle-zod`)                      |
 | Database       | Postgres 16                                                               |
 | Tests          | Vitest (real Postgres test database)                                      |
+
+## Experience
+
+- **Live demo**: <https://ai.firetable.tech> — a hosted instance running this repo. Sign up with any email; the first account matching `INITIAL_ADMIN_EMAIL` is promoted to admin (set that env var on your own deployment if you want the same).
+- **Repo**: <https://github.com/FireTable/langgraph-app>
 
 ## Quick start
 
@@ -111,19 +118,21 @@ app/                          Next.js App Router
   page.tsx                    Full-viewport entry, renders <Assistant />
   assistant.tsx               useLangGraphRuntime + thread list adapter wiring
   api/                        HTTP routes (see docs/APIS.md)
-    [..._path]/route.ts       Node catch-all proxy to LANGGRAPH_API_URL (withAuth-gated)
+    [..._path]/route.ts       Node catch-all proxy to LANGGRAPH_API_URL (withAuth-gated, per-turn credit cap)
     threads/                  Thread metadata CRUD + observability sub-routes
     memory/                   Profile + thread-summaries delete endpoints
+    credit/                   status + history endpoints (user-facing)
+    admin/                    Providers / Roles / Users CRUD (admin-only)
     alchemy/                  Alchemy JSON-RPC proxy + key-status endpoint
 
 backend/
   agent.ts                    Chat graph (router + sub-agents + triggerBackgroundAgent)
   background-agent.ts         Background graph (touchLastMessage + summarize)
   state.ts                    RouterAgentState + CommonAgentState
-  model.ts                    ChatOpenAI singletons (with / without thinking)
+  model.ts                    getChatModel() — DB-backed ChatOpenAI factory + env fallback
   checkpointer.ts             PostgresSaver (LangGraph Postgres checkpoint tables)
   store.ts                    Shared PostgresStore for memory + thread summaries
-  callbacks.ts                Singleton CapturingHandler shared by both compiled graphs
+  callbacks.ts                Singleton handlers shared by both compiled graphs (capturingHandler + creditTrackingHandler)
   agent/
     chat-agent.ts             chatAgent compiled subgraph (model ↔ tools loop)
     weather-agent.ts          weatherAgent compiled subgraph
@@ -149,9 +158,11 @@ backend/
 components/
   assistant-ui/               Chat primitives (thread, markdown, reasoning, …)
   observability/              Observability UI (button, sheet, sheet-context, panel, llm-messages renderer)
-  tool-ui/                    Tool-call cards (weather / crypto / code / memory)
+  tool-ui/                    Tool-call cards (weather / crypto / code / memory / credit)
   ui/                         shadcn/ui primitives
-  settings/                   Memory settings tab (memory-view)
+  settings/                   Memory + Credits settings tabs
+  credit/                     CreditProgress + CreditHeader + CreditSummaryCard (shared chrome)
+  auth/                       Auth-shell + user-button + sign-in UI
 
 lib/
   utils.ts                    cn() = twMerge(clsx(...))
@@ -170,6 +181,26 @@ lib/
     aggregate.ts              aggregateRoot — pre-compute stat-card row server-side
     config.ts                 getRetentionDays() — reads OBSERVABILITY_RETENTION_DAYS
     validators.ts             Zod schemas for list / detail / DELETE responses + AggregateDTO
+  credit/                     Credit quota module
+    schema.ts                 Drizzle table (credit_usage_log) + call_status enum
+    check.ts                  checkCredit(userId) — SUM + UTC-anchored window + admin unlimited short-circuit
+    charge.ts                 recordLlmCall + computeCredits (pure math)
+    callback.ts               CreditTrackingHandler — BaseCallbackHandler that writes the log
+    build-model.ts            findProviderId / getModelRate — callback-side helpers
+    status.ts                 Shared client-side /api/credit/status reader (1s TTL + in-flight collapse)
+    invoke.ts                 creditExceededReply — unused helper (kept for future hookup)
+    errors.ts                 CreditExceededError class — defined but never thrown today
+    zod.ts                    Zod schemas for roleId / callStatus / providerApiKey / modelConfig + provider/role input+patch
+  provider/                   LLM provider registry module
+    schema.ts                 Drizzle table (provider) + ProviderApiKey / ModelConfig types
+    admin.ts                  PublicProvider projection + stripProviderSecrets + encryptApiKey helper
+    model-registry.ts         getChatModelFromDB / invalidateModelCache (LRU + 60s TTL)
+  auth/                       Better Auth + RBAC
+    schema.ts                 user / session / account / verification / role tables
+    config.ts                 Better Auth instance + INITIAL_ADMIN_EMAIL hook + ban-session gate
+    encryption.ts             AES-256-GCM helpers (loadKek / aesGcmEncrypt / aesGcmDecrypt / deriveKeyName)
+    with-auth.ts              withAuth({ role }, handler) — session + role gate wrapper
+    role-queries.ts           getUserWithRole — JOIN through role
 
 db/                           Database root
   schema.ts                   Aggregate re-export of all module schemas
@@ -183,6 +214,7 @@ tests/                        Vitest (NODE_ENV=test → reads .env.test)
   db/                         Migration sanity tests
   frontend/                   Component tests (Memory tab, observability sheet, …)
   threads/                    queries + adapter + validators tests
+  lib/                        Library-module tests (credit, provider, auth, observability, memory)
 
 drizzle.config.ts             Drizzle-kit config (uses @next/env to load .env)
 vitest.config.ts              Vitest config (NODE_ENV=test → reads .env.test)
@@ -194,22 +226,18 @@ langgraph.json                LangGraph CLI config (registers BOTH graphs: agent
 
 ## Database
 
-Two persistence layers, both in Postgres:
+Three persistence layers, all in Postgres:
 
-### 1. Threads metadata (`threads` table)
+### 1. App tables
 
-Managed by Drizzle. Owned by the `lib/threads` module.
+Owned by `lib/<module>/schema.ts` (re-exported from `db/schema.ts`). See [`docs/DB.md`](docs/DB.md) for the full column-by-column source of truth.
 
-| Column                      | Type                                             | Notes                                                    |
-| --------------------------- | ------------------------------------------------ | -------------------------------------------------------- |
-| `id`                        | `TEXT PRIMARY KEY`                               | nanoid, 12 chars, also used as the LangGraph `thread_id` |
-| `title`                     | `TEXT NOT NULL DEFAULT 'New Chat'`               | editable from the UI                                     |
-| `status`                    | `TEXT NOT NULL CHECK IN ('regular', 'archived')` | sidebar filter                                           |
-| `user_id`                   | `TEXT NULL`                                      | reserved for future multi-user                           |
-| `custom`                    | `JSONB NOT NULL DEFAULT '{}'`                    | free-form metadata                                       |
-| `created_at` / `updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT now()`             |                                                          |
-
-Index: `(status, updated_at DESC)` for sidebar queries.
+- **`user`, `session`, `account`, `verification`** — Better Auth tables (managed by `lib/auth/schema.ts`).
+- **`threads`** — chat threads; one row per assistant-ui thread. Indexed `(status, updated_at DESC)` for the sidebar.
+- **`attachments`** — R2-backed file metadata (no FK to `threads`; see [`docs/ATTACHMENTS.md`](docs/ATTACHMENTS.md)).
+- **`role`** — per-tier credit cap (`credit_limit`, `window_hours`). Seeded with `guest`, `user`, `admin` (migration `0003`).
+- **`provider`** — LLM registry (encrypted API keys + per-model rates). Seeded with `default` (migration `0003`).
+- **`credit_usage_log`** — append-only per-LLM-call log. Source of truth for the cap check + the user-facing history. Composite index `(user_id, created_at)` covers both workloads.
 
 ### 2. LangGraph checkpoints
 
@@ -242,9 +270,9 @@ Test database stays isolated from dev — never put production-like data in `lan
 
 | Var                                 | Used by                   | Required?                                                                                                                                                                                                                                               |
 | ----------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OPENAI_API_KEY`                    | backend agent             | yes                                                                                                                                                                                                                                                     |
-| `OPENAI_MODEL`                      | backend agent             | optional (default `gpt-4o-mini`)                                                                                                                                                                                                                        |
-| `OPENAI_BASE_URL`                   | backend agent             | optional (OpenAI-compatible gateway)                                                                                                                                                                                                                    |
+| `OPENAI_API_KEY`                    | backend agent             | optional — read only when the `provider` table is empty (first-boot env fallback). After the seed migration lands, the admin UI manages encrypted keys per provider.                                                                                    |
+| `OPENAI_MODEL`                      | backend agent             | optional (default `gpt-4o-mini`); seeds the `default` provider's first model at migration time                                                                                                                                                          |
+| `OPENAI_BASE_URL`                   | backend agent             | optional (OpenAI-compatible gateway); seeds the `default` provider's `base_url` at migration time                                                                                                                                                       |
 | `JINA_API_KEYS`                     | web-search + web-fetch    | yes (comma-separated; one per Jina account)                                                                                                                                                                                                             |
 | `ALCHEMY_API_KEY`                   | NFT gallery + portfolio   | yes (server-only; powers `get_NFT_holdings`)                                                                                                                                                                                                            |
 | `LANGGRAPH_API_URL`                 | Next.js proxy             | optional (default `http://localhost:2024`)                                                                                                                                                                                                              |
@@ -255,6 +283,8 @@ Test database stays isolated from dev — never put production-like data in `lan
 | `DATABASE_URL_TEST`                 | vitest                    | yes                                                                                                                                                                                                                                                     |
 | `BETTER_AUTH_SECRET`                | session cookie signing    | yes (see [docs/AUTH.md](docs/AUTH.md))                                                                                                                                                                                                                  |
 | `BETTER_AUTH_URL`                   | OAuth callback base       | yes (default `http://localhost:3000`)                                                                                                                                                                                                                   |
+| `LLM_KEY_ENCRYPTION_KEY`            | API-key KEK               | yes — 32-byte hex (`openssl rand -hex 32`). AES-256-GCM key that wraps every `provider.apiKeys[]` row. The admin UI returns 503 on first request if this is missing (no silent fallback). Rotating it is out of scope.                                  |
+| `INITIAL_ADMIN_EMAIL`               | bootstrap admin           | optional — the first signup matching this email (case-insensitive) is promoted to `roleId: "admin"` via the Better Auth `databaseHooks.user.create.after` hook. Idempotent — only the FIRST match is promoted.                                          |
 | `RESEND_API_KEY`                    | verification emails       | yes                                                                                                                                                                                                                                                     |
 | `RESEND_FROM_EMAIL`                 | verification email sender | optional (`onboarding@resend.dev` default)                                                                                                                                                                                                              |
 | `GITHUB_CLIENT_ID` / `_SECRET`      | GitHub OAuth              | optional                                                                                                                                                                                                                                                |
@@ -283,9 +313,12 @@ Test database stays isolated from dev — never put production-like data in `lan
 - [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — observability panel design: callback handler wiring, `observability_spans` schema, server-side transform + aggregate, lazy-loaded row detail, security/redaction, retention config, and curl examples.
 - [`docs/TOOLS.md`](docs/TOOLS.md) — LangGraph tool inventory and frontend card wiring. Update whenever a tool or card is added/removed/rerouted.
 - [`docs/INTERRUPT.md`](docs/INTERRUPT.md) — interrupt-driven tool flows (ask_location, connect_wallet, place_crypto_order, get_order_status) — the two runtime paths the cards can take.
-- [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, troubleshooting.
+- [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, role mechanism, `INITIAL_ADMIN_EMAIL` bootstrap, troubleshooting.
 - [`docs/ATTACHMENTS.md`](docs/ATTACHMENTS.md) — chat attachments backed by Cloudflare R2: direct-upload architecture, key convention, lazy-register on missing env, `Content-Disposition` XSS guard, `messageId`-deferred decision.
-- [`docs/DB.md`](docs/DB.md) — database schema (Better Auth + `threads` + `attachments`), ownership model, indexes. Source of truth: `db/migrations/0000_*.sql`.
+- [`docs/DB.md`](docs/DB.md) — database schema (Better Auth + `threads` + `attachments` + `role` + `provider` + `credit_usage_log`), ownership model, indexes. Source of truth: `db/migrations/0000_*.sql`.
+- [`docs/CREDIT.md`](docs/CREDIT.md) — per-LLM-call credit cap: UTC-aligned rolling window, proxy-level enforcement, callback-level recording, `show_credit_card` UI affordance, `credit_usage_log` audit trail.
+- [`docs/ADMIN.md`](docs/ADMIN.md) — admin console: `/admin` Providers / Roles / Users tabs, AES-256-GCM API-key encryption, last-admin + default-provider guards, secrets handling.
+- [`docs/PROVIDERS.md`](docs/PROVIDERS.md) — DB-backed chat-model registry: `getChatModel` / `getChatModelFromDB` / `invalidateModelCache`, LRU + 60s cross-process TTL tradeoff, seeded `default` row, env fallback.
 - [`docs/CI.md`](docs/CI.md) — CI/CD layout, base-image runtime requirements, local verification commands.
 - [`docs/DEPLOY.md`](docs/DEPLOY.md) — self-hosting guide: pull the image, configure env, first-start Postgres fix, reverse proxy + TLS, backups. **Read this if you're deploying.**
 
