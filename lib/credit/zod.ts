@@ -45,6 +45,13 @@ export const roleInputSchema = z.object({
 // fails strict (handler returns 400). `.partial()` alone would still
 // accept `{}` because the defaults fill in — `enabled: true`,
 // `apiKeys: []`, etc. — and the handler would silently rewrite the row.
+//
+// apiKeys is also stripped from the PATCH schema: encrypted material
+// must travel through `POST /providers/[id]/keys` which routes through
+// `encryptApiKey` — a hand-crafted `apiKeys[]` here would write the
+// caller's plaintext-or-garbage directly into the jsonb and fail later
+// at `aesGcmDecrypt` with no signal. `models` stays — it carries no
+// secrets, only rate config.
 const providerNoDefaults = z.object({
   id: z
     .string()
@@ -55,7 +62,6 @@ const providerNoDefaults = z.object({
   name: z.string().min(1).max(128).optional(),
   enabled: z.boolean().optional(),
   baseUrl: z.url().optional(),
-  apiKeys: z.array(providerApiKeySchema).optional(),
   models: z.array(modelConfigSchema).optional(),
 });
 export const providerPatchSchema = providerNoDefaults;

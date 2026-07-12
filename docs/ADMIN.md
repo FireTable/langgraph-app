@@ -26,17 +26,17 @@ Create a new provider row. `apiKeys` / `models` default to `[]`; new providers a
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Request body  | `ProviderInput` — `id` (`^[a-z0-9_-]+$`, 1..64), `name` (1..128), `enabled` (bool, default `true`), `apiKeys?` (`ProviderApiKey[]`, default `[]`), `models?` (`ModelConfig[]`, default `[]`). |
 | 201 response  | `PublicProvider`                                                                                                                                                                              |
-| Failure codes | 400 `BAD_REQUEST` (Zod), 401, 403. 409 `PROVIDER_EXISTS` surfaces from the unique PK if a duplicate `id` slips through.                                                                       |
+| Failure codes | 400 `BAD_REQUEST` (Zod), 401, 403, 409 `DUPLICATE` (PK collision on `id`).                                                                                                                    |
 
 ### `PATCH /api/admin/providers/[id]`
 
-Partial update. Whole-array replacement is used for `apiKeys` / `models` when present — no merge semantics.
+Partial update. Whole-array replacement is used for `models` when present — no merge semantics. **`apiKeys` is intentionally NOT exposed on PATCH** — encrypted material must travel through `POST /api/admin/providers/[id]/keys` so it goes through `encryptApiKey`. A raw `apiKeys[]` on PATCH would write caller-supplied bytes straight into the jsonb and fail later at `aesGcmDecrypt` with no signal.
 
-|               |                                                                                                                     |
-| ------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Request body  | `ProviderPatch` — any subset of `id`, `name`, `enabled`, `apiKeys`, `models`. Empty body returns 400 `BAD_REQUEST`. |
-| 200 response  | `PublicProvider`                                                                                                    |
-| Failure codes | 400 `BAD_REQUEST` (Zod or empty patch), 401, 403, 404 `NOT_FOUND`                                                   |
+|               |                                                                                                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | `ProviderPatch` — any subset of `id`, `name`, `enabled`, `baseUrl`, `models`. Empty body returns 400 `BAD_REQUEST`. Sending `apiKeys` is silently ignored by the schema. |
+| 200 response  | `PublicProvider`                                                                                                                                                         |
+| Failure codes | 400 `BAD_REQUEST` (Zod or empty patch), 401, 403, 404 `NOT_FOUND`                                                                                                        |
 
 ### `DELETE /api/admin/providers/[id]`
 

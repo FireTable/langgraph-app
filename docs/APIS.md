@@ -295,17 +295,17 @@ Create a new provider row. `apiKeys` / `models` default to `[]`.
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Request body  | `{ id: string (^[a-z0-9_-]+$, 1..64), name: string (1..128), enabled?: boolean (default true), apiKeys?: ProviderApiKey[] (default []), models?: ModelConfig[] (default []) }`. |
 | 201 response  | `PublicProvider`                                                                                                                                                                |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403. The DB PK rejects duplicates; the handler surfaces that as a generic 500 today (no 409 wrap yet).                                                  |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 409 `DUPLICATE` (PK collision on `id`).                                                                                                            |
 
 ### `PATCH /api/admin/providers/[id]`
 
-Partial update. Whole-array replacement is used for `apiKeys` / `models` when present — no merge semantics.
+Partial update. Whole-array replacement is used for `models` when present — no merge semantics. **`apiKeys` is not accepted on this endpoint** — encrypted material must go through `POST /api/admin/providers/[id]/keys` so it routes through `encryptApiKey`. A raw `apiKeys[]` on PATCH would store caller-supplied bytes unencrypted in the jsonb.
 
-|               |                                                                                                    |
-| ------------- | -------------------------------------------------------------------------------------------------- |
-| Request body  | Any subset of `{ id?, name?, enabled?, apiKeys?, models? }`. Empty body returns 400 `BAD_REQUEST`. |
-| 200 response  | `PublicProvider`                                                                                   |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND`                                                       |
+|               |                                                                                                                                                 |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | Any subset of `{ id?, name?, enabled?, baseUrl?, models? }`. Empty body returns 400 `BAD_REQUEST`. `apiKeys` is silently dropped by the schema. |
+| 200 response  | `PublicProvider`                                                                                                                                |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND`                                                                                                    |
 
 ### `DELETE /api/admin/providers/[id]`
 
