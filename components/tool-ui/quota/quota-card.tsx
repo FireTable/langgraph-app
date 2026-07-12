@@ -1,8 +1,7 @@
 "use client";
 
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
-import { SparklesIcon } from "lucide-react";
-
+import { CoinsIcon } from "lucide-react";
 import { QuotaProgress } from "@/components/credit/quota-progress";
 import { CardHeader, CardShell } from "@/components/tool-ui/primitives/card";
 
@@ -35,7 +34,7 @@ export const QuotaCard: ToolCallMessagePartComponent<Args> = ({ args }) => {
   return (
     <CardShell data-slot="show-quota-card" maxWidthClass="max-w-md">
       <CardHeader
-        icon={<SparklesIcon className="size-4" />}
+        icon={<CoinsIcon className="size-4" />}
         iconClassName="bg-amber-500/10 text-amber-500"
         title="Credit limit reached"
         subtitle={subtitle}

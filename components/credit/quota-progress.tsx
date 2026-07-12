@@ -101,22 +101,18 @@ export function QuotaProgress({
           <span className="shrink-0 text-[11px] tabular-nums">{pct}%</span>
         </div>
         <div className="text-muted-foreground/80 pl-6 text-[11px]">
-          {windowHours}h window · resets at {resetTime}
+          Reached {windowHours}h window · resets at {resetTime}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2 text-sm font-normal">
-        <CoinsIcon className="size-4 shrink-0" />
-        <span>Usage</span>
-      </div>
-      <div className="text-muted-foreground pl-6 text-xs">
+    <div className="flex flex-col gap-1 pl-12">
+      <div className="text-muted-foreground text-xs">
         Used <span className="text-foreground font-medium">{usedStr}</span> / {limitStr} credits
       </div>
-      <div className="flex items-center gap-2 pl-6">
+      <div className="flex items-center gap-2">
         <div
           className="bg-muted-foreground/15 relative h-1.5 flex-1 overflow-hidden rounded-full"
           role="progressbar"
@@ -132,9 +128,9 @@ export function QuotaProgress({
         </div>
         <span className="shrink-0 text-xs tabular-nums">{pct}%</span>
       </div>
-      <p className="text-muted-foreground pl-6 text-xs">
-        {windowHours}h rolling window · resets at {resetTime}. Try again when the window rolls
-        forward, or contact your admin to raise the limit.
+      <p className="text-muted-foreground text-xs">
+        Reached {windowHours}h rolling window · resets at {resetTime}. Try again when the window
+        rolls forward, or contact your admin to raise the limit.
       </p>
     </div>
   );
