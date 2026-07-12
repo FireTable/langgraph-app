@@ -59,7 +59,7 @@ Every `/api/threads/*` route requires a session cookie and filters by `session.u
 
 ## Roles
 
-Every user has a `roleId` FK pointing at the `role` table (`lib/auth/schema.ts`). The role controls the **credit quota** — the rolling-window cap on LLM usage enforced at call time (see [`docs/CREDIT.md`](./CREDIT.md)). Three roles ship in the migration seed:
+Every user has a `roleId` FK pointing at the `role` table (`lib/auth/schema.ts`). The role controls the **credit cap** — the rolling-window limit on LLM usage enforced at call time (see [`docs/CREDIT.md`](./CREDIT.md)). Three roles ship in the migration seed:
 
 | `id`    | `name` | `creditLimit` | `windowHours` |
 | ------- | ------ | ------------- | ------------- |
@@ -98,7 +98,7 @@ To add a second admin later: sign them up with a different email, then either fl
 
 ### Removed env knobs
 
-`INITIAL_ADMIN_EMAIL` replaces an earlier env-quota knob (the pre-roles prototype had per-user `creditLimit` env values). The migration to the `role` table is the only place this is configured today.
+`INITIAL_ADMIN_EMAIL` replaces an earlier env-knob for per-user credit (the pre-roles prototype had per-user `creditLimit` env values). The migration to the `role` table is the only place this is configured today.
 
 ## Environment variables
 
@@ -121,7 +121,7 @@ See `.env.example` for the full list. Required for auth:
 | -------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | "BETTER_AUTH_SECRET is required"             | Missing env var                                                 | Generate with `openssl rand -hex 32` and add to `.env.local`                               |
 | 500 on `/api/auth/sign-up/email` with no log | Better Auth's sendVerificationEmail threw (e.g. Resend failure) | Check `RESEND_API_KEY` is set; check Resend dashboard for delivery errors                  |
-| 429 on sign-up                               | Resend free-tier quota exceeded (100/day)                       | Wait for the next day, or verify a custom domain to lift the limit                         |
+| 429 on sign-up                               | Resend free-tier rate limit exceeded (100/day)                  | Wait for the next day, or verify a custom domain to lift the limit                         |
 | OAuth button → `OAUTH_FAILED`                | Client ID/secret mismatch, or callback URL not whitelisted      | Check the provider's app settings match `BETTER_AUTH_URL`                                  |
 | Login page redirects back to itself          | `BETTER_AUTH_URL` doesn't match the host the browser is hitting | Set it to the URL the user actually visits (e.g. `http://localhost:3000`)                  |
 | Old threads lost after a migration           | Expected — the schema reset drops the `threads` table           | See `specs/001-user-auth/quickstart.md` scenario 7 for the new ownership flow              |

@@ -1,6 +1,6 @@
 # Admin
 
-The admin area manages the LLM provider registry (API keys, model rates) and the role table that gates credit quota enforcement. Access is gated by `session.user.roleId === "admin"` — the `/admin` page server-component performs the redirect, and every route under `/api/admin/*` is `withAuth({ role: "admin" }, ...)`. Non-admin callers receive 401 (no session) or 403 (wrong role); unauthenticated UI visitors are bounced to `/login`.
+The admin area manages the LLM provider registry (API keys, model rates) and the role table that gates credit enforcement. Access is gated by `session.user.roleId === "admin"` — the `/admin` page server-component performs the redirect, and every route under `/api/admin/*` is `withAuth({ role: "admin" }, ...)`. Non-admin callers receive 401 (no session) or 403 (wrong role); unauthenticated UI visitors are bounced to `/login`.
 
 The first admin is bootstrapped via the `INITIAL_ADMIN_EMAIL` env var (see [`docs/AUTH.md`](./AUTH.md) § Role mechanism + Bootstrap). Subsequent admins are created by promoting an existing user — the admin UI's Roles tab does this indirectly: edit the user's `roleId` via the DB, or use the bootstrap email to create a new admin via sign-up. There is no in-UI "make this user an admin" affordance today.
 
@@ -130,7 +130,7 @@ Create a new role. The seeded trio (`guest`, `user`, `admin`) is inserted by the
 
 ### `PATCH /api/admin/roles/[id]`
 
-Partial update. Changing `creditLimit` for a role immediately affects every user with that `roleId` — the next LLM call re-reads `role.creditLimit` via `checkQuota`.
+Partial update. Changing `creditLimit` for a role immediately affects every user with that `roleId` — the next LLM call re-reads `role.creditLimit` via `checkCredit`.
 
 |               |                                                                                              |
 | ------------- | -------------------------------------------------------------------------------------------- |
@@ -202,7 +202,7 @@ Three roles ship in the migration seed:
 | `admin` | Admin  | `null`        | 24            |
 
 - **`creditLimit`**: total credits allowed in the rolling window. `null` = **unlimited** (the admin role). Non-null values are non-negative integers — a value of `0` is technically valid and means "no LLM calls allowed".
-- **`windowHours`**: the rolling-window length in hours. The cap is `(credits sum over the last N hours) < creditLimit`, where N is this value. Default `24`, max `720` (30 days). The window slides on every `checkQuota` call — there's no fixed UTC-day reset.
+- **`windowHours`**: the rolling-window length in hours. The cap is `(credits sum over the last N hours) < creditLimit`, where N is this value. Default `24`, max `720` (30 days). The window slides on every `checkCredit` call — there's no fixed UTC-day reset.
 - **DELETE refusal**: 409 `ROLE_IN_USE` is the only way to "delete" a role with active references; the API route counts `user.roleId = <id>` and rejects the delete rather than dropping the FK.
 
 Changing `creditLimit` or `windowHours` takes effect immediately on the next LLM call — there is no caching layer.

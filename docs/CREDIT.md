@@ -1,4 +1,4 @@
-# Credit quota
+# Credit
 
 Every LLM call costs **credit** — a unitless accounting value computed from input + output token counts and the per-model rates registered in the admin's `provider.models[]` config. The cap is enforced at the call boundary (not after the fact) via a LangChain callback wired into the compiled graph; the same callback records every call into `credit_usage_log` for the user-facing call history.
 
@@ -27,9 +27,9 @@ WHERE  user_id = $1 AND status = 'success'
        AND created_at >= now() - interval '<windowHours> hours'
 ```
 
-The cap holds iff `SUM(credits) < creditLimit`. The window slides continuously — there's no "midnight reset", no per-day token bucket. When the user goes over, the next call throws `QuotaExceededError` carrying `resetAt = oldestInWindow.createdAt + windowHours` (i.e. "when the oldest call ages out of the window"), surfaced to the user via a friendly assistant message written by the graph node that caught the throw.
+The cap holds iff `SUM(credits) < creditLimit`. The window slides continuously — there's no "midnight reset", no per-day token bucket. When the user goes over, the next call throws `CreditExceededError` carrying `resetAt = oldestInWindow.createdAt + windowHours` (i.e. "when the oldest call ages out of the window"), surfaced to the user via a friendly assistant message written by the graph node that caught the throw.
 
-`windowHours` is capped at `720` (30 days) in the Zod schema. `0` is rejected; `null` is rejected. The `admin` role ships with `creditLimit = null` (= unlimited, see [`lib/credit/check.ts:checkQuota`](./../lib/credit/check.ts) — short-circuits the SUM entirely).
+`windowHours` is capped at `720` (30 days) in the Zod schema. `0` is rejected; `null` is rejected. The `admin` role ships with `creditLimit = null` (= unlimited, see [`lib/credit/check.ts:checkCredit`](./../lib/credit/check.ts) — short-circuits the SUM entirely).
 
 ## How a credit is computed
 
@@ -52,11 +52,11 @@ Single source of truth: **`lib/credit/callback.ts`'s `CreditTrackingHandler`**. 
 
 Lifecycle:
 
-1. **`handleLLMStart`** — read `metadata.userId`; if absent, skip (admin tooling, internal calls). Otherwise call `checkQuota(userId)`. If `!status.allowed`, throw `QuotaExceededError` carrying `resetAt`, `limit`, `used`. LangChain converts the throw into `handleLLMError`; the throwing node catches it and writes a friendly assistant message to the thread instead of bubbling the error out of the graph.
+1. **`handleLLMStart`** — read `metadata.userId`; if absent, skip (admin tooling, internal calls). Otherwise call `checkCredit(userId)`. If `!status.allowed`, throw `CreditExceededError` carrying `resetAt`, `limit`, `used`. LangChain converts the throw into `handleLLMError`; the throwing node catches it and writes a friendly assistant message to the thread instead of bubbling the error out of the graph.
 2. **`handleLLMEnd`** — read token usage from `LLMResult` (probing `llmOutput.tokenUsage` / `.usage` then `generation[0][0].message.usage_metadata` — LangChain has shifted these shapes between minors). If usage is present and metadata has `providerId` / `modelName`, compute credits + write a `status='success'` row.
-3. **`handleLLMError`** — if metadata has `providerId` / `modelName` AND the error is NOT a `QuotaExceededError` (which short-circuits — no LLM call happened, don't pollute the log), write a `status='error'` row with `errorMessage`.
+3. **`handleLLMError`** — if metadata has `providerId` / `modelName` AND the error is NOT a `CreditExceededError` (which short-circuits — no LLM call happened, don't pollute the log), write a `status='error'` row with `errorMessage`.
 
-Why a callback and not a per-node `invokeWithQuota` wrapper:
+Why a callback and not a per-node `invokeWithCredit` wrapper:
 
 - There's no way to forget the wrapper — every `ChatModel.invoke()` in the graph fires this regardless of who calls it (router, sub-agents, future agents, tools).
 - Token usage comes from the LangChain result object the same way observability does, so the credit log and the spans see identical numbers.
@@ -76,7 +76,7 @@ Every `chatModel.invoke(messages, { metadata: { ... } })` in the graph **must** 
 
 Nodes that skip these fields won't get cap enforcement. Specifically:
 
-- Missing `userId` → `handleLLMStart` skips the quota check, the handler treats it as a non-user-facing call (admin tooling, internal prompts) and writes no log row. This is intentional — internal calls shouldn't count against the user's cap.
+- Missing `userId` → `handleLLMStart` skips the credit check, the handler treats it as a non-user-facing call (admin tooling, internal prompts) and writes no log row. This is intentional — internal calls shouldn't count against the user's cap.
 - Missing `providerId` or `modelName` → `handleLLMEnd` / `handleLLMError` skip the `recordLlmCall` write. The LLM call still goes through (LangChain doesn't know about our schema), but no row is recorded — meaning the call ALSO doesn't count toward the cap. This is the silent bug to watch for: a node that forgets metadata would let users burn unlimited credits.
 - Missing `agentName` → defaulted to `"unknown"` at write time (the credit log stays accurate, but agent-name breakdowns lose fidelity).
 
@@ -86,15 +86,15 @@ Nodes that skip these fields won't get cap enforcement. Specifically:
 
 ### LLM error (provider 4xx/5xx, network timeout, etc.)
 
-`handleLLMError` writes a `status='error'` row with `errorMessage` set to the thrown error's message. The row is **excluded** from the cap SUM (`checkQuota` filters `status = 'success'`), so users don't pay for upstream flakiness. The row IS visible in the call history (the Settings → Credits tab shows them with a red status badge).
+`handleLLMError` writes a `status='error'` row with `errorMessage` set to the thrown error's message. The row is **excluded** from the cap SUM (`checkCredit` filters `status = 'success'`), so users don't pay for upstream flakiness. The row IS visible in the call history (the Settings → Credits tab shows them with a red status badge).
 
 ### User over cap
 
-`handleLLMStart` throws `QuotaExceededError` BEFORE the LLM call. LangChain converts the throw into `handleLLMError` — which has a special-case `if (err instanceof QuotaExceededError) return;` so no row is written (no LLM call happened). The throwing node catches the error and writes a friendly assistant message to the thread, e.g. "You've used 200/200 credits in the last 24 hours — try again at <resetAt>." The graph continues; the next turn still gets re-checked.
+`handleLLMStart` throws `CreditExceededError` BEFORE the LLM call. LangChain converts the throw into `handleLLMError` — which has a special-case `if (err instanceof CreditExceededError) return;` so no row is written (no LLM call happened). The throwing node catches the error and writes a friendly assistant message to the thread, e.g. "You've used 200/200 credits in the last 24 hours — try again at <resetAt>." The graph continues; the next turn still gets re-checked.
 
 ### Admin
 
-`creditLimit IS NULL` short-circuits `checkQuota` — cap check skipped, `used: 0`, `limit: Number.POSITIVE_INFINITY` on the returned status. The handler still records `status='success'` rows against admin calls; the SUM just doesn't apply. This matters for analytics: every LLM call shows up in the log, but admins never get a quota-exceeded throw.
+`creditLimit IS NULL` short-circuits `checkCredit` — cap check skipped, `used: 0`, `limit: Number.POSITIVE_INFINITY` on the returned status. The handler still records `status='success'` rows against admin calls; the SUM just doesn't apply. This matters for analytics: every LLM call shows up in the log, but admins never get a credit-exceeded throw.
 
 ## API for users
 

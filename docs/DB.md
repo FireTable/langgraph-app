@@ -124,7 +124,7 @@ Indexes:
 
 ## `role`
 
-Per-tier credit cap. Referenced by `user.role_id` (FK) and read on every LLM call by `lib/credit/check.ts:checkQuota`. Three rows ship in the migration seed: `guest` (20 credits / 24h), `user` (200 credits / 24h), `admin` (`null` credit limit = unlimited, 24h window). Migration adds the FK AFTER the seed INSERT so existing user rows have a target.
+Per-tier credit cap. Referenced by `user.role_id` (FK) and read on every LLM call by `lib/credit/check.ts:checkCredit`. Three rows ship in the migration seed: `guest` (20 credits / 24h), `user` (200 credits / 24h), `admin` (`null` credit limit = unlimited, 24h window). Migration adds the FK AFTER the seed INSERT so existing user rows have a target.
 
 | Column         | Type         | Notes                                                   |
 | -------------- | ------------ | ------------------------------------------------------- |
@@ -137,7 +137,7 @@ Per-tier credit cap. Referenced by `user.role_id` (FK) and read on every LLM cal
 
 Notes:
 
-- `creditLimit IS NULL` short-circuits the cap check in `lib/credit/check.ts` — admins never see `QuotaExceededError`.
+- `creditLimit IS NULL` short-circuits the cap check in `lib/credit/check.ts` — admins never see `CreditExceededError`.
 - DELETE refuses with 409 `ROLE_IN_USE` from `app/api/admin/roles/[id]/route.ts` while any user row still references the role.
 - Window slides continuously — there is no fixed UTC-day reset.
 
@@ -207,11 +207,11 @@ Notes:
 | `session`          | `withAuth` (`lib/auth/with-auth.ts`)                                                         | Better Auth sign-in / sign-out / refresh                                                                                                           |
 | `account`          | Better Auth internal                                                                         | Sign-up (credential provider writes password hash)                                                                                                 |
 | `verification`     | Better Auth internal                                                                         | Better Auth on email verify / password reset request                                                                                               |
-| `role`             | `lib/credit/check.ts` (`checkQuota`), `lib/auth/role-queries.ts` (`getUserWithRole`)         | `app/api/admin/roles/**`                                                                                                                           |
+| `role`             | `lib/credit/check.ts` (`checkCredit`), `lib/auth/role-queries.ts` (`getUserWithRole`)        | `app/api/admin/roles/**`                                                                                                                           |
 | `threads`          | `lib/threads/queries.ts` (UI list + adapter)                                                 | API routes under `app/api/threads/`                                                                                                                |
 | `attachments`      | `lib/attachments/queries.ts`                                                                 | API routes under `app/api/attachments/` (presign → row, confirm → `status='uploaded'`, DELETE → row + R2 object)                                   |
 | `provider`         | `lib/credit/build-model.ts` (`buildChatModel`, `getModelRate`)                               | `app/api/admin/providers/**` (encrypt at POST/PATCH; rotate re-encrypts in place; `stripProviderSecrets` on every response)                        |
-| `credit_usage_log` | `lib/credit/check.ts` (cap SUM + `MIN(created_at)` for `resetAt`), `GET /api/credit/history` | `lib/credit/callback.ts` (`CreditTrackingHandler.handleLLMEnd` writes `success`, `handleLLMError` writes `error`; `QuotaExceededError` is skipped) |
+| `credit_usage_log` | `lib/credit/check.ts` (cap SUM + `MIN(created_at)` for `resetAt`), `GET /api/credit/history` | `lib/credit/callback.ts` (`CreditTrackingHandler.handleLLMEnd` writes `success`, `handleLLMError` writes `error`; `CreditExceededError` is skipped) |
 
 ## Tooling
 
