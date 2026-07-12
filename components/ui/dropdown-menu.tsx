@@ -28,15 +28,23 @@ function DropdownMenuContent({
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   // ponytail: when the trigger sits at the bottom of the screen, the
-  // menu opens upward — the LAST menu item ends up directly under the
-  // trigger. The pointerdown that opened the menu and the click that
-  // follows it happen at the same screen position, so the click
-  // "tunnels through" to that last item and fires its onClick (e.g.
-  // Sign Out). Fix: track pointer movement on the content; if the
-  // pointer hasn't moved since the menu mounted, the first click is
-  // the same physical press that opened the menu, so swallow it via
-  // preventDefault. Real clicks after the user moves the mouse pass
-  // through untouched.
+  // menu opens upward and the LAST menu item ends up directly under
+  // the trigger. The same physical press that opened the menu then
+  // fires its pointerup on the content, and the browser dispatches a
+  // compatibility click after that pointerup — the click "tunnels
+  // through" to the last item and fires its onClick (e.g. Sign Out).
+  //
+  // Fix: per the Pointer Events spec, preventDefault on pointerup
+  // suppresses the compatibility click. We swallow it iff the pointer
+  // hasn't moved since the content mounted — i.e. the release is the
+  // same press that opened the menu. Real clicks after the user moves
+  // the mouse pass through untouched.
+  //
+  // hasMovedRef starts at false on every mount; in Radix's default
+  // (non-forceMount) mode the content mounts/unmounts with the menu,
+  // so each open is a fresh ref. We can't reset on open via
+  // onOpenAutoFocus because Radix omits it from
+  // DropdownMenuContentProps.
   const hasMovedRef = React.useRef(false);
 
   return (
@@ -47,7 +55,7 @@ function DropdownMenuContent({
         onPointerMove={() => {
           hasMovedRef.current = true;
         }}
-        onPointerDown={(e) => {
+        onPointerUp={(e) => {
           if (!hasMovedRef.current) {
             e.preventDefault();
           }
