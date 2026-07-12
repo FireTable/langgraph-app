@@ -19,8 +19,9 @@
 // coloring stay identical so muscle memory transfers between the
 // two surfaces.
 
-import { CoinsIcon } from "lucide-react";
 import type { ReactNode } from "react";
+
+import { QuotaHeader } from "@/components/credit/quota-header";
 
 export type QuotaTier = "normal" | "warn" | "over";
 
@@ -77,10 +78,7 @@ export function QuotaProgress({
   if (variant === "slot") {
     return (
       <div className="flex flex-col gap-1">
-        <div className="flex items-center gap-2 pb-1.5 text-sm font-normal">
-          <CoinsIcon className="size-4 shrink-0 text-muted-foreground " />
-          <span>Usage</span>
-        </div>
+        <QuotaHeader className="pb-1.5" />
         <div className="text-muted-foreground pl-6 text-xs">
           Used <span className="text-foreground font-medium">{usedStr}</span> / {limitStr} credits
         </div>

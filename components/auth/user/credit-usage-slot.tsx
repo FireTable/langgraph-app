@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CoinsIcon } from "lucide-react";
 
+import { QuotaHeader } from "@/components/credit/quota-header";
 import { QuotaProgress } from "@/components/credit/quota-progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { loadCreditStatus, peekCachedStatus, type CreditStatus } from "@/lib/credit/status";
@@ -23,10 +23,7 @@ function SlotSkeleton(): React.JSX.Element {
   // returns non-null and we render straight away.
   return (
     <div className="flex flex-col gap-2 px-2 py-1.5">
-      <div className="flex items-center gap-2 text-sm font-normal">
-        <CoinsIcon className="size-4 text-muted-foreground" />
-        <span>Usage</span>
-      </div>
+      <QuotaHeader />
       <Skeleton className="ml-6 h-3 w-32" />
       <div className="ml-6 flex items-center gap-2 w-50">
         <Skeleton className="h-2 flex-1 rounded-full" />
@@ -60,10 +57,7 @@ export function CreditUsageSlot(): React.JSX.Element | null {
   if (status.unlimited) {
     return (
       <div className="flex flex-col gap-1 px-2 py-1.5">
-        <div className="flex items-center gap-2 text-sm font-normal">
-          <CoinsIcon className="size-4 text-muted-foreground" />
-          <span>Usage</span>
-        </div>
+        <QuotaHeader />
         <div className="text-muted-foreground pl-6 text-xs">No cap on this account</div>
       </div>
     );
