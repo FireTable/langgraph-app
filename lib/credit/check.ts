@@ -57,7 +57,7 @@ export async function checkCredit(userId: string): Promise<CreditStatus> {
     FROM ${creditUsageLog}
     WHERE ${creditUsageLog.userId} = ${userId}
       AND ${creditUsageLog.status} = 'success'
-      AND ${creditUsageLog.createdAt} >= ${windowStart}
+      AND ${creditUsageLog.createdAt} >= ${windowStart.toISOString()}
   `);
 
   const usedNum = Number(used);
