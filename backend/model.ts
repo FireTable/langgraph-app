@@ -1,8 +1,9 @@
 import { ChatOpenAI } from "@langchain/openai";
 
 import {
-  getChatModel,
+  getChatModelFromDB,
   invalidateModelCache,
+  type GetChatModelOpts,
 } from "@/lib/provider/model-registry";
 
 function buildEnvModel(): ChatOpenAI {
@@ -24,26 +25,26 @@ function buildEnvModel(): ChatOpenAI {
   });
 }
 
-// ponytail: legacy export for the 7 `createAgent({ llm: chatModel })`
-// consumers that take the model at module load. Top-level await blocks
-// the module's evaluation until the DB lookup resolves, then we cache
-// the result here for those consumers. On DB failure (migration not yet
-// applied, replica unreachable, etc.) we fall back to env so the backend
-// still boots in dev. New callers should use `getChatModel()` to
-// benefit from the LRU cache on the async path.
-//
-// Type stays ChatOpenAI (not BaseChatModel) because 6 of the consumers
-// chain `.bindTools(...).invoke(...)` — `bindTools` is optional on
-// BaseChatModel but required on ChatOpenAI, so the wider type breaks
-// every callsite. The registry hard-codes ChatOpenAI today; if a future
-// provider switch adds non-OpenAI models, this cast moves to a typed
-// adapter at that boundary.
-export const chatModel: ChatOpenAI = await (async (): Promise<ChatOpenAI> => {
+/**
+ * Canonical entry point for runtime chat-model lookup. Tries the DB-backed
+ * registry first (with LRU caching + admin CUD invalidation); on miss /
+ * DB unreachable, falls back to a ChatOpenAI built from env vars so the
+ * backend still serves requests in dev before the seed provider is wired.
+ *
+ * Return type stays ChatOpenAI (not BaseChatModel) because 6 consumers
+ * chain `.bindTools(...).invoke(...)` and `bindTools` is optional on the
+ * wider type. The registry hard-codes ChatOpenAI today; if a non-OpenAI
+ * provider lands, this cast moves to a typed adapter at that boundary.
+ */
+export async function getChatModel(
+  opts: GetChatModelOpts = {},
+): Promise<ChatOpenAI> {
   try {
-    return (await getChatModel()) as ChatOpenAI;
+    return (await getChatModelFromDB(opts)) as ChatOpenAI;
   } catch {
     return buildEnvModel();
   }
-})();
+}
 
-export { getChatModel, invalidateModelCache };
+export { invalidateModelCache };
+export type { GetChatModelOpts };

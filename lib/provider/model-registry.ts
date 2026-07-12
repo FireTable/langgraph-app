@@ -38,12 +38,17 @@ export type GetChatModelOpts = {
  * first enabled model. Throws if no enabled provider/model exists.
  *
  * Admin writes call `invalidateModelCache()` to bust entries on demand.
+ *
+ * The pure-DB path. The `getChatModel()` wrapper in backend/model.ts adds
+ * an env-var fallback on top of this — call that one from runtime code,
+ * not this one.
  */
-export async function getChatModel(
+export async function getChatModelFromDB(
   opts: GetChatModelOpts = {},
 ): Promise<BaseChatModel> {
   const key = `${opts.providerId ?? "*"}:${opts.modelName ?? "*"}`;
   const cached = cache.get(key);
+
   if (cached) return cached;
 
   const { provider, modelName } = await resolveProviderAndModel(opts);
@@ -82,18 +87,18 @@ async function resolveProviderAndModel(opts: GetChatModelOpts): Promise<{
 }> {
   const providerRows = opts.providerId
     ? await db
-        .select()
-        .from(providerTable)
-        .where(
-          and(eq(providerTable.id, opts.providerId), eq(providerTable.enabled, true)),
-        )
-        .limit(1)
+      .select()
+      .from(providerTable)
+      .where(
+        and(eq(providerTable.id, opts.providerId), eq(providerTable.enabled, true)),
+      )
+      .limit(1)
     : await db
-        .select()
-        .from(providerTable)
-        .where(eq(providerTable.enabled, true))
-        .orderBy(asc(providerTable.id))
-        .limit(1);
+      .select()
+      .from(providerTable)
+      .where(eq(providerTable.enabled, true))
+      .orderBy(asc(providerTable.id))
+      .limit(1);
 
   if (providerRows.length === 0) {
     throw new Error("no enabled provider in DB");

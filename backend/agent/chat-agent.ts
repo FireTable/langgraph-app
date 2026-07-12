@@ -2,7 +2,7 @@ import { END, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import type { BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { chatModel } from "@/backend/model";
+import { getChatModel } from "@/backend/model";
 import { ALL_TOOLS } from "@/backend/tool";
 import { CHAT_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
@@ -40,7 +40,7 @@ async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?:
   const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
 
   const sysMsg = await buildSystemMessageWithMemory(CHAT_AGENT_PROMPT, config, threads);
-  const response = await chatModel.bindTools(ALL_TOOLS).invoke([sysMsg, ...history], config);
+  const response = await (await getChatModel()).bindTools(ALL_TOOLS).invoke([sysMsg, ...history], config);
 
   return { messages: [response] };
 }

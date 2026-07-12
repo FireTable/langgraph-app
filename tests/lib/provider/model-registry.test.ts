@@ -9,7 +9,7 @@ import {
 } from "@/lib/provider/schema";
 import { aesGcmEncrypt, loadKek } from "@/lib/auth/encryption";
 import {
-  getChatModel,
+  getChatModelFromDB,
   invalidateModelCache,
 } from "@/lib/provider/model-registry";
 
@@ -52,9 +52,9 @@ afterAll(async () => {
   invalidateModelCache();
 });
 
-describe("getChatModel", () => {
+describe("getChatModelFromDB", () => {
   it("throws when no enabled provider exists", async () => {
-    await expect(getChatModel()).rejects.toThrow(/no enabled provider/i);
+    await expect(getChatModelFromDB()).rejects.toThrow(/no enabled provider/i);
   });
 
   it("throws when provider has no enabled model", async () => {
@@ -62,7 +62,7 @@ describe("getChatModel", () => {
       id: "primary",
       models: [{ name: "gpt-4o", enabled: false, inputPer1k: 0, outputPer1k: 0 }],
     });
-    await expect(getChatModel()).rejects.toThrow(/no enabled model/i);
+    await expect(getChatModelFromDB()).rejects.toThrow(/no enabled model/i);
   });
 
   it("returns the same cached instance on repeat calls (no extra DB read)", async () => {
@@ -74,9 +74,9 @@ describe("getChatModel", () => {
 
     const dbSpy = vi.spyOn(db, "select");
     const callsAfterSpy = dbSpy.mock.calls.length;
-    const first = await getChatModel();
+    const first = await getChatModelFromDB();
     const callsAfterFirst = dbSpy.mock.calls.length;
-    const second = await getChatModel();
+    const second = await getChatModelFromDB();
     const callsAfterSecond = dbSpy.mock.calls.length;
 
     expect(first).toBe(second);
@@ -97,11 +97,11 @@ describe("getChatModel", () => {
       models: [ENABLED_MODEL("claude-3")],
     });
 
-    const explicitPrimary = await getChatModel({
+    const explicitPrimary = await getChatModelFromDB({
       providerId: "primary",
       modelName: "gpt-4o",
     });
-    const explicitSecondary = await getChatModel({
+    const explicitSecondary = await getChatModelFromDB({
       providerId: "secondary",
       modelName: "claude-3",
     });
@@ -117,9 +117,9 @@ describe("getChatModel", () => {
       models: [ENABLED_MODEL("gpt-4o")],
     });
 
-    const first = await getChatModel();
+    const first = await getChatModelFromDB();
     invalidateModelCache();
-    const second = await getChatModel();
+    const second = await getChatModelFromDB();
 
     expect(first).not.toBe(second);
   });
@@ -138,7 +138,7 @@ describe("getChatModel", () => {
     // Both picks must produce a usable model — we can't read the random
     // choice directly, but if decrypt or ChatOpenAI ctor threw we'd see it
     // here.
-    const model = await getChatModel();
+    const model = await getChatModelFromDB();
     expect(model).toBeDefined();
     expect(typeof model.invoke).toBe("function");
   });
@@ -155,13 +155,13 @@ describe("invalidateModelCache", () => {
       ],
     });
 
-    const a = await getChatModel({ providerId: "primary", modelName: "gpt-4o" });
-    const b = await getChatModel({ providerId: "primary", modelName: "gpt-4o-mini" });
+    const a = await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o" });
+    const b = await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o-mini" });
 
     invalidateModelCache("primary:gpt-4o");
 
-    const a2 = await getChatModel({ providerId: "primary", modelName: "gpt-4o" });
-    const b2 = await getChatModel({ providerId: "primary", modelName: "gpt-4o-mini" });
+    const a2 = await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o" });
+    const b2 = await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o-mini" });
 
     expect(a).not.toBe(a2);
     expect(b).toBe(b2); // untouched

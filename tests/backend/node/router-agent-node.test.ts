@@ -10,13 +10,13 @@ const { mockInvokeStructured, mockInvoke, mockWithStructuredArgs } = vi.hoisted(
 // time. We mock `withStructuredOutput` to return a stub whose `.invoke`
 // is mockInvokeStructured, so the router's call lands in our control.
 vi.mock("@/backend/model", () => ({
-  chatModel: {
+  getChatModel: async () => ({
     invoke: (...args: unknown[]) => mockInvoke(...args),
     withStructuredOutput: (...args: unknown[]) => {
       mockWithStructuredArgs(...args);
       return { invoke: (...args: unknown[]) => mockInvokeStructured(...args) };
     },
-  },
+  }),
 }));
 
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";

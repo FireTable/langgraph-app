@@ -4,7 +4,7 @@ import { MEMORY_THREAD_SUMMARY_KEEP_RECENT } from "@/lib/memory/constants";
 import { getAllUserSummaries, writeSummary } from "@/lib/memory/queries";
 import { formatSummaryText } from "@/lib/langgraph/format-summary";
 import { summaryOutputSchema } from "@/lib/langgraph/summary-schema";
-import { chatModel } from "@/backend/model";
+import { getChatModel } from "@/backend/model";
 import { THREAD_SUMMARIZE_PROMPT } from "@/backend/prompt/system";
 import { HumanMessage, BaseMessage } from "@langchain/core/messages";
 
@@ -316,7 +316,7 @@ export async function threadSummarizeNode(
     // ponytail: "nostream" tag so partial tokens don't leak into the
     // chat stream — the summary is a side-effect, not a user-visible
     // reply.
-    out = await chatModel
+    out = await (await getChatModel())
       .withStructuredOutput(summaryOutputSchema, { method: "jsonSchema" })
       .invoke(
         [

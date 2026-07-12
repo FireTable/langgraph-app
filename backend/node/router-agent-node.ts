@@ -2,7 +2,7 @@ import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/m
 import { RunnableConfig } from "@langchain/core/runnables";
 import { z } from "zod";
 
-import { chatModel } from "@/backend/model";
+import { getChatModel } from "@/backend/model";
 import { ROUTER_AGENT_PROMPT } from "@/backend/prompt/system";
 
 // Router agent: inspects the latest user message and decides which
@@ -34,7 +34,7 @@ export async function routerAgentNode(
   const system = new SystemMessage(ROUTER_AGENT_PROMPT);
   const invokeMessages = lastUserMessage ? [system, lastUserMessage] : [system];
 
-  const decision = (await chatModel
+  const decision = (await (await getChatModel())
     .withStructuredOutput(RouteDecisionSchema, {
       name: "route_decision",
       method: "jsonSchema",
@@ -43,6 +43,7 @@ export async function routerAgentNode(
       ...config,
       tags: [...(config?.tags ?? []), "nostream"],
     })) as RouterDecision;
+
 
   return { routerDecision: decision };
 }
