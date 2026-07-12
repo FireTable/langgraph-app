@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k --kill-signal=SIGTERM -n frontend,backend -c cyan,magenta \"pnpm dev:frontend\" \"pnpm dev:backend\"",
-    "dev:stop": "lsof -ti :2024,:3000 2>/dev/null | xargs -r kill -TERM; sleep 1; lsof -ti :2024,:3000 2>/dev/null | xargs -r kill -KILL; true",
+    "dev:stop": "for p in 2024 3000 3001; do lsof -nP -iTCP:$p -sTCP:LISTEN -t 2>/dev/null | xargs -r kill -TERM; done; sleep 1; for p in 2024 3000 3001; do lsof -nP -iTCP:$p -sTCP:LISTEN -t 2>/dev/null | xargs -r kill -KILL; done; true",
     "dev:frontend": "next dev --turbopack",
     "dev:backend": "langgraphjs dev",
     "build": "next build",
