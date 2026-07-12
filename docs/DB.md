@@ -159,7 +159,7 @@ LLM provider registry — one row per upstream (openai / anthropic / ...). Holds
 
 - `encryptedKey` — AES-256-GCM ciphertext + GCM auth tag, base64-packed. **Never** returned on the wire.
 - `iv` — 12-byte nonce, base64. **Never** returned on the wire.
-- `name` — `"...xyz9"`, auto-derived from the plaintext tail at create time. The only persistent identifier exposed to clients.
+- `name` — `"sk-…xyz9"`, auto-derived from the plaintext first-3 + last-4 chars at create time. The only persistent identifier exposed to clients.
 - `baseUrl?` — optional override URL for OpenAI-compatible endpoints.
 
 `models[]` entry shape (`ModelConfig`):

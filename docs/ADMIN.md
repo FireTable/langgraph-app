@@ -10,7 +10,7 @@ Every endpoint is `withAuth({ role: "admin" }, ...)` (rule #9). Status codes: `4
 
 ### `GET /api/admin/providers`
 
-List every row in `provider`, ordered by `id`. The `encryptedKey` + `iv` fields are stripped server-side (see [`lib/provider/admin.ts:stripProviderSecrets`](./../lib/provider/admin.ts)); the wire shape only exposes the `name` tail (`"...xyz9"`) + optional `baseUrl`.
+List every row in `provider`, ordered by `id`. The `encryptedKey` + `iv` fields are stripped server-side (see [`lib/provider/admin.ts:stripProviderSecrets`](./../lib/provider/admin.ts)); the wire shape only exposes the `name` (`"sk-…xyz9"` — first 3 + ellipsis + last 4) + optional `baseUrl`.
 
 |               |                                     |
 | ------------- | ----------------------------------- |
@@ -50,7 +50,7 @@ Hard-delete the row. The FK to `credit_usage_log` is intentionally absent — hi
 
 ### `POST /api/admin/providers/[id]/keys`
 
-Encrypt + append a key. The plaintext is encrypted with AES-256-GCM (`lib/auth/encryption.ts`) and never leaves the server again — the response only carries the derived `name` (`"...xyz9"`) + optional `baseUrl`.
+Encrypt + append a key. The plaintext is encrypted with AES-256-GCM (`lib/auth/encryption.ts`) and never leaves the server again — the response only carries the derived `name` (`"sk-…xyz9"`) + optional `baseUrl`.
 
 |               |                                                                                                                                                          |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -156,7 +156,7 @@ Wire shape on every endpoint:
 
 - `encryptedKey` (base64 ciphertext + GCM auth tag, packed) — **never** returned.
 - `iv` (base64, 12-byte nonce) — **never** returned.
-- `name` (e.g. `"...xyz9"`) — the only persistent identifier exposed to clients, auto-derived from the plaintext tail at create time.
+- `name` (e.g. `"sk-…xyz9"`) — the only persistent identifier exposed to clients, auto-derived from the plaintext first-3 + last-4 chars at create time.
 - `baseUrl` (optional) — only included when the client supplied one at create time.
 
 The `PublicProvider` projection in `lib/provider/admin.ts` is applied uniformly before any response is built. There is no admin API that returns the full ciphertext; the decrypt path runs only inside `buildChatModel` when constructing the actual chat model at LLM-call time.
@@ -167,7 +167,7 @@ The `PublicProvider` projection in `lib/provider/admin.ts` is applied uniformly 
 type ProviderApiKey = {
   encryptedKey: string; // AES-256-GCM ciphertext+tag, base64
   iv: string; // 12-byte nonce, base64
-  name: string; // "...xyz9", auto-derived
+  name: string; // "sk-…xyz9", auto-derived
   baseUrl?: string;
 };
 

@@ -55,9 +55,9 @@ describe("AES-256-GCM encryption", () => {
     ).toThrow(/auth tag/i);
   });
 
-  it("deriveKeyName returns last 4 chars with ... prefix", () => {
-    expect(deriveKeyName("sk-proj-abc123xyz9")).toBe("...xyz9");
-    expect(deriveKeyName("ab")).toBe("...ab");
+  it("deriveKeyName returns first 3 + … + last 4", () => {
+    expect(deriveKeyName("sk-proj-abc123xyz9")).toBe("sk-…xyz9");
+    expect(deriveKeyName("ab")).toBe("ab…ab");
   });
 });
 

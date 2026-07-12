@@ -63,10 +63,12 @@ export function aesGcmDecrypt(encrypted: string, ivB64: string, kek: Buffer): st
 }
 
 /**
- * Convenience: auto-derive the last-4-chars "name" used to identify a key
- * in admin UI lists. Caller is responsible for never storing the full
- * plaintext beyond this function's return.
+ * Convenience: auto-derive a "name" used to identify a key in admin UI
+ * lists — first 3 chars + ellipsis + last 4 chars (e.g. `sk-…xyz9`). Lets
+ * the operator recognise the key family at a glance and confirm the tail
+ * without exposing the full secret. Caller is responsible for never
+ * storing the full plaintext beyond this function's return.
  */
 export function deriveKeyName(plaintext: string): string {
-  return `...${plaintext.slice(-4)}`;
+  return `${plaintext.slice(0, 3)}…${plaintext.slice(-4)}`;
 }

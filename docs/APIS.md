@@ -279,7 +279,7 @@ Every endpoint is `withAuth({ role: "admin" }, ...)` (rule #9). The wire shape f
 
 ### `GET /api/admin/providers`
 
-List every row in `provider`, ordered by `id`. The encrypted key material is stripped server-side — only `name` (the `"...xyz9"` derived tail) + optional `baseUrl` are exposed.
+List every row in `provider`, ordered by `id`. The encrypted key material is stripped server-side — only `name` (the `"sk-…xyz9"` derived first-3 + last-4) + optional `baseUrl` are exposed.
 
 |               |                                     |
 | ------------- | ----------------------------------- |

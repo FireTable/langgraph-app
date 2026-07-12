@@ -9,7 +9,7 @@ import { pgTable, text, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
 export type ProviderApiKey = {
   encryptedKey: string; // AES-256-GCM ciphertext, base64
   iv: string; // 12-byte nonce, base64
-  name: string; // e.g. "...xyz9", auto-derived at create time
+  name: string; // e.g. "sk-…xyz9", auto-derived at create time
 };
 
 /**

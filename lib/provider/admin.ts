@@ -5,7 +5,7 @@ import type { provider } from "@/lib/provider/schema";
 /**
  * Public projection of a provider row. Strips `encryptedKey` + `iv` from
  * apiKey entries — the secret material is server-side only. Admin UIs list
- * `name` (the derived "...xyz9" tail) for rotation flows.
+ * `name` (the derived "sk-…xyz9" first-3 + last-4) for rotation flows.
  */
 export type PublicProviderApiKey = {
   name: string;
