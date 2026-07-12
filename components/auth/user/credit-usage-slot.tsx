@@ -1,11 +1,15 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { QuotaHeader } from "@/components/credit/quota-header";
 import { QuotaProgress } from "@/components/credit/quota-progress";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { loadCreditStatus, peekCachedStatus, type CreditStatus } from "@/lib/credit/status";
+
+const SETTINGS_CREDIT_PATH = "/settings/credit";
 
 // ponytail: read-only credit-usage indicator rendered inside the
 // UserButton dropdown between the user header and the link list.
@@ -16,6 +20,14 @@ import { loadCreditStatus, peekCachedStatus, type CreditStatus } from "@/lib/cre
 // in lib/credit/status.ts so the UserButton slot and the settings
 // page summary card share one network round-trip when both are
 // mounted at once (desktop sidebar + settings tab open).
+//
+// The data-bearing branches wrap their content in <DropdownMenuItem
+// asChild onSelect={...}> so a click (or Enter/Space while focused)
+// navigates to /settings/credit AND closes the menu in one motion —
+// the alternative (plain button) leaves the dropdown open over the
+// new page because Radix only auto-closes on DropdownMenuItem's
+// onSelect, not on arbitrary child clicks. The Skeleton branch is
+// not interactive — there's nothing to navigate to while loading.
 function SlotSkeleton(): React.JSX.Element {
   // ponytail: mirrors the QuotaProgress slot layout (header / used /
   // progress+pct / window hint) so the slot's height stays constant
@@ -34,7 +46,31 @@ function SlotSkeleton(): React.JSX.Element {
   );
 }
 
+function SlotBody({
+  onSelect,
+  children,
+}: {
+  onSelect: () => void;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  // ponytail: shared interactive wrapper. asChild merges Radix's
+  // onSelect (and its menu-close behaviour) onto the child div so
+  // hover/focus styling lands directly on the slot content instead
+  // of an extra ring around it. hover:bg-accent/40 + focus:bg-accent
+  // matches the affordance other DropdownMenuItems give the user,
+  // with a lighter hover so it reads as "preview" rather than
+  // "selected".
+  return (
+    <DropdownMenuItem asChild onSelect={onSelect}>
+      <div className="hover:bg-accent/40 focus:bg-accent cursor-pointer rounded-md px-2 py-1.5 outline-hidden transition-colors">
+        {children}
+      </div>
+    </DropdownMenuItem>
+  );
+}
+
 export function CreditUsageSlot(): React.JSX.Element | null {
+  const router = useRouter();
   const [status, setStatus] = useState<CreditStatus | null>(peekCachedStatus());
 
   useEffect(() => {
@@ -54,18 +90,22 @@ export function CreditUsageSlot(): React.JSX.Element | null {
 
   if (!status) return <SlotSkeleton />;
 
+  const navigateToCredit = () => router.push(SETTINGS_CREDIT_PATH);
+
   if (status.unlimited) {
     return (
-      <div className="flex flex-col gap-1 px-2 py-1.5">
-        <QuotaHeader />
-        <div className="text-muted-foreground pl-6 text-xs">No cap on this account</div>
-      </div>
+      <SlotBody onSelect={navigateToCredit}>
+        <div className="flex flex-col gap-1">
+          <QuotaHeader />
+          <div className="text-muted-foreground pl-6 text-xs">No cap on this account</div>
+        </div>
+      </SlotBody>
     );
   }
   if (status.limit == null || status.windowHours == null) return null;
 
   return (
-    <div className="px-2 py-1.5">
+    <SlotBody onSelect={navigateToCredit}>
       <QuotaProgress
         variant="slot"
         used={status.used}
@@ -73,6 +113,6 @@ export function CreditUsageSlot(): React.JSX.Element | null {
         windowHours={status.windowHours}
         resetAt={status.resetAt}
       />
-    </div>
+    </SlotBody>
   );
 }
