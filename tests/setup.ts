@@ -5,6 +5,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
 
+import { KEK_LENGTH_BYTES } from "@/lib/auth/encryption";
+
 // Use Next.js's own env loader. With NODE_ENV=test, .env.test / .env.test.local
 // are read (and .env.local is intentionally skipped).
 loadEnvConfig(process.cwd());
@@ -38,7 +40,14 @@ async function interpolateEnv(content: string): Promise<string> {
 
   const apiKeyJson = (() => {
     const plain = process.env.OPENAI_API_KEY;
-    if (!plain) return "[]";
+    // ponytail: loadEnvConfig intentionally skips .env.local under
+    // NODE_ENV=test, so LLM_KEY_ENCRYPTION_KEY isn't carried in. Treat
+    // "no KEK" the same as "no key" — seed an empty api_keys array and
+    // let the migration's `enabled=true, api_keys=[]` row be a harmless
+    // stub rather than crashing the entire global setup.
+    const kekHex = process.env.LLM_KEY_ENCRYPTION_KEY;
+    const kekOk = !!kekHex && kekHex.length === KEK_LENGTH_BYTES * 2 && /^[0-9a-fA-F]+$/.test(kekHex);
+    if (!plain || !kekOk) return "[]";
     const blob = encryptApiKey(plain);
     return JSON.stringify([blob]).replace(/'/g, "''");
   })();
