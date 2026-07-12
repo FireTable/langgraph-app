@@ -11,6 +11,7 @@ import { PATCH, DELETE } from "@/app/api/admin/providers/[id]/route";
 import { POST as AddKey } from "@/app/api/admin/providers/[id]/keys/route";
 import { PATCH as RotateKey } from "@/app/api/admin/providers/[id]/keys/[keyName]/route";
 import { POST as AddModel } from "@/app/api/admin/providers/[id]/models/route";
+import { PATCH as EditModel } from "@/app/api/admin/providers/[id]/models/[modelName]/route";
 
 function jsonRequest(body: unknown): Request {
   return new Request("http://localhost", {
@@ -23,6 +24,7 @@ function jsonRequest(body: unknown): Request {
 const ctx = { params: Promise.resolve(undefined as never) };
 const ctxId = (id: string) => ({ params: Promise.resolve({ id }) });
 const ctxKey = (id: string, keyName: string) => ({ params: Promise.resolve({ id, keyName }) });
+const ctxModel = (id: string, modelName: string) => ({ params: Promise.resolve({ id, modelName }) });
 
 const ADMIN = { id: TEST_USER.id, email: TEST_USER.email, roleId: "admin" };
 const PLAINTEXT = "sk-test-plaintext-secret-1234";
@@ -374,5 +376,63 @@ describe("POST /api/admin/providers/[id]/models", () => {
       ctxId("openai"),
     );
     expect(res.status).toBe(409);
+  });
+});
+
+describe("PATCH /api/admin/providers/[id]/models/[modelName] (rename + edit)", () => {
+  async function seedTwoModels() {
+    await db.insert(provider).values({
+      id: "openai",
+      name: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      models: [
+        { name: "gpt-4o-mini", enabled: true, inputPer1k: 0.001, outputPer1k: 0.002 },
+        { name: "gpt-4o", enabled: true, inputPer1k: 0.005, outputPer1k: 0.015 },
+      ],
+    });
+  }
+
+  it("renames a model (200, name updates in place)", async () => {
+    await seedTwoModels();
+    const res = await EditModel(
+      jsonRequest({ name: "gpt-4o-mini-2026", enabled: true }),
+      ctxModel("openai", "gpt-4o-mini"),
+    );
+    expect(res.status).toBe(200);
+    const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
+    const names = row?.models.map((m) => m.name).sort();
+    expect(names).toEqual(["gpt-4o", "gpt-4o-mini-2026"]);
+    const renamed = row?.models.find((m) => m.name === "gpt-4o-mini-2026");
+    expect(renamed?.inputPer1k).toBe(0.001);
+    expect(renamed?.enabled).toBe(true);
+  });
+
+  it("no-op rename to same name is fine (200)", async () => {
+    await seedTwoModels();
+    const res = await EditModel(
+      jsonRequest({ name: "gpt-4o-mini" }),
+      ctxModel("openai", "gpt-4o-mini"),
+    );
+    expect(res.status).toBe(200);
+    const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
+    expect(row?.models.find((m) => m.name === "gpt-4o-mini")?.inputPer1k).toBe(0.001);
+  });
+
+  it("returns 409 on rename collision with another model", async () => {
+    await seedTwoModels();
+    const res = await EditModel(
+      jsonRequest({ name: "gpt-4o" }),
+      ctxModel("openai", "gpt-4o-mini"),
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it("returns 400 on empty name", async () => {
+    await seedTwoModels();
+    const res = await EditModel(
+      jsonRequest({ name: "" }),
+      ctxModel("openai", "gpt-4o-mini"),
+    );
+    expect(res.status).toBe(400);
   });
 });

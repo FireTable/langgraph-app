@@ -551,7 +551,7 @@ function ModelDialog(
       : `/api/admin/providers/${encodeURIComponent(props.providerId)}/models`;
     const method = isEdit ? "PATCH" : "POST";
     const body = isEdit
-      ? { enabled, inputPer1k: inp, outputPer1k: out }
+      ? { name: name.trim(), enabled, inputPer1k: inp, outputPer1k: out }
       : { name: name.trim(), enabled, inputPer1k: inp, outputPer1k: out };
     start(async () => {
       const r = await jsonFetch(path, { method, body: JSON.stringify(body) });
@@ -571,8 +571,8 @@ function ModelDialog(
       title={isEdit ? "Edit model" : "Add model"}
       description={
         isEdit
-          ? `${props.model.name} — the name is the identifier and can’t be changed here. Delete + recreate to rename.`
-          : "Register a new model for this provider. The name is the JSONB-array key and can’t be changed later — delete + recreate to rename."
+          ? `${props.model.name} — rename takes effect on Save; collision with another model on this provider is rejected.`
+          : "Register a new model for this provider. The name is the JSONB-array key; you can rename it later from the Edit dialog."
       }
       submitLabel={isEdit ? "Save" : "Add"}
       pending={saving || props.pending}
@@ -585,7 +585,7 @@ function ModelDialog(
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            disabled={isEdit || saving || props.pending}
+            disabled={saving || props.pending}
             placeholder="gpt-4o-mini"
             className="font-mono"
           />
