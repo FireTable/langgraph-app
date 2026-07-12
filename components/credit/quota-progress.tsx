@@ -78,7 +78,7 @@ export function QuotaProgress({
     return (
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2 pb-1.5 text-sm font-normal">
-          <CoinsIcon className="size-4 shrink-0" />
+          <CoinsIcon className="size-4 shrink-0 text-muted-foreground " />
           <span>Usage</span>
         </div>
         <div className="text-muted-foreground pl-6 text-xs">
