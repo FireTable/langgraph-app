@@ -3,11 +3,21 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { Loader2, Plus, Trash2 } from "lucide-react";
+
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 
 type PublicProviderApiKey = { name: string };
@@ -110,35 +120,28 @@ function ProvidersPanel({ initial }: { initial: PublicProviderRow[] }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>Add provider</CardTitle>
-          <CardDescription>Register a new LLM provider.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex-1">
-              <label className="mb-1 block text-xs font-medium">id</label>
-              <Input
-                placeholder="openai"
-                value={newId}
-                onChange={(e) => setNewId(e.target.value)}
-                disabled={pending}
-              />
-            </div>
-            <div className="flex-1">
-              <label className="mb-1 block text-xs font-medium">name</label>
-              <Input
-                placeholder="OpenAI"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                disabled={pending}
-              />
-            </div>
-            <Button onClick={create} disabled={pending}>
-              Create
-            </Button>
-          </div>
+      <Card className="border-dashed bg-muted/20">
+        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <Input
+            className="flex-1"
+            placeholder="Provider id (e.g. openai)"
+            value={newId}
+            onChange={(e) => setNewId(e.target.value)}
+            disabled={pending}
+            aria-label="New provider id"
+          />
+          <Input
+            className="flex-1"
+            placeholder="Display name (e.g. OpenAI)"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            disabled={pending}
+            aria-label="New provider name"
+          />
+          <Button onClick={create} disabled={pending}>
+            <Plus aria-hidden />
+            Create
+          </Button>
         </CardContent>
       </Card>
 
@@ -160,6 +163,7 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
   const [pending, start] = useTransition();
   const [editingBaseUrl, setEditingBaseUrl] = useState(false);
   const [baseUrlDraft, setBaseUrlDraft] = useState(provider.baseUrl);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const saveBaseUrl = () => {
     if (!baseUrlDraft.trim()) {
@@ -181,8 +185,7 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
     });
   };
 
-  const remove = () => {
-    if (!confirm(`Delete provider "${provider.id}"? This cannot be undone.`)) return;
+  const confirmRemove = () => {
     start(async () => {
       const r = await jsonFetch(`/api/admin/providers/${encodeURIComponent(provider.id)}`, {
         method: "DELETE",
@@ -191,6 +194,7 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
         toast.error(errMsg(r.body));
         return;
       }
+      setConfirmingDelete(false);
       toast.success("provider deleted");
       router.refresh();
     });
@@ -207,14 +211,21 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
               {provider.enabled ? "enabled" : "disabled"}
             </CardDescription>
           </div>
-          <Button variant="destructive" size="sm" onClick={remove} disabled={pending}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmingDelete(true)}
+            disabled={pending}
+          >
+            <Trash2 aria-hidden />
             Delete
           </Button>
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
         <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">baseUrl</h3>
+          <h3 className="text-sm font-medium">Base URL</h3>
           {editingBaseUrl ? (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <Input
@@ -225,10 +236,10 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
               />
               <div className="flex gap-1">
                 <Button size="sm" onClick={saveBaseUrl} disabled={pending}>
-                  save
+                  Save
                 </Button>
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
                   onClick={() => {
                     setBaseUrlDraft(provider.baseUrl);
@@ -236,7 +247,7 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
                   }}
                   disabled={pending}
                 >
-                  cancel
+                  Cancel
                 </Button>
               </div>
             </div>
@@ -244,12 +255,12 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
             <div className="flex items-center justify-between gap-2">
               <code className="text-muted-foreground text-xs">{provider.baseUrl}</code>
               <Button
-                variant="ghost"
+                variant="outline"
                 size="xs"
                 onClick={() => setEditingBaseUrl(true)}
                 disabled={pending}
               >
-                edit
+                Edit
               </Button>
             </div>
           )}
@@ -259,6 +270,44 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
         <Separator />
         <KeysSection providerId={provider.id} keys={provider.apiKeys} />
       </CardContent>
+
+      <Dialog open={confirmingDelete} onOpenChange={(open) => !open && setConfirmingDelete(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this provider?</DialogTitle>
+            <DialogDescription>
+              “{provider.name}” and all of its models and API keys will be removed. This cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="w-full md:w-auto"
+              onClick={() => setConfirmingDelete(false)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="w-full md:w-auto"
+              onClick={() => void confirmRemove()}
+              disabled={pending}
+              aria-busy={pending}
+            >
+              {pending ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden />
+                  Deleting…
+                </>
+              ) : (
+                "Delete"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -269,6 +318,7 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
   const [name, setName] = useState("");
   const [inputPer1k, setInputPer1k] = useState("0.001");
   const [outputPer1k, setOutputPer1k] = useState("0.002");
+  const [pendingDelete, setPendingDelete] = useState<PublicModel | null>(null);
 
   const add = () => {
     if (!name.trim()) {
@@ -315,16 +365,19 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
     });
   };
 
-  const remove = (m: PublicModel) => {
+  const confirmRemove = () => {
+    if (!pendingDelete) return;
+    const target = pendingDelete;
     start(async () => {
       const r = await jsonFetch(
-        `/api/admin/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(m.name)}`,
+        `/api/admin/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(target.name)}`,
         { method: "DELETE" },
       );
       if (!r.ok) {
         toast.error(errMsg(r.body));
         return;
       }
+      setPendingDelete(null);
       router.refresh();
     });
   };
@@ -332,22 +385,26 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
   return (
     <div className="flex flex-col gap-3">
       <h3 className="text-sm font-medium">Models</h3>
-      {models.length === 0 ? (
-        <p className="text-muted-foreground text-xs">No models configured.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-md border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-muted-foreground text-xs">
+      <div className="overflow-x-auto rounded-md border">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 text-muted-foreground text-xs">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Name</th>
+              <th className="px-3 py-2 text-left font-medium">Enabled</th>
+              <th className="px-3 py-2 text-right font-medium">Input / 1k</th>
+              <th className="px-3 py-2 text-right font-medium">Output / 1k</th>
+              <th className="px-3 py-2 text-right font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {models.length === 0 ? (
               <tr>
-                <th className="px-3 py-2 text-left font-medium">name</th>
-                <th className="px-3 py-2 text-left font-medium">enabled</th>
-                <th className="px-3 py-2 text-right font-medium">input / 1k</th>
-                <th className="px-3 py-2 text-right font-medium">output / 1k</th>
-                <th className="px-3 py-2 text-right font-medium" />
+                <td colSpan={5} className="text-muted-foreground px-3 py-3 text-center text-xs">
+                  No models configured.
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {models.map((m) => (
+            ) : (
+              models.map((m) => (
                 <tr key={m.name} className="border-t">
                   <td className="px-3 py-2 font-mono text-xs">{m.name}</td>
                   <td className="px-3 py-2">
@@ -357,53 +414,114 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
                       onClick={() => toggle(m, !m.enabled)}
                       disabled={pending}
                     >
-                      {m.enabled ? "yes" : "no"}
+                      {m.enabled ? "Yes" : "No"}
                     </button>
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{m.inputPer1k}</td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{m.outputPer1k}</td>
                   <td className="px-3 py-2 text-right">
-                    <Button variant="ghost" size="xs" onClick={() => remove(m)} disabled={pending}>
-                      delete
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => setPendingDelete(m)}
+                      disabled={pending}
+                      aria-label={`Delete ${m.name}`}
+                    >
+                      <Trash2 aria-hidden />
+                      Delete
                     </Button>
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-        <div className="flex-1">
-          <label className="mb-1 block text-xs font-medium">add model</label>
-          <Input
-            placeholder="gpt-4o-mini"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={pending}
-          />
-        </div>
-        <div className="w-32">
-          <Input
-            placeholder="input/1k"
-            value={inputPer1k}
-            onChange={(e) => setInputPer1k(e.target.value)}
-            disabled={pending}
-          />
-        </div>
-        <div className="w-32">
-          <Input
-            placeholder="output/1k"
-            value={outputPer1k}
-            onChange={(e) => setOutputPer1k(e.target.value)}
-            disabled={pending}
-          />
-        </div>
-        <Button onClick={add} disabled={pending}>
-          Add model
-        </Button>
+              ))
+            )}
+            <tr className="border-t">
+              <td className="px-3 py-1.5">
+                <Input
+                  placeholder="gpt-4o-mini"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  disabled={pending}
+                  className="h-5 px-1.5 font-mono text-[11px]"
+                  aria-label="New model name"
+                />
+              </td>
+              <td className="text-muted-foreground px-3 py-1.5 text-center text-xs">—</td>
+              <td className="px-3 py-1.5">
+                <Input
+                  placeholder="input / 1k"
+                  value={inputPer1k}
+                  onChange={(e) => setInputPer1k(e.target.value)}
+                  disabled={pending}
+                  className="h-5 px-1.5 text-right font-mono text-[11px]"
+                  aria-label="New model input rate"
+                />
+              </td>
+              <td className="px-3 py-1.5">
+                <Input
+                  placeholder="output / 1k"
+                  value={outputPer1k}
+                  onChange={(e) => setOutputPer1k(e.target.value)}
+                  disabled={pending}
+                  className="h-5 px-1.5 text-right font-mono text-[11px]"
+                  aria-label="New model output rate"
+                />
+              </td>
+              <td className="px-3 py-2 text-right">
+                <Button
+                  type="button"
+                  size="xs"
+                  onClick={add}
+                  disabled={pending}
+                  aria-label="Add model"
+                >
+                  Add
+                </Button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this model?</DialogTitle>
+            <DialogDescription>
+              “{pendingDelete?.name}” will be removed from this provider. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="w-full md:w-auto"
+              onClick={() => setPendingDelete(null)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="w-full md:w-auto"
+              onClick={() => void confirmRemove()}
+              disabled={pending}
+              aria-busy={pending}
+            >
+              {pending ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden />
+                  Deleting…
+                </>
+              ) : (
+                "Delete"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -412,6 +530,7 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
   const router = useRouter();
   const [pending, start] = useTransition();
   const [plain, setPlain] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<PublicProviderApiKey | null>(null);
 
   const add = () => {
     if (!plain.trim()) {
@@ -450,17 +569,19 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
     });
   };
 
-  const remove = (k: PublicProviderApiKey) => {
+  const confirmRemove = () => {
+    if (!pendingDelete) return;
+    const target = pendingDelete;
     start(async () => {
       const r = await jsonFetch(`/api/admin/providers/${encodeURIComponent(providerId)}/keys`, {
         method: "DELETE",
-        body: JSON.stringify({ name: k.name }),
+        body: JSON.stringify({ name: target.name }),
       });
       if (!r.ok) {
         toast.error(errMsg(r.body));
         return;
       }
-      toast.success("key deleted");
+      setPendingDelete(null);
       router.refresh();
     });
   };
@@ -468,63 +589,122 @@ function KeysSection({ providerId, keys }: { providerId: string; keys: PublicPro
   return (
     <div className="flex flex-col gap-3">
       <h3 className="text-sm font-medium">API keys</h3>
-      {keys.length === 0 ? (
-        <p className="text-muted-foreground text-xs">No API keys configured.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-md border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-muted-foreground text-xs">
+      <div className="overflow-x-auto rounded-md border">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/50 text-muted-foreground text-xs">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Name</th>
+              <th className="px-3 py-2 text-right font-medium">Created</th>
+              <th className="px-3 py-2 text-right font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {keys.length === 0 ? (
               <tr>
-                <th className="px-3 py-2 text-left font-medium">name</th>
-                <th className="px-3 py-2 text-right font-medium" />
+                <td colSpan={3} className="text-muted-foreground px-3 py-3 text-center text-xs">
+                  No API keys configured.
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {keys.map((k) => (
+            ) : (
+              keys.map((k) => (
                 <tr key={k.name} className="border-t">
                   <td className="px-3 py-2 font-mono text-xs">{k.name}</td>
+                  <td className="text-muted-foreground px-3 py-2 text-right text-xs">—</td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex justify-end gap-1">
                       <Button
-                        variant="ghost"
+                        type="button"
+                        variant="outline"
                         size="xs"
                         onClick={() => rotate(k)}
                         disabled={pending}
                       >
-                        rotate
+                        Rotate
                       </Button>
                       <Button
-                        variant="ghost"
+                        type="button"
+                        variant="outline"
                         size="xs"
-                        onClick={() => remove(k)}
+                        onClick={() => setPendingDelete(k)}
                         disabled={pending}
+                        aria-label={`Delete ${k.name}`}
                       >
-                        delete
+                        <Trash2 aria-hidden />
+                        Delete
                       </Button>
                     </div>
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-        <div className="flex-1">
-          <label className="mb-1 block text-xs font-medium">add api key</label>
-          <Input
-            type="password"
-            placeholder="sk-…"
-            value={plain}
-            onChange={(e) => setPlain(e.target.value)}
-            disabled={pending}
-          />
-        </div>
-        <Button onClick={add} disabled={pending}>
-          Add key
-        </Button>
+              ))
+            )}
+            <tr className="border-t">
+              <td colSpan={2} className="px-3 py-1.5">
+                <Input
+                  type="password"
+                  placeholder="sk-…"
+                  value={plain}
+                  onChange={(e) => setPlain(e.target.value)}
+                  disabled={pending}
+                  className="h-5 px-1.5 font-mono text-[11px]"
+                  aria-label="New API key"
+                />
+              </td>
+              <td className="px-3 py-1.5 text-right">
+                <Button
+                  type="button"
+                  size="xs"
+                  onClick={add}
+                  disabled={pending}
+                  aria-label="Add API key"
+                >
+                  Add
+                </Button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this API key?</DialogTitle>
+            <DialogDescription>
+              “{pendingDelete?.name}” will be removed from this provider. Requests using this key
+              will start failing immediately. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="w-full md:w-auto"
+              onClick={() => setPendingDelete(null)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="w-full md:w-auto"
+              onClick={() => void confirmRemove()}
+              disabled={pending}
+              aria-busy={pending}
+            >
+              {pending ? (
+                <>
+                  <Loader2 className="animate-spin" aria-hidden />
+                  Deleting…
+                </>
+              ) : (
+                "Delete"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -579,75 +759,78 @@ function RolesPanel({ initial }: { initial: RoleRow[] }) {
     <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
-          <CardTitle>Add role</CardTitle>
-          <CardDescription>Roles set the per-window credit cap for users.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-5 sm:items-end">
-            <div>
-              <label className="mb-1 block text-xs font-medium">id</label>
-              <Input value={id} onChange={(e) => setId(e.target.value)} disabled={pending} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium">name</label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} disabled={pending} />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium">credit limit</label>
-              <Input
-                placeholder="blank = unlimited"
-                value={limit}
-                onChange={(e) => setLimit(e.target.value)}
-                disabled={pending}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium">window hours</label>
-              <Input
-                type="number"
-                min={1}
-                value={hours}
-                onChange={(e) => setHours(e.target.value)}
-                disabled={pending}
-              />
-            </div>
-            <Button onClick={create} disabled={pending}>
-              Create
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
           <CardTitle>Roles</CardTitle>
           <CardDescription>
-            <code className="font-mono">null</code> creditLimit = unlimited.
+            Roles set the per-window credit cap for users. A blank credit limit means unlimited.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {initial.length === 0 ? (
-            <p className="text-muted-foreground py-2 text-sm">No roles yet.</p>
-          ) : (
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-muted-foreground text-xs">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">id</th>
-                    <th className="px-3 py-2 text-left font-medium">name</th>
-                    <th className="px-3 py-2 text-right font-medium">credit limit</th>
-                    <th className="px-3 py-2 text-right font-medium">window (h)</th>
-                    <th className="px-3 py-2 text-right font-medium" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {initial.map((r) => (
-                    <RoleRowView key={r.id} role={r} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <div className="overflow-x-auto rounded-md border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-muted-foreground text-xs">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Id</th>
+                  <th className="px-3 py-2 text-left font-medium">Name</th>
+                  <th className="px-3 py-2 text-right font-medium">Credit limit</th>
+                  <th className="px-3 py-2 text-right font-medium">Window (h)</th>
+                  <th className="px-3 py-2 text-right font-medium" />
+                </tr>
+              </thead>
+              <tbody>
+                {initial.map((r) => (
+                  <RoleRowView key={r.id} role={r} />
+                ))}
+                <tr className="border-t">
+                  <td className="px-3 py-1.5">
+                    <Input
+                      placeholder="editor"
+                      value={id}
+                      onChange={(e) => setId(e.target.value)}
+                      disabled={pending}
+                      className="h-5 px-1.5 font-mono text-[11px]"
+                      aria-label="New role id"
+                    />
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <Input
+                      placeholder="Editor"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      disabled={pending}
+                      className="h-5 px-1.5 text-[11px]"
+                      aria-label="New role name"
+                    />
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <Input
+                      placeholder="blank = unlimited"
+                      value={limit}
+                      onChange={(e) => setLimit(e.target.value)}
+                      disabled={pending}
+                      className="h-5 px-1.5 text-right font-mono text-[11px]"
+                      aria-label="New role credit limit"
+                    />
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <Input
+                      type="number"
+                      min={1}
+                      value={hours}
+                      onChange={(e) => setHours(e.target.value)}
+                      disabled={pending}
+                      className="h-5 px-1.5 text-right font-mono text-[11px]"
+                      aria-label="New role window hours"
+                    />
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    <Button size="xs" onClick={create} disabled={pending} aria-label="Add role">
+                      Add
+                    </Button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -661,6 +844,7 @@ function RoleRowView({ role }: { role: RoleRow }) {
   const [name, setName] = useState(role.name);
   const [limit, setLimit] = useState(role.creditLimit === null ? "" : String(role.creditLimit));
   const [hours, setHours] = useState(String(role.windowHours));
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const save = () => {
     const h = Number(hours);
@@ -689,7 +873,6 @@ function RoleRowView({ role }: { role: RoleRow }) {
   };
 
   const remove = () => {
-    if (!confirm(`Delete role "${role.id}"?`)) return;
     start(async () => {
       const r = await jsonFetch(`/api/admin/roles/${encodeURIComponent(role.id)}`, {
         method: "DELETE",
@@ -698,6 +881,7 @@ function RoleRowView({ role }: { role: RoleRow }) {
         toast.error(errMsg(r.body));
         return;
       }
+      setConfirmingDelete(false);
       toast.success("role deleted");
       router.refresh();
     });
@@ -730,10 +914,10 @@ function RoleRowView({ role }: { role: RoleRow }) {
         <td className="px-3 py-2 text-right">
           <div className="flex justify-end gap-1">
             <Button size="xs" onClick={save} disabled={pending}>
-              save
+              Save
             </Button>
-            <Button variant="ghost" size="xs" onClick={() => setEditing(false)} disabled={pending}>
-              cancel
+            <Button variant="outline" size="xs" onClick={() => setEditing(false)} disabled={pending}>
+              Cancel
             </Button>
           </div>
         </td>
@@ -751,13 +935,62 @@ function RoleRowView({ role }: { role: RoleRow }) {
       <td className="px-3 py-2 text-right font-mono text-xs">{role.windowHours}</td>
       <td className="px-3 py-2 text-right">
         <div className="flex justify-end gap-1">
-          <Button variant="ghost" size="xs" onClick={() => setEditing(true)} disabled={pending}>
-            edit
+          <Button variant="outline" size="xs" onClick={() => setEditing(true)} disabled={pending}>
+            Edit
           </Button>
-          <Button variant="ghost" size="xs" onClick={remove} disabled={pending}>
-            delete
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={() => setConfirmingDelete(true)}
+            disabled={pending}
+            aria-label={`Delete ${role.id}`}
+          >
+            <Trash2 aria-hidden />
+            Delete
           </Button>
         </div>
+
+        <Dialog
+          open={confirmingDelete}
+          onOpenChange={(open) => !open && setConfirmingDelete(false)}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete this role?</DialogTitle>
+              <DialogDescription>
+                “{role.name}” will be removed. Users on this role fall back to the default. This
+                cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                className="w-full md:w-auto"
+                onClick={() => setConfirmingDelete(false)}
+                disabled={pending}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                className="w-full md:w-auto"
+                onClick={remove}
+                disabled={pending}
+                aria-busy={pending}
+              >
+                {pending ? (
+                  <>
+                    <Loader2 className="animate-spin" aria-hidden />
+                    Deleting…
+                  </>
+                ) : (
+                  "Delete"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </td>
     </tr>
   );
