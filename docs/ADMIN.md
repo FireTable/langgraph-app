@@ -52,11 +52,11 @@ The seeded `default` provider (migration `0003_*`) is **protected**: deleting it
 
 ### `POST /api/admin/providers/[id]/keys`
 
-Encrypt + append a key. The plaintext is encrypted with AES-256-GCM (`lib/auth/encryption.ts`) and never leaves the server again — the response only carries the derived `name` (`"sk-…xyz9"`) + optional `baseUrl`.
+Encrypt + append a key. The plaintext is encrypted with AES-256-GCM (`lib/auth/encryption.ts`) and never leaves the server again — the response only carries the derived `name` (`"sk-…xyz9"`). `baseUrl` is NOT accepted here — it lives on the provider row (`POST /api/admin/providers`), one per provider.
 
 |               |                                                                                                                                                          |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Request body  | `{ plaintext: string (1..2048), baseUrl?: url }`                                                                                                         |
+| Request body  | `{ plaintext: string (1..2048) }`                                                                                                                        |
 | 201 response  | `PublicProvider` (full row, secrets stripped)                                                                                                            |
 | Failure codes | 400 `BAD_REQUEST` (Zod), 401, 403, 404 `NOT_FOUND` (provider missing), 409 `DUPLICATE_KEY` (a key with the same tail already exists — `name` collision). |
 

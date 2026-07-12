@@ -291,11 +291,11 @@ List every row in `provider`, ordered by `id`. The encrypted key material is str
 
 Create a new provider row. `apiKeys` / `models` default to `[]`.
 
-|               |                                                                                                                                                                                 |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Request body  | `{ id: string (^[a-z0-9_-]+$, 1..64), name: string (1..128), enabled?: boolean (default true), apiKeys?: ProviderApiKey[] (default []), models?: ModelConfig[] (default []) }`. |
-| 201 response  | `PublicProvider`                                                                                                                                                                |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 409 `DUPLICATE` (PK collision on `id`).                                                                                                            |
+|               |                                                                                                                                                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ id: string (^[a-z0-9_-]+$, 1..64), name: string (1..128), baseUrl: url (REQUIRED — OpenAI-compatible endpoint), enabled?: boolean (default true), apiKeys?: ProviderApiKey[] (default []), models?: ModelConfig[] (default []) }`. |
+| 201 response  | `PublicProvider`                                                                                                                                                                                                                      |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 409 `DUPLICATE` (PK collision on `id`).                                                                                                                                                                  |
 
 ### `PATCH /api/admin/providers/[id]`
 
@@ -309,12 +309,12 @@ Partial update. Whole-array replacement is used for `models` when present — no
 
 ### `DELETE /api/admin/providers/[id]`
 
-Hard-delete. Historical `credit_usage_log` rows keep their `provider_id` (text, not FK) even after the provider is gone.
+Hard-delete. Historical `credit_usage_log` rows keep their `provider_id` (text, not FK) even after the provider is gone. The seeded `default` provider is protected — see `DELETE` row in the Admin table below.
 
-|               |                           |
-| ------------- | ------------------------- |
-| Response      | `204 No Content`          |
-| Failure codes | 401, 403, 404 `NOT_FOUND` |
+|               |                                                         |
+| ------------- | ------------------------------------------------------- |
+| Response      | `204 No Content`                                        |
+| Failure codes | 401, 403, 404 `NOT_FOUND`, 409 `PROTECTED` (default id) |
 
 ### `POST /api/admin/providers/[id]/keys`
 

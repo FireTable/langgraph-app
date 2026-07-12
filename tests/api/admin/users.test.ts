@@ -91,10 +91,7 @@ describe("PATCH /api/admin/users/[id]", () => {
     await db
       .insert(user)
       .values({ id: "bob", email: "bob@test.local", name: "Bob", roleId: "user" });
-    const res = await PATCH(
-      jsonRequest({ roleId: "vip" }),
-      ctxId("bob"),
-    );
+    const res = await PATCH(jsonRequest({ roleId: "vip" }), ctxId("bob"));
     expect(res.status).toBe(200);
     const after = await db.query.user.findFirst({ where: (u, { eq }) => eq(u.id, "bob") });
     expect(after?.roleId).toBe("vip");
@@ -140,14 +137,12 @@ describe("PATCH /api/admin/users/[id]", () => {
   });
 
   it("allows demoting an admin when another admin exists", async () => {
-    await db
-      .insert(user)
-      .values({
-        id: "second-admin",
-        email: "second@test.local",
-        name: "Second",
-        roleId: "admin",
-      });
+    await db.insert(user).values({
+      id: "second-admin",
+      email: "second@test.local",
+      name: "Second",
+      roleId: "admin",
+    });
     const res = await PATCH(jsonRequest({ roleId: "user" }), ctxId(TEST_USER.id));
     expect(res.status).toBe(200);
     const after = await db.query.user.findFirst({
@@ -180,23 +175,18 @@ describe("PATCH /api/admin/users/[id]", () => {
     const res = await PATCH(jsonRequest({ banned: true }), ctxId("alice"));
     expect(res.status).toBe(200);
 
-    const remaining = await db
-      .select()
-      .from(session)
-      .where(eq(session.userId, "alice"));
+    const remaining = await db.select().from(session).where(eq(session.userId, "alice"));
     expect(remaining).toHaveLength(0);
   });
 
   it("unbanning does NOT touch sessions (user signs in fresh)", async () => {
-    await db
-      .insert(user)
-      .values({
-        id: "alice",
-        email: "alice@test.local",
-        name: "Alice",
-        roleId: "user",
-        banned: true,
-      });
+    await db.insert(user).values({
+      id: "alice",
+      email: "alice@test.local",
+      name: "Alice",
+      roleId: "user",
+      banned: true,
+    });
     await db.insert(session).values({
       id: "sess-alice-1",
       token: "tok-alice-1",
@@ -207,11 +197,18 @@ describe("PATCH /api/admin/users/[id]", () => {
     const res = await PATCH(jsonRequest({ banned: false }), ctxId("alice"));
     expect(res.status).toBe(200);
 
-    const remaining = await db
-      .select()
-      .from(session)
-      .where(eq(session.userId, "alice"));
+    const remaining = await db.select().from(session).where(eq(session.userId, "alice"));
     expect(remaining).toHaveLength(1);
+  });
+
+  it("unbanning the only admin succeeds (no false LAST_ADMIN)", async () => {
+    // Regression: banned:false with no roleId in the body used to trip
+    // the last-admin guard via `undefined !== "admin"`. Split the role
+    // and ban checks so unban is unconditionally allowed.
+    const res = await PATCH(jsonRequest({ banned: false }), ctxId(TEST_USER.id));
+    expect(res.status).toBe(200);
+    const after = await db.query.user.findFirst({ where: (u, { eq }) => eq(u.id, TEST_USER.id) });
+    expect(after?.banned).toBe(false);
   });
 });
 
@@ -239,14 +236,12 @@ describe("DELETE /api/admin/users/[id]", () => {
   });
 
   it("allows deleting an admin when another admin exists", async () => {
-    await db
-      .insert(user)
-      .values({
-        id: "second-admin",
-        email: "second@test.local",
-        name: "Second",
-        roleId: "admin",
-      });
+    await db.insert(user).values({
+      id: "second-admin",
+      email: "second@test.local",
+      name: "Second",
+      roleId: "admin",
+    });
     const res = await DELETE(new Request("http://localhost"), ctxId(TEST_USER.id));
     expect(res.status).toBe(204);
     const after = await db.query.user.findFirst({

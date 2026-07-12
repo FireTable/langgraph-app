@@ -33,14 +33,13 @@ export const PATCH = withAuth<IdParams>({ role: "admin" }, async (req, { params 
 
   // ponytail: last-admin guard. Mirrors the default-provider protection
   // — the system can't boot without a path to admin pages, so we refuse
-  // to demote or ban the only remaining admin. Self-edit is allowed so
-  // an admin can still change their own name / role as long as another
-  // admin exists.
-  if (existing.roleId === "admin" && (parsed.data.roleId !== "admin" || parsed.data.banned === true)) {
-    const [{ c }] = await db
-      .select({ c: count() })
-      .from(user)
-      .where(eq(user.roleId, "admin"));
+  // to demote or ban the only remaining admin. Two distinct triggers,
+  // each guarded separately so an unban (`banned: false`) doesn't trip
+  // the role-change branch when roleId is absent from the body.
+  const roleChange = parsed.data.roleId !== undefined && parsed.data.roleId !== "admin";
+  const newBan = parsed.data.banned === true;
+  if (existing.roleId === "admin" && (roleChange || newBan)) {
+    const [{ c }] = await db.select({ c: count() }).from(user).where(eq(user.roleId, "admin"));
     if (c <= 1) {
       return NextResponse.json(
         { code: "LAST_ADMIN", message: "at least one admin must remain" },
@@ -81,10 +80,7 @@ export const DELETE = withAuth<IdParams>({ role: "admin" }, async (_req, { param
   // ponytail: same last-admin rule applies to delete. The FK from
   // session / account cascades on user delete, so the row goes alone.
   if (existing.roleId === "admin") {
-    const [{ c }] = await db
-      .select({ c: count() })
-      .from(user)
-      .where(eq(user.roleId, "admin"));
+    const [{ c }] = await db.select({ c: count() }).from(user).where(eq(user.roleId, "admin"));
     if (c <= 1) {
       return NextResponse.json(
         { code: "LAST_ADMIN", message: "at least one admin must remain" },
