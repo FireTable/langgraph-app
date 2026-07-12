@@ -14,7 +14,7 @@ import {
 } from "@/components/tool-ui/crypto";
 import { WriteCodeCard, ExecuteCodeResult } from "@/components/tool-ui/code";
 import { SaveMemoryCard } from "@/components/tool-ui/memory";
-import { QuotaCard } from "@/components/tool-ui/quota";
+import { CreditCard } from "@/components/tool-ui/credit";
 
 // Frontend-side tool registrations. `execute` lives on the LangGraph
 // backend (backend/tool/) and is dispatched via useLangGraphRuntime —
@@ -130,12 +130,12 @@ const memoryToolkit = defineToolkit({
   },
 });
 
-const quotaToolkit = defineToolkit({
+const creditToolkit = defineToolkit({
   // ponytail: client-only render. No backend tool — the proxy injects
   // a tool_call with these args when the user's rolling-window credit
   // cap blocks a turn at app/api/[..._path]. The args ride on the
   // tool_call itself; no ToolMessage is emitted.
-  show_quota_card: {
+  show_credit_card: {
     description: "Render a credit-limit-reached card. Read-only.",
     parameters: z.object({
       resetAt: z.string(),
@@ -143,7 +143,7 @@ const quotaToolkit = defineToolkit({
       used: z.number(),
       windowHours: z.number(),
     }),
-    render: QuotaCard,
+    render: CreditCard,
   },
 });
 
@@ -152,5 +152,5 @@ export default defineToolkit({
   ...cryptoToolkit,
   ...codeToolkit,
   ...memoryToolkit,
-  ...quotaToolkit,
+  ...creditToolkit,
 });

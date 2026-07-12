@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { withAuth } from "@/lib/auth/with-auth";
-import { checkQuota } from "@/lib/credit/check";
+import { checkCredit } from "@/lib/credit/check";
 
 // ponytail: rule #9 — withAuth wraps the handler. Same auth shape as
 // /api/credit/history (signed-in user reads their own status only).
@@ -14,7 +14,7 @@ import { checkQuota } from "@/lib/credit/check";
 // rolling window ages out; "limit resets" reads better than
 // "window starts" on the chat surface.
 export const GET = withAuth(async (_req, { user }) => {
-  const status = await checkQuota(user.id);
+  const status = await checkCredit(user.id);
   const unlimited = !Number.isFinite(status.limit);
   return NextResponse.json({
     used: status.used,

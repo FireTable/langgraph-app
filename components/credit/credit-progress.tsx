@@ -5,7 +5,7 @@
 //
 //   1. <CreditUsageSlot /> inside UserButton — a compact
 //      "Used X / Y · pct%" line + a horizontal bar.
-//   2. <QuotaCard /> as a tool call in the chat — a wider card
+//   2. <CreditCard /> as a tool call in the chat — a wider card
 //      that says "Credit limit reached" with the same numbers.
 //
 // Keeping them in one place is the only way to make sure the
@@ -21,17 +21,17 @@
 
 import type { ReactNode } from "react";
 
-import { QuotaHeader } from "@/components/credit/quota-header";
+import { CreditHeader } from "@/components/credit/credit-header";
 
-export type QuotaTier = "normal" | "warn" | "over";
+export type CreditTier = "normal" | "warn" | "over";
 
-export function tierFor(pct: number): QuotaTier {
+export function creditTierFor(pct: number): CreditTier {
   if (pct >= 100) return "over";
   if (pct >= 80) return "warn";
   return "normal";
 }
 
-export function tierClass(tier: QuotaTier): string {
+export function creditTierClass(tier: CreditTier): string {
   switch (tier) {
     case "over":
       return "bg-destructive";
@@ -50,7 +50,7 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export type QuotaProgressProps = {
+export type CreditProgressProps = {
   variant: "slot" | "card";
   used: number;
   limit: number;
@@ -58,15 +58,15 @@ export type QuotaProgressProps = {
   resetAt: Date | string;
 };
 
-export function QuotaProgress({
+export function CreditProgress({
   variant,
   used,
   limit,
   windowHours,
   resetAt,
-}: QuotaProgressProps): ReactNode {
+}: CreditProgressProps): ReactNode {
   const pct = Math.min(100, Math.round((used / limit) * 100));
-  const tier = tierFor(pct);
+  const tier = creditTierFor(pct);
   const resetTime = formatTime(typeof resetAt === "string" ? resetAt : resetAt.toISOString());
   const usedStr = formatCredits(used);
   const limitStr = formatCredits(limit);
@@ -78,7 +78,7 @@ export function QuotaProgress({
   if (variant === "slot") {
     return (
       <div className="flex flex-col gap-1">
-        <QuotaHeader className="pb-1.5" />
+        <CreditHeader className="pb-1.5" />
         <div className="text-muted-foreground pl-6 text-xs">
           Used <span className="text-foreground font-medium">{usedStr}</span> / {limitStr} credits
         </div>
@@ -92,7 +92,7 @@ export function QuotaProgress({
             aria-label={`${usedStr} of ${limitStr} credits used`}
           >
             <div
-              className={`h-full rounded-full transition-all ${tierClass(tier)}`}
+              className={`h-full rounded-full transition-all ${creditTierClass(tier)}`}
               style={{ width: `${pct}%` }}
             />
           </div>
@@ -120,7 +120,7 @@ export function QuotaProgress({
           aria-label={`${usedStr} of ${limitStr} credits used`}
         >
           <div
-            className={`h-full rounded-full transition-all ${tierClass(tier)}`}
+            className={`h-full rounded-full transition-all ${creditTierClass(tier)}`}
             style={{ width: `${pct}%` }}
           />
         </div>

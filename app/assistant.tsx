@@ -89,13 +89,13 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
             size="icon"
             className="border-border bg-card border"
             links={memoryLink}
-            quotaSlot={<CreditUsageSlot />}
+            creditSlot={<CreditUsageSlot />}
           />
         ) : (
           <UserButton
             className="border-border bg-card w-full border"
             links={memoryLink}
-            quotaSlot={<CreditUsageSlot />}
+            creditSlot={<CreditUsageSlot />}
           />
         )}
       </div>
@@ -123,7 +123,7 @@ const MobileSidebar: FC = () => {
           <UserButton
             className="border-border bg-card w-full border"
             links={memoryLink}
-            quotaSlot={<CreditUsageSlot />}
+            creditSlot={<CreditUsageSlot />}
           />
         </div>
       </SheetContent>

@@ -4,7 +4,7 @@ import { type NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 import { withAuth } from "@/lib/auth/with-auth";
-import { checkQuota } from "@/lib/credit/check";
+import { checkCredit } from "@/lib/credit/check";
 
 // ponytail: edge catch-all proxy to LANGGRAPH_API_URL. The browser
 // sends `ANY /api/<rest>`; we forward to `${LANGGRAPH_API_URL}/<rest>`
@@ -28,30 +28,30 @@ function getCorsHeaders() {
 }
 
 // ponytail: every POST/PUT/PATCH is checked against the rolling-window
-// quota. The check is cheap (single SUM over an indexed window) and
+// credit cap. The check is cheap (single SUM over an indexed window) and
 // avoids the path-prefix branch's surface area — the proxy's job is to
 // gate token spend, not to know exactly which endpoints spend it. GET
 // stays unchecked (reads only).
 //
 // ponytail: the proxy fabricates a tiny SSE stream that mirrors the
 // shape LangGraph emits for a real run. We emit `event: messages/partial`
-// carrying the new quota-AI message — NOT `event: values`, which carries
-// the full state and would replace (wipe) the client's existing message
-// cache. `messages/partial` is append-only: the SDK adds the new message
-// to whatever the user already sees in the thread, so prior turns stay
-// visible alongside the QuotaCard.
+// carrying the new credit-blocked AI message — NOT `event: values`,
+// which carries the full state and would replace (wipe) the client's
+// existing message cache. `messages/partial` is append-only: the SDK
+// adds the new message to whatever the user already sees in the thread,
+// so prior turns stay visible alongside the CreditCard.
 //
-// We do NOT call the LangGraph API in this branch — `checkQuota`
+// We do NOT call the LangGraph API in this branch — `checkCredit`
 // already decided the turn is blocked, so no model invocation happens
 // and no recordLlmCall INSERT is queued.
-function quotaBlockedResponse(status: {
+function creditBlockedResponse(status: {
   used: number;
   limit: number;
   windowHours: number;
   resetAt: Date;
 }): Response {
-  const runId = `quota-blocked-${randomUUID()}`;
-  const messageId = `msg-quota-block-${randomUUID()}`;
+  const runId = `credit-blocked-${randomUUID()}`;
+  const messageId = `msg-credit-block-${randomUUID()}`;
 
   const aiMessage = {
     id: messageId,
@@ -59,8 +59,8 @@ function quotaBlockedResponse(status: {
     content: "",
     tool_calls: [
       {
-        id: `tc-quota-${randomUUID()}`,
-        name: "show_quota_card",
+        id: `tc-credit-${randomUUID()}`,
+        name: "show_credit_card",
         args: {
           resetAt: status.resetAt.toISOString(),
           limit: status.limit,
@@ -70,7 +70,7 @@ function quotaBlockedResponse(status: {
         type: "tool_call",
       },
     ],
-    additional_kwargs: { quota_blocked: true },
+    additional_kwargs: { credit_blocked: true },
     response_metadata: {},
   };
 
@@ -122,15 +122,15 @@ async function proxyRequest(
   searchParams.delete("nxtP_path");
   const queryString = searchParams.toString() ? `?${searchParams.toString()}` : "";
 
-  // ponytail: per-turn quota gate. Runs before any upstream fetch so a
-  // blocked turn never burns a model invocation. checkQuota is a single
+  // ponytail: per-turn credit gate. Runs before any upstream fetch so a
+  // blocked turn never burns a model invocation. checkCredit is a single
   // DB round-trip (role join + SUM over a window) — no need to cache at
   // this layer because LangGraph's ToolNode still records any LLM call
   // it does end up making, and the proxy only blocks once per turn.
   if (["POST", "PUT", "PATCH"].includes(nextReq.method)) {
-    const quota = await checkQuota(ctx.user.id);
-    if (!quota.allowed) {
-      return quotaBlockedResponse(quota);
+    const credit = await checkCredit(ctx.user.id);
+    if (!credit.allowed) {
+      return creditBlockedResponse(credit);
     }
   }
 

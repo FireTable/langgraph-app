@@ -5,7 +5,7 @@ import { role, user } from "@/lib/auth/schema";
 import { creditUsageLog } from "@/lib/credit/schema";
 import { provider } from "@/lib/provider/schema";
 import { CreditTrackingHandler } from "@/lib/credit/callback";
-import { QuotaExceededError } from "@/lib/credit/errors";
+import { CreditExceededError } from "@/lib/credit/errors";
 import { randomUUID } from "node:crypto";
 
 // ponytail: minimal integration test for the callback. We mock the
@@ -156,11 +156,11 @@ describe("CreditTrackingHandler", () => {
     expect(rows[0].outputTokens).toBe(0);
   });
 
-  it("handleLLMError for QuotaExceededError does NOT record (defensive)", async () => {
-    // ponytail: real quota enforcement lives in backend/model.ts's wrapper,
+  it("handleLLMError for CreditExceededError does NOT record (defensive)", async () => {
+    // ponytail: real credit enforcement lives in backend/model.ts's wrapper,
     // which throws BEFORE invoke/stream — so handleLLMError never fires for
     // a blocked call in practice. This test guards the bookkeeping path
-    // anyway: if a QuotaExceededError ever leaks into handleLLMError, the
+    // anyway: if a CreditExceededError ever leaks into handleLLMError, the
     // handler must skip recording (no LLM call happened, no row to write).
     const userId = await makeUser("user");
     await clearLog(userId);
@@ -177,13 +177,13 @@ describe("CreditTrackingHandler", () => {
     await handler.handleLLMStart(
       fakeLlm as never,
       [],
-      "run-quota",
+      "run-credit",
       undefined,
       undefined,
       undefined,
       metadata,
     );
-    await handler.handleLLMError(new QuotaExceededError(new Date(), 200, 200), "run-quota");
+    await handler.handleLLMError(new CreditExceededError(new Date(), 200, 200), "run-credit");
 
     const rows = await db.select().from(creditUsageLog).where(eq(creditUsageLog.userId, userId));
     expect(rows).toHaveLength(0);

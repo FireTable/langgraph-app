@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Infinity as InfinityIcon } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { tierClass, tierFor } from "@/components/credit/quota-progress";
+import { creditTierClass, creditTierFor } from "@/components/credit/credit-progress";
 import { loadCreditStatus, peekCachedStatus, type CreditStatus } from "@/lib/credit/status";
 
 // ponytail: 4-card stat grid + thin progress bar, rendered as a
@@ -52,14 +52,14 @@ function LimitedView({ status }: { status: CreditStatus }) {
   if (limit == null || windowHours == null) return null;
   const remaining = Math.max(0, limit - used);
   const pct = Math.min(100, Math.round((used / limit) * 100));
-  const tier = tierFor(pct);
+  const tier = creditTierFor(pct);
 
   return (
     <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Used" value={formatCredits(used)} hint="credits" />
         <StatCard label="Remaining" value={formatCredits(remaining)} hint="credits" />
-        <StatCard label="Used %" value={`${pct}%`} />
+        <StatCard label="Used Percent" value={`${pct}%`} />
         <StatCard label="Window" value={formatHours(windowHours)} hint="rolling" />
       </div>
       <div
@@ -71,7 +71,7 @@ function LimitedView({ status }: { status: CreditStatus }) {
         aria-label={`${pct}% of ${formatCredits(limit)} credits used in the last ${formatHours(windowHours)}`}
       >
         <div
-          className={`h-full rounded-full transition-all ${tierClass(tier)}`}
+          className={`h-full rounded-full transition-all ${creditTierClass(tier)}`}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -124,7 +124,7 @@ export function CreditSummarySection(): React.JSX.Element {
   return (
     <section>
       <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
-        Window Quota
+        Window credits
       </h2>
       <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
         Credits charged to your account in the last rolling window. Resets when the oldest in-window

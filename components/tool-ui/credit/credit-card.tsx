@@ -2,14 +2,14 @@
 
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 import { CoinsIcon } from "lucide-react";
-import { QuotaProgress } from "@/components/credit/quota-progress";
+import { CreditProgress } from "@/components/credit/credit-progress";
 import { CardHeader, CardShell } from "@/components/tool-ui/primitives/card";
 
 // ponytail: the proxy injects the full messages array (no ToolMessage
-// follows) when quota blocks the turn, so the args ride on the tool
-// call itself — `result` stays undefined and the card reads everything
-// from `args`. Model-driven cards (save_memory etc.) parse `result`
-// instead because LangGraph's ToolNode writes the ToolMessage.
+// follows) when the credit cap blocks the turn, so the args ride on
+// the tool call itself — `result` stays undefined and the card reads
+// everything from `args`. Model-driven cards (save_memory etc.) parse
+// `result` instead because LangGraph's ToolNode writes the ToolMessage.
 type Args = {
   resetAt: string;
   limit: number;
@@ -21,7 +21,7 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export const QuotaCard: ToolCallMessagePartComponent<Args> = ({ args }) => {
+export const CreditCard: ToolCallMessagePartComponent<Args> = ({ args }) => {
   const resetAt = typeof args?.resetAt === "string" ? args.resetAt : "";
   const limit = typeof args?.limit === "number" ? args.limit : 0;
   const used = typeof args?.used === "number" ? args.used : 0;
@@ -32,14 +32,14 @@ export const QuotaCard: ToolCallMessagePartComponent<Args> = ({ args }) => {
     : "Resets when the oldest in-window call ages out";
 
   return (
-    <CardShell data-slot="show-quota-card" maxWidthClass="max-w-md">
+    <CardShell data-slot="show-credit-card" maxWidthClass="max-w-md">
       <CardHeader
         icon={<CoinsIcon className="size-4" />}
         iconClassName="bg-amber-500/10 text-amber-500"
         title="Credit limit reached"
         subtitle={subtitle}
       />
-      <QuotaProgress
+      <CreditProgress
         variant="card"
         used={used}
         limit={limit}

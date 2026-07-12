@@ -3,7 +3,7 @@ import { db } from "@/db/client";
 import { role, user } from "@/lib/auth/schema";
 import { creditUsageLog } from "./schema";
 
-export type QuotaStatus = {
+export type CreditStatus = {
   allowed: boolean;
   used: number;
   limit: number; // Number.POSITIVE_INFINITY for unlimited
@@ -12,7 +12,7 @@ export type QuotaStatus = {
   roleName: string;
 };
 
-// ponytail: the quota window is a fixed calendar day in **server
+// ponytail: the credit window is a fixed calendar day in **server
 // time (UTC)**, not a rolling 24h-from-first-call window. Every user
 // sees the same resetAt (next UTC 00:00), which makes "resets at
 // 14:06" stop drifting per-user depending on when they happened to
@@ -22,7 +22,7 @@ export type QuotaStatus = {
 // multi-reset windows — see the TODO in the SQL).
 //
 // Admin role: creditLimit IS NULL → unlimited, skip the SUM entirely.
-export async function checkQuota(userId: string): Promise<QuotaStatus> {
+export async function checkCredit(userId: string): Promise<CreditStatus> {
   const [{ creditLimit, windowHours, roleName }] = await db
     .select({
       creditLimit: role.creditLimit,

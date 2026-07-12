@@ -2,7 +2,7 @@ import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { LLMResult } from "@langchain/core/outputs";
 import { computeCredits, recordLlmCall } from "./charge";
 import { findProviderId, getModelRate } from "./build-model";
-import { QuotaExceededError } from "./errors";
+import { CreditExceededError } from "./errors";
 
 type RunMeta = {
   userId: string;
@@ -53,10 +53,10 @@ function resolveRunMeta(
  * `handleLLMStart` does. Caching by runId is the only way to carry
  * userId + agentName + baseURL across the three hooks.
  *
- * Quota enforcement is NOT this handler's job — LangChain's CallbackManager
+ * Credit enforcement is NOT this handler's job — LangChain's CallbackManager
  * swallows throws from handleLLMStart, so a throw here would only fail the
  * bookkeeping step without interrupting the model call. Enforcement lives
- * in backend/model.ts's quota-aware wrapper, which throws BEFORE invoke/stream
+ * in backend/model.ts's credit-aware wrapper, which throws BEFORE invoke/stream
  * runs and propagates the error to the graph node. This handler only records.
  *
  * Wired in via `compile({ callbacks: [creditTrackingHandler] })` —
@@ -126,11 +126,11 @@ export class CreditTrackingHandler extends BaseCallbackHandler {
     _extraParams?: Record<string, unknown>,
   ): Promise<void> {
     const resolved = this.runMeta.get(runId);
-    // Always clean up — even for QuotaExceededError we don't want the
+    // Always clean up — even for CreditExceededError we don't want the
     // entry to leak past this hook.
     this.runMeta.delete(runId);
 
-    if (err instanceof QuotaExceededError) return; // no LLM call happened
+    if (err instanceof CreditExceededError) return; // no LLM call happened
     if (!resolved) return;
 
     const providerId = await findProviderId({

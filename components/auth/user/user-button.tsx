@@ -58,7 +58,7 @@ export type UserButtonProps = {
    * `links` slot. Use for context the user should always see at a
    * glance (e.g. rolling-window credit usage).
    */
-  quotaSlot?: ReactNode;
+  creditSlot?: ReactNode;
 };
 
 function renderUserLink(
@@ -100,7 +100,7 @@ export function UserButton({
   variant = "ghost",
   links,
   hideSettings = false,
-  quotaSlot,
+  creditSlot,
 }: UserButtonProps) {
   const { authClient, basePaths, viewPaths, localization, plugins, navigate } = useAuth();
 
@@ -164,7 +164,7 @@ export function UserButton({
 
             <DropdownMenuSeparator />
 
-            {quotaSlot}
+            {creditSlot}
 
             <DropdownMenuSeparator />
           </>

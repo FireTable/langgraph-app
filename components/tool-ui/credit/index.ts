@@ -1,0 +1,1 @@
+export { CreditCard } from "@/components/tool-ui/credit/credit-card";

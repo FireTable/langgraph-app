@@ -3,8 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { QuotaHeader } from "@/components/credit/quota-header";
-import { QuotaProgress } from "@/components/credit/quota-progress";
+import { CreditHeader } from "@/components/credit/credit-header";
+import { CreditProgress } from "@/components/credit/credit-progress";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { loadCreditStatus, peekCachedStatus, type CreditStatus } from "@/lib/credit/status";
@@ -14,7 +14,7 @@ const SETTINGS_CREDIT_PATH = "/settings/credit";
 // ponytail: read-only credit-usage indicator rendered inside the
 // UserButton dropdown between the user header and the link list.
 // Hits /api/credit/status (the same path the proxy uses for its
-// quota gate) so the number on the surface and the gate that
+// credit gate) so the number on the surface and the gate that
 // blocks the chat stay in lock-step — a single source of truth
 // for "how much have I used". The cache + in-flight promise live
 // in lib/credit/status.ts so the UserButton slot and the settings
@@ -29,13 +29,13 @@ const SETTINGS_CREDIT_PATH = "/settings/credit";
 // onSelect, not on arbitrary child clicks. The Skeleton branch is
 // not interactive — there's nothing to navigate to while loading.
 function SlotSkeleton(): React.JSX.Element {
-  // ponytail: mirrors the QuotaProgress slot layout (header / used /
+  // ponytail: mirrors the CreditProgress slot layout (header / used /
   // progress+pct / window hint) so the slot's height stays constant
   // when status lands. Cache hits skip this — peekCachedStatus
   // returns non-null and we render straight away.
   return (
     <div className="flex flex-col gap-2 px-2 py-1.5">
-      <QuotaHeader />
+      <CreditHeader />
       <Skeleton className="ml-6 h-3 w-32" />
       <div className="ml-6 flex items-center gap-2 w-50">
         <Skeleton className="h-2 flex-1 rounded-full" />
@@ -96,7 +96,7 @@ export function CreditUsageSlot(): React.JSX.Element | null {
     return (
       <SlotBody onSelect={navigateToCredit}>
         <div className="flex flex-col gap-1">
-          <QuotaHeader />
+          <CreditHeader />
           <div className="text-muted-foreground pl-6 text-xs">No cap on this account</div>
         </div>
       </SlotBody>
@@ -106,7 +106,7 @@ export function CreditUsageSlot(): React.JSX.Element | null {
 
   return (
     <SlotBody onSelect={navigateToCredit}>
-      <QuotaProgress
+      <CreditProgress
         variant="slot"
         used={status.used}
         limit={status.limit}

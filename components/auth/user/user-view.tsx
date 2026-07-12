@@ -9,7 +9,7 @@ import { UserAvatar } from "./user-avatar";
 
 // ponytail: the role pill text is read off `window.__CONFIG__` —
 // `app/layout.tsx` resolves the current user's role row once per
-// render (a single JOIN on the same DB the SUM quota check uses)
+// render (a single JOIN on the same DB the SUM credit check uses)
 // and stamps the display name into the bootstrap script. No prop
 // drilling, no extra fetch, no hard-coded admin/user/guest →
 // display-name map that drifts when the role table gains a tier.
