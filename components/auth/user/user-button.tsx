@@ -6,7 +6,7 @@ import {
   useSession,
   useSetActiveSession,
 } from "@better-auth-ui/react";
-import { ChevronsUpDown, LogIn, LogOut, Settings, UserPlus2 } from "lucide-react";
+import { ChevronsUpDown, LayoutDashboard, LogIn, LogOut, Settings, UserPlus2 } from "lucide-react";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 
 import { buttonVariants } from "@/components/ui/button";
@@ -53,6 +53,12 @@ export type UserButtonProps = {
   links?: (UserButtonLink | ReactElement)[];
   /** Hide the built-in "Settings" link. Useful when replacing it via `links`. */
   hideSettings?: boolean;
+  /**
+   * Rendered as a read-only block between the user header and the
+   * `links` slot. Use for context the user should always see at a
+   * glance (e.g. rolling-window credit usage).
+   */
+  quotaSlot?: ReactNode;
 };
 
 function renderUserLink(
@@ -94,6 +100,7 @@ export function UserButton({
   variant = "ghost",
   links,
   hideSettings = false,
+  quotaSlot,
 }: UserButtonProps) {
   const { authClient, basePaths, viewPaths, localization, plugins, navigate } = useAuth();
 
@@ -156,11 +163,28 @@ export function UserButton({
             </DropdownMenuGroup>
 
             <DropdownMenuSeparator />
+
+            {quotaSlot}
+
+            <DropdownMenuSeparator />
           </>
         )}
 
         {session ? (
           <>
+            {/* ponytail: admins get a one-click entry to the dashboard
+                surface. roleId is the only signal we need — checking
+                session.user.roleId (not the window-side roleName) keeps
+                the gate in the same place the server enforces it
+                (lib/auth/with-auth.ts) so the menu can't drift from
+                the route gate. */}
+            {(session.user as { roleId?: string | null } | undefined)?.roleId === "admin" && (
+              <DropdownMenuItem onClick={() => navigate({ to: "/admin" })}>
+                <LayoutDashboard className="text-muted-foreground" />
+                Admin Dashboard
+              </DropdownMenuItem>
+            )}
+
             {userLinks}
 
             {!hideSettings && (

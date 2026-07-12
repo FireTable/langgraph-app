@@ -20,6 +20,7 @@ import { ThreadList } from "@/components/assistant-ui/thread-list";
 import { mergeSubgraphMessages } from "@/lib/langgraph/merge-subgraph-messages";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { UserButton } from "@/components/auth/user/user-button";
+import { CreditUsageSlot } from "@/components/auth/user/credit-usage-slot";
 import weatherToolkit from "@/components/tool-ui/toolkit";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -84,9 +85,18 @@ const Sidebar: FC<{ collapsed?: boolean }> = ({ collapsed }) => {
       )}
       <div className={cn("shrink-0 p-2", collapsed ? "flex justify-center" : "")}>
         {collapsed ? (
-          <UserButton size="icon" className="border-border bg-card border" links={memoryLink} />
+          <UserButton
+            size="icon"
+            className="border-border bg-card border"
+            links={memoryLink}
+            quotaSlot={<CreditUsageSlot />}
+          />
         ) : (
-          <UserButton className="border-border bg-card w-full border" links={memoryLink} />
+          <UserButton
+            className="border-border bg-card w-full border"
+            links={memoryLink}
+            quotaSlot={<CreditUsageSlot />}
+          />
         )}
       </div>
     </aside>
@@ -110,7 +120,11 @@ const MobileSidebar: FC = () => {
           <ThreadList />
         </div>
         <div className="shrink-0 p-2">
-          <UserButton className="border-border bg-card w-full border" links={memoryLink} />
+          <UserButton
+            className="border-border bg-card w-full border"
+            links={memoryLink}
+            quotaSlot={<CreditUsageSlot />}
+          />
         </div>
       </SheetContent>
     </Sheet>
