@@ -338,13 +338,13 @@ Remove a key by its `name` (the derived tail).
 
 ### `PATCH /api/admin/providers/[id]/keys/[keyName]`
 
-Rotate (new plaintext) and/or rename an existing key. Rotation re-derives `name` from the new plaintext via `deriveKeyName()` so the displayed tail stays in sync with what's encrypted. An explicit `name` in the body overrides the derived one (rename wins over rotate). Collision check excludes the entry being patched — a rotate-to-same-tail is a no-op rename with a fresh ciphertext.
+Rotate (new plaintext) and/or rename an existing key. Path is keyed on the **original** `keyName` so existing admin UI links keep working. `plaintext` re-derives `name` from the new plaintext via `deriveKeyName()` so the displayed tail stays in sync with what's encrypted. An explicit `name` in the body overrides the derived one (rename wins over rotate). Either field can be sent independently — sending only `plaintext` is the legacy rotate flow; sending only `name` is a pure rename. Collision check excludes the entry being patched — a rotate-to-same-tail is a no-op rename with a fresh ciphertext.
 
-|               |                                                                                                                                     |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Request body  | Any subset of `{ plaintext?: string (1..2048), name?: string (1..64, `^[a-zA-Z0-9_-…]+$`) }`. Empty body returns 400 `BAD_REQUEST`. |
-| 200 response  | `PublicProvider`                                                                                                                    |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or key missing), 409 `DUPLICATE` (renamed / derived name matches another).   |
+|               |                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | Any subset of `{ plaintext?: string (1..2048), name?: string (1..64, `^[a-zA-Z0-9_\-…]+$`) }`. Empty body returns 400 `BAD_REQUEST`. |
+| 200 response  | `PublicProvider`                                                                                                                     |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or key missing), 409 `DUPLICATE` (renamed / derived name matches another).    |
 
 ### `POST /api/admin/providers/[id]/models`
 
@@ -499,9 +499,18 @@ Returns the signed-in user's current cap state. Backs the user-button dropdown's
 
 ## Proxy
 
-| Endpoint             | Purpose                                                                                                                                                                   |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANY /api/[...path]` | Edge catch-all that forwards to `LANGGRAPH_API_URL` (the LangGraph dev server / production endpoint). Strips hop-by-hop headers, adds CORS, optionally sends `x-api-key`. |
+| Endpoint             | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ANY /api/[...path]` | Node catch-all (`runtime = "nodejs"`) that forwards to `LANGGRAPH_API_URL` (the LangGraph dev server / production endpoint). `withAuth`-wrapped (rule #9) — anonymous traffic is rejected with 401 before any upstream hop. Strips hop-by-hop headers, adds CORS, sends `x-api-key`. Also injects the session's `userId` into the proxied body so `withMemoryRecall` and `CreditTrackingHandler` can attribute the run. See [`docs/CREDIT.md`](./CREDIT.md) § Where the cap is enforced for the per-turn credit gate. |
+
+Behavior:
+
+- **Auth gate** — `withAuth` runs before any upstream fetch. No session → 401 `UNAUTHORIZED`. (The previous build accepted anonymous traffic; any site's JS could create / list / delete threads through this proxy.)
+- **Credit gate** — `POST / PUT / PATCH` triggers `checkCredit(user.id)` before the upstream `fetch`. If the rolling-window cap is reached, the proxy short-circuits with a synthetic SSE stream (`text/event-stream`) carrying one AI message with a `show_credit_card` tool_call — no LangGraph call, no `credit_usage_log` write. The assistant-ui SDK consumes the stream and `components/tool-ui/credit/credit-card.tsx` mounts inline in the thread. `GET` stays unchecked (reads only).
+- **`userId` injection** — for `POST / PUT / PATCH` with a JSON body, the proxy injects `config.configurable.userId` and `config.metadata.userId` (= `ctx.user.id`) so the LangGraph SDK propagates the user through every `chatModel.invoke` call. Without this, `withMemoryRecall` would skip memory loading and `CreditTrackingHandler` would skip recording.
+- **Header forwarding** — only `cookie` and `authorization` are forwarded (the two LangGraph consults). `x-api-key` is added from `LANGCHAIN_API_KEY` server-side. Everything else is dropped.
+- **`OPTIONS`** — short-circuits to 204 with CORS headers (Better Auth / browser preflight).
+- **Streaming passthrough** — `res.body` is forwarded as a `ReadableStream`; SSE for `runs.stream` / `runs.stream-log` keeps working because we never buffer it.
 
 ## Alchemy RPC
 

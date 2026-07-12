@@ -72,13 +72,13 @@ Remove a key by its `name` (the derived tail). The encrypted blob + IV are delet
 
 ### `PATCH /api/admin/providers/[id]/keys/[keyName]`
 
-Rotate an existing key. The `name` (UI identifier) is preserved — only `encryptedKey` + `iv` are re-encrypted from the new plaintext. This keeps the rotation UI simple: the existing link / chip on the admin page still points at the right row after the swap.
+Rotate and/or rename an existing key. The path is keyed on the **original** `keyName` so existing admin UI links keep working. `plaintext` re-derives `name` from the new plaintext via `deriveKeyName()`; an explicit `name` in the body overrides the derived one (rename wins over rotate). Either field can be sent independently — sending only `plaintext` is the legacy rotate flow; sending only `name` is a pure rename. Collision check excludes the entry being patched, so a rotate-to-same-tail is a no-op rename with a fresh ciphertext.
 
-|               |                                                                         |
-| ------------- | ----------------------------------------------------------------------- |
-| Request body  | `{ plaintext: string (1..2048) }`                                       |
-| 200 response  | `PublicProvider`                                                        |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or key missing). |
+|               |                                                                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | Any subset of `{ plaintext?: string (1..2048), name?: string (1..64, `^[a-zA-Z0-9_\-…]+$`) }`. Empty body returns 400 `BAD_REQUEST`.       |
+| 200 response  | `PublicProvider`                                                                                                                           |
+| Failure codes | 400 `BAD_REQUEST` (Zod or empty patch), 401, 403, 404 `NOT_FOUND` (provider or key missing), 409 `DUPLICATE` (name collides with another). |
 
 ### `POST /api/admin/providers/[id]/models`
 
