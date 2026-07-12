@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db/client";
 import { provider } from "@/lib/provider/schema";
 import { stripProviderSecrets } from "@/lib/provider/admin";
+import { invalidateModelCache } from "@/lib/provider/model-registry";
 import { withAuth } from "@/lib/auth/with-auth";
 
 type ModelParams = { id: string; modelName: string };
@@ -43,6 +44,7 @@ export const PATCH = withAuth<ModelParams>({ role: "admin" }, async (req, { para
     .set({ models: nextModels, updatedAt: new Date() })
     .where(eq(provider.id, params.id))
     .returning();
+  invalidateModelCache();
   return NextResponse.json(stripProviderSecrets(row!));
 });
 
@@ -58,5 +60,6 @@ export const DELETE = withAuth<ModelParams>({ role: "admin" }, async (_req, { pa
     .update(provider)
     .set({ models: next, updatedAt: new Date() })
     .where(eq(provider.id, params.id));
+  invalidateModelCache();
   return new NextResponse(null, { status: 204 });
 });

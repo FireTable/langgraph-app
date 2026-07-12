@@ -5,6 +5,7 @@ import { db } from "@/db/client";
 import { provider } from "@/lib/provider/schema";
 import { providerPatchSchema } from "@/lib/credit/zod";
 import { stripProviderSecrets } from "@/lib/provider/admin";
+import { invalidateModelCache } from "@/lib/provider/model-registry";
 import { withAuth } from "@/lib/auth/with-auth";
 
 type IdParams = { id: string };
@@ -37,6 +38,7 @@ export const PATCH = withAuth<IdParams>({ role: "admin" }, async (req, { params 
     .set({ ...data, updatedAt: new Date() })
     .where(eq(provider.id, params.id))
     .returning();
+  invalidateModelCache();
   return NextResponse.json(stripProviderSecrets(row!));
 });
 
@@ -54,5 +56,6 @@ export const DELETE = withAuth<IdParams>({ role: "admin" }, async (_req, { param
   const existing = await loadProvider(params.id);
   if (!existing) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   await db.delete(provider).where(eq(provider.id, params.id));
+  invalidateModelCache();
   return new NextResponse(null, { status: 204 });
 });

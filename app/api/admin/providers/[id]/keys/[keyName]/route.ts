@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db/client";
 import { provider, type ProviderApiKey } from "@/lib/provider/schema";
 import { encryptApiKey, stripProviderSecrets } from "@/lib/provider/admin";
+import { invalidateModelCache } from "@/lib/provider/model-registry";
 import { withAuth } from "@/lib/auth/with-auth";
 
 type KeyParams = { id: string; keyName: string };
@@ -74,5 +75,6 @@ export const PATCH = withAuth<KeyParams>({ role: "admin" }, async (req, { params
     .set({ apiKeys: nextKeys, updatedAt: new Date() })
     .where(eq(provider.id, params.id))
     .returning();
+  invalidateModelCache();
   return NextResponse.json(stripProviderSecrets(row!));
 });

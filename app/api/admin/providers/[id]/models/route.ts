@@ -5,6 +5,7 @@ import { db } from "@/db/client";
 import { provider } from "@/lib/provider/schema";
 import { modelConfigSchema } from "@/lib/credit/zod";
 import { stripProviderSecrets } from "@/lib/provider/admin";
+import { invalidateModelCache } from "@/lib/provider/model-registry";
 import { withAuth } from "@/lib/auth/with-auth";
 
 type IdParams = { id: string };
@@ -30,5 +31,6 @@ export const POST = withAuth<IdParams>({ role: "admin" }, async (req, { params }
     .set({ models: [...existing.models, parsed.data], updatedAt: new Date() })
     .where(eq(provider.id, params.id))
     .returning();
+  invalidateModelCache();
   return NextResponse.json(stripProviderSecrets(row!), { status: 201 });
 });

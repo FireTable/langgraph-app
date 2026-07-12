@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { provider } from "@/lib/provider/schema";
 import { providerInputSchema } from "@/lib/credit/zod";
 import { encryptApiKey, stripProviderSecrets } from "@/lib/provider/admin";
+import { invalidateModelCache } from "@/lib/provider/model-registry";
 import { withAuth } from "@/lib/auth/with-auth";
 
 export const GET = withAuth({ role: "admin" }, async () => {
@@ -18,5 +19,6 @@ export const POST = withAuth({ role: "admin" }, async (req) => {
     return NextResponse.json({ code: "BAD_REQUEST", error: parsed.error.issues }, { status: 400 });
   }
   const [row] = await db.insert(provider).values(parsed.data).returning();
+  invalidateModelCache();
   return NextResponse.json(stripProviderSecrets(row!), { status: 201 });
 });

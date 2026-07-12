@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db/client";
 import { provider } from "@/lib/provider/schema";
 import { encryptApiKey, stripProviderSecrets } from "@/lib/provider/admin";
+import { invalidateModelCache } from "@/lib/provider/model-registry";
 import { withAuth } from "@/lib/auth/with-auth";
 
 type IdParams = { id: string };
@@ -52,6 +53,7 @@ export const POST = withAuth<IdParams>({ role: "admin" }, async (req, { params }
     })
     .where(eq(provider.id, params.id))
     .returning();
+  invalidateModelCache();
   return NextResponse.json(stripProviderSecrets(row!), { status: 201 });
 });
 
@@ -74,5 +76,6 @@ export const DELETE = withAuth<IdParams>({ role: "admin" }, async (req, { params
     .set({ apiKeys: filtered, updatedAt: new Date() })
     .where(eq(provider.id, params.id))
     .returning();
+  invalidateModelCache();
   return NextResponse.json(stripProviderSecrets(row!));
 });
