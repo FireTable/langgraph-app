@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
@@ -80,11 +81,14 @@ export const auth =
         },
       },
       session: {
-        // ponytail: block new sessions for banned users. Existing sessions
-        // stay valid (the admin can revoke them explicitly via Better Auth's
-        // listUserSessions / revokeUserSessions when immediate cutoff is
-        // needed). Cheap because `select { banned }` is a covering query
-        // and the hook runs only at signin, not on every authenticated call.
+        // ponytail: block new sessions for banned users. Throwing
+        // `APIError` (not a bare `Error`) is the only way the message
+        // reaches the signin form's UI — BA's error router maps APIError
+        // to its typed response shape; a plain Error surfaces as a
+        // generic 500 with no readable body. Code is USER_BANNED so the
+        // client could branch on it later (e.g. show a "Contact support"
+        // link). Pair with the PATCH-side session revoke so the
+        // already-signed-in case also gets cut off immediately.
         create: {
           before: async (sessionData) => {
             const [row] = await db
@@ -92,7 +96,10 @@ export const auth =
               .from(authSchema.user)
               .where(eq(authSchema.user.id, sessionData.userId));
             if (row?.banned) {
-              throw new Error("BANNED");
+              throw new APIError("FORBIDDEN", {
+                message: "Your account has been banned. Contact an administrator for help.",
+                code: "USER_BANNED",
+              });
             }
             return { data: sessionData };
           },
