@@ -2,7 +2,32 @@
   "name": "langgraph-app",
   "version": "0.1.0",
   "private": true,
+  "description": "Self-hostable chat app: streaming LangGraph StateGraph agents into an assistant-ui thread, persistent threads in Postgres, per-LLM-call credit quota with an admin console, R2-backed chat attachments, memory + thread summaries, observability waterfall, OAuth + email auth.",
+  "keywords": [
+    "ai-agents",
+    "assistant-ui",
+    "better-auth",
+    "chat",
+    "credit-quota",
+    "drizzle",
+    "langgraph",
+    "nextjs",
+    "postgres",
+    "self-hosted"
+  ],
+  "homepage": "https://ai.firetable.tech",
+  "bugs": {
+    "url": "https://github.com/FireTable/langgraph-app/issues"
+  },
   "license": "MIT",
+  "author": {
+    "name": "FireTable",
+    "url": "https://github.com/FireTable"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FireTable/langgraph-app.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "concurrently -k --kill-signal=SIGTERM -n frontend,backend -c cyan,magenta \"pnpm dev:frontend\" \"pnpm dev:backend\"",

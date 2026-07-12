@@ -58,7 +58,7 @@ export default async function AdminPage() {
       <div className="mx-auto w-full px-4 md:px-6 pb-8 pt-4 md:pb-12 md:pt-8">
         <h1 className="mb-2 text-2xl font-semibold tracking-tight">Administration</h1>
         <p className="text-muted-foreground mb-6 text-sm">
-          Manage LLM providers, API keys, models, and user roles.
+          Manage LLM providers, API keys, models, roles and users.
         </p>
         <AdminTabs
           providers={providers.map((p) => ({
