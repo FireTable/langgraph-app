@@ -23,10 +23,7 @@ function SlotSkeleton(): React.JSX.Element {
   // returns non-null and we render straight away.
   return (
     <div className="flex flex-col gap-1 px-2 py-1.5">
-      <div className="flex items-center gap-2 pb-1.5">
-        <Skeleton className="size-4 rounded-full" />
-        <Skeleton className="h-4 w-12" />
-      </div>
+      <Skeleton className="mb-1.5 h-4 w-16" />
       <Skeleton className="ml-6 h-3 w-28" />
       <div className="ml-6 flex items-center gap-2">
         <Skeleton className="h-1.5 flex-1 rounded-full" />
