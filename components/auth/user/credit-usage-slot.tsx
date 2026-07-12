@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CoinsIcon } from "lucide-react";
 
 import { QuotaProgress } from "@/components/credit/quota-progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import { loadCreditStatus, peekCachedStatus, type CreditStatus } from "@/lib/credit/status";
 
 // ponytail: read-only credit-usage indicator rendered inside the
@@ -15,6 +16,27 @@ import { loadCreditStatus, peekCachedStatus, type CreditStatus } from "@/lib/cre
 // in lib/credit/status.ts so the UserButton slot and the settings
 // page summary card share one network round-trip when both are
 // mounted at once (desktop sidebar + settings tab open).
+function SlotSkeleton(): React.JSX.Element {
+  // ponytail: mirrors the QuotaProgress slot layout (header / used /
+  // progress+pct / window hint) so the slot's height stays constant
+  // when status lands. Cache hits skip this — peekCachedStatus
+  // returns non-null and we render straight away.
+  return (
+    <div className="flex flex-col gap-1 px-2 py-1.5">
+      <div className="flex items-center gap-2 pb-1.5">
+        <Skeleton className="size-4 rounded-full" />
+        <Skeleton className="h-4 w-12" />
+      </div>
+      <Skeleton className="ml-6 h-3 w-28" />
+      <div className="ml-6 flex items-center gap-2">
+        <Skeleton className="h-1.5 flex-1 rounded-full" />
+        <Skeleton className="h-3 w-7" />
+      </div>
+      <Skeleton className="ml-6 h-3 w-36" />
+    </div>
+  );
+}
+
 export function CreditUsageSlot(): React.JSX.Element | null {
   const [status, setStatus] = useState<CreditStatus | null>(peekCachedStatus());
 
@@ -33,11 +55,11 @@ export function CreditUsageSlot(): React.JSX.Element | null {
     };
   }, []);
 
-  if (!status) return null;
+  if (!status) return <SlotSkeleton />;
 
   if (status.unlimited) {
     return (
-      <div className="flex flex-col gap-1 px-2 py-2">
+      <div className="flex flex-col gap-1 px-2 py-1.5">
         <div className="flex items-center gap-2 text-sm font-normal">
           <CoinsIcon className="size-4 text-muted-foreground" />
           <span>Usage</span>
@@ -49,7 +71,7 @@ export function CreditUsageSlot(): React.JSX.Element | null {
   if (status.limit == null || status.windowHours == null) return null;
 
   return (
-    <div className="px-2 py-2.5">
+    <div className="px-2 py-1.5">
       <QuotaProgress
         variant="slot"
         used={status.used}
