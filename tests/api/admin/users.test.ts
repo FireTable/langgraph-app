@@ -1,9 +1,25 @@
 import "@/tests/helpers/session";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
+
+// ponytail: capture checkpointer sweeps without a real langgraphjs dev.
+vi.mock("@/backend/checkpointer", () => ({
+  checkpointer: { deleteThread: vi.fn(async () => {}) },
+  subgraphCheckpointerConfig: {},
+}));
+import { checkpointer } from "@/backend/checkpointer";
+const mockCheckpointDelete = vi.mocked(checkpointer!.deleteThread);
+
+vi.mock("@/lib/memory/queries", () => ({
+  deleteThreadSummaries: vi.fn(async () => 0),
+  deleteMemoryDoc: vi.fn(async () => {}),
+}));
+import { deleteMemoryDoc } from "@/lib/memory/queries";
+const mockDeleteMemoryDoc = vi.mocked(deleteMemoryDoc);
 
 import { db } from "@/db/client";
 import { role, session, user } from "@/lib/auth/schema";
+import { threads } from "@/lib/threads/schema";
 import { setCurrentUser } from "@/tests/helpers/session";
 import { TEST_USER } from "@/tests/helpers/auth";
 
@@ -44,6 +60,9 @@ async function seedRoles() {
 
 beforeEach(async () => {
   await seedRoles();
+  await db.delete(threads);
+  mockCheckpointDelete.mockClear();
+  mockDeleteMemoryDoc.mockClear();
   setCurrentUser(ADMIN);
 });
 
@@ -248,5 +267,24 @@ describe("DELETE /api/admin/users/[id]", () => {
       where: (u, { eq }) => eq(u.id, TEST_USER.id),
     });
     expect(after).toBeUndefined();
+  });
+
+  it("sweeps per-thread checkpointer rows + memory profile before the FK cascade", async () => {
+    await db
+      .insert(user)
+      .values({ id: "alice", email: "alice@test.local", name: "Alice", roleId: "user" });
+    await db.insert(threads).values([
+      { id: "a-t1", userId: "alice" },
+      { id: "a-t2", userId: "alice" },
+    ]);
+    const res = await DELETE(new Request("http://localhost"), ctxId("alice"));
+    expect(res.status).toBe(204);
+    expect(mockCheckpointDelete).toHaveBeenCalledTimes(2);
+    expect(mockCheckpointDelete).toHaveBeenCalledWith("a-t1");
+    expect(mockCheckpointDelete).toHaveBeenCalledWith("a-t2");
+    expect(mockDeleteMemoryDoc).toHaveBeenCalledWith("alice");
+    expect(
+      await db.query.user.findFirst({ where: (u, { eq }) => eq(u.id, "alice") }),
+    ).toBeUndefined();
   });
 });

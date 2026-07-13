@@ -55,7 +55,7 @@ If only one provider is configured, the other button still renders but Better Au
 
 ## Data isolation
 
-Every `/api/threads/*` route requires a session cookie and filters by `session.user.id`. Cross-user access returns 404 (not 403) to avoid leaking the existence of other users' threads. Deleting a user cascades through `ON DELETE CASCADE` and removes their threads (FR-021).
+Every `/api/threads/*` route requires a session cookie and filters by `session.user.id`. Cross-user access returns 404 (not 403) to avoid leaking the existence of other users' threads. Deleting a user cascades through `ON DELETE CASCADE` and removes their threads (FR-021), `observability_spans` (via `threads.id`), `attachments` rows, `account`/`session` rows, and `credit_usage_log`. `DELETE /api/admin/users/[id]` runs `purgeUserState` first so the LangGraph checkpointer rows + PostgresStore `[userId,"threads"]` summaries + `[userId,"memory"]` profile don't survive as orphans — those tables aren't managed by Drizzle so they have no FK to cascade. See [`docs/APIS.md`](./APIS.md) for the endpoint contract.
 
 ## Roles
 
@@ -150,7 +150,7 @@ See `.env.example` for the full list. Required for auth:
 
 - Password reset (forgot password flow with email link)
 - Multi-factor auth (TOTP)
-- Account deletion UI (the FK cascade already removes threads; we just need a button)
+- Account deletion UI (the FK cascade + `purgeUserState` already handle all DB / store / checkpointer cleanup; we just need a user-facing button — admin DELETE exists at `/api/admin/users/[id]`)
 - Team / organization support
 - Session management UI (list active sessions, sign out everywhere)
 - Rate limiting beyond Better Auth's defaults (would require Upstash or similar)

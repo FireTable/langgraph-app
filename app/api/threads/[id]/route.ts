@@ -8,6 +8,7 @@ import {
   unarchiveThread,
   updateCustom,
   deleteThread,
+  purgeThreadState,
 } from "@/lib/threads/queries";
 import { RenameThreadBody, UpdateStatusBody, UpdateCustomBody } from "@/lib/threads/validators";
 import { withAuth } from "@/lib/auth/with-auth";
@@ -48,6 +49,11 @@ export const PATCH = withAuth<IdParams>(async (req, { user, params }) => {
 export const DELETE = withAuth<IdParams>(async (_req, { user, params }) => {
   const existing = await getThreadForUser(params.id, user.id);
   if (!existing) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
+  // ponytail: sweep per-thread state (checkpointer rows + store summaries)
+  // BEFORE dropping the threads row. The threads row's FK cascade picks up
+  // observability_spans; the FK-less checkpointer/store tables don't, so they
+  // need an explicit call. Best-effort — see `purgeThreadState` for rationale.
+  await purgeThreadState(params.id, user.id);
   await deleteThread(params.id, user.id);
   return new NextResponse(null, { status: 204 });
 });

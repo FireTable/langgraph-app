@@ -11,6 +11,15 @@ vi.mock("@/lib/langgraph/client", () => ({
 import { langGraphClient } from "@/lib/langgraph/client";
 const mockCreate = vi.mocked(langGraphClient.threads.create);
 
+// Mock the PostgresSaver so DELETE assertions can observe checkpointer
+// sweep calls without needing a real langgraphjs dev server.
+vi.mock("@/backend/checkpointer", () => ({
+  checkpointer: { deleteThread: vi.fn(async () => {}) },
+  subgraphCheckpointerConfig: {},
+}));
+import { checkpointer } from "@/backend/checkpointer";
+const mockCheckpointDelete = vi.mocked(checkpointer!.deleteThread);
+
 import { POST as POSTList, GET as GETList } from "@/app/api/threads/route";
 import {
   GET as GETOne,
@@ -41,6 +50,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await db.delete(threads);
   mockCreate.mockClear();
+  mockCheckpointDelete.mockClear();
   setCurrentUser({ id: owner, email: TEST_USER.email });
 });
 
@@ -218,6 +228,37 @@ describe("DELETE /api/threads/[id]", () => {
       params: Promise.resolve({ id: "theirs" }),
     });
     expect(res.status).toBe(404);
+  });
+
+  it("sweeps checkpointer rows + summaries alongside the threads row", async () => {
+    await db.insert(threads).values({ id: "purge", userId: owner });
+    const res = await DELETEOne(new Request("http://localhost"), {
+      params: Promise.resolve({ id: "purge" }),
+    });
+    expect(res.status).toBe(204);
+    expect(mockCheckpointDelete).toHaveBeenCalledTimes(1);
+    expect(mockCheckpointDelete).toHaveBeenCalledWith("purge");
+    expect(
+      await db.query.threads.findFirst({ where: (t, { eq }) => eq(t.id, "purge") }),
+    ).toBeUndefined();
+  });
+
+  it("still drops the rows row when checkpointer delete throws (best-effort)", async () => {
+    await db.insert(threads).values({ id: "blow", userId: owner });
+    mockCheckpointDelete.mockRejectedValueOnce(new Error("connection lost"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const res = await DELETEOne(new Request("http://localhost"), {
+        params: Promise.resolve({ id: "blow" }),
+      });
+      expect(res.status).toBe(204);
+      expect(
+        await db.query.threads.findFirst({ where: (t, { eq }) => eq(t.id, "blow") }),
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

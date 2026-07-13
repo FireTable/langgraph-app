@@ -51,13 +51,13 @@ Response shape (single row, same for list / fetch / create / update):
 
 `lastMessageAt` mirrors the most recent activity for the thread (creation time until a run-end sync lands; see `lib/threads/queries.ts`). The frontend adapter translates this object into assistant-ui's `RemoteThreadMetadata` (`remoteId` + `externalId` are both set to `id`).
 
-| Endpoint                   | Purpose                                                                                       | Status codes          |
-| -------------------------- | --------------------------------------------------------------------------------------------- | --------------------- |
-| `GET /api/threads`         | List regular (non-archived) threads owned by the current user.                                | 200 / 401             |
-| `POST /api/threads`        | Create a new thread bound to the current user; registers the id with the LangGraph dev STORE. | 201 / 400 / 401       |
-| `GET /api/threads/[id]`    | Fetch one thread's metadata (owner-only).                                                     | 200 / 401 / 404       |
-| `PATCH /api/threads/[id]`  | Rename, archive, unarchive, or replace `custom` jsonb (owner-only).                           | 200 / 400 / 401 / 404 |
-| `DELETE /api/threads/[id]` | Remove the thread metadata row (owner-only; does not touch LangGraph checkpoints).            | 204 / 401 / 404       |
+| Endpoint                   | Purpose                                                                                                                                                                                                                                                             | Status codes          |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| `GET /api/threads`         | List regular (non-archived) threads owned by the current user.                                                                                                                                                                                                      | 200 / 401             |
+| `POST /api/threads`        | Create a new thread bound to the current user; registers the id with the LangGraph dev STORE.                                                                                                                                                                       | 201 / 400 / 401       |
+| `GET /api/threads/[id]`    | Fetch one thread's metadata (owner-only).                                                                                                                                                                                                                           | 200 / 401 / 404       |
+| `PATCH /api/threads/[id]`  | Rename, archive, unarchive, or replace `custom` jsonb (owner-only).                                                                                                                                                                                                 | 200 / 400 / 401 / 404 |
+| `DELETE /api/threads/[id]` | Remove the thread metadata row plus its LangGraph checkpointer rows and PostgresStore thread summaries (owner-only; `observability_spans` ride on the threads FK cascade). Best-effort — a checkpointer/store failure leaves orphans on disk but still returns 204. | 204 / 401 / 404       |
 
 ## Attachments
 
@@ -444,7 +444,9 @@ When `banned: true` is sent, every row in `session` where `userId` matches is DE
 
 ### `DELETE /api/admin/users/[id]`
 
-Hard-delete. FK cascade removes `session` + `account` rows automatically. The last-admin guard fires with 409 `LAST_ADMIN` if the target is admin and no other admin exists.
+Hard-delete. FK cascade removes `session` + `account` rows automatically; `threads` cascade further drops the user's `observability_spans`. `attachments` and `credit_usage_log` cascade off the user row directly. The last-admin guard fires with 409 `LAST_ADMIN` if the target is admin and no other admin exists.
+
+Before the FK cascade fires the handler also best-effort sweeps per-thread state (LangGraph checkpointer rows + PostgresStore thread summaries) via `purgeUserState` and the cross-thread memory profile key, since neither has an FK back to `user`.
 
 |               |                                              |
 | ------------- | -------------------------------------------- |

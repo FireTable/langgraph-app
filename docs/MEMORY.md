@@ -521,6 +521,13 @@ with "Unsupported operation type" (verified at
 `@langchain/langgraph-checkpoint-postgres` 1.0.4
 `/store/index.js:155`).
 
+`DELETE /api/threads/[id]` and `DELETE /api/admin/users/[id]`
+also fire this sweep as part of `purgeThreadState` / `purgeUserState`
+(`lib/threads/queries.ts`), so a thread or account going away
+takes its summaries + LangGraph checkpointer rows + memory profile
+with it. No separate cron needed for the happy-path lifecycle;
+see [`docs/APIS.md`](./APIS.md) for the endpoint contracts.
+
 ## Security stance
 
 - **No forget tool.** The Memory tab is the only path to deletion —
@@ -558,7 +565,9 @@ with "Unsupported operation type" (verified at
   grows.
 - **No summary retention yet.** Unlike observability spans,
   SummaryEntries have no `OBSERVABILITY_RETENTION_DAYS`-style
-  cron. They're meant to persist for the life of the account.
+  cron. They're meant to persist for the life of the account —
+  thread/account delete sweeps them via `purgeThreadState` /
+  `purgeUserState`, no separate cron needed.
 - **Char-based token estimate.** `estimateTokens` is
   `Math.ceil(text.length / 4)` — rough heuristic used for the
   SummaryEntry's `tokenCountBefore/After` analytics fields. Not

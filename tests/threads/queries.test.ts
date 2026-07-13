@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
 import { db } from "@/db/client";
 import { threads } from "@/lib/threads/schema";
 import {
@@ -9,9 +9,27 @@ import {
   archiveThread,
   unarchiveThread,
   deleteThread,
+  purgeThreadState,
+  purgeUserState,
   updateCustom,
   touchLastMessageAt,
 } from "@/lib/threads/queries";
+
+vi.mock("@/backend/checkpointer", () => ({
+  checkpointer: { deleteThread: vi.fn(async () => {}) },
+  subgraphCheckpointerConfig: {},
+}));
+import { checkpointer } from "@/backend/checkpointer";
+const mockCheckpointDelete = vi.mocked(checkpointer!.deleteThread);
+
+vi.mock("@/lib/memory/queries", () => ({
+  deleteThreadSummaries: vi.fn(async () => 0),
+  deleteMemoryDoc: vi.fn(async () => {}),
+}));
+import { deleteThreadSummaries, deleteMemoryDoc } from "@/lib/memory/queries";
+const mockDeleteSummaries = vi.mocked(deleteThreadSummaries);
+const mockDeleteMemoryDoc = vi.mocked(deleteMemoryDoc);
+
 import { makeUser, cleanupUsers, ensureTestUser, TEST_USER } from "@/tests/helpers/auth";
 import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
 
@@ -26,6 +44,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.delete(threads);
+  mockCheckpointDelete.mockClear();
+  mockDeleteSummaries.mockClear();
+  mockDeleteMemoryDoc.mockClear();
 });
 
 afterAll(async () => {
@@ -160,6 +181,49 @@ describe("deleteThread", () => {
     await deleteThread("d2", owner);
     const row = await getThreadForUser("d2", other.id);
     expect(row).toBeDefined();
+  });
+});
+
+describe("purgeThreadState", () => {
+  it("calls checkpointer.deleteThread + deleteThreadSummaries with the right ids", async () => {
+    await purgeThreadState("purge-1", owner);
+    expect(mockCheckpointDelete).toHaveBeenCalledTimes(1);
+    expect(mockCheckpointDelete).toHaveBeenCalledWith("purge-1");
+    expect(mockDeleteSummaries).toHaveBeenCalledTimes(1);
+    expect(mockDeleteSummaries).toHaveBeenCalledWith(owner, "purge-1");
+  });
+
+  it("still runs summaries when checkpointer throws (best-effort)", async () => {
+    mockCheckpointDelete.mockRejectedValueOnce(new Error("boom"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await purgeThreadState("purge-2", owner);
+      expect(mockDeleteSummaries).toHaveBeenCalledWith(owner, "purge-2");
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("purgeUserState", () => {
+  it("calls checkpointer.deleteThread for every user thread + wipes memory profile", async () => {
+    await db.insert(threads).values([
+      { id: "u-t1", userId: owner },
+      { id: "u-t2", userId: owner },
+    ]);
+    await purgeUserState(owner);
+    expect(mockCheckpointDelete).toHaveBeenCalledTimes(2);
+    expect(mockCheckpointDelete).toHaveBeenCalledWith("u-t1");
+    expect(mockCheckpointDelete).toHaveBeenCalledWith("u-t2");
+    expect(mockDeleteMemoryDoc).toHaveBeenCalledTimes(1);
+    expect(mockDeleteMemoryDoc).toHaveBeenCalledWith(owner);
+  });
+
+  it("does nothing for a user with no threads", async () => {
+    await purgeUserState("nobody");
+    expect(mockCheckpointDelete).not.toHaveBeenCalled();
+    expect(mockDeleteMemoryDoc).toHaveBeenCalledWith("nobody");
   });
 });
 

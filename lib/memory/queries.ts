@@ -32,6 +32,10 @@ export async function putMemoryDoc(userId: string, value: MemoryDoc): Promise<vo
   await store!.put(memoryNs(userId), MEMORY_KEY, value as Record<string, unknown>);
 }
 
+export async function deleteMemoryDoc(userId: string): Promise<void> {
+  await store!.delete(memoryNs(userId), MEMORY_KEY);
+}
+
 // ponytail: delete = apply RFC 6902 remove patch via the same path
 // save_memory uses, so the model can also remove fields. Returns null
 // when the row / key is missing — the DELETE handler surfaces 404.
@@ -98,14 +102,7 @@ export async function deleteThreadSummaries(userId: string, threadId: string): P
   const all = await getAllUserSummaries(userId);
   const toDelete = all.filter((s) => s.value.threadId === threadId);
   if (toDelete.length === 0) return 0;
-  // ponytail: PostgresStore.batch only handles put/get/search/listNamespaces
-  // — a `{ op: "delete" }` entry throws "Unsupported operation type" inside
-  // the batch loop (verified at @langchain/langgraph-checkpoint-postgres
-  // 1.0.4 /store/index.js:155). The previous code's batch op never
-  // actually deleted rows — the API surfaced `deletedCount: toDelete.length`
-  // anyway, which is why the Memory tab re-fetch kept showing the same
-  // thread summary. Loop store.delete() per key, matching the call pattern
-  // the upstream library was written for.
+  // ponytail: per-key delete, not store.batch — see [[langgraph-postgres-store-batch-no-delete]].
   for (const s of toDelete) {
     await store!.delete(threadsNs(userId), s.key);
   }

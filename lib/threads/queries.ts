@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/db/client";
 import { threads, type Thread, type ThreadCustom } from "./schema";
 import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
+import { checkpointer } from "@/backend/checkpointer";
+import { deleteMemoryDoc, deleteThreadSummaries } from "@/lib/memory/queries";
 
 export async function listThreadsForUser(userId: string): Promise<Thread[]> {
   return db
@@ -46,6 +48,51 @@ export async function unarchiveThread(id: string, userId: string): Promise<void>
 
 export async function deleteThread(id: string, userId: string): Promise<void> {
   await db.delete(threads).where(and(eq(threads.id, id), eq(threads.userId, userId)));
+}
+
+// ponytail: best-effort sweep of the per-thread state that lives OUTSIDE the
+// `threads` row — LangGraph checkpointer rows + PostgresStore thread summaries.
+// The threads-row delete itself happens in `deleteThread` above; the route
+// composes the two. Each step is wrapped so a partial failure (DB transient,
+// store unavailable) doesn't leave the user staring at a thread they already
+// asked to be rid of — orphaned checkpoints/summaries are a disk-cleanup
+// problem, not a UX one. Observability spans ride on the `threads` row's FK
+// ON DELETE CASCADE so they get swept automatically.
+export async function purgeThreadState(id: string, userId: string): Promise<void> {
+  try {
+    await checkpointer?.deleteThread(id);
+  } catch (err) {
+    // ponytail: console.warn is the right level here — best-effort, the
+    // caller is the DELETE route handler which has already validated
+    // ownership. add a retention sweep when orphan rows actually pile up.
+    console.warn(`purgeThreadState: checkpointer.deleteThread(${id}) failed`, err);
+  }
+  try {
+    await deleteThreadSummaries(userId, id);
+  } catch (err) {
+    console.warn(`purgeThreadState: deleteThreadSummaries(${userId}, ${id}) failed`, err);
+  }
+}
+
+// ponytail: account-level sweep. Iterates every thread this user owns and
+// reuses `purgeThreadState` per row, then wipes the cross-thread memory
+// profile key. Other tables (account, session, attachments, credit_usage_log)
+// ride the user FK cascade so they don't need a manual call. Must run BEFORE
+// db.delete(user) — once the threads cascade fires, their ids are gone.
+export async function purgeUserState(userId: string): Promise<void> {
+  const rows = await db.select({ id: threads.id }).from(threads).where(eq(threads.userId, userId));
+  for (const { id } of rows) {
+    try {
+      await purgeThreadState(id, userId);
+    } catch (err) {
+      console.warn(`purgeUserState: purgeThreadState(${id}, ${userId}) failed`, err);
+    }
+  }
+  try {
+    await deleteMemoryDoc(userId);
+  } catch (err) {
+    console.warn(`purgeUserState: deleteMemoryDoc(${userId}) failed`, err);
+  }
 }
 
 export async function updateCustom(

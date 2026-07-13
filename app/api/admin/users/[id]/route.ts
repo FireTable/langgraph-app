@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db/client";
 import { role, session, user } from "@/lib/auth/schema";
 import { withAuth } from "@/lib/auth/with-auth";
+import { purgeUserState } from "@/lib/threads/queries";
 
 type IdParams = { id: string };
 
@@ -89,6 +90,9 @@ export const DELETE = withAuth<IdParams>({ role: "admin" }, async (_req, { param
     }
   }
 
+  // ponytail: sweep before the user-row FK cascades fire — once threads are
+  // gone, their ids (and the keys into checkpointer / store) are unreachable.
+  await purgeUserState(params.id);
   await db.delete(user).where(eq(user.id, params.id));
   return new NextResponse(null, { status: 204 });
 });
