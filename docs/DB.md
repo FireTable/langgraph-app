@@ -171,7 +171,7 @@ Notes:
 
 - The seeded `id = "default"` row is **protected** at the API layer — `DELETE /api/admin/providers/default` returns 409 `PROTECTED` because the system needs at least one provider to boot.
 - No FK from `credit_usage_log.provider_id` to `provider.id` — historical call rows survive a provider delete.
-- `getChatModelFromDB` collects every enabled `(provider, model, key)` tuple, round-robin picks the primary, and returns a `RunnableWithFallbacks` over the rest. No priority field — the array order is `(providerId, modelName, keyName)` and the rotation is modulo N. `buildChatModel` (used by `lib/credit/build-model.ts` for rate lookup) still consults `apiKeys[0]` only — it doesn't make LLM calls, just looks up credit rates.
+- `getChatModelFromDB` collects every enabled `(provider, model, key)` tuple, sorts by `(providerId, modelName, keyName)`, and round-robin picks the primary. Returns a bare `ChatOpenAI` (no fallback chain — a previous `withFallbacks(...)` wrap dropped `.bindTools` / `.withStructuredOutput` and crashed the 6 LangGraph node consumers). `buildChatModel` (used by `lib/credit/build-model.ts` for rate lookup) still consults `apiKeys[0]` only — it doesn't make LLM calls, just looks up credit rates.
 - See [`docs/PROVIDERS.md`](./PROVIDERS.md) for how the runtime resolves which provider to call (DB registry + LRU + cross-process TTL + env fallback).
 
 ## `credit_usage_log`
