@@ -91,14 +91,10 @@ export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<B
   // QPS.
   const start = nextTupleIndex++ % tuples.length;
 
-  // ponytail: build ALL tuples' ChatOpenAIs first (decrypt + ctor —
-  // cheap, no network), then return just the round-robin pick. We
-  // build the full list so a future "per-tuple apply bindTools /
-  // withStructuredOutput before picking" change stays local to this
-  // file. Today we return one bare ChatOpenAI — the 6 LangGraph node
-  // call sites chain `.bindTools(...)` / `.withStructuredOutput(...)`
-  // on the result, methods that don't exist on the old
-  // RunnableWithFallbacks wrap.
+  // ponytail: build all N ChatOpenAIs, then return the round-robin
+  // pick. N decrypt + ctor is small and amortized over the 60s tuple
+  // TTL, so the "build only the picked one" optimization isn't worth
+  // the cache-tracker complexity.
   const models = tuples.map(
     (t) =>
       new ChatOpenAI({
@@ -112,11 +108,10 @@ export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<B
       }),
   );
 
-  // Return type stays BaseChatModel (not ChatOpenAI) so the surface
-  // accepts a non-OpenAI provider landing later without touching the 6
-  // call sites; today every registered model is ChatOpenAI so the
-  // narrowing is honest.
-  return models[start] as unknown as BaseChatModel;
+  // Return type stays BaseChatModel (not ChatOpenAI) so a non-OpenAI
+  // provider can land without touching the 6 call sites; today every
+  // registered model is ChatOpenAI.
+  return models[start] as BaseChatModel;
 }
 
 /**
