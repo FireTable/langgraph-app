@@ -63,9 +63,9 @@ describe("getChatModelFromDB", () => {
   });
 
   // ponytail: tuple list (DB rows + encrypted blobs) is cached, but the
-  // wrapped runnable is rebuilt on every call so the round-robin can
+  // picked ChatOpenAI is rebuilt on every call so the round-robin can
   // advance. The DB read is what we cache — not the final object.
-  it("caches the tuple list but rebuilds the wrapped runnable per call (no extra DB read)", async () => {
+  it("caches the tuple list but rebuilds the picked model per call (no extra DB read)", async () => {
     await seedProvider({
       id: "primary",
       apiKeys: [encryptFixtureKey("sk-test-1234")],
@@ -101,9 +101,9 @@ describe("getChatModelFromDB", () => {
       models: [ENABLED_MODEL("gpt-4o")],
     });
 
-    // Three calls → three distinct wrapped runnables (each ChatOpenAI
-    // is a new instance because of withFallbacks wrap). Same .invoke
-    // surface, but reference identity differs.
+    // Three calls → three distinct ChatOpenAI instances (each is a
+    // fresh ctor over the cached tuple list). Same .invoke surface,
+    // but reference identity differs.
     const a = await getChatModelFromDB();
     const b = await getChatModelFromDB();
     const c = await getChatModelFromDB();
@@ -193,6 +193,32 @@ describe("getChatModelFromDB", () => {
       const model = await getChatModelFromDB();
       expect(model).toBeDefined();
       expect(typeof model.invoke).toBe("function");
+    }
+  });
+
+  // ponytail: regression — a previous version wrapped the round-robin
+  // picks in `withFallbacks(...)`, which returns a RunnableWithFallbacks
+  // (Runnable, not BaseChatModel). `.bindTools` / `.withStructuredOutput`
+  // don't exist on a plain Runnable, so 6 LangGraph call sites crashed
+  // at runtime with `TypeError: ... is not a function` whenever there
+  // were ≥2 tuples. This test pins both methods as functions on every
+  // round-robin pick — a regression to `withFallbacks` flips these to
+  // undefined.
+  it("with ≥2 tuples, every round-robin pick still exposes bindTools + withStructuredOutput", async () => {
+    await seedProvider({
+      id: "primary",
+      apiKeys: [encryptFixtureKey("sk-aaa-1111"), encryptFixtureKey("sk-bbb-2222")],
+      models: [ENABLED_MODEL("gpt-4o")],
+    });
+
+    // Cover both rotation positions to guarantee neither primary is
+    // landing on the old wrapper.
+    for (let i = 0; i < 4; i++) {
+      const model = await getChatModelFromDB();
+      expect(typeof (model as { bindTools?: unknown }).bindTools).toBe("function");
+      expect(typeof (model as { withStructuredOutput?: unknown }).withStructuredOutput).toBe(
+        "function",
+      );
     }
   });
 });

@@ -17,11 +17,14 @@ const TUPLE_CACHE_MAX = 10;
 type OptsKey = string;
 
 // ponytail: a "tuple" is one (provider, model, key) leaf — the unit of
-// load distribution. Each call picks one as the primary via round-robin;
-// the rest become the withFallbacks chain. Deterministic ordering by
-// (providerId, modelName, keyName) so the round-robin is stable across
-// cache misses (a fresh process always starts at the same primary for
-// the same opt shape, not at a random key).
+// load distribution. Each call picks one via round-robin and returns
+// it directly. No fallback chain — a previous version wrapped the
+// picks in `withFallbacks(...)` but that returns a `RunnableWithFallbacks`
+// (Runnable, not BaseChatModel) and dropped `.bindTools` /
+// `.withStructuredOutput`, which broke the 6 LangGraph node call
+// sites that depend on those chat-model-only methods. Cross-tuple
+// retry on error is gone; add it back via a manual try/catch wrapper
+// at the call site if a per-key rate-limit becomes a real problem.
 type ModelTuple = {
   providerId: string;
   baseUrl: string | undefined;
@@ -50,20 +53,20 @@ export type GetChatModelOpts = {
 };
 
 /**
- * Resolve a chat model from the DB, returning a round-robin-balanced
- * fallback chain across all enabled (provider, model, key) tuples that
+ * Resolve a chat model from the DB, returning one round-robin-picked
+ * (provider, model, key) tuple per call across all enabled tuples that
  * match the opts. With no opts, every enabled provider's enabled models
  * and keys are in the pool; with `providerId` set, only that provider's
  * tuples; with `modelName` set, only matching models.
  *
- * The wrapped runnable is rebuilt on every call so the round-robin can
- * advance. The tuple list (DB rows + encrypted key blobs) is cached for
- * 60s — admin CUD calls `invalidateModelCache()` to bust it eagerly.
+ * The picked ChatOpenAI is rebuilt on every call so the round-robin
+ * can advance. The tuple list (DB rows + encrypted key blobs) is cached
+ * for 60s — admin CUD calls `invalidateModelCache()` to bust it eagerly.
  *
  * No priority field. Even distribution by rotation: call N's primary is
- * the Nth tuple modulo len(tuples). On retryable error, LangChain's
- * `withFallbacks` walks the rest in order; on the last tuple's error,
- * that last error is rethrown.
+ * the Nth tuple modulo len(tuples). On retryable error, the exception
+ * propagates — cross-tuple fallback is intentionally NOT here (see the
+ * `ModelTuple` comment for the why).
  */
 export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<BaseChatModel> {
   const cacheKey = `${opts.providerId ?? "*"}:${opts.modelName ?? "*"}`;
@@ -83,14 +86,19 @@ export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<B
   }
 
   // Round-robin pick. Counter advances on every call so consecutive
-  // calls see a different primary; the rest of the tuples become the
-  // withFallbacks chain. modulo is safe — nextTupleIndex is unbounded
-  // but JS doubles can hold 2^53, plenty for any realistic QPS.
+  // calls see a different primary. modulo is safe — nextTupleIndex is
+  // unbounded but JS doubles can hold 2^53, plenty for any realistic
+  // QPS.
   const start = nextTupleIndex++ % tuples.length;
 
-  // Build one ChatOpenAI per tuple. The decrypt + ctor cost is small
-  // (AES + LangChain field assignment, no network) — the user explicitly
-  // traded the old LRU-on-wrapped-runnable for per-call round-robin.
+  // ponytail: build ALL tuples' ChatOpenAIs first (decrypt + ctor —
+  // cheap, no network), then return just the round-robin pick. We
+  // build the full list so a future "per-tuple apply bindTools /
+  // withStructuredOutput before picking" change stays local to this
+  // file. Today we return one bare ChatOpenAI — the 6 LangGraph node
+  // call sites chain `.bindTools(...)` / `.withStructuredOutput(...)`
+  // on the result, methods that don't exist on the old
+  // RunnableWithFallbacks wrap.
   const models = tuples.map(
     (t) =>
       new ChatOpenAI({
@@ -104,21 +112,11 @@ export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<B
       }),
   );
 
-  // Rotate so the round-robin pick is index 0; withFallbacks always
-  // uses [0] as primary, [1..] as the chain.
-  const ordered = [...models.slice(start), ...models.slice(0, start)];
-
-  // ponytail: skip the withFallbacks wrapper when there's only one
-  // candidate — LangChain's wrapper is a no-op then, and a bare
-  // ChatOpenAI has fewer stack frames on the hot path.
-  const runnable = ordered.length === 1 ? ordered[0] : ordered[0].withFallbacks(ordered.slice(1));
-  // ponytail: withFallbacks returns RunnableWithFallbacks (a Runnable),
-  // not a BaseChatModel. The 7 `createAgent({llm}).bindTools(...)`
-  // consumers in backend/model.ts already cast via `as ChatOpenAI`, so
-  // structural methods (invoke / stream / bindTools) all work at
-  // runtime — TypeScript just can't see through the wrap. Cast through
-  // `unknown` once at the boundary; don't pepper the call sites.
-  return runnable as unknown as BaseChatModel;
+  // Return type stays BaseChatModel (not ChatOpenAI) so the surface
+  // accepts a non-OpenAI provider landing later without touching the 6
+  // call sites; today every registered model is ChatOpenAI so the
+  // narrowing is honest.
+  return models[start] as unknown as BaseChatModel;
 }
 
 /**
