@@ -5,17 +5,28 @@ The runtime chat model that powers every LangGraph node is resolved at **call ti
 Resolution path:
 
 1. **`backend/model.ts:getChatModel(opts?)`** — canonical entry point. Every LangGraph node calls this. Tries the DB registry first; on miss / DB unreachable, falls back to a `ChatOpenAI` built from env vars so dev still works pre-seed.
-2. **`lib/provider/model-registry.ts:getChatModelFromDB(opts?)`** — the pure-DB path. Picks the first enabled provider (or `opts.providerId` if set), the first enabled model on that provider (or `opts.modelName` if set), decrypts one `apiKeys[]` entry (random pick when there are several), and constructs a `ChatOpenAI` with `streaming: true` + `modelKwargs.reasoning_split: true`. Result is cached in an in-process LRU keyed on `providerId:modelName`.
+2. **`lib/provider/model-registry.ts:getChatModelFromDB(opts?)`** — the pure-DB path. Collects every enabled `(provider, model, key)` tuple matching the opts, decrypts each, and returns a `RunnableWithFallbacks` whose primary is round-robin-picked and whose fallbacks are the rest. With one tuple, returns a bare `ChatOpenAI` (skip the wrapper). The tuple list is cached in an in-process LRU keyed on `providerId:modelName` for 60s.
 3. **`lib/provider/model-registry.ts:invalidateModelCache(key?)`** — called by every admin CUD route (`POST/PATCH/DELETE` under `/api/admin/providers/**`). Without an arg, clears the entire LRU; with a key, drops just that entry.
 
 The fallback exists so a fresh checkout can boot end-to-end before `pnpm db:migrate` lands the seeded `default` provider row.
 
+## Round-robin + withFallbacks
+
+The registry distributes traffic **evenly** across every enabled `(provider, model, key)` tuple, with no priority field — each tuple is one slot in the rotation. On every call, `getChatModelFromDB`:
+
+1. Looks up the cached tuple list (sync LRU hit) or queries Postgres on miss.
+2. Increments a process-local `nextTupleIndex` counter; the new primary is `tuples[counter % N]`.
+3. Builds one `ChatOpenAI` per tuple (decrypt + `new ChatOpenAI(...)`, no I/O).
+4. Rotates the array so the round-robin pick is index 0; wraps with `primary.withFallbacks([rest])` so a retryable error on the primary walks the rest in order.
+
+Deterministic ordering: tuples are sorted by `(providerId, modelName, keyName)`, so the rotation is reproducible across cache misses. Per-process counter — LangGraph and Next.js each have their own; per-process is fine for a self-host where the bottleneck is per-key rate-limit, not cluster-wide fair distribution.
+
 ## LRU cache + cross-process TTL
 
-The registry caches the constructed `ChatOpenAI` instance in `lib/provider/model-registry.ts`:
+The registry caches the **(provider, model, key) tuple list** in `lib/provider/model-registry.ts` — the decrypted blobs, baseUrl, and model names. The wrapped `RunnableWithFallbacks` is rebuilt on every call so round-robin can advance.
 
 ```ts
-const cache = new LRUCache<OptsKey, BaseChatModel>({
+const tupleCache = new LRUCache<OptsKey, ModelTuple[]>({
   max: 10,
   ttl: 60 * 1000, // 60s
 });
@@ -79,8 +90,8 @@ Every LangGraph node that calls an LLM goes through `backend/model.ts:getChatMod
 ## Future direction
 
 - **Per-agent model binding** — pass `getChatModel({ agentName: "weather" })` and look up `provider.models[].defaultForAgents[]` from the DB. The registry signature already accepts `providerId` + `modelName`; per-agent is a one-arg extension.
-- **Fallback chains** — `provider.fallback_models jsonb` listing ordered alternates; the registry constructs a `primary.withFallbacks([backup1, backup2])`. LangChain's `withFallbacks` handles the per-call retry.
 - **Cross-process invalidation** — see § Cross-process tradeoff above.
+- **Health observability** — `provider.last_used_at` / `last_success_at` / `last_error_at` / `last_error_message` columns + an admin "Test key" button. Out of scope for the round-robin work; add when the need surfaces (see issue #14).
 
 ## See also
 

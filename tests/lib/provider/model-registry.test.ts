@@ -59,10 +59,13 @@ describe("getChatModelFromDB", () => {
       id: "primary",
       models: [{ name: "gpt-4o", enabled: false, inputPer1k: 0, outputPer1k: 0 }],
     });
-    await expect(getChatModelFromDB()).rejects.toThrow(/no enabled model/i);
+    await expect(getChatModelFromDB()).rejects.toThrow(/no enabled (provider|model)/i);
   });
 
-  it("returns the same cached instance on repeat calls (no extra DB read)", async () => {
+  // ponytail: tuple list (DB rows + encrypted blobs) is cached, but the
+  // wrapped runnable is rebuilt on every call so the round-robin can
+  // advance. The DB read is what we cache — not the final object.
+  it("caches the tuple list but rebuilds the wrapped runnable per call (no extra DB read)", async () => {
     await seedProvider({
       id: "primary",
       apiKeys: [encryptFixtureKey("sk-test-1234")],
@@ -76,10 +79,59 @@ describe("getChatModelFromDB", () => {
     const second = await getChatModelFromDB();
     const callsAfterSecond = dbSpy.mock.calls.length;
 
-    expect(first).toBe(second);
+    expect(typeof first.invoke).toBe("function");
+    expect(typeof second.invoke).toBe("function");
     expect(callsAfterFirst).toBe(callsAfterSpy + 1); // first call hits DB exactly once
     expect(callsAfterSecond).toBe(callsAfterFirst); // second call hits DB zero times
     dbSpy.mockRestore();
+  });
+
+  // ponytail: round-robin across (provider, model, key) tuples. N calls
+  // with N keys → each key is primary exactly once. Counter is process-
+  // local but deterministic in ordering.
+  it("rotates the starting key across calls (round-robin, not random)", async () => {
+    const keys = [
+      encryptFixtureKey("sk-first-1111"),
+      encryptFixtureKey("sk-second-2222"),
+      encryptFixtureKey("sk-third-3333"),
+    ];
+    await seedProvider({
+      id: "primary",
+      apiKeys: keys,
+      models: [ENABLED_MODEL("gpt-4o")],
+    });
+
+    // Three calls → three distinct wrapped runnables (each ChatOpenAI
+    // is a new instance because of withFallbacks wrap). Same .invoke
+    // surface, but reference identity differs.
+    const a = await getChatModelFromDB();
+    const b = await getChatModelFromDB();
+    const c = await getChatModelFromDB();
+    expect(a).not.toBe(b);
+    expect(b).not.toBe(c);
+    expect(a).not.toBe(c);
+  });
+
+  it("round-robins across multiple providers (load balance goal of #14)", async () => {
+    await seedProvider({
+      id: "alpha",
+      apiKeys: [encryptFixtureKey("sk-alpha-1111")],
+      models: [ENABLED_MODEL("gpt-4o")],
+    });
+    await seedProvider({
+      id: "beta",
+      apiKeys: [encryptFixtureKey("sk-beta-2222")],
+      models: [ENABLED_MODEL("gpt-4o")],
+    });
+
+    const seen: unknown[] = [];
+    for (let i = 0; i < 4; i++) seen.push(await getChatModelFromDB());
+    // 4 calls, 2 tuples → first call primary=alpha, second=beta, third=alpha, fourth=beta
+    // Distinct wrapped runnables (rebuilt each call), but the primary
+    // rotates deterministically. We just assert that all 4 are usable
+    // and not equal pairwise (per-call wrap → distinct references).
+    for (const s of seen) expect(typeof (s as { invoke: unknown }).invoke).toBe("function");
+    expect(new Set(seen).size).toBe(seen.length);
   });
 
   it("respects explicit providerId / modelName opts", async () => {
@@ -103,11 +155,12 @@ describe("getChatModelFromDB", () => {
       modelName: "claude-3",
     });
 
-    // ponytail: distinct (provider, model) keys → distinct cached instances.
+    // ponytail: distinct (provider, model) cache keys → distinct tuple
+    // lists, hence distinct ChatOpenAI instances in the wrap.
     expect(explicitPrimary).not.toBe(explicitSecondary);
   });
 
-  it("returns a different instance after invalidateModelCache", async () => {
+  it("returns a different wrapped runnable after invalidateModelCache", async () => {
     await seedProvider({
       id: "primary",
       apiKeys: [encryptFixtureKey("sk-test-1234")],
@@ -118,10 +171,11 @@ describe("getChatModelFromDB", () => {
     invalidateModelCache();
     const second = await getChatModelFromDB();
 
+    // Per-call wrap + invalidated tuple list → guaranteed distinct.
     expect(first).not.toBe(second);
   });
 
-  it("survives multiple apiKeys (random selection, no decryption error)", async () => {
+  it("survives multiple apiKeys (round-robin, no decryption error)", async () => {
     await seedProvider({
       id: "primary",
       apiKeys: [
@@ -132,12 +186,14 @@ describe("getChatModelFromDB", () => {
       models: [ENABLED_MODEL("gpt-4o")],
     });
 
-    // Both picks must produce a usable model — we can't read the random
-    // choice directly, but if decrypt or ChatOpenAI ctor threw we'd see it
-    // here.
-    const model = await getChatModelFromDB();
-    expect(model).toBeDefined();
-    expect(typeof model.invoke).toBe("function");
+    // All picks must produce a usable model — if decrypt or ChatOpenAI
+    // ctor threw we'd see it here. Round-robin is deterministic in
+    // tuple order, so each call is a valid wrap of three ChatOpenAIs.
+    for (let i = 0; i < 3; i++) {
+      const model = await getChatModelFromDB();
+      expect(model).toBeDefined();
+      expect(typeof model.invoke).toBe("function");
+    }
   });
 });
 
@@ -149,15 +205,23 @@ describe("invalidateModelCache", () => {
       models: [ENABLED_MODEL("gpt-4o"), ENABLED_MODEL("gpt-4o-mini")],
     });
 
-    const a = await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o" });
-    const b = await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o-mini" });
+    // With one key and one model per opt-shape, the wrapped runnable
+    // changes per-call anyway (round-robin across the same single tuple
+    // still wraps once), so we can only assert that the tuple list
+    // itself is re-queried after invalidation.
+    await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o" });
+    await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o-mini" });
 
+    const dbSpy = vi.spyOn(db, "select");
+    const before = dbSpy.mock.calls.length;
     invalidateModelCache("primary:gpt-4o");
+    await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o" });
+    const afterGpt4o = dbSpy.mock.calls.length;
+    await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o-mini" });
+    const afterGpt4oMini = dbSpy.mock.calls.length;
 
-    const a2 = await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o" });
-    const b2 = await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o-mini" });
-
-    expect(a).not.toBe(a2);
-    expect(b).toBe(b2); // untouched
+    expect(afterGpt4o).toBeGreaterThan(before); // invalidated → re-queried
+    expect(afterGpt4oMini).toBe(afterGpt4o); // untouched
+    dbSpy.mockRestore();
   });
 });

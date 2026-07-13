@@ -16,6 +16,10 @@ Guidance for Claude Code in this repo. Features, layout, env vars, tech stack �
 | Attachments backing (R2 + presign) design       | `docs/ATTACHMENTS.md`   |
 | Auth setup, OAuth, troubleshooting              | `docs/AUTH.md`          |
 | DB schema, ownership, indexes                   | `docs/DB.md`            |
+| Provider registry (round-robin + withFallbacks) | `docs/PROVIDERS.md`     |
+| Credit / LLM-call quota system                  | `docs/CREDIT.md`        |
+| Admin UI + endpoints for providers/users/roles  | `docs/ADMIN.md`         |
+| Production deploys (Docker, env, Caddy)         | `docs/DEPLOY.md`        |
 | CI/CD, Docker, deploys                          | `docs/CI.md`            |
 
 API changes update `docs/APIS.md` in the same commit (rule 1). Tool changes update `docs/TOOLS.md` (rule 10).
@@ -66,6 +70,8 @@ Non-negotiable. Every change.
 12. **Env var maintenance contract.** **Default: never add `NEXT_PUBLIC_*`.** Client-visible values surface via `window.__CONFIG__`, injected by `app/layout.tsx` from server-only env. Server-only vars (`process.env.X` in app code) need only an `.env.example` entry — `docker-compose.yml` reads them via `env_file: .env`. Adding a new client-visible value is one line in each of `app/layout.tsx`, `.env.example`, and `lib/window-config.d.ts`. The ONLY remaining build-arg is `DATABASE_URL` (Better Auth runs migrations at module load).
 
     **SSR gotcha**: client-visible values are also evaluated during server-side rendering of any module that imports them (e.g. `lib/wagmi.ts` is pulled in by `app/web3-providers.tsx`, which `RootLayout` imports). Read them with the `isBrowser ? window.__CONFIG__?.X : process.env.X` ternary + a non-empty fallback (e.g. `"ssr-placeholder"`) — `window.__CONFIG__` is `undefined` on the server and RainbowKit / similar constructors throw on empty. The placeholder never reaches the network because no client-side call happens during SSR.
+
+13. **No ad-hoc test scripts in `scripts/`.** `scripts/` is for production tooling (migrations, snapshots, start, retention). Ad-hoc verification / seed / smoke scripts go in `/tmp/<name>.ts` (or anywhere outside the repo) — not alongside the real ones, so they can't get committed by accident.
 
 ## Things to know before editing
 
