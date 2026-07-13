@@ -1,32 +1,48 @@
 import { ChatOpenAI } from "@langchain/openai";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { and, asc, eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { LRUCache } from "lru-cache";
 
 import { db } from "@/db/client";
 import { provider as providerTable, type ProviderApiKey } from "@/lib/provider/schema";
 import { aesGcmDecrypt, loadKek } from "@/lib/auth/encryption";
 
-// ponytail: 60s TTL — admin writes call invalidateModelCache() in the
-// Next.js process, but LangGraph.js is a SEPARATE process (port 2024)
-// with its own in-memory LRU. The Next-side invalidate can't reach it.
-// 60s bounds how long an admin change can stay invisible to a fresh
-// LangGraph.js request. Short enough to feel live, long enough that
-// hot nodes don't hammer the DB.
-const CACHE_TTL_MS = 60 * 1000;
-const CACHE_MAX = 10;
+// ponytail: 60s TTL on the (provider, model, key) TUPLE list, not on
+// the wrapped runnable. The wrapped runnable is rebuilt on every call
+// so round-robin can advance; the tuple list (encrypted blobs + baseUrl)
+// only changes when admin CUDs a row, so a 60s refresh is plenty.
+const TUPLE_CACHE_TTL_MS = 60 * 1000;
+const TUPLE_CACHE_MAX = 10;
 
-// ponytail: cache key is derived from the caller-supplied opts alone, so
-// the lookup is a sync hash hit and we don't pay a DB round-trip on cache
-// hit. `"*"` is the placeholder for unset fields — different opt shapes
-// land in different slots, which is fine: the DB lookup only runs once
-// per (providerId, modelName) pair, and admin invalidation drops them all.
 type OptsKey = string;
 
-const cache = new LRUCache<OptsKey, BaseChatModel>({
-  max: CACHE_MAX,
-  ttl: CACHE_TTL_MS,
+// ponytail: a "tuple" is one (provider, model, key) leaf — the unit of
+// load distribution. Each call picks one via round-robin and returns
+// it directly. No fallback chain — a previous version wrapped the
+// picks in `withFallbacks(...)` but that returns a `RunnableWithFallbacks`
+// (Runnable, not BaseChatModel) and dropped `.bindTools` /
+// `.withStructuredOutput`, which broke the 6 LangGraph node call
+// sites that depend on those chat-model-only methods. Cross-tuple
+// retry on error is gone; add it back via a manual try/catch wrapper
+// at the call site if a per-key rate-limit becomes a real problem.
+type ModelTuple = {
+  providerId: string;
+  baseUrl: string | undefined;
+  modelName: string;
+  key: ProviderApiKey;
+};
+
+const tupleCache = new LRUCache<OptsKey, ModelTuple[]>({
+  max: TUPLE_CACHE_MAX,
+  ttl: TUPLE_CACHE_TTL_MS,
 });
+
+// ponytail: per-cacheKey round-robin counter — Map<OptsKey, count>. Each
+// opt shape (default pool vs per-provider pool vs per-model pool) gets
+// its own counter so interleaved calls don't drift a smaller pool onto
+// a single index. Per-process is fine for a self-host where the
+// bottleneck is rate-limit per key, not cluster-wide fair distribution.
+const nextTupleIndexByKey = new Map<OptsKey, number>();
 
 export type GetChatModelOpts = {
   providerId?: string;
@@ -34,83 +50,124 @@ export type GetChatModelOpts = {
 };
 
 /**
- * Resolve a chat model from the DB, with an in-process LRU keyed on the
- * caller-supplied opts. With no opts, picks the first enabled provider's
- * first enabled model. Throws if no enabled provider/model exists.
+ * Resolve a chat model from the DB, returning one round-robin-picked
+ * (provider, model, key) tuple per call across all enabled tuples that
+ * match the opts. With no opts, every enabled provider's enabled models
+ * and keys are in the pool; with `providerId` set, only that provider's
+ * tuples; with `modelName` set, only matching models.
  *
- * Admin writes call `invalidateModelCache()` to bust entries on demand.
+ * The picked ChatOpenAI is rebuilt on every call so the round-robin
+ * can advance. The tuple list (DB rows + encrypted key blobs) is cached
+ * for 60s — admin CUD calls `invalidateModelCache()` to bust it eagerly.
  *
- * The pure-DB path. The `getChatModel()` wrapper in backend/model.ts adds
- * an env-var fallback on top of this — call that one from runtime code,
- * not this one.
+ * No priority field. Even distribution by rotation: call N's primary is
+ * the Nth tuple modulo len(tuples). On any thrown error, the exception
+ * propagates — cross-tuple fallback is intentionally NOT here (see the
+ * `ModelTuple` comment for the why).
  */
 export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<BaseChatModel> {
-  const key = `${opts.providerId ?? "*"}:${opts.modelName ?? "*"}`;
-  const cached = cache.get(key);
+  const cacheKey = `${opts.providerId ?? "*"}:${opts.modelName ?? "*"}`;
 
-  if (cached) return cached;
+  let tuples = tupleCache.get(cacheKey);
+  if (!tuples) {
+    tuples = await collectTuples(opts);
+    tupleCache.set(cacheKey, tuples);
+  }
 
-  const { provider, modelName } = await resolveProviderAndModel(opts);
-  const apiKeyBlob = pickRandomApiKey(provider.apiKeys);
-  const apiKey = apiKeyBlob ? decryptApiKey(apiKeyBlob) : undefined;
+  if (tuples.length === 0) {
+    throw new Error(
+      opts.providerId
+        ? `no enabled (provider, model, key) tuple for ${cacheKey}`
+        : `no enabled provider in DB (cacheKey=${cacheKey})`,
+    );
+  }
 
-  const model = new ChatOpenAI({
-    model: modelName,
-    apiKey,
-    configuration: provider.baseUrl ? { baseURL: provider.baseUrl } : undefined,
-    streaming: true,
-    // ponytail: only minimax reads this — keeping it hard-coded keeps the
-    // DB schema free of a one-off knob that no other provider honors.
-    modelKwargs: { reasoning_split: true },
-  });
+  // Round-robin pick, scoped to the cacheKey so interleaving different
+  // opt shapes doesn't drift a smaller pool onto a single index.
+  const counter = nextTupleIndexByKey.get(cacheKey) ?? 0;
+  nextTupleIndexByKey.set(cacheKey, counter + 1);
+  const start = counter % tuples.length;
 
-  cache.set(key, model);
-  return model;
+  // ponytail: build all N ChatOpenAIs, then return the round-robin
+  // pick. N decrypt + ctor is small and amortized over the 60s tuple
+  // TTL, so the "build only the picked one" optimization isn't worth
+  // the cache-tracker complexity.
+  const models = tuples.map(
+    (t) =>
+      new ChatOpenAI({
+        model: t.modelName,
+        apiKey: decryptApiKey(t.key),
+        configuration: t.baseUrl ? { baseURL: t.baseUrl } : undefined,
+        streaming: true,
+        // ponytail: only minimax reads this — keeping it hard-coded keeps
+        // the DB schema free of a one-off knob that no other provider honors.
+        modelKwargs: { reasoning_split: true },
+      }),
+  );
+
+  // Return type stays BaseChatModel (not ChatOpenAI) so a non-OpenAI
+  // provider can land without touching the 6 call sites; today every
+  // registered model is ChatOpenAI.
+  return models[start] as BaseChatModel;
 }
 
 /**
- * Bust the cache. With no arg, clears every entry (use after CUD on the
- * provider/models/apiKeys rows). With a specific key, clears just that
- * `(providerId, modelName)` opt-shape.
+ * Bust the tuple cache. With no arg, clears every entry (use after CUD
+ * on the provider/models/apiKeys rows). With a specific key, clears
+ * just that `(providerId, modelName)` opt-shape.
  */
 export function invalidateModelCache(key?: OptsKey): void {
-  if (key) cache.delete(key);
-  else cache.clear();
+  if (key) tupleCache.delete(key);
+  else tupleCache.clear();
+  // ponytail: clear the round-robin counter alongside the cache. The
+  // next call rebuilds the tuple list from scratch, and a counter
+  // trained on the old layout would pick a stale index.
+  nextTupleIndexByKey.clear();
 }
 
-async function resolveProviderAndModel(opts: GetChatModelOpts): Promise<{
-  provider: typeof providerTable.$inferSelect;
-  modelName: string;
-}> {
+/**
+ * ponytail: test-only hook. Resets every per-cacheKey counter to 0 so
+ * tests asserting "call N picks tuple N" don't depend on whatever calls
+ * the previous test made. No-op in prod (callers shouldn't reach for it,
+ * but it doesn't expose anything worth attacking).
+ */
+export function resetRoundRobinCounters(): void {
+  nextTupleIndexByKey.clear();
+}
+
+async function collectTuples(opts: GetChatModelOpts): Promise<ModelTuple[]> {
   const providerRows = opts.providerId
-    ? await db
-        .select()
-        .from(providerTable)
-        .where(and(eq(providerTable.id, opts.providerId), eq(providerTable.enabled, true)))
-        .limit(1)
-    : await db
-        .select()
-        .from(providerTable)
-        .where(eq(providerTable.enabled, true))
-        .orderBy(asc(providerTable.id))
-        .limit(1);
+    ? await db.select().from(providerTable).where(eq(providerTable.id, opts.providerId))
+    : await db.select().from(providerTable).orderBy(asc(providerTable.id));
 
-  if (providerRows.length === 0) {
-    throw new Error("no enabled provider in DB");
+  const tuples: ModelTuple[] = [];
+  for (const p of providerRows) {
+    if (!p.enabled) continue;
+    for (const m of p.models) {
+      if (!m.enabled) continue;
+      if (opts.modelName && m.name !== opts.modelName) continue;
+      for (const k of p.apiKeys) {
+        tuples.push({
+          providerId: p.id,
+          baseUrl: p.baseUrl,
+          modelName: m.name,
+          key: k,
+        });
+      }
+    }
   }
-  const provider = providerRows[0];
-
-  const modelName = opts.modelName ?? provider.models.find((m) => m.enabled)?.name;
-  if (!modelName) {
-    throw new Error(`no enabled model in provider "${provider.id}"`);
-  }
-
-  return { provider, modelName };
-}
-
-function pickRandomApiKey(keys: ProviderApiKey[]): ProviderApiKey | undefined {
-  if (keys.length === 0) return undefined;
-  return keys[Math.floor(Math.random() * keys.length)];
+  // ponytail: explicit sort by (providerId, modelName, keyName) so the
+  // rotation is reproducible across cache misses, matching the doc
+  // contract. DB orderBy only covers the provider dimension; models and
+  // keys come out of JSONB arrays in insertion order, which can drift
+  // from alphabetical name sort.
+  tuples.sort(
+    (a, b) =>
+      a.providerId.localeCompare(b.providerId) ||
+      a.modelName.localeCompare(b.modelName) ||
+      a.key.name.localeCompare(b.key.name),
+  );
+  return tuples;
 }
 
 function decryptApiKey(blob: ProviderApiKey): string {

@@ -186,13 +186,15 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
   };
 
   return (
-    <Card>
+    // ponytail: muted background for disabled cards so the list separates
+    // "live" from "kept around but off" at a glance.
+    <Card className={provider.enabled ? undefined : "bg-muted/40"}>
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-2">
               <CardTitle>{provider.name}</CardTitle>
-              <Badge variant={provider.enabled ? "success" : "muted"}>
+              <Badge variant={provider.enabled ? "success" : "destructive"}>
                 {provider.enabled ? "Enabled" : "Disabled"}
               </Badge>
             </div>

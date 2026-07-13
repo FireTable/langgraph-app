@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 // (success = green-ish) without resorting to per-state colour
 // classes everywhere. Match the shadcn badge API surface so a
 // future shadcn drop-in is a one-liner swap.
-type BadgeVariant = "default" | "secondary" | "outline" | "success" | "muted";
+type BadgeVariant = "default" | "secondary" | "outline" | "success" | "muted" | "destructive";
 
 const variantClasses: Record<BadgeVariant, string> = {
   default: "border-transparent bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
@@ -16,6 +16,7 @@ const variantClasses: Record<BadgeVariant, string> = {
   success:
     "border-transparent bg-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-300",
   muted: "border-transparent bg-muted text-muted-foreground [a&]:hover:bg-muted/80",
+  destructive: "border-transparent bg-red-100 text-red-900 dark:bg-red-900/30 dark:text-red-300",
 };
 
 function Badge({
