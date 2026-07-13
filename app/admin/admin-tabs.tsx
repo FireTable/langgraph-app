@@ -186,13 +186,17 @@ function ProviderCard({ provider }: { provider: PublicProviderRow }) {
   };
 
   return (
-    <Card>
+    // ponytail: disabled providers get a muted card background so a
+    // glance at the list separates "live" from "kept around but off".
+    // bg-muted/40 matches the existing tile pattern in UsersPanel —
+    // doesn't pile on a new shade the design system doesn't already own.
+    <Card className={provider.enabled ? undefined : "bg-muted/40"}>
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-2">
               <CardTitle>{provider.name}</CardTitle>
-              <Badge variant={provider.enabled ? "success" : "muted"}>
+              <Badge variant={provider.enabled ? "success" : "destructive"}>
                 {provider.enabled ? "Enabled" : "Disabled"}
               </Badge>
             </div>
