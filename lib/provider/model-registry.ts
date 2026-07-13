@@ -37,15 +37,12 @@ const tupleCache = new LRUCache<OptsKey, ModelTuple[]>({
   ttl: TUPLE_CACHE_TTL_MS,
 });
 
-// ponytail: process-local round-robin counter. Each call to
-// getChatModelFromDB advances by 1, so a stable (provider, model) opt
-// shape distributes starting key across the tuple list evenly. Counter
-// is per-process (LangGraph and Next.js each have their own); per-process
-// is fine for a self-host where the bottleneck is rate-limit per key,
-// not coordinated cluster-wide fair distribution. No priority field —
-// every enabled key gets a slot; ordering is by (providerId, modelName,
-// keyName) so the rotation is reproducible.
-let nextTupleIndex = 0;
+// ponytail: per-cacheKey round-robin counter — Map<OptsKey, count>. Each
+// opt shape (default pool vs per-provider pool vs per-model pool) gets
+// its own counter so interleaved calls don't drift a smaller pool onto
+// a single index. Per-process is fine for a self-host where the
+// bottleneck is rate-limit per key, not cluster-wide fair distribution.
+const nextTupleIndexByKey = new Map<OptsKey, number>();
 
 export type GetChatModelOpts = {
   providerId?: string;
@@ -64,7 +61,7 @@ export type GetChatModelOpts = {
  * for 60s — admin CUD calls `invalidateModelCache()` to bust it eagerly.
  *
  * No priority field. Even distribution by rotation: call N's primary is
- * the Nth tuple modulo len(tuples). On retryable error, the exception
+ * the Nth tuple modulo len(tuples). On any thrown error, the exception
  * propagates — cross-tuple fallback is intentionally NOT here (see the
  * `ModelTuple` comment for the why).
  */
@@ -85,11 +82,11 @@ export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<B
     );
   }
 
-  // Round-robin pick. Counter advances on every call so consecutive
-  // calls see a different primary. modulo is safe — nextTupleIndex is
-  // unbounded but JS doubles can hold 2^53, plenty for any realistic
-  // QPS.
-  const start = nextTupleIndex++ % tuples.length;
+  // Round-robin pick, scoped to the cacheKey so interleaving different
+  // opt shapes doesn't drift a smaller pool onto a single index.
+  const counter = nextTupleIndexByKey.get(cacheKey) ?? 0;
+  nextTupleIndexByKey.set(cacheKey, counter + 1);
+  const start = counter % tuples.length;
 
   // ponytail: build all N ChatOpenAIs, then return the round-robin
   // pick. N decrypt + ctor is small and amortized over the 60s tuple
@@ -122,6 +119,20 @@ export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<B
 export function invalidateModelCache(key?: OptsKey): void {
   if (key) tupleCache.delete(key);
   else tupleCache.clear();
+  // ponytail: clear the round-robin counter alongside the cache. The
+  // next call rebuilds the tuple list from scratch, and a counter
+  // trained on the old layout would pick a stale index.
+  nextTupleIndexByKey.clear();
+}
+
+/**
+ * ponytail: test-only hook. Resets every per-cacheKey counter to 0 so
+ * tests asserting "call N picks tuple N" don't depend on whatever calls
+ * the previous test made. No-op in prod (callers shouldn't reach for it,
+ * but it doesn't expose anything worth attacking).
+ */
+export function resetRoundRobinCounters(): void {
+  nextTupleIndexByKey.clear();
 }
 
 async function collectTuples(opts: GetChatModelOpts): Promise<ModelTuple[]> {
@@ -145,6 +156,17 @@ async function collectTuples(opts: GetChatModelOpts): Promise<ModelTuple[]> {
       }
     }
   }
+  // ponytail: explicit sort by (providerId, modelName, keyName) so the
+  // rotation is reproducible across cache misses, matching the doc
+  // contract. DB orderBy only covers the provider dimension; models and
+  // keys come out of JSONB arrays in insertion order, which can drift
+  // from alphabetical name sort.
+  tuples.sort(
+    (a, b) =>
+      a.providerId.localeCompare(b.providerId) ||
+      a.modelName.localeCompare(b.modelName) ||
+      a.key.name.localeCompare(b.key.name),
+  );
   return tuples;
 }
 

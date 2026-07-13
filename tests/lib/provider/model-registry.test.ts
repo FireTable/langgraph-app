@@ -9,6 +9,7 @@ import {
 } from "@/lib/provider/schema";
 import { aesGcmEncrypt, loadKek } from "@/lib/auth/encryption";
 import { getChatModelFromDB, invalidateModelCache } from "@/lib/provider/model-registry";
+import { resetRoundRobinCounters } from "@/lib/provider/model-registry";
 
 function encryptFixtureKey(plain: string): ProviderApiKey {
   const blob = aesGcmEncrypt(plain, loadKek());
@@ -43,6 +44,10 @@ async function seedProvider(row: {
 beforeEach(async () => {
   await db.delete(providerTable);
   invalidateModelCache();
+  // ponytail: clear per-cacheKey rotation counters so this test sees a
+  // fresh "call 0 → tuple 0" baseline. Without it, calls from earlier
+  // tests in the same file would push the counter ahead.
+  resetRoundRobinCounters();
 });
 
 afterAll(async () => {
@@ -73,23 +78,29 @@ describe("getChatModelFromDB", () => {
     });
 
     const dbSpy = vi.spyOn(db, "select");
-    const callsAfterSpy = dbSpy.mock.calls.length;
-    const first = await getChatModelFromDB();
-    const callsAfterFirst = dbSpy.mock.calls.length;
-    const second = await getChatModelFromDB();
-    const callsAfterSecond = dbSpy.mock.calls.length;
+    try {
+      const callsAfterSpy = dbSpy.mock.calls.length;
+      const first = await getChatModelFromDB();
+      const callsAfterFirst = dbSpy.mock.calls.length;
+      const second = await getChatModelFromDB();
+      const callsAfterSecond = dbSpy.mock.calls.length;
 
-    expect(typeof first.invoke).toBe("function");
-    expect(typeof second.invoke).toBe("function");
-    expect(callsAfterFirst).toBe(callsAfterSpy + 1); // first call hits DB exactly once
-    expect(callsAfterSecond).toBe(callsAfterFirst); // second call hits DB zero times
-    dbSpy.mockRestore();
+      expect(typeof first.invoke).toBe("function");
+      expect(typeof second.invoke).toBe("function");
+      expect(callsAfterFirst).toBe(callsAfterSpy + 1); // first call hits DB exactly once
+      expect(callsAfterSecond).toBe(callsAfterFirst); // second call hits DB zero times
+    } finally {
+      dbSpy.mockRestore();
+    }
   });
 
-  // ponytail: round-robin across (provider, model, key) tuples. N calls
-  // with N keys → each key is primary exactly once. Counter is process-
-  // local but deterministic in ordering.
-  it("rotates the starting key across calls (round-robin, not random)", async () => {
+  // ponytail: each call rebuilds a fresh ChatOpenAI per tuple, so the
+  // returned references are pairwise distinct even if rotation logic
+  // were broken (every call picks the same tuple → still sees `a !== b`).
+  // This test pins the per-call-rebuild contract, not actual rotation
+  // order. A real "call N picks tuple N" assertion would need to peek
+  // at the picked key, which requires module-mocking ChatOpenAI's ctor.
+  it("builds a fresh ChatOpenAI per call (per-call rebuild)", async () => {
     const keys = [
       encryptFixtureKey("sk-first-1111"),
       encryptFixtureKey("sk-second-2222"),
@@ -112,7 +123,10 @@ describe("getChatModelFromDB", () => {
     expect(a).not.toBe(c);
   });
 
-  it("round-robins across multiple providers (load balance goal of #14)", async () => {
+  // ponytail: same per-call-rebuild caveat as the test above. This one
+  // exercises a two-provider setup; distinct refs are guaranteed by the
+  // rebuild, not by per-provider rotation.
+  it("builds fresh per-call across multiple providers (round-robin shape)", async () => {
     await seedProvider({
       id: "alpha",
       apiKeys: [encryptFixtureKey("sk-alpha-1111")],
