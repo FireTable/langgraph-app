@@ -124,6 +124,9 @@ importers:
       motion:
         specifier: ^12.42.2
         version: 12.42.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      mupdf:
+        specifier: ^1.28.0
+        version: 1.28.0
       next:
         specifier: 16.1.7
         version: 16.1.7(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -5673,6 +5676,9 @@ packages:
 
   multiformats@9.9.0:
     resolution: {integrity: sha512-HoMUjhH9T8DDBNT+6xzkrd9ga/XiBI4xLr58LJACwK6G3HTOPeMz4nB4KJs33L2BelrIJa7P0VuNaVF3hMYfjg==}
+
+  mupdf@1.28.0:
+    resolution: {integrity: sha512-ACUnbpECaQ5JLq04pwd89lS+0IGMest5qL5tb08g9TAR7bDtfqflHEkb2Xm3o4rvC/szguLiV+WEbW9kstj8Sg==}
 
   mustache@4.2.0:
     resolution: {integrity: sha512-71ippSywq5Yb7/tVYyGbkBggbU8H3u5Rz56fH60jGFgr8uHwxs+aSKeqmluIVzM0m0kB7xQjKS6qPfd0b2ZoqQ==}
@@ -13611,6 +13617,8 @@ snapshots:
   ms@2.1.3: {}
 
   multiformats@9.9.0: {}
+
+  mupdf@1.28.0: {}
 
   mustache@4.2.0: {}
 
