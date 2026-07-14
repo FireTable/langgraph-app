@@ -32,7 +32,14 @@ import { getObject } from "@/lib/r2/client";
 type FilePart = {
   type: "file";
   data: string;
-  mimeType?: string;
+  // ponytail: the wire format is LangGraph SDK's snake_case MessageContent,
+  // NOT assistant-ui's camelCase. useLangGraphRuntime's
+  // toLangGraphUserMessage flattens content and renames mimeType → mime_type
+  // before the runtime POSTs the run to /api/threads/.../runs/stream. Reading
+  // the camelCase field here would always be undefined and silently drop every
+  // PDF at the non-PDF branch below. See components/assistant-ui/attachment.tsx
+  // line 337 comment for the same caveat from the rendering side.
+  mime_type?: string;
   filename?: string;
 };
 
@@ -109,7 +116,7 @@ export async function attachmentKbInjectorNode(
       newContent.push(part as Record<string, unknown>);
       continue;
     }
-    if (part.mimeType !== "application/pdf") {
+    if (part.mime_type !== "application/pdf") {
       // v1: PDFs only. Images, docs, etc. pass through untouched.
       newContent.push(part as Record<string, unknown>);
       continue;

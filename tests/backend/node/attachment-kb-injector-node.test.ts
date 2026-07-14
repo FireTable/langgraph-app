@@ -46,8 +46,17 @@ afterEach(() => {
 
 const userId = "user-1";
 
-function filePart(filename: string, publicUrl: string, mimeType = "application/pdf") {
-  return { type: "file" as const, data: publicUrl, mimeType, filename };
+function filePart(
+  filename: string,
+  publicUrl: string,
+  mime_type = "application/pdf",
+  source_type = "url",
+) {
+  // ponytail: snake_case mime_type + source_type matches the LangGraph SDK
+  // MessageContent shape that @assistant-ui/react-langgraph's runtime sends
+  // to /api/threads/.../runs/stream. The injector must read this exact shape,
+  // NOT assistant-ui's camelCase, otherwise every PDF drops silently.
+  return { type: "file" as const, data: publicUrl, mime_type, source_type, filename };
 }
 
 function r2KeyFromUrl(publicUrl: string): string {
