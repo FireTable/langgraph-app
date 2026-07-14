@@ -1,12 +1,15 @@
-import { ChatOpenAI } from "@langchain/openai";
+import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
+import type { Embeddings } from "@langchain/core/embeddings";
 
 import {
   getChatModelFromDB,
+  getEmbeddingModelFromDB,
+  getVlmModelFromDB,
   invalidateModelCache,
   type GetChatModelOpts,
 } from "@/lib/provider/model-registry";
 
-function buildEnvModel(): ChatOpenAI {
+function buildEnvChatModel(): ChatOpenAI {
   return new ChatOpenAI({
     model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
     apiKey: process.env.OPENAI_API_KEY,
@@ -25,6 +28,27 @@ function buildEnvModel(): ChatOpenAI {
   });
 }
 
+// ponytail: vlm reuses the chat-model env vars today (vision-capable
+// chat models handle image_url content). When a non-chat VLM provider
+// lands (e.g. a vision-only upstream) this builder splits off.
+function buildEnvVlmModel(): ChatOpenAI {
+  return buildEnvChatModel();
+}
+
+function buildEnvEmbeddingModel(): Embeddings {
+  return new OpenAIEmbeddings({
+    model: process.env.OPENAI_EMBEDDING_MODEL ?? "text-embedding-3-small",
+    apiKey: process.env.OPENAI_API_KEY,
+    ...(process.env.OPENAI_BASE_URL
+      ? {
+          configuration: {
+            baseURL: process.env.OPENAI_BASE_URL,
+          },
+        }
+      : {}),
+  });
+}
+
 /**
  * Canonical entry point for runtime chat-model lookup. Tries the DB-backed
  * registry first (with LRU caching + admin CUD invalidation); on miss /
@@ -40,7 +64,33 @@ export async function getChatModel(opts: GetChatModelOpts = {}): Promise<ChatOpe
   try {
     return (await getChatModelFromDB(opts)) as ChatOpenAI;
   } catch {
-    return buildEnvModel();
+    return buildEnvChatModel();
+  }
+}
+
+/**
+ * VLM = chat-capable model with vision (image_url) support. Same
+ * round-robin pool key as chat, but `kind="vlm"` filter — chat-only
+ * models are excluded. Falls back to env-built ChatOpenAI on miss.
+ */
+export async function getVlmModel(opts: GetChatModelOpts = {}): Promise<ChatOpenAI> {
+  try {
+    return (await getVlmModelFromDB(opts)) as ChatOpenAI;
+  } catch {
+    return buildEnvVlmModel();
+  }
+}
+
+/**
+ * Embedding model entry point. Same fallback chain as chat: registry
+ * first, env on miss. Returns Embeddings interface (not chat) — caller
+ * chains `.embedDocuments` / `.embedQuery`, not `.invoke`.
+ */
+export async function getEmbeddingModel(opts: GetChatModelOpts = {}): Promise<Embeddings> {
+  try {
+    return await getEmbeddingModelFromDB(opts);
+  } catch {
+    return buildEnvEmbeddingModel();
   }
 }
 
