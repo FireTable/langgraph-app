@@ -58,6 +58,9 @@ importers:
       '@langchain/openai':
         specifier: ^1.5.3
         version: 1.5.3(@langchain/core@1.2.1(openai@6.44.0(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@4.4.3))(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)))(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+      '@langchain/textsplitters':
+        specifier: 1.0.1
+        version: 1.0.1(@langchain/core@1.2.1(openai@6.44.0(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@4.4.3))(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)))
       '@radix-ui/react-avatar':
         specifier: ^1.2.1
         version: 1.2.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -1523,6 +1526,12 @@ packages:
 
   '@langchain/protocol@0.0.18':
     resolution: {integrity: sha512-XW1egQtPfsGI41w2AMZNFZrUIwFSQHTjVMZs0OaTpCAvht/QLoaPN8FQcsysMVypOhupG28J29yOorrc70otBQ==}
+
+  '@langchain/textsplitters@1.0.1':
+    resolution: {integrity: sha512-rheJlB01iVtrOUzttscutRgLybPH9qR79EyzBEbf1u97ljWyuxQfCwIWK+SjoQTM9O8M7GGLLRBSYE26Jmcoww==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@langchain/core': ^1.0.0
 
   '@levischuck/tiny-cbor@0.2.11':
     resolution: {integrity: sha512-llBRm4dT4Z89aRsm6u2oEZ8tfwL/2l6BwpZ7JcyieouniDECM5AqNgr/y08zalEIvW3RSK4upYyybDcmjXqAow==}
@@ -8604,6 +8613,11 @@ snapshots:
       - ws
 
   '@langchain/protocol@0.0.18': {}
+
+  '@langchain/textsplitters@1.0.1(@langchain/core@1.2.1(openai@6.44.0(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@4.4.3))(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)))':
+    dependencies:
+      '@langchain/core': 1.2.1(openai@6.44.0(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@4.4.3))(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+      js-tiktoken: 1.0.21
 
   '@levischuck/tiny-cbor@0.2.11': {}
 

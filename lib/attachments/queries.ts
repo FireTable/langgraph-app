@@ -55,12 +55,12 @@ export async function findUploadedBySha(
   return row ?? null;
 }
 
-// ponytail: attachment-kb-injector (#13) needs to look up an attachment
+// ponytail: kbAgent.screenshotNode (#13 v2) needs to look up an attachment
 // by its R2 publicUrl — the URL is what rides in the chat message's
 // file content part. Index on (userId, r2Key) would be ideal, but
 // r2Key already serves the dedup index (attachments_user_sha_idx uses
-// the same leading column). For v1 a scan over the user's recent
-// attachments is fine; v2 adds the index when this gets hot.
+// the same leading column). For v2 a scan over the user's recent
+// attachments is fine; add the index when this gets hot.
 export async function findAttachmentByR2Key(
   userId: string,
   r2Key: string,

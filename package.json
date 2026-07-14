@@ -66,6 +66,7 @@
     "@langchain/langgraph-checkpoint-postgres": "^1.0.4",
     "@langchain/langgraph-sdk": "^1.9.25",
     "@langchain/openai": "^1.5.3",
+    "@langchain/textsplitters": "1.0.1",
     "@radix-ui/react-avatar": "^1.2.1",
     "@radix-ui/react-collapsible": "^1.1.15",
     "@radix-ui/react-dialog": "^1.1.18",

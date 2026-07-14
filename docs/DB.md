@@ -4,23 +4,28 @@ Source of truth: `db/migrations/0000_*.sql` (drizzle-kit generated). This doc de
 
 ## Tables
 
-| Table              | Owner | Purpose                                                                |
-| ------------------ | ----- | ---------------------------------------------------------------------- |
-| `user`             | app   | Better Auth user rows; FK target for owned rows                        |
-| `session`          | app   | Better Auth DB sessions (cookie → userId)                              |
-| `account`          | app   | Better Auth credentials / OAuth links per user                         |
-| `verification`     | app   | One-time tokens (email verify, password reset)                         |
-| `role`             | app   | Per-role credit cap + rolling window length                            |
-| `threads`          | app   | Chat threads; one row per assistant-ui thread                          |
-| `attachments`      | app   | Chat attachment metadata; bytes live in Cloudflare R2                  |
-| `provider`         | app   | LLM provider registry (API keys, model rates)                          |
-| `credit_usage_log` | app   | Append-only per-LLM-call log; drives cap enforcement + call history UI |
+| Table              | Owner | Purpose                                                                         |
+| ------------------ | ----- | ------------------------------------------------------------------------------- |
+| `user`             | app   | Better Auth user rows; FK target for owned rows                                 |
+| `session`          | app   | Better Auth DB sessions (cookie → userId)                                       |
+| `account`          | app   | Better Auth credentials / OAuth links per user                                  |
+| `verification`     | app   | One-time tokens (email verify, password reset)                                  |
+| `role`             | app   | Per-role credit cap + rolling window length                                     |
+| `threads`          | app   | Chat threads; one row per assistant-ui thread                                   |
+| `attachments`      | app   | Chat attachment metadata; bytes live in Cloudflare R2                           |
+| `provider`         | app   | LLM provider registry (API keys, model rates)                                   |
+| `credit_usage_log` | app   | Append-only per-LLM-call log; drives cap enforcement + call history UI          |
+| `kb_folder`        | app   | Per-user grouping for KB docs (issue #13); default `Attachments` auto-created   |
+| `kb_document`      | app   | One row per ingested PDF; status enum `pending \| parsing \| success \| failed` |
+| `kb_chunk`         | app   | Chunks with pgvector embedding + GIN-indexed tsvector + entities[]              |
 
 ## Cascade behavior
 
 `user.id` is the cascade root. Deleting a user removes every `session`, `account`, `thread`, `attachment`, and `credit_usage_log` row they own. `attachments` has no FK to `threads` (Q3 — see `docs/ATTACHMENTS.md` for why), so thread deletion does NOT clean up attachment rows. Use the retention sweep if those accumulate. No soft delete; CASCADE only.
 
 `role` deletion is refused at the API layer (`409 ROLE_IN_USE`) while any user row still references it — the schema's FK is `ON DELETE NO ACTION`, so the API check is what surfaces the conflict before the constraint trips. `provider` deletion is unconstrained (no FK from `credit_usage_log.provider_id` — see `provider` notes above).
+
+`kb_folder` deletion is refused at the DB layer: `kb_document.folder_id` is `NOT NULL ... ON DELETE RESTRICT`. Move docs to another folder before deleting a folder.
 
 ## `user`
 
