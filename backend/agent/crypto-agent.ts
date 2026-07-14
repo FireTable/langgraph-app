@@ -11,6 +11,7 @@ import {
   loadThreadSummariesForPrompt,
   trimMessagesForInvoke,
 } from "@/backend/memory/template";
+import { extractUserId } from "@/backend/memory/recall";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 
 // Crypto sub-agent: mirrors the weather subgraph. The model ↔ tools
@@ -26,7 +27,11 @@ async function cryptoModelNode({ messages }: { messages: BaseMessage[] }, config
   // and drop the original turns from the input array. state.messages
   // is NEVER touched.
   const threads = await loadThreadSummariesForPrompt(config);
-  const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
+  const history = await trimMessagesForInvoke(
+    messages,
+    threads?.summaries ?? [],
+    extractUserId(config) ?? undefined,
+  );
   const sysMsg = await buildSystemMessageWithMemory(CRYPTO_AGENT_PROMPT, config, threads);
   const response = await (
     await getChatModel()

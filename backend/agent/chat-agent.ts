@@ -11,6 +11,7 @@ import {
   loadThreadSummariesForPrompt,
   trimMessagesForInvoke,
 } from "@/backend/memory/template";
+import { extractUserId } from "@/backend/memory/recall";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 
 // Chat agent gets every tool — the router already decided whether this
@@ -37,7 +38,12 @@ async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?:
   // context-loss one). state.messages is NEVER touched — UI +
   // checkpointer read from it directly.
   const threads = await loadThreadSummariesForPrompt(config);
-  const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
+  const userId = extractUserId(config);
+  const history = await trimMessagesForInvoke(
+    messages,
+    threads?.summaries ?? [],
+    userId ?? undefined,
+  );
 
   const sysMsg = await buildSystemMessageWithMemory(CHAT_AGENT_PROMPT, config, threads);
   const response = await (

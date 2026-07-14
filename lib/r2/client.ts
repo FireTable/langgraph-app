@@ -116,3 +116,32 @@ export async function getObject(key: string): Promise<Buffer> {
 export function buildPublicUrl(key: string): string {
   return `${getR2PublicBaseUrl()}/${key}`;
 }
+
+// ponytail: KB helpers (issue #13 v2). url → r2Key strips the public
+// base so the kbAgent can recover the source key from the file part's
+// publicUrl. uploadKbImage is the one-shot PUT for VLM page renders;
+// PNGs are tiny so no multipart.
+export function r2KeyFromPublicUrl(url: string, base: string): string {
+  const trimmed = base.replace(/\/$/, "");
+  if (url.startsWith(trimmed + "/")) {
+    return url.slice(trimmed.length + 1);
+  }
+  // Fallback: caller passed a key already, or base is unset.
+  return url;
+}
+
+export async function uploadKbImage(args: {
+  key: string;
+  body: Buffer;
+  contentType?: string;
+}): Promise<string> {
+  await getS3Client().send(
+    new PutObjectCommand({
+      Bucket: getR2Bucket(),
+      Key: args.key,
+      Body: args.body,
+      ContentType: args.contentType ?? "image/png",
+    }),
+  );
+  return buildPublicUrl(args.key);
+}

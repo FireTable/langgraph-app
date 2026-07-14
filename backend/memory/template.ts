@@ -11,6 +11,7 @@ import {
 } from "@/backend/memory/recall";
 import { MEMORY_AUGMENTED_PROMPT_TEMPLATE } from "@/backend/prompt/system";
 import { formatSummaryText } from "@/lib/langgraph/format-summary";
+import { resolveKbRefs } from "@/lib/kb/resolve";
 
 // ponytail: the system prompt carries TWO dynamic blocks:
 //   <memory>    = the user's saved profile (keys + values), plus OAuth
@@ -106,11 +107,17 @@ export function formatThreadsForPrompt(threads: ThreadSummariesPayload): string 
 // Pure function — `template.test.ts` pins every branch (no summary,
 // no humans, single summary, multiple summaries, last human covered,
 // out-of-order store rows, tool interleaving preserved).
-export function trimMessagesForInvoke(
+//
+// v2 (issue #13): kb_ref resolution happens here too — the LLM only
+// ever sees resolved text. Async because resolveKbRefs awaits the
+// LRU-cached DB lookup.
+export async function trimMessagesForInvoke(
   messages: BaseMessage[],
   summaries: ThreadSummariesPayload["summaries"],
-): BaseMessage[] {
-  const noSystem = messages.filter((m) => !(m instanceof SystemMessage));
+  userId?: string,
+): Promise<BaseMessage[]> {
+  const resolved = userId ? await resolveKbRefs(messages, userId) : messages;
+  const noSystem = resolved.filter((m) => !(m instanceof SystemMessage));
   const humanIndices: number[] = [];
   for (let i = 0; i < noSystem.length; i++) {
     if (noSystem[i] instanceof HumanMessage) humanIndices.push(i);
