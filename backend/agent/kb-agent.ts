@@ -1,127 +1,164 @@
 import { END, START, StateGraph, StateSchema } from "@langchain/langgraph";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { type BaseMessage } from "@langchain/core/messages";
+import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-import { getEmbeddingModel, getVlmModel } from "@/backend/model";
+import { getChatModel, getEmbeddingModel, getVlmModel } from "@/backend/model";
+import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 import { screenshotPdf } from "@/lib/kb/screenshot";
 import {
-  writeKbDoc,
-  type KbChunkRecord,
-  type KbDocRecord,
-  type KbPageRecord,
-} from "@/lib/kb/store";
+  ensureDefaultKbFolder,
+  findKbDocumentByContentHash,
+  findKbDocumentByAttachmentId,
+  insertKbChunks,
+  insertKbDocument,
+  withKbTx,
+  type KbDocument,
+} from "@/lib/kb/queries";
+import { findAttachmentByR2Key } from "@/lib/attachments/queries";
+import { appendKbRef, extractFilePart, findLastHumanMessage } from "@/lib/kb/extract";
+import { invalidateKbDoc } from "@/lib/kb/cache";
+import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from "@/lib/r2/client";
 
-/**
- * Ponytail: v1 KB ingestion subgraph. Three nodes — screenshot → vlm →
- * chunk-embed-store — wired linearly. Each node updates a shared
- * KbAgentState; the final node writes the JSON record so a v2 migration
- * to Postgres is a 1:1 dump.
- *
- * The graph is invoked synchronously from the chat runtime's
- * attachment-kb-injector node (commit #5). For v1 we don't need a
- * background dispatcher — the chat blocks on this subgraph for the
- * first message that touches a new attachment, matching the M2
- * transition plan's UX option (c) (sync fallback, duplicate work on
- * the first turn only).
- *
- * v2 will move this to background: fire-and-forget invoke from
- * confirm/route.ts (#12), the chat model sees the original file part
- * for the first turn, and the model gets KB chunks on subsequent
- * turns once the subgraph finishes.
- */
+// ponytail: v2 KB ingest subgraph. Compiled once at module load, then
+// wired into the parent agent.ts graph as `kbAgent`. Sits between
+// RouterNode (which decides "PDF → kbAgent") and the actual sub-agent
+// (chatAgent / etc.). The parent calls `addEdge("kbAgent", "routerAgent")`
+// so the router runs a SECOND time after kbAgent, this time seeing the
+// appended kb_ref — and routes to chatAgent (no more PDF to handle).
+//
+// Flow:
+//   START → screenshot → (conditional) → chunkEmbedStore → END
+//                              ↓
+//                            vlm ────────────┘
+//
+// The conditional edge after screenshotNode skips vlm + chunkEmbedStore
+// when the doc is a dedup hit (state.skipPipeline). Both the dedup-hit
+// path and the new-ingest path funnel through chunkEmbedStoreNode
+// (which appends the kb_ref to the last HumanMessage either way).
 
-const KbAgentState = new StateSchema({
-  userId: z.string(),
-  attachmentId: z.string().nullable(),
-  sourceUrl: z.string().nullable(),
-  title: z.string(),
-  contentType: z.string(),
-  contentHash: z.string(),
-  pdfBytes: z.instanceof(Buffer),
-  docId: z.string(),
-  imageTmpDir: z.string().nullable(),
-  pages: z
-    .array(
-      z.object({
-        pageIndex: z.number(),
-        markdown: z.string(),
-        imagePath: z.string(),
-      }),
-    )
-    .default([]),
-  chunks: z
-    .array(
-      z.object({
-        id: z.string(),
-        ordinal: z.number(),
-        content: z.string(),
-        embedding: z.array(z.number()),
-        entities: z.array(z.string()),
-      }),
-    )
-    .default([]),
-  status: z.enum(["pending", "parsing", "ready", "failed"]).default("pending"),
-  errorMessage: z.string().nullable().default(null),
-  createdAt: z.string().nullable(),
-  updatedAt: z.string().nullable(),
-});
-
-// ponytail: VLM is called per page with the rendered PNG. The prompt
-// asks for clean markdown so the chunker's downstream step (or v1's
-// 1-page = 1-chunk shortcut) gets a predictable input shape. Trimming
-// whitespace is the model's job; we don't re-parse.
 const VLM_PAGE_PROMPT = `You are extracting text from a single PDF page rendered as an image.
 Output clean markdown: preserve headings, lists, code blocks, tables, and inline formatting.
 If the page is blank or contains only decorative images, output an empty string.
 Do not add commentary — return only the markdown content of the page.`;
 
-async function screenshotNode(state: typeof KbAgentState.State) {
-  // ponytail: mupdf needs a writable dir. Use the caller-provided
-  // imageTmpDir (set by tests) when present, otherwise mkdtemp under
-  // os.tmpdir(). Tests pre-create the dir via mkdtempSync; production
-  // path uses the async mkdtemp here. The dir lives only for the
-  // duration of the subgraph; chunkEmbedStoreNode reads from imagePath
-  // then runs cleanup.
-  let dir: string;
-  if (state.imageTmpDir) {
-    dir = state.imageTmpDir;
-    await mkdir(dir, { recursive: true });
-  } else {
-    dir = await mkdtemp(join(tmpdir(), "kb-screenshot-"));
+type PageResult = { pageIndex: number; imageUrl: string; markdown: string };
+type ChunkSeed = { ordinal: number; content: string; entities: string[]; embedding: number[] };
+
+const KbAgentState = new StateSchema({
+  // From parent — populated by RouterNode at invoke time.
+  messages: z.array(z.custom<BaseMessage>()),
+  userId: z.string().nullable().default(null),
+  attachmentId: z.string().nullable().default(null),
+  r2Key: z.string().nullable().default(null),
+  title: z.string().nullable().default(null),
+  contentHash: z.string().nullable().default(null),
+  docId: z.string().nullable().default(null),
+  // Internal.
+  pages: z.array(z.custom<PageResult>()).default([]),
+  skipPipeline: z.boolean().default(false),
+  chunks: z.array(z.custom<ChunkSeed>()).default([]),
+  status: z.enum(["pending", "parsing", "success", "failed"]).default("pending"),
+  errorMessage: z.string().nullable().default(null),
+});
+
+function makeError(message: string) {
+  return { status: "failed" as const, errorMessage: message, skipPipeline: true };
+}
+
+// ponytail: derive the state shape once and reuse; matches the pattern
+// in chat-agent.ts (inline `messages: BaseMessage[]`).
+type KbAgentStateShape = {
+  messages: BaseMessage[];
+  userId: string | null;
+  attachmentId: string | null;
+  r2Key: string | null;
+  title: string | null;
+  contentHash: string | null;
+  docId: string | null;
+  pages: PageResult[];
+  skipPipeline: boolean;
+  chunks: ChunkSeed[];
+  status: "pending" | "parsing" | "success" | "failed";
+  errorMessage: string | null;
+};
+
+async function screenshotNode(
+  state: KbAgentStateShape,
+  config?: { configurable?: { userId?: string } },
+): Promise<Partial<KbAgentStateShape>> {
+  const userId = config?.configurable?.userId ?? state.userId;
+  if (!userId) return makeError("user not provided");
+  const last = findLastHumanMessage(state.messages);
+  if (!last) return makeError("no human message");
+  const filePart = extractFilePart(state.messages);
+  if (!filePart) return makeError("no file part");
+  if (filePart.mime_type !== "application/pdf") {
+    return makeError(`unsupported type: ${filePart.mime_type ?? "unknown"}`);
   }
-  const pdfBytes = Buffer.from(state.pdfBytes);
-  const pages = await screenshotPdf({ pdfBytes, outputDir: dir, dpi: 200 });
+  const base = getR2PublicBaseUrl();
+  const r2Key = r2KeyFromPublicUrl(filePart.data, base);
+  const attachment = await findAttachmentByR2Key(userId, r2Key);
+  if (!attachment) return makeError("attachment not found");
+
+  const contentHash = attachment.sha256 ?? `r2key:${attachment.r2Key}`;
+
+  // PRIMARY dedup — contentHash. SECONDARY — attachmentId (defense in
+  // depth). Either hit short-circuits to a kb_ref-only pass.
+  let existing = await findKbDocumentByContentHash(userId, contentHash);
+  if (!existing) existing = await findKbDocumentByAttachmentId(userId, attachment.id);
+
+  if (existing) {
+    return {
+      userId,
+      attachmentId: attachment.id,
+      r2Key: attachment.r2Key,
+      title: attachment.name,
+      contentHash,
+      docId: existing.id,
+      status: existing.status as KbAgentStateShape["status"],
+      errorMessage: existing.errorMessage,
+      skipPipeline: true,
+    };
+  }
+
+  // New ingest: fetch bytes, render pages, upload to R2.
+  const pdfBytes = await getObject(attachment.r2Key);
+  const rendered = await screenshotPdf({ pdfBytes, dpi: 200 });
+  const docId = `d-${randomUUID()}`;
+  const pages: PageResult[] = await Promise.all(
+    rendered.map(async (p) => {
+      const key = `kb-tmp/${userId}/${docId}/page-${p.pageIndex}.png`;
+      const imageUrl = await uploadKbImage({ key, body: p.png });
+      return { pageIndex: p.pageIndex, imageUrl, markdown: "" };
+    }),
+  );
+
   return {
-    pages: pages.map((p: { pageIndex: number; imagePath: string }) => ({
-      pageIndex: p.pageIndex,
-      imagePath: p.imagePath,
-      markdown: "",
-    })),
-    imageTmpDir: dir,
-    status: "parsing" as const,
+    userId,
+    attachmentId: attachment.id,
+    r2Key: attachment.r2Key,
+    title: attachment.name,
+    contentHash,
+    docId,
+    pages,
+    status: "parsing",
   };
 }
 
-async function vlmNode(state: typeof KbAgentState.State) {
+async function vlmNode(state: KbAgentStateShape) {
+  if (state.skipPipeline) return {};
   const vlm = await getVlmModel();
-  const updatedPages: KbPageRecord[] = [];
-  try {
-    for (const p of state.pages) {
-      // ponytail: ChatOpenAI's image_url content part accepts a data: URL
-      // or an http(s) URL. We send a data URL with base64 so the model
-      // can OCR the image inline. v2 will swap to R2-hosted URLs to keep
-      // payload sizes sane for large documents.
-      const imgBytes = await readFile(p.imagePath);
-      const dataUrl = `data:image/png;base64,${Buffer.from(imgBytes).toString("base64")}`;
+  const updated: PageResult[] = [];
+  for (const p of state.pages) {
+    try {
       const response = await vlm.invoke([
         {
           role: "user",
           content: [
             { type: "text", text: VLM_PAGE_PROMPT },
-            { type: "image_url", image_url: { url: dataUrl } },
+            { type: "image_url", image_url: { url: p.imageUrl } },
           ],
         },
       ] as never);
@@ -138,90 +175,116 @@ async function vlmNode(state: typeof KbAgentState.State) {
                 )
                 .join("")
             : "";
-      updatedPages.push({
-        pageIndex: p.pageIndex,
-        imagePath: p.imagePath,
-        markdown: text.trim(),
-      });
+      updated.push({ ...p, markdown: text.trim() });
+    } catch (err) {
+      return {
+        status: "failed" as const,
+        errorMessage: (err as Error).message,
+        skipPipeline: true,
+      };
     }
-    return { pages: updatedPages };
-  } catch (err) {
-    // ponytail: bubble up as status=failed + errorMessage in state, not
-    // as a thrown error. The chat runtime's attachment-kb-injector
-    // (commit #5) inspects state.status to decide whether to short-
-    // circuit the chat loop. Throwing would crash the LangGraph run.
-    return {
-      status: "failed" as const,
-      errorMessage: (err as Error).message,
-    };
   }
+  return { pages: updated };
 }
 
-async function chunkEmbedStoreNode(state: typeof KbAgentState.State) {
-  // ponytail: v1 chunks 1:1 with pages. A page's VLM output is one
-  // chunk. Future: replace with chonkie/LangChain Recursive splitter
-  // when we need semantic boundaries. The store already carries
-  // `chunks: KbChunkRecord[]` so the schema doesn't change.
-  //
-  // Failure short-circuit: if vlmNode already set status=failed (e.g.
-  // VLM call errored), we still write a partial record to the store
-  // so the user can see what failed in their KB. No embeddings → empty
-  // chunks array, status=failed with errorMessage propagated.
-  const embedder = await getEmbeddingModel();
-  const isFailed = state.status === "failed";
-  const nonEmpty = isFailed
-    ? []
-    : state.pages.filter((p: { markdown: string }) => p.markdown.length > 0);
-  const texts = nonEmpty.map((p: { markdown: string }) => p.markdown);
-  const embeddings: number[][] = texts.length > 0 ? await embedder.embedDocuments(texts) : [];
-
-  const chunks: KbChunkRecord[] = nonEmpty.map((p: { markdown: string }, i: number) => ({
-    id: `c-${randomUUID()}`,
-    ordinal: i,
-    content: p.markdown,
-    embedding: embeddings[i] ?? [],
-    // ponytail: entity extraction is v2. v1 leaves the field empty; the
-    // search-graph leg in issue #13's design gets activated once
-    // entity extraction lands.
-    entities: [],
-  }));
-
-  const now = new Date().toISOString();
-  const record: KbDocRecord = {
-    id: state.docId,
-    userId: state.userId,
-    attachmentId: state.attachmentId,
-    sourceUrl: state.sourceUrl,
-    title: state.title,
-    contentType: state.contentType,
-    status: isFailed ? "failed" : "ready",
-    contentHash: state.contentHash,
-    errorMessage: state.errorMessage,
-    pages: state.pages,
-    chunks,
-    createdAt: state.createdAt ?? now,
-    updatedAt: now,
-  };
-  await writeKbDoc(record);
-
-  // ponytail: image tmp dir is no longer needed once chunks are stored;
-  // the JSON record's imagePath points into it, but v1 doesn't expose
-  // those paths in the UI yet. Clean up to avoid leaking the rendered
-  // PNGs forever. v2 keeps the images in R2.
-  if (state.imageTmpDir) {
-    try {
-      await rm(state.imageTmpDir, { recursive: true, force: true });
-    } catch {
-      // best-effort cleanup; tmp OS reaps eventually
-    }
+async function chunkEmbedStoreNode(state: KbAgentStateShape) {
+  const userId = state.userId;
+  const docId = state.docId;
+  const attachmentId = state.attachmentId;
+  const contentHash = state.contentHash;
+  if (!userId || !docId || !contentHash || !attachmentId) {
+    return { status: "failed" as const, errorMessage: "missing fields in kbAgent state" };
   }
 
-  return {
-    chunks,
-    status: isFailed ? ("failed" as const) : ("ready" as const),
-    errorMessage: state.errorMessage,
-    updatedAt: now,
-  };
+  // Skip-path (dedup hit or vlm failed): no new chunks — append kb_ref
+  // for the existing doc and bail.
+  if (state.skipPipeline) {
+    const last = findLastHumanMessage(state.messages);
+    if (!last) return { status: "failed" as const, errorMessage: "no human message" };
+    const rewritten = appendKbRef(state.messages, docId, attachmentId);
+    return { messages: rewritten, status: state.status, errorMessage: state.errorMessage };
+  }
+
+  // New ingest: chunk + embed + entity extract + DB transaction.
+  const fullMarkdown = state.pages
+    .map((p) => p.markdown)
+    .filter((m) => m.length > 0)
+    .join("\n\n");
+  if (!fullMarkdown) {
+    return { status: "failed" as const, errorMessage: "empty markdown after VLM" };
+  }
+  const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
+  const splitDocs = await splitter.createDocuments([fullMarkdown]);
+  const chat = await getChatModel();
+
+  // Entity extraction per chunk (best-effort — fall back to [] on parse).
+  const entitySchema = z.array(z.string());
+  const seeds: ChunkSeed[] = [];
+  const embedder = await getEmbeddingModel();
+  const texts = splitDocs.map((d) => d.pageContent);
+  const embeddings = await embedder.embedDocuments(texts);
+  for (let i = 0; i < splitDocs.length; i++) {
+    let entities: string[] = [];
+    try {
+      const out = await chat
+        .withStructuredOutput(entitySchema)
+        .invoke(
+          `Extract named entities (people, orgs, concepts, products) from this passage:\n\n${texts[i]}`,
+        );
+      entities = (out as string[]).slice(0, 20);
+    } catch {
+      entities = [];
+    }
+    seeds.push({
+      ordinal: i,
+      content: texts[i],
+      entities,
+      embedding: embeddings[i] ?? [],
+    });
+  }
+
+  // tx: doc + chunks land atomically.
+  const folder = await ensureDefaultKbFolder(userId, "Attachments");
+  const newDoc: KbDocument = await withKbTx(async (tx) => {
+    const doc = await insertKbDocument({
+      id: docId,
+      userId,
+      folderId: folder.id,
+      attachmentId,
+      title: state.title ?? "untitled",
+      contentType: "application/pdf",
+      contentHash,
+      status: "success",
+      errorMessage: null,
+    });
+    await insertKbChunks(
+      tx,
+      seeds.map((s) => ({
+        id: `c-${randomUUID()}`,
+        documentId: doc.id,
+        ordinal: s.ordinal,
+        content: s.content,
+        embedding: s.embedding,
+        entities: s.entities,
+        // tsv is a generated column — the DB computes it on INSERT
+        // from `content`. Drizzle infers it as required on the insert
+        // type even though writes are forbidden; pass an empty
+        // placeholder that the DB replaces.
+        tsv: "",
+      })),
+    );
+    return doc;
+  });
+  invalidateKbDoc(userId, newDoc.id);
+
+  const last = findLastHumanMessage(state.messages);
+  if (!last) return { status: "failed" as const, errorMessage: "no human message" };
+  const rewritten = appendKbRef(state.messages, newDoc.id, attachmentId);
+  return { chunks: seeds, messages: rewritten, status: "success", errorMessage: null };
+}
+
+function routeAfterScreenshot(state: KbAgentStateShape): "vlm" | "chunkEmbedStore" {
+  return state.skipPipeline ? "chunkEmbedStore" : "vlm";
 }
 
 const builder = new StateGraph(KbAgentState)
@@ -229,8 +292,12 @@ const builder = new StateGraph(KbAgentState)
   .addNode("vlm", vlmNode)
   .addNode("chunkEmbedStore", chunkEmbedStoreNode)
   .addEdge(START, "screenshot")
-  .addEdge("screenshot", "vlm")
+  .addConditionalEdges("screenshot", routeAfterScreenshot, ["vlm", "chunkEmbedStore"])
   .addEdge("vlm", "chunkEmbedStore")
   .addEdge("chunkEmbedStore", END);
 
-export const graph = builder.compile({ name: "kbAgent" });
+export const kbAgent = builder.compile({
+  name: "kbAgent",
+  ...subgraphCheckpointerConfig,
+});
+void END;

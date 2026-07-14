@@ -6,6 +6,7 @@ import { weatherAgent } from "@/backend/agent/weather-agent";
 import { chatAgent } from "@/backend/agent/chat-agent";
 import { cryptoAgent } from "@/backend/agent/crypto-agent";
 import { codeAgent } from "@/backend/agent/code-agent";
+import { kbAgent } from "@/backend/agent/kb-agent";
 import { routerAgentNode } from "@/backend/node/router-agent-node";
 import { checkpointer } from "@/backend/checkpointer";
 import { store } from "@/backend/store";
@@ -15,12 +16,14 @@ import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
 
 // After the router speaks, decide which sub-agent gets the turn.
 // Falls back to chatAgent if the router hasn't run yet or its
-// decision didn't make it into state.
+// decision didn't make it into state. kbAgent routes back to the
+// router after appending the kb_ref so a SECOND router pass picks the
+// final sub-agent (chat / weather / etc.) now that the PDF is gone.
 function routeToSubAgent({
   routerDecision,
 }: {
-  routerDecision?: { next: "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" };
-}): "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" {
+  routerDecision?: { next: "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" | "kbAgent" };
+}): "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" | "kbAgent" {
   return routerDecision?.next ?? "chatAgent";
 }
 
@@ -53,11 +56,16 @@ export const builder = new StateGraph(RouterAgentState)
   .addNode("weatherAgent", weatherAgent)
   .addNode("cryptoAgent", cryptoAgent)
   .addNode("codeAgent", codeAgent)
+  .addNode("kbAgent", kbAgent)
   .addNode("triggerBackgroundAgent", triggerBackgroundAgentNode)
   .addNode("renameThreadAgent", renameThreadAgentNode)
-  // Topology:
-  //   START ──▶ routerAgent ──▶ (sub-agent) ──▶ triggerBackgroundAgent ──▶ END
-  //   START ─────────────────────────────────▶ renameThreadAgent (parallel, leaf)
+  // Topology (issue #13 v2):
+  //   START ──▶ routerAgent ──▶ (sub-agent | kbAgent) ──▶ triggerBackgroundAgent ──▶ END
+  //   START ─────────────────────────────────────────▶ renameThreadAgent (parallel, leaf)
+  //
+  // kbAgent loops back to routerAgent after appending the kb_ref, so
+  // a SECOND router pass picks the final sub-agent (chat / weather /
+  // etc.) now that the PDF file part has been replaced with a kb_ref.
   //
   // ask_location's picker card is owned by the weather subgraph
   // (see backend/agent/weather-agent.ts + components/tool-ui/ask-location).
@@ -84,11 +92,16 @@ export const builder = new StateGraph(RouterAgentState)
     "chatAgent",
     "cryptoAgent",
     "codeAgent",
+    "kbAgent",
   ])
   .addEdge("chatAgent", "triggerBackgroundAgent")
   .addEdge("weatherAgent", "triggerBackgroundAgent")
   .addEdge("cryptoAgent", "triggerBackgroundAgent")
   .addEdge("codeAgent", "triggerBackgroundAgent")
+  // ponytail: kbAgent loops back to the router — after it appends
+  // the kb_ref part, the router's PDF-short-circuit no longer fires
+  // and it routes to the final sub-agent (chatAgent for PDFs, etc.).
+  .addEdge("kbAgent", "routerAgent")
   .addEdge("triggerBackgroundAgent", END)
   .addConditionalEdges(START, shouldRenameRouter, {
     renameThreadAgent: "renameThreadAgent",

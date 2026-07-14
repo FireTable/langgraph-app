@@ -10,7 +10,7 @@ import { StateSchema, MessagesValue } from "@langchain/langgraph";
 export const RouterAgentState = new StateSchema({
   messages: MessagesValue,
   routerDecision: z.object({
-    next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent"]),
+    next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent", "kbAgent"]),
   }),
 });
 
