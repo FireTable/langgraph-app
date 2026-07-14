@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { setKbStoreRoot, type KbDocRecord } from "@/lib/kb/store";
-import { graph as kbAgentGraph } from "@/backend/kb-agent";
+import { graph as kbAgentGraph } from "@/backend/agent/kb-agent";
 
 const { mockVlmInvoke, mockEmbedDocuments } = vi.hoisted(() => ({
   mockVlmInvoke: vi.fn(),

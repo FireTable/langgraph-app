@@ -1,7 +1,7 @@
 import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
 import { randomUUID } from "node:crypto";
 
-import { graph as kbAgentGraph } from "@/backend/kb-agent";
+import { graph as kbAgentGraph } from "@/backend/agent/kb-agent";
 import { findAttachmentByR2Key } from "@/lib/attachments/queries";
 import { getObject } from "@/lib/r2/client";
 

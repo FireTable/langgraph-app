@@ -14,7 +14,7 @@ const { mockKbInvoke, mockR2Get, mockFindAttachment, mockInsertAttachment } = vi
   mockInsertAttachment: vi.fn(),
 }));
 
-vi.mock("@/backend/kb-agent", () => ({
+vi.mock("@/backend/agent/kb-agent", () => ({
   graph: { invoke: (...args: unknown[]) => mockKbInvoke(...args) },
 }));
 
