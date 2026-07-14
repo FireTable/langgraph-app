@@ -12,6 +12,7 @@ import {
   trimMessagesForInvoke,
 } from "@/backend/memory/template";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
+import { attachmentKbInjectorNode } from "@/backend/node/attachment-kb-injector-node";
 
 // Chat agent gets every tool — the router already decided whether this
 // turn is weather, so chatAgent never sees a weather question. Weather
@@ -56,9 +57,17 @@ function chatModelRoute(state: { messages: BaseMessage[] }) {
 const chatToolNode = new ToolNode(ALL_TOOLS);
 
 const builder = new StateGraph(CommonAgentState)
+  .addNode("injectAttachments", attachmentKbInjectorNode)
   .addNode("chatModel", chatModelNode)
   .addNode("chatTools", chatToolNode)
-  .addEdge(START, "chatModel")
+  // ponytail: the injector runs once per chat subgraph invocation,
+  // BEFORE chatModelNode. It is a no-op when the latest user message
+  // has no PDF file parts (every existing chat turn today). The KB
+  // rewrite of state.messages (file part → text content) only
+  // happens when a PDF is present, so the existing chat history
+  // replay path is unchanged for non-PDF messages.
+  .addEdge(START, "injectAttachments")
+  .addEdge("injectAttachments", "chatModel")
   .addConditionalEdges("chatModel", chatModelRoute, ["chatTools", END])
   .addEdge("chatTools", "chatModel");
 

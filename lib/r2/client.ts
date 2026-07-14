@@ -1,4 +1,5 @@
 import {
+  GetObjectCommand,
   S3Client,
   DeleteObjectCommand,
   HeadObjectCommand,
@@ -87,6 +88,29 @@ export async function headObject(key: string): Promise<{
 
 export async function deleteObject(key: string): Promise<void> {
   await getS3Client().send(new DeleteObjectCommand({ Bucket: getR2Bucket(), Key: key }));
+}
+
+// ponytail: server-side fetch used by the KB ingest pipeline (issue #13).
+// Returns the raw object bytes as a Buffer; the caller is responsible for
+// any format detection / decoding. v1 callers are the attachment-kb-
+// injector node that pulls a PDF from R2 and feeds mupdf.
+//
+// We don't return a stream — the KB pipeline ingests the full PDF in
+// one pass (mupdf needs the whole document for the page tree). A
+// streaming variant would matter for >10 MiB docs; today the R2 cap
+// is 10 MiB so the buffer is fine.
+export async function getObject(key: string): Promise<Buffer> {
+  const res = await getS3Client().send(new GetObjectCommand({ Bucket: getR2Bucket(), Key: key }));
+  const body = res.Body;
+  if (!body) throw new Error(`getObject: empty body for key ${key}`);
+  // ponytail: Body is a Node Readable in Node runtime; collect chunks
+  // into a single Buffer. transformToByteArray is the typed-array
+  // equivalent but Buffer is what mupdf's openDocument takes.
+  const chunks: Buffer[] = [];
+  for await (const chunk of body as AsyncIterable<Buffer | Uint8Array>) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
 }
 
 export function buildPublicUrl(key: string): string {
