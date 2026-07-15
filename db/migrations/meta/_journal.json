@@ -43,6 +43,13 @@
       "when": 1784050103247,
       "tag": "0005_past_grey_gargoyle",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784141731876,
+      "tag": "0006_strong_karen_page",
+      "breakpoints": true
     }
   ]
 }

@@ -20,6 +20,7 @@ import {
   insertKbFolder,
   listKbDocumentsByFolder,
   listKbDocumentsGroupedByFolder,
+  updateKbDocumentStatus,
   withKbTx,
 } from "@/lib/kb/queries";
 // (no namespace alias — ESM bindings are read-only in this Vitest setup,
@@ -79,7 +80,7 @@ async function seedDocument(
 
 function makeEmbedding(seed = 0): number[] {
   const out: number[] = [];
-  for (let i = 0; i < 1536; i++) out.push(Math.sin(seed + i) * 0.001);
+  for (let i = 0; i < 1024; i++) out.push(Math.sin(seed + i) * 0.001);
   return out;
 }
 
@@ -475,6 +476,46 @@ describe("lib/kb/queries", () => {
       ).rejects.toThrow("intentional rollback");
       const chunks = await findKbChunksByDocumentId(TEST_USER.id, docId);
       expect(chunks).toEqual([]);
+    });
+  });
+
+  // ponytail: kbAgent pushes doc-row status updates from screenshotNode
+  // (insert "parsing") and ocrNode (flip to "success" or "failed"
+  // + errorMessage) so a doc row is always present once the agent has
+  // observed the PDF. Before this helper existed the only update path
+  // was resetKbDocumentForReprocess, which is dedicated to the
+  // reprocess flow — kbAgent itself had no way to mark a row failed.
+  describe("updateKbDocumentStatus", () => {
+    it("flips a doc from parsing to success", async () => {
+      const folderId = await seedFolder(TEST_USER.id);
+      const docId = await seedDocument(TEST_USER.id, folderId, { status: "parsing" });
+      const updated = await updateKbDocumentStatus(TEST_USER.id, docId, {
+        status: "success",
+        errorMessage: null,
+      });
+      expect(updated?.status).toBe("success");
+      expect(updated?.errorMessage).toBeNull();
+      const found = await findKbDocumentById(TEST_USER.id, docId);
+      expect(found?.status).toBe("success");
+    });
+
+    it("records errorMessage when status flips to failed", async () => {
+      const folderId = await seedFolder(TEST_USER.id);
+      const docId = await seedDocument(TEST_USER.id, folderId, { status: "parsing" });
+      const updated = await updateKbDocumentStatus(TEST_USER.id, docId, {
+        status: "failed",
+        errorMessage: "OCR gateway 502",
+      });
+      expect(updated?.status).toBe("failed");
+      expect(updated?.errorMessage).toBe("OCR gateway 502");
+    });
+
+    it("returns null for a docId the caller doesn't own", async () => {
+      const other = await makeIsolatedUser();
+      const folderId = await seedFolder(other.id);
+      const docId = await seedDocument(other.id, folderId);
+      const updated = await updateKbDocumentStatus(TEST_USER.id, docId, { status: "success" });
+      expect(updated).toBeNull();
     });
   });
 });

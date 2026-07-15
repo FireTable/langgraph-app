@@ -23,11 +23,17 @@ export const kbDocStatusEnum = pgEnum("kb_doc_status", ["pending", "parsing", "s
 
 // ponytail: Drizzle's built-in types don't cover pgvector's `vector(1536)`
 // yet. customType pins the SQL string + the JS shape (number[]) so the
-// rest of the code reads embeddings as plain number arrays; the SELECT
-// path parses the pgvector literal "[1,2,3]" back to a JS array.
+// ponytail: pgvector dimension 1024. The embedder is BAAI/bge-m3
+// (served by apimart under the OPENAI_EMBEDDING_MODEL alias); bge-m3
+// returns 1024 dims by default. schema column + HNSW index must agree
+// on dim — pgvector refuses vector inserts of the wrong size with
+// 22P02, and HNSW can't be built against a column whose dim doesn't
+// match the index operator's dim. If you switch embedders, bump the
+// dim here AND run the matching ALTER COLUMN migration.
+export const EMBEDDING_DIM = 1024;
 const vector = customType<{ data: number[]; driverData: string }>({
   dataType() {
-    return "vector(1536)";
+    return `vector(${EMBEDDING_DIM})`;
   },
   toDriver(value: number[]): string {
     // pgvector accepts the array literal directly when cast.

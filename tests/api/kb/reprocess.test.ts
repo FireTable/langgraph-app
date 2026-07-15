@@ -29,10 +29,10 @@ import { setCurrentUser } from "@/tests/helpers/session";
 
 import { POST } from "@/app/api/kb/documents/[id]/reprocess/route";
 
-// ponytail: 1536-dim zero vector literal. pgvector requires the
+// ponytail: 1024-dim zero vector literal. pgvector requires the
 // bracket-wrapped form — `'[0,0,...]'::vector`, not bare comma-list.
 const embeddingLiteral = sql.raw(
-  `'[${Array.from({ length: 1536 }, () => "0").join(",")}]'::vector`,
+  `'[${Array.from({ length: 1024 }, () => "0").join(",")}]'::vector`,
 );
 
 const USER_A = { id: "user-a", email: "a@x" };
