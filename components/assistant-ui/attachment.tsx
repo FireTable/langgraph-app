@@ -1,9 +1,10 @@
 "use client";
 
 import { type PropsWithChildren, useEffect, useMemo, useState, type FC } from "react";
+import { useRouter } from "next/navigation";
 import { XIcon, PlusIcon, FileText, Loader2Icon } from "lucide-react";
 import { AttachmentPrimitive, ComposerPrimitive, useAuiState, useAui } from "@assistant-ui/react";
-import type { CompleteAttachment, ThreadUserMessagePart } from "@assistant-ui/react";
+import type { CompleteAttachment } from "@assistant-ui/react";
 import { useShallow } from "zustand/shallow";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogTitle, DialogContent, DialogTrigger } from "@/components/ui/dialog";
@@ -11,6 +12,9 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
 import { useUploadStore } from "@/lib/attachments/upload-store";
+import { buildUserMessageAttachments } from "@/components/assistant-ui/build-user-message-attachments";
+
+const KB_SETTINGS_PATH = "/settings/knowledge-base";
 
 // ponytail: client-side object URL for a pending File. Drops on unmount.
 const useFileSrc = (file: File | undefined) => {
@@ -262,22 +266,6 @@ const AttachmentUI: FC = () => {
   );
 };
 
-// ponytail: image parts in message.content carry only the URL — the
-// SDK's `contentToParts` drops `filename` on the round trip through
-// `image_url`. R2 keys look like `u/<userId>/<uuid>-<filename>`, so
-// the last URL segment is the original filename with the uuid prefix
-// stripped.
-function filenameFromImageUrl(url: string): string {
-  try {
-    const last = new URL(url).pathname.split("/").pop() ?? "";
-    const decoded = decodeURIComponent(last);
-    const stripped = decoded.replace(/^[0-9a-f-]{36}-/, "");
-    return stripped || "image";
-  } catch {
-    return "image";
-  }
-}
-
 // ponytail: prop-based message-path card. Renders one attachment for
 // the message-list. No SDK attachment runtime here — the attachment
 // data is plain JS, sourced from message.content by the parent.
@@ -286,11 +274,13 @@ type MessageAttachmentCardProps = {
 };
 
 const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) => {
+  const router = useRouter();
   const src = useMemo(
     () => attachment.content?.find((c) => c.type === "image")?.image,
     [attachment],
   );
   const isImage = attachment.type === "image";
+  const isKbRef = attachment.type === "kb_ref";
   const typeLabel = useMemo(() => {
     switch (attachment.type) {
       case "image":
@@ -299,10 +289,28 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
         return "Document";
       case "file":
         return "File";
+      case "kb_ref":
+        return "KB document";
       default:
         return attachment.type;
     }
   }, [attachment.type]);
+
+  // ponytail: kb_ref tiles deep-link into /settings/knowledge-base?doc=<id>.
+  // The settings view can read the query and open its detail dialog.
+  // We bypass AttachmentPreviewDialog entirely for kb_ref (no src) and
+  // wire click / keydown to router.push instead.
+  const kbRefDocId = useMemo(() => {
+    if (!isKbRef) return null;
+    const part = attachment.content?.find(
+      (c) => (c as unknown as { type?: string }).type === "kb_ref",
+    ) as { docId?: string } | undefined;
+    return part?.docId ?? null;
+  }, [attachment, isKbRef]);
+
+  const activate = () => {
+    if (kbRefDocId) router.push(`${KB_SETTINGS_PATH}?doc=${encodeURIComponent(kbRefDocId)}`);
+  };
 
   return (
     <Tooltip>
@@ -313,18 +321,38 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
           isImage && "aui-attachment-root-message only:*:first:size-24",
         )}
       >
-        <AttachmentPreviewDialog src={src}>
+        {isKbRef ? (
           <TooltipTrigger asChild>
             <div
               className="aui-attachment-tile bg-muted size-14 cursor-pointer overflow-hidden rounded-[calc(var(--composer-radius)-var(--composer-padding))] border transition-opacity hover:opacity-75"
               role="button"
               tabIndex={0}
               aria-label={`${typeLabel} attachment`}
+              onClick={activate}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  activate();
+                }
+              }}
             >
-              <AttachmentThumb src={src} />
+              <AttachmentThumb src={undefined} />
             </div>
           </TooltipTrigger>
-        </AttachmentPreviewDialog>
+        ) : (
+          <AttachmentPreviewDialog src={src}>
+            <TooltipTrigger asChild>
+              <div
+                className="aui-attachment-tile bg-muted size-14 cursor-pointer overflow-hidden rounded-[calc(var(--composer-radius)-var(--composer-padding))] border transition-opacity hover:opacity-75"
+                role="button"
+                tabIndex={0}
+                aria-label={`${typeLabel} attachment`}
+              >
+                <AttachmentThumb src={src} />
+              </div>
+            </TooltipTrigger>
+          </AttachmentPreviewDialog>
+        )}
       </div>
       <TooltipContent side="top">{attachment.name}</TooltipContent>
     </Tooltip>
@@ -354,61 +382,10 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
 export const UserMessageAttachments: FC = () => {
   const content = useAuiState((s) => s.message.content);
 
-  const attachments = useMemo<CompleteAttachment[]>(() => {
-    const seen = new Set<string>();
-    const result: CompleteAttachment[] = [];
-    for (const part of content) {
-      let key: string | undefined;
-      let complete: CompleteAttachment | undefined;
-      if (part.type === "image") {
-        const imagePart = part;
-        const name = filenameFromImageUrl(imagePart.image);
-        key = imagePart.image;
-        complete = {
-          id: imagePart.image,
-          type: "image",
-          name,
-          contentType: "image",
-          status: { type: "complete" },
-          content: [
-            {
-              type: "image",
-              image: imagePart.image,
-              filename: name,
-            },
-          ],
-        };
-      } else if (part.type === "file") {
-        const filePart = part as Extract<ThreadUserMessagePart, { type: "file" }>;
-        // ponytail: SDK's contentToParts defaults filename to "file"
-        // when the source part lacks `metadata.filename`, but the type
-        // still allows undefined. Fall back to "file" so we always
-        // have a non-empty id / name.
-        const fileName = filePart.filename || "file";
-        key = fileName;
-        complete = {
-          id: fileName,
-          type: "file",
-          name: fileName,
-          contentType: filePart.mimeType,
-          status: { type: "complete" },
-          content: [
-            {
-              type: "file",
-              data: filePart.data,
-              mimeType: filePart.mimeType,
-              filename: fileName,
-            },
-          ],
-        };
-      }
-      if (complete && key && !seen.has(key)) {
-        seen.add(key);
-        result.push(complete);
-      }
-    }
-    return result;
-  }, [content]);
+  const attachments = useMemo<CompleteAttachment[]>(
+    () => buildUserMessageAttachments(content),
+    [content],
+  );
 
   if (attachments.length === 0) return null;
 
