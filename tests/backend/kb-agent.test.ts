@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => {
   const insertChunks = vi.fn();
   const withTx = vi.fn();
   const invalidate = vi.fn();
+  const updateDocStatus = vi.fn();
 
   return {
     chatInvoke,
@@ -58,6 +59,7 @@ const mocks = vi.hoisted(() => {
     insertChunks,
     withTx,
     invalidate,
+    updateDocStatus,
   };
 });
 
@@ -80,6 +82,7 @@ vi.mock("@/lib/kb/queries", () => ({
   findKbDocumentByAttachmentId: mocks.findByAtt,
   insertKbDocument: mocks.insertDoc,
   insertKbChunks: mocks.insertChunks,
+  updateKbDocumentStatus: mocks.updateDocStatus,
   withKbTx: mocks.withTx,
 }));
 vi.mock("@/lib/kb/cache", () => ({ invalidateKbDoc: mocks.invalidate }));
@@ -154,18 +157,26 @@ beforeEach(() => {
   );
   mocks.withTx.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn({}));
   mocks.insertChunks.mockResolvedValue(undefined);
+  mocks.updateDocStatus.mockResolvedValue(undefined);
   mocks.screenshot.mockResolvedValue([
     { pageIndex: 0, png: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
     { pageIndex: 1, png: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
   ]);
   mocks.getObject.mockResolvedValue(Buffer.from("%PDF-1.4\n"));
   mocks.uploadKbImage.mockImplementation(async ({ key }: { key: string }) => `${BASE_URL}/${key}`);
-  mocks.embedderInvoke.mockResolvedValue([
-    [0.1, 0.2, 0.3],
-    [0.4, 0.5, 0x6],
-  ]);
+  // ponytail: kbAgent now sanity-checks dim === 1024 (matches pgvector
+  // column + HNSW index). Build a real-shape 1024-dim vector instead
+  // of the old 3-tuple stub.
+  const makeEmbedding = () => Array.from({ length: 1024 }, (_, i) => (i % 7) * 0.01);
+  mocks.embedderInvoke.mockImplementation(async (texts: string[]) =>
+    texts.map(() => makeEmbedding()),
+  );
   mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "page text" });
-  mocks.chatInvoke.mockResolvedValue(["entity1", "entity2"]);
+  // ponytail: entitySchema is z.object({ entities: z.array(z.string()) })
+  // because OpenAI strict jsonSchema mode rejects top-level arrays.
+  // The mock must match the new shape — otherwise `out.entities` is
+  // undefined and the chunk's entity list silently falls back to [].
+  mocks.chatInvoke.mockResolvedValue({ entities: ["entity1", "entity2"] });
 });
 
 describe("backend/kb-agent", () => {
@@ -252,6 +263,12 @@ describe("backend/kb-agent", () => {
       expect(mocks.insertDoc).toHaveBeenCalledTimes(1);
       expect(mocks.insertChunks).toHaveBeenCalledTimes(1);
       expect(mocks.invalidate).toHaveBeenCalledWith(USER, processed[0].docId);
+      // Final status flip on the doc row
+      expect(mocks.updateDocStatus).toHaveBeenCalledWith(
+        USER,
+        processed[0].docId as string,
+        expect.objectContaining({ status: "success" }),
+      );
 
       const lastMsg = (out.messages as HumanMessage[])[0];
       const content = lastMsg.content as Array<Record<string, unknown>>;
@@ -410,6 +427,16 @@ describe("backend/kb-agent", () => {
       );
       expect(out.status).toBe("failed");
       expect(out.errorMessage).toMatch(/OCR gateway 502/);
+      const processed = out.processedFiles as Array<Record<string, unknown>>;
+      expect(processed[0]?.docId).toMatch(/^d-/);
+      expect(mocks.updateDocStatus).toHaveBeenCalledWith(
+        USER,
+        processed[0]?.docId as string,
+        expect.objectContaining({ status: "failed", errorMessage: "OCR gateway 502" }),
+      );
+      const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
+      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(1);
+      expect(content.filter((p) => p.type === "file")).toHaveLength(0);
     });
   });
 
@@ -422,7 +449,19 @@ describe("backend/kb-agent", () => {
       );
       expect(out.status).toBe("failed");
       expect(out.errorMessage).toMatch(/empty markdown/i);
-      expect(mocks.insertDoc).not.toHaveBeenCalled();
+      // Doc row was written by screenshotNode with status=parsing and
+      // stays there — chunks didn't insert but OCR data is preserved
+      // for a future retry. updateKbDocumentStatus is NOT called for
+      // chunkEmbedStoreNode failures (only for successful writes).
+      expect(mocks.insertDoc).toHaveBeenCalledTimes(1);
+      expect(mocks.insertChunks).not.toHaveBeenCalled();
+      const processed = out.processedFiles as Array<Record<string, unknown>>;
+      expect(processed[0]?.docId).toMatch(/^d-/);
+      // No failed-status update for the doc row — OCR work isn't lost.
+      const failedUpdates = mocks.updateDocStatus.mock.calls.filter(
+        ([, , patch]) => (patch as { status?: string }).status === "failed",
+      );
+      expect(failedUpdates).toHaveLength(0);
     });
 
     it("concatenates pages' markdown across the doc for chunking", async () => {
@@ -440,6 +479,70 @@ describe("backend/kb-agent", () => {
       const joined = chunks[docId].map((c) => c.content).join("\n\n");
       expect(joined).toContain("alpha beta");
       expect(joined).toContain("gamma");
+    });
+
+    // ponytail: fan-out isolation. One doc's chunkEmbedStore failure
+    // (here, embedDocuments rejects for beta) must not block alpha's
+    // chunks from being inserted and indexed. Each per-doc closure runs
+    // its own try/catch and only mutates its own entry in
+    // updatedProcessed.
+    it("isolates per-doc embed failures — one fail, one success", async () => {
+      mocks.ocrStructuredInvoke.mockReset();
+      mocks.ocrStructuredInvoke.mockResolvedValue({
+        markdown: "doc markdown content ".repeat(40),
+      });
+      let embedCallIdx = 0;
+      mocks.embedderInvoke.mockImplementation(async (texts: string[]) => {
+        const i = embedCallIdx++;
+        if (i === 0) {
+          return texts.map(() => Array.from({ length: 1024 }, (_, j) => (j % 7) * 0.01));
+        }
+        throw new Error("beta embed gateway 502");
+      });
+
+      const messages = [
+        new HumanMessage({
+          content: [pdfFilePart(urlFor("alpha")), pdfFilePart(urlFor("beta"))] as never,
+          id: "m-1",
+        }),
+      ];
+      const out = await kbAgent.invoke(
+        { messages, userId: USER },
+        { configurable: { userId: USER } },
+      );
+      expect(out.status).toBe("failed");
+      const processed = out.processedFiles as Array<Record<string, unknown>>;
+      const alpha = processed.find(
+        (p) => (p.filePart as { data: string }).data === urlFor("alpha"),
+      ) as Record<string, unknown>;
+      const beta = processed.find(
+        (p) => (p.filePart as { data: string }).data === urlFor("beta"),
+      ) as Record<string, unknown>;
+      expect(alpha.pipelineStatus).toBe("new");
+      expect(alpha.docId).toMatch(/^d-/);
+      expect(beta.pipelineStatus).toBe("failed");
+      expect(beta.docId).toMatch(/^d-/);
+      expect(beta.errorMessage).toMatch(/embed gateway 502/);
+      // Alpha's chunks landed in db; beta's did not.
+      expect(mocks.insertChunks).toHaveBeenCalledTimes(1);
+      // Both kb_refs present in the rewritten HumanMessage.
+      const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
+      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(2);
+      // The successful doc got status=success on its row. The failed doc
+      // stays at status=parsing — OCR completed for both, beta's chunks
+      // insert failed but we don't downgrade its row to failed (that
+      // would discard OCR work). The kb_ref still gets written so
+      // resolveKbRefs can surface a [Processing...] placeholder for
+      // beta until the user retries.
+      expect(mocks.updateDocStatus).toHaveBeenCalledWith(
+        USER,
+        alpha.docId as string,
+        expect.objectContaining({ status: "success" }),
+      );
+      const failedUpdates = mocks.updateDocStatus.mock.calls.filter(
+        ([, , patch]) => (patch as { status?: string }).status === "failed",
+      );
+      expect(failedUpdates).toHaveLength(0);
     });
   });
 
@@ -612,17 +715,29 @@ describe("backend/kb-agent", () => {
       const statuses = processed.map((p) => p.pipelineStatus);
       expect(statuses).toContain("new");
       expect(statuses).toContain("failed");
-      // Only alpha's doc gets inserted
-      expect(mocks.insertDoc).toHaveBeenCalledTimes(1);
-      // The failed entry has docId cleared (resolve strips it)
+      // Both docs get a row written (parsing) — even the one that failed OCR.
+      expect(mocks.insertDoc).toHaveBeenCalledTimes(2);
+      // The failed entry KEEPS its docId so the rewritten HumanMessage
+      // can still carry a kb_ref — resolveKbRefs then renders the
+      // [Failed: ...] placeholder instead of silently dropping the
+      // document context.
       const failed = processed.find((p) => p.pipelineStatus === "failed") as Record<
         string,
         unknown
       >;
-      expect(failed.docId).toBeNull();
-      // The other entry still has a kb_ref
+      expect(failed.docId).toMatch(/^d-/);
+      // updateKbDocumentStatus flips the failed row to status=failed
+      expect(mocks.updateDocStatus).toHaveBeenCalledWith(
+        USER,
+        failed.docId,
+        expect.objectContaining({ status: "failed", errorMessage: expect.stringMatching(/OCR/) }),
+      );
+      // The success entry still has a kb_ref
       const success = processed.find((p) => p.pipelineStatus === "new") as Record<string, unknown>;
       expect(success.docId).toMatch(/^d-/);
+      // Both kb_refs present in the rewritten message
+      const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
+      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(2);
     });
 
     it("strips non-PDF file parts while keeping PDF-derived kb_refs", async () => {

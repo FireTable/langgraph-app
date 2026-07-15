@@ -93,6 +93,22 @@ describe("lib/kb/resolve", () => {
       });
       expect(await resolveKbRef(DOC, USER)).toBe("[Failed: unknown error]");
     });
+
+    // ponytail: data-integrity guard. kbAgent writes chunks BEFORE
+    // flipping status=success, so a doc row with status=success and no
+    // chunks shouldn't happen via the agent — but a manual SQL edit,
+    // a backfill script, or a future reprocess path could leave one
+    // here. Returning an empty string would silently drop the doc
+    // context; [Processing...] is the closest existing placeholder
+    // ("the doc is being prepared, ask again in a moment") which
+    // matches the on-the-wire intent for the model.
+    it("returns [Processing...] when status is success but chunks are empty", async () => {
+      getKbDocForResolve.mockResolvedValueOnce({
+        doc: docWithStatus("success"),
+        chunks: [],
+      });
+      expect(await resolveKbRef(DOC, USER)).toBe("[Processing...]");
+    });
   });
 
   describe("resolveKbRefs", () => {

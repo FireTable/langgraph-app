@@ -320,7 +320,7 @@ List all of the caller's folders + their docs in one round-trip. `attachmentUrl`
 
 ### `GET /api/kb/documents/[id]`
 
-Single-doc detail + slim chunk preview (text content only — no 1536-dim embedding, no generated `tsv` column). The status field drives whether chunks are included: only `success` docs return their parsed content; other statuses return `chunks: []`.
+Single-doc detail + slim chunk preview (text content only — no 1024-dim embedding, no generated `tsv` column). The status field drives whether chunks are included: only `success` docs return their parsed content; other statuses return `chunks: []`.
 
 |               |                                                                                                                                                                           |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

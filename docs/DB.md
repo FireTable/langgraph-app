@@ -4,20 +4,20 @@ Source of truth: `db/migrations/0000_*.sql` (drizzle-kit generated). This doc de
 
 ## Tables
 
-| Table              | Owner | Purpose                                                                         |
-| ------------------ | ----- | ------------------------------------------------------------------------------- |
-| `user`             | app   | Better Auth user rows; FK target for owned rows                                 |
-| `session`          | app   | Better Auth DB sessions (cookie → userId)                                       |
-| `account`          | app   | Better Auth credentials / OAuth links per user                                  |
-| `verification`     | app   | One-time tokens (email verify, password reset)                                  |
-| `role`             | app   | Per-role credit cap + rolling window length                                     |
-| `threads`          | app   | Chat threads; one row per assistant-ui thread                                   |
-| `attachments`      | app   | Chat attachment metadata; bytes live in Cloudflare R2                           |
-| `provider`         | app   | LLM provider registry (API keys, model rates)                                   |
-| `credit_usage_log` | app   | Append-only per-LLM-call log; drives cap enforcement + call history UI          |
-| `kb_folder`        | app   | Per-user grouping for KB docs (issue #13); default `Attachments` auto-created   |
-| `kb_document`      | app   | One row per ingested PDF; status enum `pending \| parsing \| success \| failed` |
-| `kb_chunk`         | app   | Chunks with pgvector embedding + GIN-indexed tsvector + entities[]              |
+| Table              | Owner | Purpose                                                                                                                                                      |
+| ------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `user`             | app   | Better Auth user rows; FK target for owned rows                                                                                                              |
+| `session`          | app   | Better Auth DB sessions (cookie → userId)                                                                                                                    |
+| `account`          | app   | Better Auth credentials / OAuth links per user                                                                                                               |
+| `verification`     | app   | One-time tokens (email verify, password reset)                                                                                                               |
+| `role`             | app   | Per-role credit cap + rolling window length                                                                                                                  |
+| `threads`          | app   | Chat threads; one row per assistant-ui thread                                                                                                                |
+| `attachments`      | app   | Chat attachment metadata; bytes live in Cloudflare R2                                                                                                        |
+| `provider`         | app   | LLM provider registry (API keys, model rates)                                                                                                                |
+| `credit_usage_log` | app   | Append-only per-LLM-call log; drives cap enforcement + call history UI                                                                                       |
+| `kb_folder`        | app   | Per-user grouping for KB docs (issue #13); default `Attachments` auto-created                                                                                |
+| `kb_document`      | app   | One row per ingested PDF; status enum `pending \| parsing \| success \| failed`                                                                              |
+| `kb_chunk`         | app   | Chunks with `vector(1024)` pgvector embedding (BAAI/bge-m3 via apimart) + GIN-indexed tsvector + entities[]; HNSW index over `embedding` (vector_cosine_ops) |
 
 ## Cascade behavior
 

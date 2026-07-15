@@ -644,9 +644,12 @@ function DocRow({ doc, onRefresh }: { doc: KbDocument; onRefresh: () => Promise<
       {/* Desktop: 5-column grid. minmax(0, 1fr) lets the title column
           shrink below its content width — without it, 1fr has implicit
           min-size: auto and collapses to 0 when the four fixed-width
-          columns exceed the row width. */}
+          columns exceed the row width. The actions column is `auto`
+          because four icon buttons (4 × 28px + 3 × 2px gap = 118px)
+          overflowed the previous fixed 84px track and overlapped the
+          Status badge to the left. */}
       <div
-        className="hidden md:grid md:grid-cols-[minmax(0,1fr)_auto_120px_auto_84px] md:items-center md:gap-x-3 md:px-4 md:py-3 md:text-sm"
+        className="hidden md:grid md:grid-cols-[minmax(0,1fr)_auto_120px_auto_auto] md:items-center md:gap-x-3 md:px-4 md:py-3 md:text-sm"
         role="row"
       >
         {/* ponytail: flex items-center so plain-text cells share the

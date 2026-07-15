@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 
@@ -99,6 +99,31 @@ export async function resetKbDocumentForReprocess(
   const [out] = await db
     .update(kbDocument)
     .set({ status: "pending", errorMessage: null, updatedAt: new Date() })
+    .where(and(eq(kbDocument.id, docId), eq(kbDocument.userId, userId)))
+    .returning();
+  return out ?? null;
+}
+
+// ponytail: kbAgent uses this to keep the doc row in sync with the
+// in-memory pipeline. screenshotNode inserts parsing rows; ocrNode +
+// chunkEmbedStoreNode flip them to success / failed + errorMessage as
+// work progresses. A failed row stays in the table so resolveKbRefs
+// can render "[Failed: ...]" instead of silently dropping the doc
+// context (the kb_ref part in the user's message is preserved across
+// agent runs and stays meaningful even when chunking never happened).
+export async function updateKbDocumentStatus(
+  userId: string,
+  docId: string,
+  patch: { status: KbDocument["status"]; errorMessage?: string | null },
+): Promise<KbDocument | null> {
+  const set: Partial<KbDocument> & { updatedAt: Date } = {
+    status: patch.status,
+    updatedAt: new Date(),
+  };
+  if (patch.errorMessage !== undefined) set.errorMessage = patch.errorMessage;
+  const [out] = await db
+    .update(kbDocument)
+    .set(set)
     .where(and(eq(kbDocument.id, docId), eq(kbDocument.userId, userId)))
     .returning();
   return out ?? null;
@@ -244,7 +269,35 @@ export async function listKbDocumentsGroupedByFolder(
 // doc + its chunks land atomically.
 export async function insertKbChunks(tx: PgTx, rows: NewKbChunk[]): Promise<void> {
   if (rows.length === 0) return;
-  await tx.insert(kbChunk).values(rows);
+  // ponytail: bypass Drizzle's `vector` customType for the embedding
+  // column. The customType's toDriver returns `[1,2,3]`, but postgres.js
+  // sees a JS number[] and encodes it as the PG array literal `1,2,3`
+  // (no brackets), so the server-side `vector_in` parser rejects it with
+  // "Vector contents must start with '['" (SQLSTATE 22P02). We instead
+  // construct the SQL fragment ourselves with the literal already in
+  // pgvector's `[1,2,3]` form, and use postgres.js's `sql` template
+  // (via Drizzle's `tx.execute`) so the cast happens with the right
+  // shape on the wire.
+  //
+  // Single-row INSERT loop also dodges a separate multi-row + pgvector
+  // failure mode that surfaced as a no-SQLSTATE FailedQueryError on
+  // some runs.
+  for (const row of rows) {
+    const embeddingLiteral = `[${row.embedding.join(",")}]`;
+    const entities = row.entities ?? [];
+    const entitiesLiteral = `{${entities.map((s) => `"${s.replace(/"/g, '\\"').replace(/\\/g, "\\\\")}"`).join(",")}}`;
+    await tx.execute(sql`
+      INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, entities)
+      VALUES (
+        ${row.id},
+        ${row.documentId},
+        ${row.ordinal},
+        ${row.content},
+        ${embeddingLiteral}::vector,
+        ${entitiesLiteral}::text[]
+      )
+    `);
+  }
 }
 
 // Resolve a kb_ref to its chunks (in document order) for LLM context.
