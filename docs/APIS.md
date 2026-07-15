@@ -273,6 +273,82 @@ Collapses all summary docs whose key starts with `${threadId}:` under the user's
 | Status codes  | 200 / 401 / 404                                                                                   |
 | Failure modes | 404 when no summary doc exists for `threadId` for the current user (a no-op for an empty thread). |
 
+## Knowledge Base
+
+User-facing KB v2 (Settings → Knowledge Base tab). Per-user scoped at the query layer (every helper filters by `userId` from `withAuth`). Schema lives in `lib/kb/schema.ts`; the LangGraph ingestion graph that flips `kb_document.status` pending → parsing → success/failed is `backend/kb-agent.ts`. See [`docs/DB.md`](./DB.md) for table shapes and FK cascades.
+
+**Auth + isolation contract**: `withAuth` (rule #9), no role gate — any signed-in user reads + writes their OWN folders/docs. The `WHERE user_id = ?` predicate inside every query in `lib/kb/queries.ts` is the only thing keeping one user's KB from leaking to another.
+
+### `POST /api/kb/folders`
+
+Create a folder. Subject to the `UNIQUE (user_id, name)` constraint on `kb_folder` — duplicate names return 409 with the existing row so the UI can highlight the conflict.
+
+|               |                                                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ name: string /* 1..64, trimmed */ }`                                                                          |
+| 201 response  | `{ folder: { id, userId, name, createdAt, updatedAt } }`                                                         |
+| Failure codes | 400 `INVALID_NAME` (zod failure). 401 `UNAUTHORIZED`. 409 `DUPLICATE` (returns existing folder). 500 `INTERNAL`. |
+
+### `PATCH /api/kb/folders/[id]`
+
+Rename a folder. Race-safe against concurrent renames — if two tabs race to the same name, the loser's UPDATE fails with 23505 and the endpoint returns 409 instead of a 500. The `attachmentId` / `contentHash` linkage on the folder's child documents is preserved; only the folder's `name` changes.
+
+|               |                                                                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | `{ name: string /* 1..64, trimmed */ }`                                                                                                          |
+| 200 response  | `{ folder: { id, userId, name, createdAt, updatedAt } }`                                                                                         |
+| Failure codes | 400 `INVALID_NAME`. 401 `UNAUTHORIZED`. 404 `NOT_FOUND` (folder missing or owned by another user). 409 `DUPLICATE` (name taken). 500 `INTERNAL`. |
+
+### `DELETE /api/kb/folders/[id]`
+
+Delete an empty folder. Postgres refuses via `ON DELETE RESTRICT` on `kb_document.folder_id` if any docs still belong to the folder; we surface that as 409 `NON_EMPTY` with a `docCount` so the UI can prompt "delete its N docs first".
+
+|               |                                                                        |
+| ------------- | ---------------------------------------------------------------------- |
+| Request body  | (none)                                                                 |
+| 204 response  | (empty body)                                                           |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND`. 409 `NON_EMPTY` (`{ docCount }`). |
+
+### `GET /api/kb/documents`
+
+List all of the caller's folders + their docs in one round-trip. `attachmentUrl` is the public R2 URL for the source file (used by the "View source" button on each row). No pagination — KB volume per user is O(tens of docs).
+
+|               |                                                                                                                                                                      |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200 response  | `{ groups: Array<{ folder: { id, name }, documents: Array<{ id, title, status, errorMessage, contentType, attachmentId, attachmentUrl, createdAt, updatedAt }> }> }` |
+| Failure codes | 401 `UNAUTHORIZED`. 500 `INTERNAL`.                                                                                                                                  |
+
+### `GET /api/kb/documents/[id]`
+
+Single-doc detail + slim chunk preview (text content only — no 1536-dim embedding, no generated `tsv` column). The status field drives whether chunks are included: only `success` docs return their parsed content; other statuses return `chunks: []`.
+
+|               |                                                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200 response  | `{ doc: { id, title, status, errorMessage, contentType, attachmentId, folderId, contentHash, createdAt, updatedAt }, chunks: Array<{ index: number, content: string }> }` |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND`.                                                                                                                                      |
+
+### `DELETE /api/kb/documents/[id]`
+
+Delete a single doc. Cascades to `kb_chunk` via `ON DELETE CASCADE` on `kb_chunk.document_id`. R2 objects (`kb-tmp/*` page PNGs and the source PDF under `attachments/`) are NOT deleted — they live in R2 forever; v3 retention sweep can clean them up.
+
+|               |                                      |
+| ------------- | ------------------------------------ |
+| 204 response  | (empty body)                         |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND`. |
+
+### `POST /api/kb/upload`
+
+Add a doc to a folder. Frontend uploads the file via the existing `/api/attachments/presign` → PUT → `confirm` flow first, then POSTs `{ folderId, attachmentId, title? }` here. Backend creates a `kb_document` row (`status=pending`) and fires a LangGraph run on the kbAgent graph (fire-and-forget — the run mutates the row's status as it progresses; the UI polls `GET /api/kb/documents` and watches the row flip pending → parsing → success/failed).
+
+**Primary dedup**: if a doc with the same `contentHash` already exists for the user, the endpoint returns the existing row instead of creating a duplicate, and re-fires ingestion if the previous attempt failed/stalled.
+
+|               |                                                                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | `{ folderId: string, attachmentId: string, title?: string /* 1..256 */ }`                                                                        |
+| 200 response  | `{ doc: { ... kb_document row ... }, deduped: true }` (existing doc — re-firing ingestion)                                                       |
+| 202 response  | `{ doc: { ... kb_document row ... } }` (new doc, ingestion run dispatched)                                                                       |
+| Failure codes | 400 `INVALID` (zod failure). 401 `UNAUTHORIZED`. 404 `ATTACHMENT_NOT_FOUND` / `FOLDER_NOT_FOUND`. 409 `ATTACHMENT_NOT_UPLOADED`. 500 `INTERNAL`. |
+
 ## Admin
 
 Every endpoint is `withAuth({ role: "admin" }, ...)` (rule #9). The wire shape for providers strips `encryptedKey` + `iv` from `apiKeys[]` — see [`docs/ADMIN.md`](./ADMIN.md) § Secrets handling for the AES-256-GCM contract. Roles are returned in full (no secrets on that table). All providers endpoints live in `app/api/admin/providers/**`; all roles endpoints in `app/api/admin/roles/**`.
