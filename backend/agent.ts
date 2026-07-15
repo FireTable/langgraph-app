@@ -1,4 +1,5 @@
 import { START, END, StateGraph } from "@langchain/langgraph";
+import { HumanMessage } from "@langchain/core/messages";
 import { triggerBackgroundAgentNode } from "@/backend/node/trigger-background-agent-node";
 import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
@@ -13,41 +14,53 @@ import { store } from "@/backend/store";
 import { RouterAgentState } from "@/backend/state";
 import { getThreadTitle } from "@/lib/threads/queries";
 import { DEFAULT_THREAD_TITLE } from "@/lib/constants";
+import { isFilePart } from "@/lib/kb/extract";
 
-// After the router speaks, decide which sub-agent gets the turn.
-// Falls back to chatAgent if the router hasn't run yet or its
-// decision didn't make it into state. kbAgent routes back to the
-// router after appending the kb_ref so a SECOND router pass picks the
-// final sub-agent (chat / weather / etc.) now that the PDF is gone.
-function routeToSubAgent({
-  routerDecision,
-}: {
-  routerDecision?: { next: "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" | "kbAgent" };
-}): "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" | "kbAgent" {
-  return routerDecision?.next ?? "chatAgent";
+// After the router speaks, decide which sub-agent gets the turn AND
+// whether to fan out to renameThreadAgent in parallel. Falls back to
+// chatAgent if the router hasn't run yet or its decision didn't make
+// it into state. kbAgent routes back to the router after appending
+// the kb_ref so a SECOND router pass picks the final sub-agent (chat
+// / weather / etc.) now that the PDF is gone — and on that second
+// pass the rename fanout also fires (file part gone → rename runs).
+//
+// Returning an ARRAY of destinations makes LangGraph run the listed
+// nodes in parallel; returning a single string is the normal one-shot
+// routing case. So we collapse the sub-agent pick + rename fanout into
+// a single conditional edge to satisfy langgraph's "one condition per
+// source node" rule.
+function hasPendingFilePart(messages: { content: unknown }[]): boolean {
+  return messages.some(
+    (m) => m instanceof HumanMessage && Array.isArray(m.content) && m.content.some(isFilePart),
+  );
 }
 
-// ponytail: renameThreadAgent only needs to run once per thread — the
-// first time the user sends a message. After that, threads.title is
-// already set; re-invoking the LLM every turn (interrupt + resume,
-// regenerate, follow-up) wastes tokens. Query the title from the DB
-// before entering; if it has been replaced from the default placeholder,
-// skip the node entirely. The conditional edge wires both branches from
-// START, so renameThreadAgent is never even entered (no callback, no
-// span) when the LLM-generated title already exists.
-async function shouldRenameRouter(
-  _state: unknown,
+type SubAgent = "weatherAgent" | "chatAgent" | "cryptoAgent" | "codeAgent" | "kbAgent";
+
+async function routeAndMaybeRename(
+  state: { messages: { content: unknown }[]; routerDecision?: { next: SubAgent } },
   config: { configurable?: { thread_id?: string } },
-): Promise<"renameThreadAgent" | typeof END> {
+): Promise<SubAgent | (string | SubAgent)[]> {
+  const subAgent: SubAgent = state.routerDecision?.next ?? "chatAgent";
+  // ponytail: renameThreadAgent only needs to run once per thread — the
+  // first time the user sends a message. After that, threads.title is
+  // already set; re-invoking the LLM every turn (interrupt + resume,
+  // regenerate, follow-up) wastes tokens.
+  //
+  // Skip while a raw file part is present (kbAgent hasn't rewritten it
+  // yet) — for PDF uploads the SECOND routerAgent pass after kbAgent
+  // sees the kb_ref in place and fires rename.
+  if (hasPendingFilePart(state.messages)) return subAgent;
   const threadId = config.configurable?.thread_id;
-  if (typeof threadId !== "string" || !threadId) return END;
+  if (typeof threadId !== "string" || !threadId) return subAgent;
   const title = await getThreadTitle(threadId);
   // ponytail: the column has `notNull().default(DEFAULT_THREAD_TITLE)`
   // ("New Chat"), so title is always a non-null string in the DB. The
   // "auto-rename not yet run" signal is `title === DEFAULT_THREAD_TITLE`;
   // anything else is the LLM-generated title from a prior turn.
-  if (typeof title === "string" && title !== DEFAULT_THREAD_TITLE) return END;
-  return "renameThreadAgent";
+  if (typeof title === "string" && title !== DEFAULT_THREAD_TITLE) return subAgent;
+  // Array return = parallel fanout (langgraph runs both nodes).
+  return [subAgent, "renameThreadAgent"];
 }
 
 export const builder = new StateGraph(RouterAgentState)
@@ -60,8 +73,8 @@ export const builder = new StateGraph(RouterAgentState)
   .addNode("triggerBackgroundAgent", triggerBackgroundAgentNode)
   .addNode("renameThreadAgent", renameThreadAgentNode)
   // Topology (issue #13 v2):
-  //   START ──▶ routerAgent ──▶ (sub-agent | kbAgent) ──▶ triggerBackgroundAgent ──▶ END
-  //   START ─────────────────────────────────────────▶ renameThreadAgent (parallel, leaf)
+  //   START ──▶ routerAgent ──┬──▶ (sub-agent | kbAgent) ──▶ triggerBackgroundAgent ──▶ END
+  //                           └──▶ renameThreadAgent ──▶ END   (parallel fanout, conditional)
   //
   // kbAgent loops back to routerAgent after appending the kb_ref, so
   // a SECOND router pass picks the final sub-agent (chat / weather /
@@ -74,26 +87,29 @@ export const builder = new StateGraph(RouterAgentState)
   // write_code's editor card is owned by the code subgraph
   // (see backend/agent/code-agent.ts + components/tool-ui/code).
   //
-  // renameThreadAgent runs as a parallel leaf off the main response
-  // path (END). The graph invocation only returns after ALL active
-  // branches complete, but the chat stream ends on the END branch,
-  // so the user sees no rename latency.
-  //
-  // triggerBackgroundAgent is the chat's last node before END. It fires
+  // triggerBackgroundAgent is the chat's last sub-agent step. It fires
   // the `background_agent` graph (registered separately in
   // langgraph.json) and returns `{}` immediately — that graph does
   // `last_message_at` touch + threadSummarizeNode work on its own
   // thread. See backend/node/trigger-background-agent-node.ts for the
   // fire-and-forget pattern; see backend/background-agent.ts for
   // what the background graph runs.
+  //
+  // routeAndMaybeRename collapses the sub-agent pick + rename fanout
+  // into one conditional edge (langgraph forbids two conditions on the
+  // same source node). When the function returns an array of two
+  // names, langgraph runs them in parallel. The rename fires only
+  // when the messages are clean (no raw file part) AND the thread
+  // title is still the default placeholder — see routeAndMaybeRename.
   .addEdge(START, "routerAgent")
-  .addConditionalEdges("routerAgent", routeToSubAgent, [
-    "weatherAgent",
-    "chatAgent",
-    "cryptoAgent",
-    "codeAgent",
-    "kbAgent",
-  ])
+  .addConditionalEdges("routerAgent", routeAndMaybeRename, {
+    chatAgent: "chatAgent",
+    weatherAgent: "weatherAgent",
+    cryptoAgent: "cryptoAgent",
+    codeAgent: "codeAgent",
+    kbAgent: "kbAgent",
+    renameThreadAgent: "renameThreadAgent",
+  })
   .addEdge("chatAgent", "triggerBackgroundAgent")
   .addEdge("weatherAgent", "triggerBackgroundAgent")
   .addEdge("cryptoAgent", "triggerBackgroundAgent")
@@ -103,10 +119,7 @@ export const builder = new StateGraph(RouterAgentState)
   // and it routes to the final sub-agent (chatAgent for PDFs, etc.).
   .addEdge("kbAgent", "routerAgent")
   .addEdge("triggerBackgroundAgent", END)
-  .addConditionalEdges(START, shouldRenameRouter, {
-    renameThreadAgent: "renameThreadAgent",
-    __end__: END,
-  });
+  .addEdge("renameThreadAgent", END);
 
 // ponytail: one handler per process (per module), shared across all
 // concurrent runs AND across every Pregel that wires it via withConfig.

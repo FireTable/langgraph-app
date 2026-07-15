@@ -1,6 +1,7 @@
 import { END, START, StateGraph, StateSchema } from "@langchain/langgraph";
 import { type BaseMessage } from "@langchain/core/messages";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+import PQueue from "p-queue";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
@@ -46,13 +47,6 @@ Do not add commentary — return only the markdown content of the page.`;
 type PageResult = {
   pageIndex: number;
   imageUrl: string;
-  // ponytail: apimart's Azure-backed gateway rejects image_url HTTPS
-  // URLs (returns a file_data schema expecting base64). Keep the
-  // rendered Buffer so vlmNode can hand the VLM a data URL directly.
-  // R2 upload is only needed for v3 citation/UI affordances — until
-  // then we ship a 2.4 MB document's worth of pages in state (≪ 50 MB
-  // LangGraph per-run budget).
-  png?: Buffer;
   markdown: string;
 };
 type ChunkSeed = { ordinal: number; content: string; entities: string[]; embedding: number[] };
@@ -100,6 +94,7 @@ async function screenshotNode(
   config?: { configurable?: { userId?: string } },
 ): Promise<Partial<KbAgentStateShape>> {
   const userId = config?.configurable?.userId ?? state.userId;
+
   if (!userId) return makeError("user not provided");
   const last = findLastHumanMessage(state.messages);
   if (!last) return makeError("no human message");
@@ -140,12 +135,9 @@ async function screenshotNode(
   const docId = `d-${randomUUID()}`;
   const pages: PageResult[] = await Promise.all(
     rendered.map(async (p) => {
-      // ponytail: keep the Buffer around for VLM (apimart gateway
-      // rejects HTTPS image_url; needs base64 data URL). R2 upload
-      // happens too — the URL is stored for future v3 affordances.
       const key = `kb-tmp/${userId}/${docId}/page-${p.pageIndex}.png`;
       const imageUrl = await uploadKbImage({ key, body: p.png });
-      return { pageIndex: p.pageIndex, imageUrl, png: p.png, markdown: "" };
+      return { pageIndex: p.pageIndex, imageUrl, markdown: "" };
     }),
   );
 
@@ -161,49 +153,67 @@ async function screenshotNode(
   };
 }
 
+// ponytail: cap VLM concurrency at 5 to stay under apimart's per-key
+// rate limit. A 30-page PDF otherwise fires 30 simultaneous requests.
+// Order is preserved by Promise.all — pages[i] always maps to results[i].
+const VLM_CONCURRENCY = 5;
+
 async function vlmNode(state: KbAgentStateShape) {
   if (state.skipPipeline) return {};
   const vlm = await getVlmModel();
-  const updated: PageResult[] = [];
-  for (const p of state.pages) {
-    // ponytail: apimart's Azure gateway rejects image_url HTTPS URLs
-    // (returns "invalid base64-encoded value"). Fall back to a base64
-    // data URL using the Buffer we kept in screenshotNode. The
-    // R2-hosted imageUrl stays in state for v3 affordances.
-    const dataUrl = `data:image/png;base64,${(p.png ?? Buffer.alloc(0)).toString("base64")}`;
-    try {
-      const response = await vlm.invoke([
-        {
-          role: "user",
-          content: [
-            { type: "text", text: VLM_PAGE_PROMPT },
-            { type: "image_url", image_url: { url: dataUrl } },
-          ],
-        },
-      ] as never);
-      const content = response.content;
-      const text =
-        typeof content === "string"
-          ? content
-          : Array.isArray(content)
-            ? content
-                .map((c: unknown) =>
-                  typeof c === "object" && c !== null && "text" in c
-                    ? (c as { text: string }).text
-                    : "",
-                )
-                .join("")
-            : "";
-      updated.push({ ...p, markdown: text.trim() });
-    } catch (err) {
-      return {
-        status: "failed" as const,
-        errorMessage: (err as Error).message,
-        skipPipeline: true,
-      };
-    }
+  const queue = new PQueue({ concurrency: VLM_CONCURRENCY });
+  try {
+    const results = await Promise.all(
+      state.pages.map((p) =>
+        queue.add(async () => {
+          // ponytail: apimart accepts the assistant-ui image part shape
+          // (same one r2-adapter.ts uses for chat uploads) — pass the
+          // R2 publicUrl directly, no base64 round-trip. Also keeps
+          // state tiny: just the URL string, not the PNG Buffer.
+          const filename = state.title ?? "page";
+          const response = await vlm.invoke(
+            [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: VLM_PAGE_PROMPT },
+                  {
+                    type: "image",
+                    image: p.imageUrl,
+                    filename,
+                  },
+                ],
+              },
+            ] as never,
+            { tags: ["nostream"] },
+          );
+          const content = response.content;
+          const text =
+            typeof content === "string"
+              ? content
+              : Array.isArray(content)
+                ? content
+                    .map((c: unknown) =>
+                      typeof c === "object" && c !== null && "text" in c
+                        ? (c as { text: string }).text
+                        : "",
+                    )
+                    .join("")
+                : "";
+          return { ...p, markdown: text.trim() };
+        }),
+      ),
+    );
+    return { pages: results };
+  } catch (err) {
+    // ponytail: Promise.all rejects on the first page failure; p-queue
+    // can't cancel in-flight jobs, but their results are discarded.
+    return {
+      status: "failed" as const,
+      errorMessage: (err as Error).message,
+      skipPipeline: true,
+    };
   }
-  return { pages: updated };
 }
 
 async function chunkEmbedStoreNode(state: KbAgentStateShape) {
@@ -237,30 +247,37 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   const chat = await getChatModel();
 
   // Entity extraction per chunk (best-effort — fall back to [] on parse).
+  // ponytail: same p-queue pattern as vlmNode — serial would be 30 chunks
+  // × ~2s = 60s of LLM calls on a 30-page PDF. Cap at 5 to stay under
+  // apimart's per-key rate limit.
   const entitySchema = z.array(z.string());
-  const seeds: ChunkSeed[] = [];
   const embedder = await getEmbeddingModel();
   const texts = splitDocs.map((d) => d.pageContent);
   const embeddings = await embedder.embedDocuments(texts);
-  for (let i = 0; i < splitDocs.length; i++) {
-    let entities: string[] = [];
-    try {
-      const out = await chat
-        .withStructuredOutput(entitySchema)
-        .invoke(
-          `Extract named entities (people, orgs, concepts, products) from this passage:\n\n${texts[i]}`,
-        );
-      entities = (out as string[]).slice(0, 20);
-    } catch {
-      entities = [];
-    }
-    seeds.push({
-      ordinal: i,
-      content: texts[i],
-      entities,
-      embedding: embeddings[i] ?? [],
-    });
-  }
+  const entityQueue = new PQueue({ concurrency: 5 });
+  const seeds: ChunkSeed[] = await Promise.all(
+    texts.map((text, i) =>
+      entityQueue.add(async () => {
+        let entities: string[] = [];
+        try {
+          const out = await chat
+            .withStructuredOutput(entitySchema)
+            .invoke(
+              `Extract named entities (people, orgs, concepts, products) from this passage:\n\n${text}`,
+            );
+          entities = (out as string[]).slice(0, 20);
+        } catch {
+          // best-effort — leave entities empty and continue
+        }
+        return {
+          ordinal: i,
+          content: text,
+          entities,
+          embedding: embeddings[i] ?? [],
+        };
+      }),
+    ),
+  );
 
   // tx: doc + chunks land atomically.
   const folder = await ensureDefaultKbFolder(userId, "Attachments");

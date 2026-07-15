@@ -29,8 +29,12 @@ export async function routerAgentNode(
   const filePart = extractFilePart(state.messages);
   const kbRef = extractKbRef(state.messages);
 
+  console.warn(1111, kbRef, filePart);
+
   // Short-circuit: new PDF (file part but no kb_ref yet) → kbAgent.
   if (filePart && isPdfAttachment(filePart) && !kbRef) {
+    console.warn(1111, filePart);
+
     return { routerDecision: { next: "kbAgent" } };
   }
 
