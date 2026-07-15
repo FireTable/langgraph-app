@@ -342,3 +342,23 @@
   margin-left: 0.25rem;
   margin-right: 0.25rem;
 }
+
+/* ponytail: hide tab label text on mobile so the settings tab strip
+   doesn't overflow. Uses Tailwind's `sr-only` technique (clip-path +
+   absolute position) so the text stays in the accessibility tree —
+   screen readers still announce the full tab label, sighted users see
+   only the icon. Above 768px the rule doesn't apply and the span
+   shows inline next to the icon. */
+@media (max-width: 767px) {
+  [role="tab"] > span:not(.sr-only) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}

@@ -69,8 +69,10 @@ export function Settings({ className, view, path, hideNav }: SettingsProps) {
             }
           >
             <User2 className="text-muted-foreground" />
-
-            {localization.settings.account}
+            {/* ponytail: wrap the label in a <span> so the mobile CSS
+                rule ([role="tab"] > span:not(.sr-only)) can hide it.
+                Bare text nodes can't be selected by element selectors. */}
+            <span>{localization.settings.account}</span>
           </TabsTrigger>
 
           <TabsTrigger
@@ -83,8 +85,7 @@ export function Settings({ className, view, path, hideNav }: SettingsProps) {
             }
           >
             <Shield className="text-muted-foreground" />
-
-            {localization.settings.security}
+            <span>{localization.settings.security}</span>
           </TabsTrigger>
 
           {plugins.flatMap(

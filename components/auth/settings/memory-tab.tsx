@@ -16,7 +16,11 @@ export const memorySettingsPlugin = {
       label: (
         <>
           <Brain className="text-muted-foreground" aria-hidden />
-          Memory
+          {/* ponytail: text is auto-hidden on mobile by the global
+              rule in app/globals.css ([role="tab"] > span:not(.sr-only))
+              using the sr-only technique. Above md the rule doesn't
+              apply and the text shows inline. */}
+          <span>Memory</span>
         </>
       ),
       component: MemoryView,
