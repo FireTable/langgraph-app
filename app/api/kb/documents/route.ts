@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 
 import { withAuth } from "@/lib/auth/with-auth";
-import { listKbDocumentsGroupedByFolder } from "@/lib/kb/queries";
+import { listKbDocumentsGroupedWithAttachment } from "@/lib/kb/queries";
 
 // ponytail: Settings → KB tab list. Per-user scoped at the query layer
-// (listKbDocumentsGroupedByFolder filters by userId from withAuth).
-// Returns folders + their docs in one round-trip — UI groups by folder
-// name. No pagination yet (KB volume per user is O(tens of docs)).
+// (the helper filters by userId from withAuth). Returns folders + their
+// docs in one round-trip, with attachmentUrl joined in for the "View
+// source" link. No pagination yet (KB volume per user is O(tens of docs)).
 
 export const GET = withAuth(async (_req, { user }) => {
   try {
-    const groups = await listKbDocumentsGroupedByFolder(user.id);
+    const groups = await listKbDocumentsGroupedWithAttachment(user.id);
     return NextResponse.json({
       groups: groups.map(({ folder, documents }) => ({
         folder: { id: folder.id, name: folder.name },
@@ -21,6 +21,7 @@ export const GET = withAuth(async (_req, { user }) => {
           errorMessage: d.errorMessage,
           contentType: d.contentType,
           attachmentId: d.attachmentId,
+          attachmentUrl: d.attachmentUrl,
           createdAt: d.createdAt.toISOString(),
           updatedAt: d.updatedAt.toISOString(),
         })),

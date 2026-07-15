@@ -141,6 +141,11 @@ export async function uploadKbImage(args: {
       Key: args.key,
       Body: args.body,
       ContentType: args.contentType ?? "image/png",
+      // ponytail: stored disposition is ignored when the GET URL also
+      // sets `?response-content-disposition=` — but storing "inline"
+      // here covers the case where someone hits the raw object URL
+      // (e.g. the chat composer's R2 publicUrl without a query).
+      ContentDisposition: "inline",
     }),
   );
   return buildPublicUrl(args.key);

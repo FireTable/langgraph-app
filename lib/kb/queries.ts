@@ -3,6 +3,7 @@ import type { PgTransaction } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 
 import { db } from "@/db/client";
+import { attachments } from "@/lib/attachments/schema";
 import {
   kbChunk,
   kbDocument,
@@ -40,6 +41,13 @@ export async function insertKbFolder(row: NewKbFolder): Promise<KbFolder> {
 export async function findKbFolderByName(userId: string, name: string): Promise<KbFolder | null> {
   const row = await db.query.kbFolder.findFirst({
     where: and(eq(kbFolder.userId, userId), eq(kbFolder.name, name)),
+  });
+  return row ?? null;
+}
+
+export async function findKbFolderById(userId: string, id: string): Promise<KbFolder | null> {
+  const row = await db.query.kbFolder.findFirst({
+    where: and(eq(kbFolder.userId, userId), eq(kbFolder.id, id)),
   });
   return row ?? null;
 }
@@ -131,6 +139,63 @@ export async function listKbDocumentsByFolder(
   });
 }
 
+// ponytail: doc + its attachment's publicUrl in one round-trip. The
+// Settings UI uses this to render a "View source" link per doc without
+// an N+1 attachments query.
+export type KbDocumentWithAttachment = KbDocument & { attachmentUrl: string | null };
+
+export async function listKbDocumentsByFolderWithAttachment(
+  userId: string,
+  folderId: string,
+  limit = 100,
+): Promise<KbDocumentWithAttachment[]> {
+  // ponytail: raw R2 public URL. We tried `?response-content-disposition=inline`
+  // to force inline rendering, but R2 custom domains (e.g. file.ai.firetable.tech)
+  // do NOT honor that query param — only the default cloudflarestorage.com
+  // endpoint does. So the link is a plain public URL; the browser will
+  // download the file unless the R2 object itself has `Content-Disposition:
+  // inline` stored at upload time. Only server-side uploads (Settings →
+  // Add Doc → uploadKbImage) set that metadata. Chat uploads via the
+  // presigned-PUT flow never store it (browsers don't send the header).
+  // TODO v3: add a server-side CopyObject step in /api/attachments/confirm
+  // to backfill `Content-Disposition: inline` for chat uploads + a
+  // one-shot script to update historical objects.
+  const base = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, "") ?? "";
+  const rows = await db
+    .select({
+      doc: kbDocument,
+      r2Key: attachments.r2Key,
+    })
+    .from(kbDocument)
+    .leftJoin(attachments, eq(kbDocument.attachmentId, attachments.id))
+    .where(and(eq(kbDocument.userId, userId), eq(kbDocument.folderId, folderId)))
+    .orderBy(desc(kbDocument.createdAt))
+    .limit(limit);
+  return rows.map((r) => ({
+    ...r.doc,
+    attachmentUrl: r.r2Key && base ? `${base}/${r.r2Key}` : null,
+  }));
+}
+
+// ponytail: Settings → KB → grouped list with attachmentUrl. The
+// per-folder loop keeps a tight SQL footprint (one query per folder
+// for the JOIN); O(folders) is fine for v2.
+export async function listKbDocumentsGroupedWithAttachment(
+  userId: string,
+): Promise<Array<{ folder: KbFolder; documents: KbDocumentWithAttachment[] }>> {
+  const folders = await db.query.kbFolder.findMany({
+    where: eq(kbFolder.userId, userId),
+    orderBy: [asc(kbFolder.name)],
+  });
+  if (folders.length === 0) return [];
+  const out: Array<{ folder: KbFolder; documents: KbDocumentWithAttachment[] }> = [];
+  for (const folder of folders) {
+    const documents = await listKbDocumentsByFolderWithAttachment(userId, folder.id);
+    out.push({ folder, documents });
+  }
+  return out;
+}
+
 // Settings → KB tab — group docs by folder in one shot.
 export async function listKbDocumentsGroupedByFolder(
   userId: string,
@@ -172,6 +237,32 @@ export async function findKbChunksByDocumentId(userId: string, docId: string): P
     .then((rows) => rows.map((r) => r.chunk));
 }
 
+// Slim variant for the Settings → KB doc-detail payload: skip the 1536-dim
+// embedding array (6 KB per chunk) and the generated `tsv` column. The
+// preview UI just needs the text + extracted entities.
+export type KbChunkPreview = {
+  ordinal: number;
+  content: string;
+  entities: string[];
+};
+
+export async function findKbChunksContentByDocumentId(
+  userId: string,
+  docId: string,
+): Promise<KbChunkPreview[]> {
+  return db
+    .select({
+      ordinal: kbChunk.ordinal,
+      content: kbChunk.content,
+      entities: kbChunk.entities,
+    })
+    .from(kbChunk)
+    .innerJoin(kbDocument, eq(kbChunk.documentId, kbDocument.id))
+    .where(and(eq(kbDocument.userId, userId), eq(kbChunk.documentId, docId)))
+    .orderBy(asc(kbChunk.ordinal))
+    .then((rows) => rows);
+}
+
 export async function deleteKbDocumentForUser(
   userId: string,
   docId: string,
@@ -179,6 +270,17 @@ export async function deleteKbDocumentForUser(
   const [row] = await db
     .delete(kbDocument)
     .where(and(eq(kbDocument.id, docId), eq(kbDocument.userId, userId)))
+    .returning();
+  return row ?? null;
+}
+
+export async function deleteKbFolderForUser(
+  userId: string,
+  folderId: string,
+): Promise<KbFolder | null> {
+  const [row] = await db
+    .delete(kbFolder)
+    .where(and(eq(kbFolder.id, folderId), eq(kbFolder.userId, userId)))
     .returning();
   return row ?? null;
 }
