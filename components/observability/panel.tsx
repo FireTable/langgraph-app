@@ -381,7 +381,7 @@ const WaterfallRow: FC = () => {
       <SpanPrimitive.Indent
         baseIndent={8}
         indentPerLevel={12}
-        className="border-border group-hover:bg-accent/50 sticky left-0 bg-background z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2 max-w-[50%] md:max-w-none"
+        className={`border-border group-hover:bg-accent/50 sticky left-0 ${isSelected ? "bg-accent/60" : "bg-background"} z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2 max-w-[50%] md:max-w-none`}
         style={{ width: LABEL_WIDTH, height: BAR_HEIGHT }}
       >
         <AuiIf
