@@ -43,7 +43,18 @@ Output clean markdown: preserve headings, lists, code blocks, tables, and inline
 If the page is blank or contains only decorative images, output an empty string.
 Do not add commentary — return only the markdown content of the page.`;
 
-type PageResult = { pageIndex: number; imageUrl: string; markdown: string };
+type PageResult = {
+  pageIndex: number;
+  imageUrl: string;
+  // ponytail: apimart's Azure-backed gateway rejects image_url HTTPS
+  // URLs (returns a file_data schema expecting base64). Keep the
+  // rendered Buffer so vlmNode can hand the VLM a data URL directly.
+  // R2 upload is only needed for v3 citation/UI affordances — until
+  // then we ship a 2.4 MB document's worth of pages in state (≪ 50 MB
+  // LangGraph per-run budget).
+  png?: Buffer;
+  markdown: string;
+};
 type ChunkSeed = { ordinal: number; content: string; entities: string[]; embedding: number[] };
 
 const KbAgentState = new StateSchema({
@@ -129,9 +140,12 @@ async function screenshotNode(
   const docId = `d-${randomUUID()}`;
   const pages: PageResult[] = await Promise.all(
     rendered.map(async (p) => {
+      // ponytail: keep the Buffer around for VLM (apimart gateway
+      // rejects HTTPS image_url; needs base64 data URL). R2 upload
+      // happens too — the URL is stored for future v3 affordances.
       const key = `kb-tmp/${userId}/${docId}/page-${p.pageIndex}.png`;
       const imageUrl = await uploadKbImage({ key, body: p.png });
-      return { pageIndex: p.pageIndex, imageUrl, markdown: "" };
+      return { pageIndex: p.pageIndex, imageUrl, png: p.png, markdown: "" };
     }),
   );
 
@@ -152,13 +166,18 @@ async function vlmNode(state: KbAgentStateShape) {
   const vlm = await getVlmModel();
   const updated: PageResult[] = [];
   for (const p of state.pages) {
+    // ponytail: apimart's Azure gateway rejects image_url HTTPS URLs
+    // (returns "invalid base64-encoded value"). Fall back to a base64
+    // data URL using the Buffer we kept in screenshotNode. The
+    // R2-hosted imageUrl stays in state for v3 affordances.
+    const dataUrl = `data:image/png;base64,${(p.png ?? Buffer.alloc(0)).toString("base64")}`;
     try {
       const response = await vlm.invoke([
         {
           role: "user",
           content: [
             { type: "text", text: VLM_PAGE_PROMPT },
-            { type: "image_url", image_url: { url: p.imageUrl } },
+            { type: "image_url", image_url: { url: dataUrl } },
           ],
         },
       ] as never);
@@ -257,6 +276,10 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
       status: "success",
       errorMessage: null,
     });
+    // ponytail: tsv is a generated column — passing any value trips
+    // Postgres' "cannot insert a non-DEFAULT value into column tsv"
+    // (428C9). Cast through `unknown` to drop the tsv field that Drizzle
+    // infers as required on the insert type.
     await insertKbChunks(
       tx,
       seeds.map((s) => ({
@@ -266,12 +289,7 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
         content: s.content,
         embedding: s.embedding,
         entities: s.entities,
-        // tsv is a generated column — the DB computes it on INSERT
-        // from `content`. Drizzle infers it as required on the insert
-        // type even though writes are forbidden; pass an empty
-        // placeholder that the DB replaces.
-        tsv: "",
-      })),
+      })) as never,
     );
     return doc;
   });

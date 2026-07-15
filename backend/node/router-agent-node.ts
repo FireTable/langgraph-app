@@ -37,9 +37,26 @@ export async function routerAgentNode(
   const system = new SystemMessage(ROUTER_AGENT_PROMPT);
   const userId = extractUserId(config);
   const trimmed = await trimMessagesForInvoke(state.messages, [], userId ?? undefined);
-  const invokeMessages = lastUserMessage
-    ? [system, lastUserMessage, ...trimmed.filter((m) => m.id !== lastUserMessage.id)]
-    : [system, ...trimmed];
+
+  // ponytail: strip file content parts before sending to the LLM —
+  // apimart's Azure Responses API rejects image_url/file content with
+  // non-base64 data ("Invalid file data" 400). The model has already
+  // routed to kbAgent (kb_ref in state) or it's not a PDF — either
+  // way the file part is irrelevant for routing.
+  function stripFileParts(msg: BaseMessage): BaseMessage {
+    if (!Array.isArray(msg.content)) return msg;
+    const cleaned = msg.content.filter(
+      (p) => typeof p === "object" && p !== null && (p as { type?: string }).type !== "file",
+    );
+    if (cleaned.length === msg.content.length) return msg;
+    return new HumanMessage({ content: cleaned as never, id: msg.id });
+  }
+  const trimmedClean = trimmed.map(stripFileParts);
+  const lastClean = lastUserMessage ? stripFileParts(lastUserMessage) : null;
+
+  const invokeMessages = lastClean
+    ? [system, lastClean, ...trimmedClean.filter((m) => m.id !== lastClean.id)]
+    : [system, ...trimmedClean];
 
   // LLM route — schema now includes kbAgent for completeness, but
   // the explicit short-circuit above means we never reach this with a
