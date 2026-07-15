@@ -1,11 +1,12 @@
 import { END, START, StateGraph, StateSchema } from "@langchain/langgraph";
-import { type BaseMessage } from "@langchain/core/messages";
+import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import PQueue from "p-queue";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { getChatModel, getEmbeddingModel, getVlmModel } from "@/backend/model";
+import { KB_VLM_PAGE_PROMPT } from "@/backend/prompt/system";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 import { screenshotPdf } from "@/lib/kb/screenshot";
 import {
@@ -38,11 +39,6 @@ import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from
 // when the doc is a dedup hit (state.skipPipeline). Both the dedup-hit
 // path and the new-ingest path funnel through chunkEmbedStoreNode
 // (which appends the kb_ref to the last HumanMessage either way).
-
-const VLM_PAGE_PROMPT = `You are extracting text from a single PDF page rendered as an image.
-Output clean markdown: preserve headings, lists, code blocks, tables, and inline formatting.
-If the page is blank or contains only decorative images, output an empty string.
-Do not add commentary — return only the markdown content of the page.`;
 
 type PageResult = {
   pageIndex: number;
@@ -162,31 +158,22 @@ async function vlmNode(state: KbAgentStateShape) {
   if (state.skipPipeline) return {};
   const vlm = await getVlmModel();
   const queue = new PQueue({ concurrency: VLM_CONCURRENCY });
+  // ponytail: hoist the system message out of the per-page loop — every
+  // page gets the same KB_VLM_PAGE_PROMPT. The page image is the only
+  // per-call variable, so it lives in the HumanMessage.
+  const system = new SystemMessage(KB_VLM_PAGE_PROMPT);
   try {
     const results = await Promise.all(
       state.pages.map((p) =>
         queue.add(async () => {
-          // ponytail: apimart accepts the assistant-ui image part shape
-          // (same one r2-adapter.ts uses for chat uploads) — pass the
-          // R2 publicUrl directly, no base64 round-trip. Also keeps
-          // state tiny: just the URL string, not the PNG Buffer.
-          const filename = state.title ?? "page";
-          const response = await vlm.invoke(
-            [
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: VLM_PAGE_PROMPT },
-                  {
-                    type: "image",
-                    image: p.imageUrl,
-                    filename,
-                  },
-                ],
-              },
-            ] as never,
-            { tags: ["nostream"] },
-          );
+          // ponytail: pass the R2 publicUrl directly — no base64
+          // round-trip. Keeps state.pages as just URL strings, not
+          // PNG Buffers. LangChain translates {type:image_url} into the
+          // OpenAI chat-completions shape the upstream expects.
+          const user = new HumanMessage({
+            content: [{ type: "image_url", image_url: { url: p.imageUrl } }],
+          });
+          const response = await vlm.invoke([system, user], { tags: ["nostream"] });
           const content = response.content;
           const text =
             typeof content === "string"
@@ -225,12 +212,20 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
     return { status: "failed" as const, errorMessage: "missing fields in kbAgent state" };
   }
 
-  // Skip-path (dedup hit or vlm failed): no new chunks — append kb_ref
-  // for the existing doc and bail.
+  // ponytail: append the kb_ref up-front (before any success/failure
+  // branch below). The router's next pass keys off filePart vs kb_ref
+  // — if we don't land a kb_ref in state.messages, the parent loops
+  // kbAgent forever (router short-circuit sees filePart still present
+  // and re-routes here). The old code only appended kb_ref on the
+  // success + skipPipeline branches, missing the "empty markdown after
+  // VLM" failure path. Doc status can still be "failed" — the UI shows
+  // it as Failed and the user can retry — but the loop must end.
+  const last = findLastHumanMessage(state.messages);
+  if (!last) return { status: "failed" as const, errorMessage: "no human message" };
+  const rewritten = appendKbRef(state.messages, docId, attachmentId);
+
+  // Skip-path (dedup hit or vlm failed): no new chunks — bail.
   if (state.skipPipeline) {
-    const last = findLastHumanMessage(state.messages);
-    if (!last) return { status: "failed" as const, errorMessage: "no human message" };
-    const rewritten = appendKbRef(state.messages, docId, attachmentId);
     return { messages: rewritten, status: state.status, errorMessage: state.errorMessage };
   }
 
@@ -240,7 +235,11 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
     .filter((m) => m.length > 0)
     .join("\n\n");
   if (!fullMarkdown) {
-    return { status: "failed" as const, errorMessage: "empty markdown after VLM" };
+    return {
+      messages: rewritten,
+      status: "failed" as const,
+      errorMessage: "empty markdown after VLM",
+    };
   }
   const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
   const splitDocs = await splitter.createDocuments([fullMarkdown]);
@@ -312,9 +311,8 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   });
   invalidateKbDoc(userId, newDoc.id);
 
-  const last = findLastHumanMessage(state.messages);
-  if (!last) return { status: "failed" as const, errorMessage: "no human message" };
-  const rewritten = appendKbRef(state.messages, newDoc.id, attachmentId);
+  // `rewritten` (with the new docId) was already computed up-front —
+  // it carries docId from state, which IS newDoc.id at this point.
   return { chunks: seeds, messages: rewritten, status: "success", errorMessage: null };
 }
 

@@ -174,6 +174,16 @@ ON FAILURE:
 - If execute_code returns \`{ ok: false, error }\`: read the error, fix the code, retry. If the fix is non-trivial, call write_code first.
 - After 3 failed attempts on the same problem: stop. Tell the user what went wrong in one sentence and ask if they want to try a different approach.`;
 
+// Dropped into the vlmNode inside the kb sub-agent. Asks the VLM to
+// read ONE rendered PDF page (passed in as an image_url) and emit the
+// page's content as clean markdown. Per-page, so the prompt has to
+// stay generic — no document-level structure, just "what's on this
+// page?". Runs at VLM_CONCURRENCY=5 (see kb-agent.ts).
+export const KB_VLM_PAGE_PROMPT = `You are extracting text from a single PDF page rendered as an image.
+Output clean markdown: preserve headings, lists, code blocks, tables, and inline formatting.
+If the page is blank or contains only decorative images, output an empty string.
+Do not add commentary — return only the markdown content of the page.`;
+
 // ponytail: shared system-prompt skeleton — wraps the per-agent base
 // prompt (CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, etc.) with the
 // user-memory + past-thread context blocks. Renders as {{base}} +
