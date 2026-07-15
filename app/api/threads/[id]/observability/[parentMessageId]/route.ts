@@ -43,7 +43,7 @@ export const GET = withAuth<Params>(async (_req, { user, params }) => {
   // so the panel never has to import transformCapturedToSpanData and
   // the wire carries only what the waterfall needs.
   const spans = transformCapturedToSpanData(capturedSpans);
-  const aggregate = aggregateRoot(capturedSpans);
+  const aggregate = aggregateRoot(capturedSpans, spans);
   const stepIdToRawSpanId = buildStepIdToRawSpanId(capturedSpans);
   return NextResponse.json({
     thread_id: params.id,
