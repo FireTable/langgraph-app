@@ -136,6 +136,9 @@ importers:
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      p-queue:
+        specifier: ^9.3.1
+        version: 9.3.1
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
@@ -5903,8 +5906,8 @@ packages:
     resolution: {integrity: sha512-RwFpb72c/BhQLEXIZ5K2e+AhgNVmIejGlTgiB9MzZ0e93GRvqZ7uSi0dvRF7/XIXDeNkra2fNHBxTyPDGySpjQ==}
     engines: {node: '>=8'}
 
-  p-queue@9.3.0:
-    resolution: {integrity: sha512-7NED7xhQ74Ngp4JP/2e0VZHp7vSWfJfqeiR92jPgxsz6m0Se4P03YoTKa9dDXyZ3r6P616gUXttrB6nnHYKang==}
+  p-queue@9.3.1:
+    resolution: {integrity: sha512-POWdiIPmsUPGwb4FeQ4OBg46aqmcInSWe45CKDsGHiOBiVQM9chqfQTuqhuTzcg2Vz9faTI65at0KkVyVEiCHw==}
     engines: {node: '>=20'}
 
   p-retry@7.1.1:
@@ -8575,7 +8578,7 @@ snapshots:
       '@langchain/core': 1.2.1(openai@6.44.0(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@4.4.3))(ws@8.18.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))
       '@langchain/protocol': 0.0.18
       '@types/json-schema': 7.0.15
-      p-queue: 9.3.0
+      p-queue: 9.3.1
       p-retry: 7.1.1
     optionalDependencies:
       react: 19.2.7
@@ -13908,7 +13911,7 @@ snapshots:
       eventemitter3: 4.0.7
       p-timeout: 3.2.0
 
-  p-queue@9.3.0:
+  p-queue@9.3.1:
     dependencies:
       eventemitter3: 5.0.4
       p-timeout: 7.0.1
