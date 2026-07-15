@@ -47,6 +47,24 @@ type PageResult = {
 };
 type ChunkSeed = { ordinal: number; content: string; entities: string[]; embedding: number[] };
 
+// ponytail: withStructuredOutput forces the VLM to emit {markdown:
+// string}. The system prompt (KB_VLM_PAGE_PROMPT) gives the WHAT —
+// "you are extracting markdown from a PDF page". The schema's
+// .describe() gives the JSON-side instruction (same prose, structured
+// for the parser) and removes the "empty markdown" footgun — every
+// response is guaranteed to be either a string or a thrown parse
+// error. Replaces the prior string|array|"" shape-detection branch.
+const vlmPageSchema = z.object({
+  markdown: z
+    .string()
+    .describe(
+      "Clean markdown extraction of this PDF page. " +
+        "Preserve headings, lists, code blocks, tables, and inline formatting. " +
+        "Return an empty string if the page is blank or contains only decorative images. " +
+        "Output ONLY the markdown — no preamble, no commentary, no code fences.",
+    ),
+});
+
 const KbAgentState = new StateSchema({
   // From parent — populated by RouterNode at invoke time.
   messages: z.array(z.custom<BaseMessage>()),
@@ -158,10 +176,13 @@ async function vlmNode(state: KbAgentStateShape) {
   if (state.skipPipeline) return {};
   const vlm = await getVlmModel();
   const queue = new PQueue({ concurrency: VLM_CONCURRENCY });
-  // ponytail: hoist the system message out of the per-page loop — every
-  // page gets the same KB_VLM_PAGE_PROMPT. The page image is the only
-  // per-call variable, so it lives in the HumanMessage.
+  // ponytail: hoist the system message + structured binding out of the
+  // per-page loop — every page shares the same prompt + schema. The
+  // page image is the only per-call variable, so it lives in the
+  // HumanMessage. withStructuredOutput guarantees `out.markdown` is a
+  // string (or the call throws), so no shape-detection branch below.
   const system = new SystemMessage(KB_VLM_PAGE_PROMPT);
+  const structured = vlm.withStructuredOutput(vlmPageSchema, { method: "jsonSchema" });
   try {
     const results = await Promise.all(
       state.pages.map((p) =>
@@ -173,21 +194,8 @@ async function vlmNode(state: KbAgentStateShape) {
           const user = new HumanMessage({
             content: [{ type: "image_url", image_url: { url: p.imageUrl } }],
           });
-          const response = await vlm.invoke([system, user], { tags: ["nostream"] });
-          const content = response.content;
-          const text =
-            typeof content === "string"
-              ? content
-              : Array.isArray(content)
-                ? content
-                    .map((c: unknown) =>
-                      typeof c === "object" && c !== null && "text" in c
-                        ? (c as { text: string }).text
-                        : "",
-                    )
-                    .join("")
-                : "";
-          return { ...p, markdown: text.trim() };
+          const out = await structured.invoke([system, user], { tags: ["nostream"] });
+          return { ...p, markdown: out.markdown.trim() };
         }),
       ),
     );
