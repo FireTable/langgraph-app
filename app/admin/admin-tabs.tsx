@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -32,11 +33,16 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { toast } from "sonner";
 
 type PublicProviderApiKey = { name: string };
+type ModelKind = "chat" | "ocr" | "embed";
 type PublicModel = {
   name: string;
   enabled: boolean;
   inputPer1k: number;
   outputPer1k: number;
+  // ponytail: server-side default ["chat"] means an older row may not
+  // carry the field at all. Fall back to chat at render time so the
+  // table shows a value for every model, regardless of seed-vs-new.
+  kind?: ModelKind[];
 };
 type PublicProviderRow = {
   id: string;
@@ -362,6 +368,7 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
             <tr>
               <th className="px-3 py-2 text-left font-medium">Name</th>
               <th className="px-3 py-2 text-left font-medium">Enabled</th>
+              <th className="px-3 py-2 text-left font-medium">Kind</th>
               <th className="px-3 py-2 text-right font-medium">Input / 1k</th>
               <th className="px-3 py-2 text-right font-medium">Output / 1k</th>
               <th className="px-3 py-2 text-right font-medium" />
@@ -370,7 +377,7 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
           <tbody>
             {models.length === 0 ? (
               <tr>
-                <td colSpan={5} className="text-muted-foreground px-3 py-3 text-center text-xs">
+                <td colSpan={6} className="text-muted-foreground px-3 py-3 text-center text-xs">
                   No models configured.
                 </td>
               </tr>
@@ -382,6 +389,15 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
                     <Badge variant={m.enabled ? "success" : "muted"}>
                       {m.enabled ? "Enabled" : "Disabled"}
                     </Badge>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap gap-1">
+                      {(m.kind ?? ["chat"]).map((k) => (
+                        <Badge key={k} variant="secondary">
+                          {k}
+                        </Badge>
+                      ))}
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{m.inputPer1k}</td>
                   <td className="px-3 py-2 text-right font-mono text-xs">{m.outputPer1k}</td>
@@ -511,11 +527,16 @@ function ModelDialog(
   const initialEnabled = isEdit ? props.model.enabled : true;
   const initialIn = isEdit ? String(props.model.inputPer1k) : "0.001";
   const initialOut = isEdit ? String(props.model.outputPer1k) : "0.002";
+  // ponytail: backend defaults kind to ["chat"] on POST when omitted,
+  // so the add-mode local seed mirrors the server contract and we don't
+  // need to send `kind` in the body. Edit-mode seeds from existing row.
+  const initialKind: ModelKind[] = isEdit ? (props.model.kind ?? ["chat"]) : ["chat"];
 
   const [name, setName] = useState(initialName);
   const [enabled, setEnabled] = useState(initialEnabled);
   const [inputPer1k, setInputPer1k] = useState(initialIn);
   const [outputPer1k, setOutputPer1k] = useState(initialOut);
+  const [kind, setKind] = useState<ModelKind[]>(initialKind);
   const [saving, start] = useTransition();
 
   useEffect(() => {
@@ -523,7 +544,18 @@ function ModelDialog(
     setEnabled(initialEnabled);
     setInputPer1k(initialIn);
     setOutputPer1k(initialOut);
-  }, [initialName, initialEnabled, initialIn, initialOut]);
+    setKind(initialKind);
+  }, [initialName, initialEnabled, initialIn, initialOut, initialKind]);
+
+  const toggleKind = (k: ModelKind, checked: boolean) => {
+    setKind((prev) => {
+      const next = checked ? Array.from(new Set([...prev, k])) : prev.filter((x) => x !== k);
+      // ponytail: at least one kind must stay selected — unchecking the
+      // last box is a no-op so the user can never save a model with
+      // kind = [] (which the API rejects with 400 anyway).
+      return next.length === 0 ? prev : next;
+    });
+  };
 
   const save = () => {
     if (!name.trim()) {
@@ -541,8 +573,8 @@ function ModelDialog(
       : `/api/admin/providers/${encodeURIComponent(props.providerId)}/models`;
     const method = isEdit ? "PATCH" : "POST";
     const body = isEdit
-      ? { name: name.trim(), enabled, inputPer1k: inp, outputPer1k: out }
-      : { name: name.trim(), enabled, inputPer1k: inp, outputPer1k: out };
+      ? { name: name.trim(), enabled, inputPer1k: inp, outputPer1k: out, kind }
+      : { name: name.trim(), enabled, inputPer1k: inp, outputPer1k: out, kind };
     start(async () => {
       const r = await jsonFetch(path, { method, body: JSON.stringify(body) });
       if (!r.ok) {
@@ -589,6 +621,26 @@ function ModelDialog(
             aria-label="Model enabled"
           />
         </label>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Kind</span>
+          <div className="flex flex-wrap gap-3">
+            {(["chat", "ocr", "embed"] as const).map((k) => (
+              <label key={k} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={kind.includes(k)}
+                  onCheckedChange={(c) => toggleKind(k, c === true)}
+                  disabled={saving || props.pending}
+                  aria-label={`kind ${k}`}
+                />
+                <span className="font-mono text-xs">{k}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-muted-foreground text-xs">
+            At least one kind is required — chat for general inference, ocr for PDF vision, embed
+            for KB chunk vectors.
+          </p>
+        </div>
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Input / 1k</span>
           <Input

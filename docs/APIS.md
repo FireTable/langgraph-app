@@ -426,21 +426,25 @@ Rotate (new plaintext) and/or rename an existing key. Path is keyed on the **ori
 
 Append a new model + rate config. `inputPer1k` / `outputPer1k` are credits-per-1k-tokens — see [`docs/CREDIT.md`](./CREDIT.md).
 
-|               |                                                                                                   |
-| ------------- | ------------------------------------------------------------------------------------------------- |
-| Request body  | `{ name: string (1..128), enabled: boolean, inputPer1k: number (≥0), outputPer1k: number (≥0) }`. |
-| 201 response  | `PublicProvider`                                                                                  |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider missing), 409 `DUPLICATE_MODEL`.           |
+|               |                                                                                                                                                                |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ name: string (1..128), enabled: boolean, inputPer1k: number (≥0), outputPer1k: number (≥0), kind?: ("chat"\|"ocr"\|"embed")[] (min 1, default ["chat"]) }`. |
+| 201 response  | `PublicProvider`                                                                                                                                               |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider missing), 409 `DUPLICATE_MODEL`.                                                                        |
+
+`kind` is the set of pools this model serves — `chat` for general inference, `ocr` for vision-based PDF text extraction (kb-agent's `ocrNode`), `embed` for KB chunk vectors. A single upstream model can hold multiple (e.g. `["chat","ocr"]`). When omitted, the backend writes `["chat"]`. See [`docs/PROVIDERS.md`](./PROVIDERS.md) for how the registry routes traffic across `(provider, model, key, kind)` tuples.
 
 ### `PATCH /api/admin/providers/[id]/models/[modelName]`
 
 Partial update. Rate changes after a call are NOT retroactively applied to historical `credit_usage_log` rows — see [`docs/CREDIT.md`](./CREDIT.md).
 
-|               |                                                                                                |
-| ------------- | ---------------------------------------------------------------------------------------------- |
-| Request body  | Any subset of `{ enabled?, inputPer1k?, outputPer1k? }`. Empty body returns 400 `BAD_REQUEST`. |
-| 200 response  | `PublicProvider`                                                                               |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or model missing).                      |
+|               |                                                                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | Any subset of `{ name?, enabled?, inputPer1k?, outputPer1k?, kind?: ("chat"\|"ocr"\|"embed")[] (min 1) }`. Empty body returns 400 `BAD_REQUEST`. |
+| 200 response  | `PublicProvider`                                                                                                                                 |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or model missing).                                                                        |
+
+When `kind` is omitted from the PATCH body, the existing model keeps whatever it had (no implicit default applied — only POST auto-fills `["chat"]`).
 
 ### `DELETE /api/admin/providers/[id]/models/[modelName]`
 

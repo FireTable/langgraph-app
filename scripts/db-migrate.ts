@@ -118,10 +118,14 @@ async function interpolateEnv(content: string): Promise<string> {
   const modelJson = (() => {
     const name = process.env.OPENAI_MODEL;
     if (!name) return "[]";
-    return JSON.stringify([{ name, enabled: true, inputPer1k: 0.25, outputPer1k: 1 }]).replace(
-      /'/g,
-      "''",
-    );
+    // ponytail: kind defaults to ["chat"] here too — the runner is the
+    // single seed entry point. The registry's `m.kind ?? ["chat"]` fallback
+    // would handle a missing field anyway, but pinning it in the JSON keeps
+    // `SELECT * FROM provider` rows readable for whoever is poking at the
+    // table from `psql` (issue #13).
+    return JSON.stringify([
+      { name, enabled: true, inputPer1k: 0.25, outputPer1k: 1, kind: ["chat"] },
+    ]).replace(/'/g, "''");
   })();
 
   return content

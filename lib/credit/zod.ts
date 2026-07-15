@@ -10,11 +10,22 @@ export const providerApiKeySchema = z.object({
   name: z.string().min(1).max(64),
 });
 
+// ponytail: model kinds — chat = general purpose, ocr = vision-capable
+// chat model used to extract text from rendered PDF pages, embed =
+// embedding model for KB chunks. A single upstream model can serve
+// multiple kinds (gpt-4o-mini is both chat + ocr).
+export const modelKindSchema = z.enum(["chat", "ocr", "embed"]);
+
 export const modelConfigSchema = z.object({
   name: z.string().min(1).max(128),
   enabled: z.boolean(),
   inputPer1k: z.number().min(0),
   outputPer1k: z.number().min(0),
+  // ponytail: backend defaults to ["chat"] when omitted, so clients
+  // never have to send it for a chat-only model. Persisted as-is on
+  // the JSONB row; the registry's `m.kind ?? ["chat"]` back-compat
+  // path keeps old rows (no kind field) eligible for chat traffic.
+  kind: z.array(modelKindSchema).default(["chat"]),
 });
 
 export const providerInputSchema = z.object({
@@ -65,6 +76,18 @@ const providerNoDefaults = z.object({
   models: z.array(modelConfigSchema).optional(),
 });
 export const providerPatchSchema = providerNoDefaults;
+
+// ponytail: PATCH-shape keeps `kind` strict and optional — empty array
+// is rejected (a model with no kind doesn't make sense; the default
+// `["chat"]` would silently replace an intentional empty). Replacing
+// the whole array is the only legal way to update kind via PATCH.
+export const modelPatchSchema = z.object({
+  name: z.string().min(1).max(128).optional(),
+  enabled: z.boolean().optional(),
+  inputPer1k: z.number().min(0).optional(),
+  outputPer1k: z.number().min(0).optional(),
+  kind: z.array(modelKindSchema).min(1).optional(),
+});
 
 const roleNoDefaults = z.object({
   id: z
