@@ -9,6 +9,7 @@ import {
   Folder,
   Loader2,
   MoreHorizontal,
+  Pencil,
   Plus,
   Search,
   Trash2,
@@ -186,7 +187,7 @@ export function KbView({ className }: { className?: string }) {
           <Skeleton className="mb-1 h-4 w-32" />
           <Skeleton className="mb-3 h-3 w-96 max-w-full" />
         </div>
-        <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+        <div className="grid items-start gap-4 md:grid-cols-[260px_1fr]">
           <Card className="h-fit p-0">
             <CardContent className="p-0">
               <div className="flex h-9 items-center justify-between px-4">
@@ -194,9 +195,9 @@ export function KbView({ className }: { className?: string }) {
                 <Skeleton className="size-6 rounded-md" />
               </div>
               <Separator />
-              <div className="space-y-1 p-1">
+              <div className="space-y-0.5 p-2">
                 {[0, 1].map((i) => (
-                  <Skeleton key={i} className="h-8 rounded-md" />
+                  <Skeleton key={i} className="h-7 rounded-md" />
                 ))}
               </div>
             </CardContent>
@@ -270,7 +271,7 @@ export function KbView({ className }: { className?: string }) {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+          <div className="grid items-start gap-4 md:grid-cols-[260px_1fr]">
             <FolderSidebar
               groups={data.groups}
               selectedId={selectedFolderId}
@@ -300,7 +301,9 @@ export function KbView({ className }: { className?: string }) {
           }}
         />
 
-        <NewFolderDialog
+        <FolderNameDialog
+          mode="create"
+          folder={null}
           open={newFolderOpen}
           onOpenChange={setNewFolderOpen}
           onCreated={(folder) => {
@@ -327,6 +330,14 @@ function FolderSidebar({
   onRefresh: () => Promise<void> | void;
 }) {
   const [deleteTarget, setDeleteTarget] = useState<KbFolder | null>(null);
+  const [editTarget, setEditTarget] = useState<KbFolder | null>(null);
+  // ponytail: track which folder's dropdown is open so the row's
+  // count number can crossfade out the same way it does on hover.
+  // We tried group-data-[state=open] but the dropdown's data-state
+  // propagation through Radix's portal is unreliable in our setup,
+  // so we mirror the open state into a data attribute on the li
+  // ourselves.
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null);
 
   return (
     <>
@@ -352,36 +363,45 @@ function FolderSidebar({
             }
           />
           <Separator />
-          <ul className="py-1">
+          {/* ponytail: each folder row is a padded card-like pill that
+              matches the skeleton. The list itself has px-2 so the
+              rounded row backgrounds sit inset from the card edge. */}
+          <ul className="space-y-0.5 p-2">
             {groups.map((g) => {
               const active = g.folder.id === selectedId;
+              const menuOpen = openFolderId === g.folder.id;
               return (
-                <li key={g.folder.id} className="group/folder relative">
+                <li
+                  key={g.folder.id}
+                  data-menu-open={menuOpen || undefined}
+                  className="group/folder relative"
+                >
                   <button
                     type="button"
                     onClick={() => onSelect(g.folder.id)}
+                    data-active={active || undefined}
                     className={cn(
-                      "hover:bg-muted/60 flex w-full items-center gap-2 py-2 pr-9 pl-3 text-left text-sm transition-colors",
-                      active && "bg-muted font-medium",
+                      "hover:bg-muted/60 data-[active=true]:bg-muted flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                      active && "font-medium",
                     )}
                   >
                     <Folder className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
                     <span className="truncate">{g.folder.name}</span>
-                    <span
-                      className={cn(
-                        "text-muted-foreground ml-auto text-xs tabular-nums transition-opacity group-hover/folder:opacity-0",
-                        active && "opacity-0",
-                      )}
-                    >
-                      {g.documents.length}
+                    <span className="ml-auto flex items-center gap-1">
+                      <span className="text-muted-foreground text-xs tabular-nums transition-opacity group-hover/folder:opacity-0 group-data-[menu-open]/folder:opacity-0 mr-2">
+                        {g.documents.length}
+                      </span>
                     </span>
                   </button>
-                  <DropdownMenu>
+                  <DropdownMenu
+                    open={menuOpen}
+                    onOpenChange={(o) => setOpenFolderId(o ? g.folder.id : null)}
+                  >
                     <DropdownMenuTrigger asChild>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="absolute top-1/2 right-1 size-6 -translate-y-1/2 opacity-0 transition-opacity group-hover/folder:opacity-100 data-[state=open]:opacity-100"
+                        className="absolute top-1/2 right-2 size-6 -translate-y-1/2 opacity-0 transition-opacity group-hover/folder:opacity-100 group-data-[active=true]/folder:opacity-100 group-data-[menu-open]/folder:opacity-100"
                         onClick={(e) => e.stopPropagation()}
                         aria-label={`Folder actions: ${g.folder.name}`}
                       >
@@ -390,11 +410,21 @@ function FolderSidebar({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem
-                        onClick={() => setDeleteTarget(g.folder)}
-                        className="text-destructive focus:text-destructive"
+                        onClick={() => setEditTarget(g.folder)}
+                        className="hover:bg-muted focus:bg-muted flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none"
                       >
-                        <Trash2 className="mr-2 size-3.5" />
-                        Delete folder
+                        <Pencil className="size-3.5" />
+                        Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => setDeleteTarget(g.folder)}
+                        // ponytail: matches thread-list delete styling
+                        // (components/assistant-ui/thread-list.tsx) — red
+                        // text + red-tinted background on hover/focus.
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none"
+                      >
+                        <Trash2 className="size-3.5 text-destructive" />
+                        Delete
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -410,6 +440,16 @@ function FolderSidebar({
         onOpenChange={(o) => !o && setDeleteTarget(null)}
         onDeleted={() => {
           setDeleteTarget(null);
+          void onRefresh();
+        }}
+      />
+      <FolderNameDialog
+        mode="edit"
+        folder={editTarget}
+        open={editTarget !== null}
+        onOpenChange={(o) => !o && setEditTarget(null)}
+        onSaved={() => {
+          setEditTarget(null);
           void onRefresh();
         }}
       />
@@ -585,17 +625,22 @@ function DocRow({ doc, onRefresh }: { doc: KbDocument; onRefresh: () => Promise<
         className="hidden md:grid md:grid-cols-[minmax(0,1fr)_auto_120px_auto_84px] md:items-center md:gap-x-3 md:px-4 md:py-3 md:text-sm"
         role="row"
       >
-        <div className="min-w-0 truncate font-medium" title={doc.title}>
+        {/* ponytail: flex items-center so plain-text cells share the
+            same vertical center as the Badge + icon buttons. Grid
+            items-center only aligns the cell box, not the text inside
+            a bare div — text baseline sits above the cell's geometric
+            center. */}
+        <div className="flex min-w-0 items-center truncate font-medium" title={doc.title}>
           {doc.title}
         </div>
-        <div className="text-muted-foreground truncate text-xs">{type}</div>
+        <div className="text-muted-foreground flex items-center truncate text-xs">{type}</div>
         <time
           dateTime={doc.updatedAt}
-          className="text-muted-foreground truncate tabular-nums text-xs"
+          className="text-muted-foreground flex items-center truncate tabular-nums text-xs"
         >
           {formatTimestamp(doc.updatedAt)}
         </time>
-        <div>
+        <div className="flex items-center">
           <StatusBadge status={doc.status} errorMessage={doc.errorMessage} />
         </div>
         <div className="flex items-center justify-end gap-0.5">{actions}</div>
@@ -857,18 +902,35 @@ function FolderDeleteDialog({
   );
 }
 
-function NewFolderDialog({
+function FolderNameDialog({
+  mode,
+  folder,
   open,
   onOpenChange,
   onCreated,
+  onSaved,
 }: {
+  mode: "create" | "edit";
+  folder: KbFolder | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (folder: KbFolder) => void;
+  onCreated?: (folder: KbFolder) => void;
+  onSaved?: (folder: KbFolder) => void;
 }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(folder?.name ?? "");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // ponytail: reset the input when the dialog reopens with a new
+  // folder (edit target) or after a create. Using a useEffect on
+  // `open` ensures the input tracks the latest folder prop without
+  // coupling to the parent's onCreated callback.
+  useEffect(() => {
+    if (open) {
+      setName(folder?.name ?? "");
+      setError(null);
+    }
+  }, [open, folder?.name, folder?.id]);
 
   const submit = useCallback(async () => {
     const trimmed = name.trim();
@@ -879,46 +941,68 @@ function NewFolderDialog({
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch("/api/kb/folders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
-      });
-      if (res.status === 201) {
-        const body = (await res.json()) as { folder: KbFolder };
-        onCreated(body.folder);
-        setName("");
-        onOpenChange(false);
-        return;
+      if (mode === "create") {
+        const res = await fetch("/api/kb/folders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmed }),
+        });
+        if (res.status === 201) {
+          const body = (await res.json()) as { folder: KbFolder };
+          onCreated?.(body.folder);
+          setName("");
+          onOpenChange(false);
+          return;
+        }
+        if (res.status === 409) {
+          setError("A folder with this name already exists");
+          return;
+        }
+        setError(`Failed (${res.status})`);
+      } else {
+        if (!folder) {
+          setError("No folder to edit");
+          return;
+        }
+        const res = await fetch(`/api/kb/folders/${folder.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmed }),
+        });
+        if (res.status === 200) {
+          const body = (await res.json()) as { folder: KbFolder };
+          onSaved?.(body.folder);
+          onOpenChange(false);
+          return;
+        }
+        if (res.status === 409) {
+          setError("A folder with this name already exists");
+          return;
+        }
+        setError(`Failed (${res.status})`);
       }
-      if (res.status === 409) {
-        setError("A folder with this name already exists");
-        return;
-      }
-      setError(`Failed (${res.status})`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSubmitting(false);
     }
-  }, [name, onCreated, onOpenChange]);
+  }, [mode, folder, name, onCreated, onSaved, onOpenChange]);
 
   return (
     <Dialog
       open={open}
       onOpenChange={(o) => {
         onOpenChange(o);
-        if (!o) {
-          setName("");
-          setError(null);
-        }
+        if (!o) setError(null);
       }}
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>New folder</DialogTitle>
+          <DialogTitle>{mode === "create" ? "New folder" : "Edit folder"}</DialogTitle>
           <DialogDescription>
-            Group your knowledge base documents by topic or project.
+            {mode === "create"
+              ? "Group your knowledge base documents by topic or project."
+              : "Rename this folder. Documents inside keep their content."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
@@ -941,7 +1025,13 @@ function NewFolderDialog({
             Cancel
           </Button>
           <Button onClick={() => void submit()} disabled={submitting || !name.trim()}>
-            {submitting ? <Loader2 className="size-3.5 animate-spin" /> : "Create"}
+            {submitting ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : mode === "create" ? (
+              "Create"
+            ) : (
+              "Save"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
