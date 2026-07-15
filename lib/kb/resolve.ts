@@ -1,13 +1,19 @@
 import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
 
-import { extractKbRef, isKbRefPart } from "./extract";
+import { collectKbRefs, isKbRefPart } from "./extract";
 import { getKbDocForResolve } from "./cache";
 
 // ponytail: kb_ref → resolved text. Called from trimMessagesForInvoke
 // at LLM-invoke time (state.messages carries the kb_ref part as-is).
-// Replaces ONLY the kb_ref part of the latest HumanMessage with a text
-// part containing either the concatenated chunks or a status
-// placeholder — never modifies state at rest.
+// Replaces kb_ref parts on EVERY HumanMessage with a text part
+// containing either the concatenated chunks or a status placeholder —
+// never modifies state at rest.
+//
+// state.messages is append-only under the LangGraph addMessages
+// reducer, so a kb_ref from an earlier turn can sit in an earlier
+// HumanMessage while the current turn's HumanMessage has plain text.
+// The earlier fix only touched the LAST HumanMessage, which silently
+// dropped prior-turn doc content from the model's view.
 //
 // "not found" returns null — caller drops the kb_ref entirely so the
 // model never sees a stale id. Matches cross-user 404 semantics from
@@ -43,57 +49,54 @@ export async function resolveKbRefs(
   userId: string,
 ): Promise<BaseMessage[]> {
   if (!userId) return messages;
-  const ref = extractKbRef(messages);
-  if (!ref) return messages;
-  const text = await resolveKbRef(ref.docId, userId);
-  if (text === null) {
-    return stripKbRef(messages, ref.docId);
-  }
-  return replaceKbRefWithText(messages, ref.docId, text);
-}
 
-function findLastHumanIndex(messages: BaseMessage[]): number {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i] instanceof HumanMessage) return i;
-  }
-  return -1;
-}
+  const refs = collectKbRefs(messages);
+  if (refs.length === 0) return messages;
 
-function stripKbRef(messages: BaseMessage[], docId: string): BaseMessage[] {
-  const idx = findLastHumanIndex(messages);
-  if (idx === -1) return messages;
-  const last = messages[idx];
-  if (!Array.isArray(last.content)) return messages;
-  const filtered = last.content.filter((p) => !(isKbRefPart(p) && p.docId === docId));
-  if (filtered.length === last.content.length) return messages;
-  // ponytail: cast at the HumanMessage boundary — `filtered` is a
-  // ContentBlock[] shaped subset that langchain accepts at runtime.
-  const rewritten = new HumanMessage({
-    content: filtered as never,
-    id: last.id,
-  });
-  return [...messages.slice(0, idx), rewritten, ...messages.slice(idx + 1)];
-}
+  // ponytail: dedupe by docId (collectKbRefs already did) then resolve
+  // in parallel. LRU cache on getKbDocForResolve makes back-to-back
+  // resolves cheap, but parallel still saves wall-clock on the cold
+  // path (a thread with 3 docs and 2 of them uncached).
+  const uniqueDocIds = Array.from(new Set(refs.map((r) => r.docId)));
+  const resolvedEntries = await Promise.all(
+    uniqueDocIds.map(
+      async (docId): Promise<[string, string | null]> => [docId, await resolveKbRef(docId, userId)],
+    ),
+  );
+  const resolved = new Map<string, string | null>(resolvedEntries);
 
-function replaceKbRefWithText(messages: BaseMessage[], docId: string, text: string): BaseMessage[] {
-  const idx = findLastHumanIndex(messages);
-  if (idx === -1) return messages;
-  const last = messages[idx];
-  if (!Array.isArray(last.content)) return messages;
-  const newContent: unknown[] = [];
-  let replaced = false;
-  for (const p of last.content) {
-    if (isKbRefPart(p) && p.docId === docId) {
-      newContent.push({ type: "text", text });
-      replaced = true;
-    } else {
-      newContent.push(p);
+  return messages.map((m): BaseMessage => {
+    if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) return m;
+    // ponytail: early-out if this message has no kb_ref — keeps the
+    // happy path reference-equal and avoids needless new HumanMessage
+    // allocations on the checkpointer write-back path.
+    if (!m.content.some((p) => isKbRefPart(p))) return m;
+
+    const newContent: unknown[] = [];
+    let replaced = false;
+    for (const part of m.content) {
+      if (isKbRefPart(part)) {
+        const text = resolved.get(part.docId);
+        if (text === undefined) {
+          // unknown docId — collectKbRefs sourced this so it shouldn't
+          // happen; leave the part as-is rather than crash.
+          newContent.push(part);
+          continue;
+        }
+        if (text === null) {
+          // doc not found (404 / cross-user) → drop the kb_ref part.
+          replaced = true;
+          continue;
+        }
+        newContent.push({ type: "text", text });
+        replaced = true;
+      } else {
+        newContent.push(part);
+      }
     }
-  }
-  if (!replaced) return messages;
-  const rewritten = new HumanMessage({
-    content: newContent as never,
-    id: last.id,
+    if (!replaced) return m;
+    // ponytail: preserve id so the LangGraph addMessages reducer's
+    // dedup-replace treats this as the same message, not a new one.
+    return new HumanMessage({ content: newContent as never, id: m.id });
   });
-  return [...messages.slice(0, idx), rewritten, ...messages.slice(idx + 1)];
 }

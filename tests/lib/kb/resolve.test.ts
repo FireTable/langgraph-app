@@ -1,4 +1,4 @@
-import { HumanMessage } from "@langchain/core/messages";
+import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ponytail: resolve.ts is a thin wrapper over getKbDocForResolve. Mock the
@@ -186,6 +186,138 @@ describe("lib/kb/resolve", () => {
       });
       await resolveKbRefs(humanWithKbRef(), "specific-user");
       expect(getKbDocForResolve).toHaveBeenCalledWith("specific-user", DOC);
+    });
+
+    // ponytail: state.messages is append-only (LangGraph addMessages reducer),
+    // so a kb_ref from an earlier turn can sit in an earlier HumanMessage
+    // while the current turn's HumanMessage has plain text. The old
+    // findLastHumanIndex pass missed those — fix covers all HumanMessages.
+    it("resolves a kb_ref sitting in an earlier HumanMessage", async () => {
+      getKbDocForResolve.mockResolvedValueOnce({
+        doc: docWithStatus("success"),
+        chunks: [{ content: "earlier doc text", ordinal: 0 } as never],
+      });
+      const earlier = new HumanMessage({
+        content: [{ type: "kb_ref", docId: DOC }] as never,
+        id: "h-earlier",
+      });
+      const ai = new HumanMessage({ content: "ai reply" } as never);
+      const current = new HumanMessage({ content: "follow-up question" } as never);
+      const out = await resolveKbRefs([earlier, ai, current], USER);
+      const earlierOut = out[0] as HumanMessage;
+      const currentOut = out[2] as HumanMessage;
+      expect((earlierOut.content as Array<Record<string, unknown>>)[0]).toEqual({
+        type: "text",
+        text: "earlier doc text",
+      });
+      expect(earlierOut.id).toBe("h-earlier");
+      expect(currentOut).toBe(current);
+      expect(getKbDocForResolve).toHaveBeenCalledTimes(1);
+    });
+
+    it("resolves kb_refs in EVERY HumanMessage that has one", async () => {
+      getKbDocForResolve
+        .mockResolvedValueOnce({
+          doc: docWithStatus("success"),
+          chunks: [{ content: "doc A text", ordinal: 0 } as never],
+        })
+        .mockResolvedValueOnce({
+          doc: { ...docWithStatus("success"), id: "doc-2" },
+          chunks: [{ content: "doc B text", ordinal: 0 } as never],
+        });
+      const h1 = new HumanMessage({
+        content: [{ type: "kb_ref", docId: "doc-1" }] as never,
+        id: "h-1",
+      });
+      const h2 = new HumanMessage({
+        content: [{ type: "kb_ref", docId: "doc-2" }] as never,
+        id: "h-2",
+      });
+      const out = await resolveKbRefs([h1, h2], USER);
+      expect((out[0] as HumanMessage).content as Array<Record<string, unknown>>).toEqual([
+        { type: "text", text: "doc A text" },
+      ]);
+      expect((out[1] as HumanMessage).content as Array<Record<string, unknown>>).toEqual([
+        { type: "text", text: "doc B text" },
+      ]);
+      expect(getKbDocForResolve).toHaveBeenCalledTimes(2);
+    });
+
+    it("dedupes parallel resolves — same docId across two HumanMessages hits the cache once", async () => {
+      getKbDocForResolve.mockResolvedValueOnce({
+        doc: docWithStatus("success"),
+        chunks: [{ content: "shared", ordinal: 0 } as never],
+      });
+      const h1 = new HumanMessage({
+        content: [{ type: "kb_ref", docId: DOC }] as never,
+        id: "h-1",
+      });
+      const h2 = new HumanMessage({
+        content: [{ type: "kb_ref", docId: DOC }] as never,
+        id: "h-2",
+      });
+      const out = await resolveKbRefs([h1, h2], USER);
+      expect(getKbDocForResolve).toHaveBeenCalledTimes(1);
+      expect((out[0] as HumanMessage).content).toEqual([{ type: "text", text: "shared" }]);
+      expect((out[1] as HumanMessage).content).toEqual([{ type: "text", text: "shared" }]);
+    });
+
+    it("strips a kb_ref from an earlier HumanMessage when the doc is not found", async () => {
+      getKbDocForResolve.mockResolvedValueOnce(null);
+      const earlier = new HumanMessage({
+        content: [
+          { type: "text", text: "context" },
+          { type: "kb_ref", docId: DOC },
+        ] as never,
+        id: "h-earlier",
+      });
+      const current = new HumanMessage({ content: "follow-up" } as never);
+      const out = await resolveKbRefs([earlier, current], USER);
+      expect((out[0] as HumanMessage).content).toEqual([{ type: "text", text: "context" }]);
+      expect(out[1]).toBe(current);
+    });
+
+    it("resolves multiple kb_ref parts within a single HumanMessage", async () => {
+      getKbDocForResolve
+        .mockResolvedValueOnce({
+          doc: { ...docWithStatus("success"), id: "doc-1" },
+          chunks: [{ content: "alpha", ordinal: 0 } as never],
+        })
+        .mockResolvedValueOnce({
+          doc: { ...docWithStatus("success"), id: "doc-2" },
+          chunks: [{ content: "beta", ordinal: 0 } as never],
+        });
+      const h = new HumanMessage({
+        content: [
+          { type: "text", text: "compare" },
+          { type: "kb_ref", docId: "doc-1" },
+          { type: "kb_ref", docId: "doc-2" },
+        ] as never,
+        id: "h-1",
+      });
+      const out = await resolveKbRefs([h], USER);
+      expect((out[0] as HumanMessage).content).toEqual([
+        { type: "text", text: "compare" },
+        { type: "text", text: "alpha" },
+        { type: "text", text: "beta" },
+      ]);
+    });
+
+    it("passes non-Human messages through untouched", async () => {
+      getKbDocForResolve.mockResolvedValueOnce({
+        doc: docWithStatus("success"),
+        chunks: [{ content: "x", ordinal: 0 } as never],
+      });
+      const sys = new SystemMessage("sys prompt");
+      const ai = { role: "assistant", content: "ai reply" } as never;
+      const h = new HumanMessage({
+        content: [{ type: "kb_ref", docId: DOC }] as never,
+        id: "h-1",
+      });
+      const out = await resolveKbRefs([sys, ai, h], USER);
+      expect(out[0]).toBe(sys);
+      expect(out[1]).toBe(ai);
+      expect((out[2] as HumanMessage).content).toEqual([{ type: "text", text: "x" }]);
     });
   });
 });

@@ -68,6 +68,50 @@ export function extractKbRef(messages: BaseMessage[]): KbRefPart | null {
   return null;
 }
 
+// ponytail: returns EVERY PDF file part from EVERY HumanMessage in
+// message order. kbAgent uses this to discover what needs OCR — it
+// must NOT be last-only, since the router can route to kbAgent while
+// earlier HumanMessages still carry unresolved PDFs (e.g. when state
+// is replayed or simulated). The single-PDF extraction lives in
+// extractFilePart (last-only, current-turn only) and stays unchanged.
+export function extractAllPdfParts(
+  messages: BaseMessage[],
+): Array<{ messageIndex: number; filePart: FilePart }> {
+  const out: Array<{ messageIndex: number; filePart: FilePart }> = [];
+  messages.forEach((m, i) => {
+    if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) return;
+    for (const part of m.content) {
+      if (isFilePart(part) && part.mime_type === "application/pdf") {
+        out.push({ messageIndex: i, filePart: part });
+      }
+    }
+  });
+  return out;
+}
+
+// ponytail: returns every kb_ref part across EVERY HumanMessage,
+// deduped by docId (first occurrence wins). state.messages is
+// append-only under the LangGraph addMessages reducer, so a kb_ref
+// appended by kbAgent in turn N stays in Human(N) for the rest of
+// the thread — even after the user has sent several more turns of
+// plain text. The router still uses extractKbRef (last-only) to flag
+// the current turn; this is the multi-message equivalent for the
+// resolve layer.
+export function collectKbRefs(messages: BaseMessage[]): KbRefPart[] {
+  const seen = new Set<string>();
+  const out: KbRefPart[] = [];
+  for (const m of messages) {
+    if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) continue;
+    for (const part of m.content) {
+      if (isKbRefPart(part) && !seen.has(part.docId)) {
+        seen.add(part.docId);
+        out.push(part);
+      }
+    }
+  }
+  return out;
+}
+
 // ponytail: kbAgent appends a kb_ref part to the same HumanMessage
 // that carried the original file part. To keep reducer dedup-replace
 // stable, we must preserve the message id when rewriting. This helper

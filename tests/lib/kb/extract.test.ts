@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   appendKbRef,
+  collectKbRefs,
+  extractAllPdfParts,
   extractFilePart,
   extractKbRef,
   findLastHumanMessage,
@@ -143,6 +145,114 @@ describe("lib/kb/extract", () => {
     it("returns null when no kb_ref present", () => {
       const m = new HumanMessage("plain");
       expect(extractKbRef([m])).toBeNull();
+    });
+  });
+
+  describe("extractAllPdfParts", () => {
+    it("returns every PDF file part from every HumanMessage in order", () => {
+      const pdfA = { type: "file" as const, data: "u/A", mime_type: "application/pdf" };
+      const pdfB = { type: "file" as const, data: "u/B", mime_type: "application/pdf" };
+      const h1 = new HumanMessage({
+        content: [{ type: "text", text: "first" }, pdfA] as never,
+        id: "h-1",
+      });
+      const ai = new AIMessage("ok");
+      const h2 = new HumanMessage({
+        content: [pdfB, { type: "text", text: "second" }] as never,
+        id: "h-2",
+      });
+      expect(extractAllPdfParts([h1, ai, h2])).toEqual([
+        { messageIndex: 0, filePart: pdfA },
+        { messageIndex: 2, filePart: pdfB },
+      ]);
+    });
+
+    it("returns every PDF when a single HumanMessage carries multiple", () => {
+      const pdf1 = { type: "file" as const, data: "u/1", mime_type: "application/pdf" };
+      const pdf2 = { type: "file" as const, data: "u/2", mime_type: "application/pdf" };
+      const h = new HumanMessage({
+        content: [{ type: "text", text: "compare" }, pdf1, pdf2] as never,
+        id: "h-1",
+      });
+      const out = extractAllPdfParts([h]);
+      expect(out).toHaveLength(2);
+      expect(out[0]).toEqual({ messageIndex: 0, filePart: pdf1 });
+      expect(out[1]).toEqual({ messageIndex: 0, filePart: pdf2 });
+    });
+
+    it("filters out non-PDF file parts (images, audio, etc.)", () => {
+      const pdf = { type: "file" as const, data: "u/A", mime_type: "application/pdf" };
+      const img = { type: "file" as const, data: "u/img", mime_type: "image/png" };
+      const h = new HumanMessage({
+        content: [pdf, img, { type: "text", text: "x" }] as never,
+        id: "h-1",
+      });
+      expect(extractAllPdfParts([h])).toEqual([{ messageIndex: 0, filePart: pdf }]);
+    });
+
+    it("returns an empty array when no HumanMessage has a PDF", () => {
+      const sys = new SystemMessage("x");
+      const ai = new AIMessage("y");
+      const h = new HumanMessage("plain");
+      expect(extractAllPdfParts([sys, ai, h])).toEqual([]);
+    });
+
+    it("returns an empty array on empty input", () => {
+      expect(extractAllPdfParts([])).toEqual([]);
+    });
+
+    it("skips HumanMessages whose content is a string", () => {
+      const pdf = { type: "file" as const, data: "u/A", mime_type: "application/pdf" };
+      const stringH = new HumanMessage("hi");
+      const arrayH = new HumanMessage({ content: [pdf], id: "h-1" });
+      expect(extractAllPdfParts([stringH, arrayH])).toEqual([{ messageIndex: 1, filePart: pdf }]);
+    });
+  });
+
+  describe("collectKbRefs", () => {
+    it("returns all kb_ref parts across every HumanMessage", () => {
+      const refA = { type: "kb_ref" as const, docId: "d-1" };
+      const refB = { type: "kb_ref" as const, docId: "d-2" };
+      const h1 = new HumanMessage({ content: [refA], id: "h-1" });
+      const ai = new AIMessage("ok");
+      const h2 = new HumanMessage({
+        content: [{ type: "text", text: "follow-up" }, refB] as never,
+        id: "h-2",
+      });
+      expect(collectKbRefs([h1, ai, h2])).toEqual([refA, refB]);
+    });
+
+    it("preserves message order (earlier HumanMessage's kb_ref comes first)", () => {
+      const refEarly = { type: "kb_ref" as const, docId: "d-early" };
+      const refLate = { type: "kb_ref" as const, docId: "d-late" };
+      const h1 = new HumanMessage({ content: [refEarly], id: "h-1" });
+      const h2 = new HumanMessage({ content: [refLate], id: "h-2" });
+      expect(collectKbRefs([h1, h2])).toEqual([refEarly, refLate]);
+    });
+
+    it("dedupes by docId — same docId in two HumanMessages appears once", () => {
+      const ref = { type: "kb_ref" as const, docId: "d-shared" };
+      const h1 = new HumanMessage({ content: [ref], id: "h-1" });
+      const h2 = new HumanMessage({ content: [ref], id: "h-2" });
+      expect(collectKbRefs([h1, h2])).toEqual([ref]);
+    });
+
+    it("returns an empty array when no HumanMessage has a kb_ref", () => {
+      const sys = new SystemMessage("x");
+      const ai = new AIMessage("y");
+      const h = new HumanMessage("plain text");
+      expect(collectKbRefs([sys, ai, h])).toEqual([]);
+    });
+
+    it("returns an empty array on empty input", () => {
+      expect(collectKbRefs([])).toEqual([]);
+    });
+
+    it("skips HumanMessages whose content is a string (no parts to inspect)", () => {
+      const ref = { type: "kb_ref" as const, docId: "d-1" };
+      const stringH = new HumanMessage("hi");
+      const arrayH = new HumanMessage({ content: [ref], id: "h-1" });
+      expect(collectKbRefs([stringH, arrayH])).toEqual([ref]);
     });
   });
 
