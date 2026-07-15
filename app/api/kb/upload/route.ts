@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { withAuth } from "@/lib/auth/with-auth";
-import { langGraphClient } from "@/lib/langgraph/client";
+import { fireIngestionRun } from "@/lib/kb/ingest";
 import { getAttachmentForUser } from "@/lib/attachments/queries";
 import { findKbDocumentByContentHash, findKbFolderById, insertKbDocument } from "@/lib/kb/queries";
 
@@ -11,12 +11,14 @@ import { findKbDocumentByContentHash, findKbFolderById, insertKbDocument } from 
 // the existing /api/attachments/presign → PUT → confirm flow first,
 // then POSTs the resulting attachmentId + a target folderId here.
 // Backend creates a kb_document row (status=pending) and kicks off
-// a LangGraph run that re-uses kbAgent — same code path as the chat
-// upload, just invoked from settings instead of the composer.
+// the kbAgent graph — registered as a top-level assistant in
+// langgraph.json so the synthetic "ingest this file" thread skips the
+// mainAgent router + renameThreadAgent LLM calls. Shared with
+// POST /api/kb/documents/[id]/reprocess via lib/kb/ingest.
 //
-// The run is fire-and-forget: we register a thread, dispatch the run,
-// and return 202 with the docId. The frontend polls GET /api/kb/documents
-// and watches the row's status flip pending → parsing → success.
+// The run is fire-and-forget: we return 202 with the docId. The
+// frontend polls GET /api/kb/documents and watches the row's status
+// flip pending → parsing → success.
 
 const Schema = z.object({
   folderId: z.string().min(1),
@@ -46,25 +48,33 @@ export const POST = withAuth(async (req, { user }) => {
     return NextResponse.json({ code: "FOLDER_NOT_FOUND" }, { status: 404 });
   }
 
-  // 3. PRIMARY dedup: if a doc with this contentHash already exists, link
-  // the new folder+attachment into it (or just return the existing row
-  // and re-fire ingestion if the previous attempt failed).
+  // 3. PRIMARY dedup: if a doc with this contentHash already exists,
+  // re-fire ingestion if the previous attempt failed/stalled.
   const contentHash = attachment.sha256 ?? `r2key:${attachment.r2Key}`;
   const existing = await findKbDocumentByContentHash(user.id, contentHash);
   if (existing) {
-    // Re-fire ingestion in case the previous attempt failed/stalled.
     if (
       existing.status === "pending" ||
       existing.status === "failed" ||
       existing.status === "parsing"
     ) {
-      await fireIngestionRun(user.id, attachment, existing.id, title ?? existing.title);
+      try {
+        await fireIngestionRun({
+          userId: user.id,
+          attachment,
+          docId: existing.id,
+          title: title ?? existing.title,
+        });
+      } catch (err) {
+        console.error("POST /api/kb/upload: fireIngestionRun failed", err);
+      }
     }
     return NextResponse.json({ doc: existing, deduped: true }, { status: 200 });
   }
 
-  // 4. Create the kb_document row (status=pending) so the UI has something
-  // to show immediately and a target to update when the run lands.
+  // 4. Create the kb_document row (status=pending) so the UI has
+  // something to show immediately and a target to update when the run
+  // lands.
   const docId = `d-${randomUUID()}`;
   const doc = await insertKbDocument({
     id: docId,
@@ -78,11 +88,14 @@ export const POST = withAuth(async (req, { user }) => {
     errorMessage: null,
   });
 
-  // 5. Fire-and-forget LangGraph run (kbAgent path). We don't await the
-  // run's completion — the run mutates the kb_document row via the
-  // graph's normal flow (status flips to parsing → success / failed).
+  // 5. Fire-and-forget kbAgent run.
   try {
-    await fireIngestionRun(user.id, attachment, docId, doc.title);
+    await fireIngestionRun({
+      userId: user.id,
+      attachment,
+      docId: doc.id,
+      title: doc.title,
+    });
   } catch (err) {
     // The row is already created; the user can retry from the UI.
     console.error("POST /api/kb/upload: fireIngestionRun failed", err);
@@ -90,56 +103,3 @@ export const POST = withAuth(async (req, { user }) => {
 
   return NextResponse.json({ doc }, { status: 202 });
 });
-
-async function fireIngestionRun(
-  userId: string,
-  attachment: { r2Key: string; contentType: string; name: string },
-  docId: string,
-  title: string,
-): Promise<void> {
-  const base = process.env.R2_PUBLIC_BASE_URL ?? "";
-  const publicUrl = `${base}/${attachment.r2Key}`;
-
-  const threadId = `t-${randomUUID()}`;
-  // ponytail: register the thread id with the dev server's in-process
-  // checkpointer (see lib/langgraph/client.ts). No-op in prod.
-  await langGraphClient.threads.create({ threadId, ifExists: "do_nothing" });
-
-  // JSON-serializable message shape — the graph's MessagesValue reducer
-  // reconstructs HumanMessage on the server. file_part matches the
-  // assistant-ui wire format that kbAgent's router expects.
-  const input = {
-    messages: [
-      {
-        type: "human",
-        content: [
-          { type: "text", text: "ingest this file" },
-          {
-            type: "file",
-            data: publicUrl,
-            mime_type: attachment.contentType,
-            filename: attachment.name,
-          },
-        ],
-      },
-    ],
-  };
-
-  const config = {
-    configurable: {
-      userId,
-      thread_id: threadId,
-    },
-  };
-
-  // Fire-and-forget: don't await run completion. The graph runs in the
-  // background; kbAgent mutates the kb_document row's status as it
-  // progresses. `after: ["kbAgent"]` would limit wait to that subgraph,
-  // but we want the whole chat-stream to finish (so renameThreadAgent
-  // runs in parallel). `wait: false` is the SDK's fire-and-forget mode.
-  void langGraphClient.runs.create(threadId, "agent", {
-    input,
-    config,
-    metadata: { source: "kb-settings", docId, title },
-  });
-}

@@ -89,6 +89,30 @@ export async function insertKbDocument(row: NewKbDocument): Promise<KbDocument> 
   return out;
 }
 
+// ponytail: reprocess flips the doc row back to "pending" + clears the
+// previous error message so the Settings UI row badge updates on the
+// next 2s poll. Chunks are cleared separately via deleteKbChunksByDocumentId.
+export async function resetKbDocumentForReprocess(
+  userId: string,
+  docId: string,
+): Promise<KbDocument | null> {
+  const [out] = await db
+    .update(kbDocument)
+    .set({ status: "pending", errorMessage: null, updatedAt: new Date() })
+    .where(and(eq(kbDocument.id, docId), eq(kbDocument.userId, userId)))
+    .returning();
+  return out ?? null;
+}
+
+// ponytail: reprocess wipes stale chunks before the new kbAgent run
+// inserts fresh ones. The chunks FK CASCADEs if the doc row ever goes
+// away, but a reprocess keeps the doc — we just want a clean slate for
+// the new chunkEmbedStore pass. Caller wraps this in a tx so a failure
+// here leaves the old chunks in place.
+export async function deleteKbChunksByDocumentId(tx: PgTx, docId: string): Promise<void> {
+  await tx.delete(kbChunk).where(eq(kbChunk.documentId, docId));
+}
+
 export async function findKbDocumentById(
   userId: string,
   docId: string,

@@ -338,7 +338,7 @@ Delete a single doc. Cascades to `kb_chunk` via `ON DELETE CASCADE` on `kb_chunk
 
 ### `POST /api/kb/upload`
 
-Add a doc to a folder. Frontend uploads the file via the existing `/api/attachments/presign` → PUT → `confirm` flow first, then POSTs `{ folderId, attachmentId, title? }` here. Backend creates a `kb_document` row (`status=pending`) and fires a LangGraph run on the kbAgent graph (fire-and-forget — the run mutates the row's status as it progresses; the UI polls `GET /api/kb/documents` and watches the row flip pending → parsing → success/failed).
+Add a doc to a folder. Frontend uploads the file via the existing `/api/attachments/presign` → PUT → `confirm` flow first, then POSTs `{ folderId, attachmentId, title? }` here. Backend creates a `kb_document` row (`status=pending`) and fires a LangGraph run on the kbAgent graph (fire-and-forget — the run mutates the row's status as it progresses; the UI polls `GET /api/kb/documents` and watches the row flip pending → parsing → success/failed). The kbAgent graph is registered as a top-level assistant in `langgraph.json` so this dispatch skips the mainAgent router + renameThreadAgent LLM calls.
 
 **Primary dedup**: if a doc with the same `contentHash` already exists for the user, the endpoint returns the existing row instead of creating a duplicate, and re-fires ingestion if the previous attempt failed/stalled.
 
@@ -348,6 +348,16 @@ Add a doc to a folder. Frontend uploads the file via the existing `/api/attachme
 | 200 response  | `{ doc: { ... kb_document row ... }, deduped: true }` (existing doc — re-firing ingestion)                                                       |
 | 202 response  | `{ doc: { ... kb_document row ... } }` (new doc, ingestion run dispatched)                                                                       |
 | Failure codes | 400 `INVALID` (zod failure). 401 `UNAUTHORIZED`. 404 `ATTACHMENT_NOT_FOUND` / `FOLDER_NOT_FOUND`. 409 `ATTACHMENT_NOT_UPLOADED`. 500 `INTERNAL`. |
+
+### `POST /api/kb/documents/[id]/reprocess`
+
+Re-runs the kbAgent pipeline (screenshot → OCR → chunk + embed → store) for an existing `kb_document`. The Settings UI exposes this via the per-row "Reprocess" button (lucide `RefreshCw`). Existing chunks are wiped inside the same tx that flips the doc row back to `status="pending"`, so the row + chunks move to a consistent state before the run is dispatched.
+
+|               |                                                                                                                                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | (none)                                                                                                                                                                                                 |
+| 202 response  | `{ docId: string }`                                                                                                                                                                                    |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND` (no doc, or doc owned by a different user — no existence leak). 409 `PROCESSING` (doc is already `pending` / `parsing`). 409 `ATTACHMENT_MISSING`. 500 `INTERNAL`. |
 
 ## Admin
 

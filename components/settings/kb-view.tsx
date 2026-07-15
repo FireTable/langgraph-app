@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
 } from "lucide-react";
@@ -549,9 +550,32 @@ function DocTableRows({
 function DocRow({ doc, onRefresh }: { doc: KbDocument; onRefresh: () => Promise<void> | void }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [reprocessOpen, setReprocessOpen] = useState(false);
   const type = doc.contentType.replace("application/", "");
+  // ponytail: in-flight ingest/processing disables the refresh button so
+  // a double-click can't kick off a parallel OCR pass against the same
+  // attachment (server side also returns 409, but UI guard avoids a
+  // round-trip + a toast).
+  const isInflight = doc.status === "pending" || doc.status === "parsing";
   const actions = (
     <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={() => setReprocessOpen(true)}
+            disabled={isInflight}
+            aria-label="Reprocess"
+          >
+            <RefreshCw className="size-3.5" aria-hidden />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          {isInflight ? "Already processing" : "Reprocess"}
+        </TooltipContent>
+      </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -661,6 +685,17 @@ function DocRow({ doc, onRefresh }: { doc: KbDocument; onRefresh: () => Promise<
           onOpenChange={setDeleteOpen}
           onDeleted={() => {
             setDeleteOpen(false);
+            void onRefresh();
+          }}
+        />
+      )}
+      {reprocessOpen && (
+        <DocReprocessDialog
+          doc={doc}
+          open={reprocessOpen}
+          onOpenChange={setReprocessOpen}
+          onReprocessed={() => {
+            setReprocessOpen(false);
             void onRefresh();
           }}
         />
@@ -819,6 +854,81 @@ function DocDeleteDialog({
           </Button>
           <Button onClick={() => void submit()} disabled={submitting} variant="destructive">
             {submitting ? <Loader2 className="size-3.5 animate-spin" /> : "Delete"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ponytail: reprocess dialog. Server returns 202 + flips the doc row's
+// status back to "pending"; the existing 2s polling effect picks it up
+// and the badge in the row transitions Ready → Parsing → Ready on its
+// own. We surface 409 PROCESSING without a retry — the row is already
+// in flight.
+function DocReprocessDialog({
+  doc,
+  open,
+  onOpenChange,
+  onReprocessed,
+}: {
+  doc: KbDocument;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onReprocessed: () => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = useCallback(async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/kb/documents/${doc.id}/reprocess`, { method: "POST" });
+      if (res.status === 202) {
+        onReprocessed();
+        return;
+      }
+      if (res.status === 409) {
+        setError("Already processing — try again when the row settles.");
+        return;
+      }
+      if (res.status === 404) {
+        setError("Document no longer exists.");
+        return;
+      }
+      setError(`Failed (${res.status})`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }, [doc.id, onReprocessed]);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+        if (!o) setError(null);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Reprocess document?</DialogTitle>
+          <DialogDescription>
+            <span className="font-medium">{doc.title}</span> will be re-rendered, re-OCRed, and
+            re-chunked from scratch. Existing chunks are wiped. This uses OCR + embedding API
+            tokens.
+          </DialogDescription>
+        </DialogHeader>
+        {error && <p className="text-destructive text-xs">{error}</p>}
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button onClick={() => void submit()} disabled={submitting}>
+            {submitting ? <Loader2 className="size-3.5 animate-spin" /> : "Reprocess"}
           </Button>
         </DialogFooter>
       </DialogContent>

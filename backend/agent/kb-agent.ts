@@ -7,7 +7,9 @@ import { z } from "zod";
 
 import { getChatModel, getEmbeddingModel, getOcrModel } from "@/backend/model";
 import { KB_OCR_PAGE_PROMPT } from "@/backend/prompt/system";
-import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
+import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
+import { checkpointer, subgraphCheckpointerConfig } from "@/backend/checkpointer";
+import { store } from "@/backend/store";
 import { screenshotPdf } from "@/lib/kb/screenshot";
 import {
   ensureDefaultKbFolder,
@@ -493,8 +495,34 @@ const builder = new StateGraph(KbAgentState)
   .addEdge("ocr", "chunkEmbedStore")
   .addEdge("chunkEmbedStore", END);
 
+// ponytail: TWO compiled graphs from the same builder.
+// - `kbAgent` (in-process subgraph): empty subgraphCheckpointerConfig.
+//   mainAgent (`backend/agent.ts`) calls `.addNode("kbAgent", kbAgent)`
+//   and the parent graph's checkpointer governs persistence. The
+//   existing direct-node-call tests (tests/backend/kb-agent.test.ts)
+//   bypass the parent and never set a thread_id — they rely on this
+//   config being empty so no checkpoint write is attempted.
+// - `graph` (standalone top-level assistant registered in
+//   langgraph.json): gets the global checkpointer + store + callbacks
+//   so observability + credit tracking + per-thread persistence work
+//   for the synthetic "ingest this file" runs dispatched from
+//   `lib/kb/ingest.fireIngestionRun()`.
+//
+// Both keep `name: "kbAgent"` so the runtime identifies the standalone
+// assistant under the expected key.
 export const kbAgent = builder.compile({
   name: "kbAgent",
   ...subgraphCheckpointerConfig,
+});
+
+const standaloneCompiled = builder.compile({
+  name: "kbAgent",
+  checkpointer,
+  store,
+});
+
+type WithConfigPregel = (config: Record<string, unknown>) => typeof standaloneCompiled;
+export const graph = (standaloneCompiled.withConfig as unknown as WithConfigPregel)({
+  callbacks: [capturingHandler, creditTrackingHandler],
 });
 void END;
