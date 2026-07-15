@@ -285,6 +285,19 @@ export async function deleteKbFolderForUser(
   return row ?? null;
 }
 
+export async function updateKbFolderNameForUser(
+  userId: string,
+  folderId: string,
+  name: string,
+): Promise<KbFolder | null> {
+  const [row] = await db
+    .update(kbFolder)
+    .set({ name })
+    .where(and(eq(kbFolder.id, folderId), eq(kbFolder.userId, userId)))
+    .returning();
+  return row ?? null;
+}
+
 // ponytail: KB transaction helper. Wraps Drizzle's transaction so the
 // caller (chunkEmbedStoreNode) inserts doc + chunks atomically. Returning
 // the tx-bound objects lets the caller reuse the freshly-inserted doc.
