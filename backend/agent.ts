@@ -60,7 +60,7 @@ async function routeAndMaybeRename(
   // anything else is the LLM-generated title from a prior turn.
   if (typeof title === "string" && title !== DEFAULT_THREAD_TITLE) return subAgent;
   // Array return = parallel fanout (langgraph runs both nodes).
-  return [subAgent, "renameThreadAgent"];
+  return ["renameThreadAgent", subAgent];
 }
 
 export const builder = new StateGraph(RouterAgentState)
@@ -74,7 +74,7 @@ export const builder = new StateGraph(RouterAgentState)
   .addNode("renameThreadAgent", renameThreadAgentNode)
   // Topology (issue #13 v2):
   //   START ──▶ routerAgent ──┬──▶ (sub-agent | kbAgent) ──▶ triggerBackgroundAgent ──▶ END
-  //                           └──▶ renameThreadAgent ──▶ END   (parallel fanout, conditional)
+  //                           └──▶ renameThreadAgent   (terminal, no outgoing edge needed)
   //
   // kbAgent loops back to routerAgent after appending the kb_ref, so
   // a SECOND router pass picks the final sub-agent (chat / weather /
@@ -118,8 +118,7 @@ export const builder = new StateGraph(RouterAgentState)
   // the kb_ref part, the router's PDF-short-circuit no longer fires
   // and it routes to the final sub-agent (chatAgent for PDFs, etc.).
   .addEdge("kbAgent", "routerAgent")
-  .addEdge("triggerBackgroundAgent", END)
-  .addEdge("renameThreadAgent", END);
+  .addEdge("triggerBackgroundAgent", END);
 
 // ponytail: one handler per process (per module), shared across all
 // concurrent runs AND across every Pregel that wires it via withConfig.
