@@ -4,12 +4,12 @@ import { z } from "zod";
 
 import { getChatModel } from "@/backend/model";
 import { ROUTER_AGENT_PROMPT } from "@/backend/prompt/system";
-import { extractFilePart, extractKbRef, isPdfAttachment } from "@/lib/kb/extract";
+import { hasUnprocessedPdf } from "@/lib/kb/extract";
 import { trimMessagesForInvoke } from "@/backend/memory/template";
 import { extractUserId } from "@/backend/memory/recall";
 
-// ponytail: v2 router (issue #13). Two short-circuits and a fallback:
-//   1. PDF file part + no kb_ref in last HumanMessage → route to kbAgent.
+// ponytail: v3 router. Two short-circuits and a fallback:
+//   1. ANY HumanMessage has an unprocessed PDF → route to kbAgent.
 //   2. Otherwise → resolve kb_refs + trim, ask the LLM.
 //
 // RouterNode is intentionally DB-free: kbAgent owns the contentHash
@@ -26,11 +26,12 @@ export async function routerAgentNode(
   config?: RunnableConfig,
 ): Promise<{ routerDecision: RouterDecision }> {
   const lastUserMessage = state.messages.findLast((m) => m instanceof HumanMessage);
-  const filePart = extractFilePart(state.messages);
-  const kbRef = extractKbRef(state.messages);
 
-  // Short-circuit: new PDF (file part but no kb_ref yet) → kbAgent.
-  if (filePart && isPdfAttachment(filePart) && !kbRef) {
+  // Short-circuit: any HumanMessage has an unprocessed PDF → kbAgent.
+  // kbAgent now processes every PDF across every HumanMessage in one
+  // invocation, so the router only needs to know "is there still
+  // work to do?" — not which turn owns it.
+  if (hasUnprocessedPdf(state.messages)) {
     return { routerDecision: { next: "kbAgent" } };
   }
 

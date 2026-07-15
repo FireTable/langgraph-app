@@ -2,13 +2,9 @@ import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages
 import { describe, expect, it } from "vitest";
 
 import {
-  appendKbRef,
   collectKbRefs,
   extractAllPdfParts,
-  extractFilePart,
-  extractKbRef,
-  findLastHumanMessage,
-  getLastHumanContent,
+  hasUnprocessedPdf,
   isFilePart,
   isKbRefPart,
   isPdfAttachment,
@@ -81,70 +77,60 @@ describe("lib/kb/extract", () => {
     });
   });
 
-  describe("findLastHumanMessage", () => {
-    it("returns the last HumanMessage in order", () => {
-      const sys = new SystemMessage("hi");
-      const h1 = new HumanMessage("first");
+  describe("hasUnprocessedPdf", () => {
+    const pdf = { type: "file" as const, data: "u/A", mime_type: "application/pdf" };
+
+    it("returns true when a HumanMessage has a PDF file part", () => {
+      const h = new HumanMessage({ content: [pdf], id: "h-1" });
+      expect(hasUnprocessedPdf([h])).toBe(true);
+    });
+
+    it("returns false once kbAgent has replaced every PDF file part with a kb_ref", () => {
+      const h = new HumanMessage({
+        content: [{ type: "kb_ref", docId: "d-1" }] as never,
+        id: "h-1",
+      });
+      expect(hasUnprocessedPdf([h])).toBe(false);
+    });
+
+    it("returns true if any HumanMessage across the array still has a PDF file part", () => {
+      const processed = new HumanMessage({
+        content: [{ type: "kb_ref", docId: "d-1" }] as never,
+        id: "h-1",
+      });
       const ai = new AIMessage("ok");
-      const h2 = new HumanMessage("second");
-      expect(findLastHumanMessage([sys, h1, ai, h2])).toBe(h2);
+      const unprocessed = new HumanMessage({ content: [pdf], id: "h-2" });
+      expect(hasUnprocessedPdf([processed, ai, unprocessed])).toBe(true);
     });
 
-    it("returns null when no HumanMessage present", () => {
-      expect(findLastHumanMessage([new SystemMessage("x"), new AIMessage("y")])).toBeNull();
+    it("returns false when a HumanMessage has only text or non-PDF files", () => {
+      const h1 = new HumanMessage("plain text");
+      const h2 = new HumanMessage({
+        content: [{ type: "file", data: "u/img", mime_type: "image/png" }],
+        id: "h-2",
+      } as never);
+      expect(hasUnprocessedPdf([h1, h2])).toBe(false);
     });
 
-    it("returns null on empty array", () => {
-      expect(findLastHumanMessage([])).toBeNull();
-    });
-  });
-
-  describe("getLastHumanContent", () => {
-    it("returns array content from last HumanMessage", () => {
-      const parts = [
-        { type: "text", text: "hi" },
-        { type: "file", data: "x", mime_type: "application/pdf" },
-      ];
-      const m = new HumanMessage(parts as never);
-      expect(getLastHumanContent([m])).toBe(parts);
+    it("returns false on empty input", () => {
+      expect(hasUnprocessedPdf([])).toBe(false);
     });
 
-    it("returns null when last HumanMessage has string content", () => {
-      expect(getLastHumanContent([new HumanMessage("hello")])).toBeNull();
+    it("returns false when there is no HumanMessage", () => {
+      const sys = new SystemMessage("x");
+      const ai = new AIMessage("y");
+      expect(hasUnprocessedPdf([sys, ai])).toBe(false);
     });
 
-    it("returns null when no HumanMessage", () => {
-      expect(getLastHumanContent([new AIMessage("x")])).toBeNull();
-    });
-  });
-
-  describe("extractFilePart", () => {
-    it("extracts the file part from the last HumanMessage", () => {
-      const filePart = { type: "file" as const, data: "u", mime_type: "application/pdf" };
-      const m = new HumanMessage([{ type: "text", text: "look" }, filePart] as never);
-      expect(extractFilePart([m])).toEqual(filePart);
-    });
-
-    it("returns null when no file part present", () => {
-      const m = new HumanMessage([{ type: "text", text: "no file" }] as never);
-      expect(extractFilePart([m])).toBeNull();
-    });
-
-    it("returns null when no HumanMessage", () => {
-      expect(extractFilePart([])).toBeNull();
-    });
-  });
-
-  describe("extractKbRef", () => {
-    it("extracts the kb_ref part from the last HumanMessage", () => {
-      const ref = { type: "kb_ref" as const, docId: "d-7" };
-      const m = new HumanMessage([{ type: "text", text: "context" }, ref] as never);
-      expect(extractKbRef([m])).toEqual(ref);
-    });
-
-    it("returns null when no kb_ref present", () => {
-      const m = new HumanMessage("plain");
-      expect(extractKbRef([m])).toBeNull();
+    it("returns true when a HumanMessage carries 2 PDFs (still unprocessed)", () => {
+      const h = new HumanMessage({
+        content: [
+          { type: "file", data: "u/A", mime_type: "application/pdf" },
+          { type: "file", data: "u/B", mime_type: "application/pdf" },
+        ] as never,
+        id: "h-1",
+      });
+      expect(hasUnprocessedPdf([h])).toBe(true);
     });
   });
 
@@ -253,65 +239,6 @@ describe("lib/kb/extract", () => {
       const stringH = new HumanMessage("hi");
       const arrayH = new HumanMessage({ content: [ref], id: "h-1" });
       expect(collectKbRefs([stringH, arrayH])).toEqual([ref]);
-    });
-  });
-
-  describe("appendKbRef", () => {
-    it("appends kb_ref, drops file parts, preserves text + message id", () => {
-      const filePart = { type: "file" as const, data: "u", mime_type: "application/pdf" };
-      const textPart = { type: "text" as const, text: "look at this" };
-      const h = new HumanMessage({
-        content: [textPart, filePart],
-        id: "msg-1",
-      });
-      const out = appendKbRef([h], "d-9", "a-3");
-      expect(out).toHaveLength(1);
-      const rewritten = out[0] as HumanMessage;
-      expect(rewritten.id).toBe("msg-1");
-      const content = rewritten.content as Array<Record<string, unknown>>;
-      expect(content).toHaveLength(2);
-      expect(content[0]).toEqual(textPart);
-      expect(content[1]).toEqual({ type: "kb_ref", docId: "d-9", attachmentId: "a-3" });
-    });
-
-    it("replaces a pre-existing kb_ref (idempotent re-append)", () => {
-      const oldRef = { type: "kb_ref" as const, docId: "d-old" };
-      const h = new HumanMessage({ content: [oldRef], id: "m-1" });
-      const out = appendKbRef([h], "d-new", "a-1");
-      const content = (out[0] as HumanMessage).content as Array<Record<string, unknown>>;
-      expect(content).toEqual([{ type: "kb_ref", docId: "d-new", attachmentId: "a-1" }]);
-    });
-
-    it("returns messages unchanged when no HumanMessage present", () => {
-      const sys = new SystemMessage("hi");
-      const ai = new AIMessage("ok");
-      const out = appendKbRef([sys, ai], "d-1");
-      expect(out).toBe(out); // reference equality — no rewrite happened
-      expect(out).toHaveLength(2);
-    });
-
-    it("returns messages unchanged when last HumanMessage has string content", () => {
-      const h = new HumanMessage("plain text only");
-      const out = appendKbRef([h], "d-1");
-      expect(out[0]).toBe(h);
-    });
-
-    it("passes attachmentId as undefined when not provided (downstream predicate ignores it)", () => {
-      const h = new HumanMessage({ content: [], id: "m" });
-      const out = appendKbRef([h], "d-1");
-      const content = (out[0] as HumanMessage).content as Array<Record<string, unknown>>;
-      // KbRefPart.attachmentId is optional; isKbRefPart doesn't read it, so
-      // undefined is harmless on the wire.
-      expect(content[0].attachmentId).toBeUndefined();
-      expect(content[0].docId).toBe("d-1");
-    });
-
-    it("does not mutate the input message array", () => {
-      const filePart = { type: "file" as const, data: "u", mime_type: "application/pdf" };
-      const h = new HumanMessage({ content: [filePart], id: "m-1" });
-      const originalContent = h.content;
-      appendKbRef([h], "d-1");
-      expect(h.content).toBe(originalContent);
     });
   });
 });

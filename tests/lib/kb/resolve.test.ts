@@ -170,10 +170,7 @@ describe("lib/kb/resolve", () => {
       expect(content[1]).toEqual({ type: "text", text: "[Failed: OCR error]" });
     });
 
-    it("returns messages unchanged when the kb_ref docId doesn't match any part", async () => {
-      // Sanity guard: extractKbRef finds the first kb_ref; if the resolver
-      // couldn't, it returns the array reference unchanged. Build a case
-      // where extractKbRef fails (no human message at all).
+    it("returns messages unchanged when there are no HumanMessages to inspect", async () => {
       const out = await resolveKbRefs([], USER);
       expect(out).toEqual([]);
       expect(getKbDocForResolve).not.toHaveBeenCalled();

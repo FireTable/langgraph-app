@@ -36,44 +36,22 @@ export function isPdfAttachment(part: FilePart): boolean {
   return part.mime_type === "application/pdf";
 }
 
-export function findLastHumanMessage(messages: BaseMessage[]): HumanMessage | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m instanceof HumanMessage) return m;
+// ponytail: router signal. True when ANY HumanMessage in the array
+// still carries a PDF file part. Once kbAgent finishes, every PDF
+// file part has been replaced with a kb_ref, so this returns false
+// until the next upload.
+export function hasUnprocessedPdf(messages: BaseMessage[]): boolean {
+  for (const m of messages) {
+    if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) continue;
+    if (m.content.some((p) => isFilePart(p) && p.mime_type === "application/pdf")) {
+      return true;
+    }
   }
-  return null;
-}
-
-export function getLastHumanContent(messages: BaseMessage[]): unknown[] | null {
-  const last = findLastHumanMessage(messages);
-  if (!last || !Array.isArray(last.content)) return null;
-  return last.content;
-}
-
-export function extractFilePart(messages: BaseMessage[]): FilePart | null {
-  const content = getLastHumanContent(messages);
-  if (!content) return null;
-  for (const part of content) {
-    if (isFilePart(part)) return part;
-  }
-  return null;
-}
-
-export function extractKbRef(messages: BaseMessage[]): KbRefPart | null {
-  const content = getLastHumanContent(messages);
-  if (!content) return null;
-  for (const part of content) {
-    if (isKbRefPart(part)) return part;
-  }
-  return null;
+  return false;
 }
 
 // ponytail: returns EVERY PDF file part from EVERY HumanMessage in
-// message order. kbAgent uses this to discover what needs OCR — it
-// must NOT be last-only, since the router can route to kbAgent while
-// earlier HumanMessages still carry unresolved PDFs (e.g. when state
-// is replayed or simulated). The single-PDF extraction lives in
-// extractFilePart (last-only, current-turn only) and stays unchanged.
+// message order. kbAgent uses this to discover what needs OCR.
 export function extractAllPdfParts(
   messages: BaseMessage[],
 ): Array<{ messageIndex: number; filePart: FilePart }> {
@@ -94,9 +72,7 @@ export function extractAllPdfParts(
 // append-only under the LangGraph addMessages reducer, so a kb_ref
 // appended by kbAgent in turn N stays in Human(N) for the rest of
 // the thread — even after the user has sent several more turns of
-// plain text. The router still uses extractKbRef (last-only) to flag
-// the current turn; this is the multi-message equivalent for the
-// resolve layer.
+// plain text. Used by resolveKbRefs to feed the LLM the full history.
 export function collectKbRefs(messages: BaseMessage[]): KbRefPart[] {
   const seen = new Set<string>();
   const out: KbRefPart[] = [];
@@ -110,34 +86,4 @@ export function collectKbRefs(messages: BaseMessage[]): KbRefPart[] {
     }
   }
   return out;
-}
-
-// ponytail: kbAgent appends a kb_ref part to the same HumanMessage
-// that carried the original file part. To keep reducer dedup-replace
-// stable, we must preserve the message id when rewriting. This helper
-// produces the rewritten message array WITHOUT mutating the input —
-// callers spread it back into state.messages.
-//
-// Drops the original file part; preserves the text parts and any
-// existing kb_ref parts (except ours — id-keyed dedup covers that).
-export function appendKbRef(
-  messages: BaseMessage[],
-  docId: string,
-  attachmentId?: string,
-): BaseMessage[] {
-  const last = findLastHumanMessage(messages);
-  if (!last || !Array.isArray(last.content)) return messages;
-  const newPart: KbRefPart = { type: "kb_ref", docId, attachmentId };
-  const newContent = [...last.content.filter((p) => !isFilePart(p) && !isKbRefPart(p)), newPart];
-  // ponytail: HumanMessage constructor takes id as second arg; passing
-  // it explicitly keeps the reducer's addMessages dedup-replace path.
-  const rewritten = new HumanMessage({
-    content: newContent,
-    id: last.id,
-  });
-  return [
-    ...messages.slice(0, messages.indexOf(last)),
-    rewritten,
-    ...messages.slice(messages.indexOf(last) + 1),
-  ];
 }
