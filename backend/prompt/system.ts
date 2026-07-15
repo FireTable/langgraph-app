@@ -179,7 +179,12 @@ ON FAILURE:
 // page's content as clean markdown. Per-page, so the prompt has to
 // stay generic — no document-level structure, just "what's on this
 // page?". Runs at VLM_CONCURRENCY=5 (see kb-agent.ts).
-export const KB_VLM_PAGE_PROMPT = `You are extracting text from a single PDF page rendered as an image.
+//
+// Named KB_OCR_* because the task is OCR (extract text from image,
+// output markdown), not "general VLM". The underlying model is still
+// a vision-capable chat model from `getVlmModel()` — the name change
+// is task-scoped, not capability-scoped.
+export const KB_OCR_PAGE_PROMPT = `You are extracting text from a single PDF page rendered as an image.
 Output clean markdown: preserve headings, lists, code blocks, tables, and inline formatting.
 If the page is blank or contains only decorative images, output an empty string.
 Do not add commentary — return only the markdown content of the page.`;

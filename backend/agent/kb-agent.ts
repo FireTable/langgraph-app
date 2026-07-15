@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { getChatModel, getEmbeddingModel, getVlmModel } from "@/backend/model";
-import { KB_VLM_PAGE_PROMPT } from "@/backend/prompt/system";
+import { KB_OCR_PAGE_PROMPT } from "@/backend/prompt/system";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 import { screenshotPdf } from "@/lib/kb/screenshot";
 import {
@@ -48,7 +48,7 @@ type PageResult = {
 type ChunkSeed = { ordinal: number; content: string; entities: string[]; embedding: number[] };
 
 // ponytail: withStructuredOutput forces the VLM to emit {markdown:
-// string}. The system prompt (KB_VLM_PAGE_PROMPT) gives the WHAT —
+// string}. The system prompt (KB_OCR_PAGE_PROMPT) gives the WHAT —
 // "you are extracting markdown from a PDF page". The schema's
 // .describe() gives the JSON-side instruction (same prose, structured
 // for the parser) and removes the "empty markdown" footgun — every
@@ -181,7 +181,7 @@ async function vlmNode(state: KbAgentStateShape) {
   // page image is the only per-call variable, so it lives in the
   // HumanMessage. withStructuredOutput guarantees `out.markdown` is a
   // string (or the call throws), so no shape-detection branch below.
-  const system = new SystemMessage(KB_VLM_PAGE_PROMPT);
+  const system = new SystemMessage(KB_OCR_PAGE_PROMPT);
   const structured = vlm.withStructuredOutput(vlmPageSchema, { method: "jsonSchema" });
   try {
     const results = await Promise.all(
