@@ -63,8 +63,12 @@ export async function ensureDefaultKbFolder(
     return await insertKbFolder(row);
   } catch (err) {
     // ponytail: race with another ingest — re-read instead of erroring.
-    // Postgres unique-violation SQLSTATE is 23505.
-    if ((err as { code?: string }).code === "23505") {
+    // Postgres unique-violation SQLSTATE is 23505. drizzle wraps the
+    // driver error in DrizzleQueryError (.cause carries the original),
+    // so check both.
+    const code =
+      (err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code;
+    if (code === "23505") {
       const again = await findKbFolderByName(userId, name);
       if (again) return again;
     }
