@@ -62,6 +62,12 @@ type RoleRow = {
   createdAt: string;
   updatedAt: string;
 };
+
+// ponytail: module-scope constant so add-mode `initialKind ?? ["chat"]`
+// keeps the same array reference across renders — `useEffect` dep
+// comparison uses Object.is, and a fresh literal each render would loop
+// forever (Next dev StrictMode catches it as "Maximum update depth").
+const DEFAULT_KIND: ModelKind[] = ["chat"];
 // ponytail: server-side join shape — user + role name inlined so the
 // table can render "Admin" / "User" labels without a second round-trip.
 // `roleName` is null when the FK points at a missing role (defensive —
@@ -366,8 +372,8 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-muted-foreground text-xs">
             <tr>
-              <th className="px-3 py-2 text-left font-medium">Name</th>
-              <th className="px-3 py-2 text-left font-medium">Enabled</th>
+              <th className="w-[220px] px-3 py-2 text-left font-medium">Name</th>
+              <th className="px-3 py-2 text-left font-medium">Status</th>
               <th className="px-3 py-2 text-left font-medium">Kind</th>
               <th className="px-3 py-2 text-right font-medium">Input / 1k</th>
               <th className="px-3 py-2 text-right font-medium">Output / 1k</th>
@@ -384,7 +390,7 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
             ) : (
               models.map((m) => (
                 <tr key={m.name} className="border-t">
-                  <td className="px-3 py-2 font-mono text-xs">{m.name}</td>
+                  <td className="w-[220px] px-3 py-2 font-mono text-xs">{m.name}</td>
                   <td className="px-3 py-2">
                     <Badge variant={m.enabled ? "success" : "muted"}>
                       {m.enabled ? "Enabled" : "Disabled"}
@@ -394,7 +400,7 @@ function ModelsSection({ providerId, models }: { providerId: string; models: Pub
                     <div className="flex flex-wrap gap-1">
                       {(m.kind ?? ["chat"]).map((k) => (
                         <Badge key={k} variant="secondary">
-                          {k}
+                          {k.charAt(0).toUpperCase() + k.slice(1)}
                         </Badge>
                       ))}
                     </div>
@@ -530,7 +536,7 @@ function ModelDialog(
   // ponytail: backend defaults kind to ["chat"] on POST when omitted,
   // so the add-mode local seed mirrors the server contract and we don't
   // need to send `kind` in the body. Edit-mode seeds from existing row.
-  const initialKind: ModelKind[] = isEdit ? (props.model.kind ?? ["chat"]) : ["chat"];
+  const initialKind: ModelKind[] = isEdit ? (props.model.kind ?? DEFAULT_KIND) : DEFAULT_KIND;
 
   const [name, setName] = useState(initialName);
   const [enabled, setEnabled] = useState(initialEnabled);
@@ -612,35 +618,6 @@ function ModelDialog(
             className="font-mono"
           />
         </label>
-        <label className="flex items-center justify-between gap-3">
-          <span className="text-sm font-medium">Enabled</span>
-          <Switch
-            checked={enabled}
-            onCheckedChange={setEnabled}
-            disabled={saving || props.pending}
-            aria-label="Model enabled"
-          />
-        </label>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">Kind</span>
-          <div className="flex flex-wrap gap-3">
-            {(["chat", "ocr", "embed"] as const).map((k) => (
-              <label key={k} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={kind.includes(k)}
-                  onCheckedChange={(c) => toggleKind(k, c === true)}
-                  disabled={saving || props.pending}
-                  aria-label={`kind ${k}`}
-                />
-                <span className="font-mono text-xs">{k}</span>
-              </label>
-            ))}
-          </div>
-          <p className="text-muted-foreground text-xs">
-            At least one kind is required — chat for general inference, ocr for PDF vision, embed
-            for KB chunk vectors.
-          </p>
-        </div>
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Input / 1k</span>
           <Input
@@ -663,6 +640,38 @@ function ModelDialog(
             disabled={saving || props.pending}
           />
         </label>
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium">Enabled</span>
+          <Switch
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            disabled={saving || props.pending}
+            aria-label="Model enabled"
+          />
+        </label>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium">Kind</span>
+          <div className="flex flex-wrap gap-3">
+            {(["chat", "ocr", "embed"] as const).map((k) => (
+              <label key={k} className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={kind.includes(k)}
+                  onCheckedChange={(c) => toggleKind(k, c === true)}
+                  disabled={saving || props.pending}
+                  aria-label={`kind ${k}`}
+                />
+                {/* ponytail: title-case label for the dialog checkbox; the
+                    wire-format enum stays lowercase (matches the JSONB value
+                    and the registry's `m.kind ?? ["chat"]` contract). */}
+                <span>{k.charAt(0).toUpperCase() + k.slice(1)}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-muted-foreground text-xs">
+            At least one kind is required — chat for general inference, ocr for PDF vision, embed
+            for KB chunk vectors.
+          </p>
+        </div>
       </div>
     </FormDialog>
   );
