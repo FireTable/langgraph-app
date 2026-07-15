@@ -3,8 +3,8 @@ import * as mupdf from "mupdf";
 /**
  * ponytail: v2 KB uses mupdf server-side to render each PDF page to a
  * PNG Buffer; the kbAgent uploads it to R2 (`kb-tmp/<userId>/<docId>/`)
- * and feeds the resulting URL to the VLM. Returns Buffers only — no
- * filesystem writes, no tmpdir cleanup.
+ * and feeds the resulting URL to the OCR model. Returns Buffers only —
+ * no filesystem writes, no tmpdir cleanup.
  */
 
 export type ScreenshotPage = {

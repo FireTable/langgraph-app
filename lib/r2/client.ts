@@ -119,7 +119,7 @@ export function buildPublicUrl(key: string): string {
 
 // ponytail: KB helpers (issue #13 v2). url → r2Key strips the public
 // base so the kbAgent can recover the source key from the file part's
-// publicUrl. uploadKbImage is the one-shot PUT for VLM page renders;
+// publicUrl. uploadKbImage is the one-shot PUT for OCR page renders;
 // PNGs are tiny so no multipart.
 export function r2KeyFromPublicUrl(url: string, base: string): string {
   const trimmed = base.replace(/\/$/, "");

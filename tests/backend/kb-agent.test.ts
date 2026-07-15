@@ -16,11 +16,11 @@ const mocks = vi.hoisted(() => {
   const embedderInvoke = vi.fn();
   const embedderFactory = vi.fn(async () => ({ embedDocuments: embedderInvoke }));
 
-  const vlmStructuredInvoke = vi.fn();
-  // ponytail: kbAgent.vlmNode uses vlm.withStructuredOutput(schema).invoke(...).
+  const ocrStructuredInvoke = vi.fn();
+  // ponytail: kbAgent.ocrNode uses ocr.withStructuredOutput(schema).invoke(...).
   // Mock the structured chain directly — the bare .invoke() path is not used.
-  const vlmFactory = vi.fn(async () => ({
-    withStructuredOutput: () => ({ invoke: vlmStructuredInvoke }),
+  const ocrFactory = vi.fn(async () => ({
+    withStructuredOutput: () => ({ invoke: ocrStructuredInvoke }),
   }));
 
   const screenshot = vi.fn();
@@ -45,8 +45,8 @@ const mocks = vi.hoisted(() => {
     chatFactory,
     embedderInvoke,
     embedderFactory,
-    vlmStructuredInvoke,
-    vlmFactory,
+    ocrStructuredInvoke,
+    ocrFactory,
     screenshot,
     getAttachment,
     r2KeyFromPublic,
@@ -66,7 +66,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/backend/model", () => ({
   getChatModel: mocks.chatFactory,
   getEmbeddingModel: mocks.embedderFactory,
-  getVlmModel: mocks.vlmFactory,
+  getOcrModel: mocks.ocrFactory,
 }));
 vi.mock("@/lib/kb/screenshot", () => ({
   screenshotPdf: mocks.screenshot,
@@ -180,7 +180,7 @@ beforeEach(() => {
     [0.1, 0.2, 0.3],
     [0.4, 0.5, 0.6],
   ]);
-  mocks.vlmStructuredInvoke.mockResolvedValue({ markdown: "page text" });
+  mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "page text" });
   mocks.chatInvoke.mockResolvedValue(["entity1", "entity2"]);
 });
 
@@ -250,15 +250,15 @@ describe("backend/kb-agent", () => {
   });
 
   describe("new PDF — full pipeline", () => {
-    it("happy path: screenshot → vlm → chunk + embed + store → kb_ref appended", async () => {
-      // Stub VLM to return distinct, long-enough content per page so the
+    it("happy path: screenshot → ocr → chunk + embed + store → kb_ref appended", async () => {
+      // Stub OCR to return distinct, long-enough content per page so the
       // splitter produces 2 chunks (chunkSize=1000). Short strings collapse
       // into 1 chunk and break the chunk-count assertions below.
-      mocks.vlmStructuredInvoke.mockReset();
-      mocks.vlmStructuredInvoke.mockResolvedValueOnce({
+      mocks.ocrStructuredInvoke.mockReset();
+      mocks.ocrStructuredInvoke.mockResolvedValueOnce({
         markdown: "page one markdown content ".repeat(50),
       });
-      mocks.vlmStructuredInvoke.mockResolvedValueOnce({
+      mocks.ocrStructuredInvoke.mockResolvedValueOnce({
         markdown: "page two markdown content ".repeat(50),
       });
       const out = await runKbAgent();
@@ -268,8 +268,8 @@ describe("backend/kb-agent", () => {
       expect(out.docId).toMatch(/^d-/);
       expect(out.attachmentId).toBe(ATT_ID);
       expect(out.contentHash).toBe("sha-abc");
-      // 2 pages → 2 VLM calls
-      expect(mocks.vlmStructuredInvoke).toHaveBeenCalledTimes(2);
+      // 2 pages → 2 OCR calls
+      expect(mocks.ocrStructuredInvoke).toHaveBeenCalledTimes(2);
       // 1 embed call covering all chunks
       expect(mocks.embedderInvoke).toHaveBeenCalledTimes(1);
       const chunkTexts = mocks.embedderInvoke.mock.calls[0][0] as string[];
@@ -336,7 +336,7 @@ describe("backend/kb-agent", () => {
       expect(out.errorMessage).toBeNull();
       // No new ingest work
       expect(mocks.screenshot).not.toHaveBeenCalled();
-      expect(mocks.vlmStructuredInvoke).not.toHaveBeenCalled();
+      expect(mocks.ocrStructuredInvoke).not.toHaveBeenCalled();
       expect(mocks.embedderInvoke).not.toHaveBeenCalled();
       expect(mocks.insertDoc).not.toHaveBeenCalled();
       // kb_ref appended
@@ -357,14 +357,14 @@ describe("backend/kb-agent", () => {
         contentType: "application/pdf",
         contentHash: "sha-abc",
         status: "failed",
-        errorMessage: "VLM timed out",
+        errorMessage: "OCR timed out",
         createdAt: new Date(),
         updatedAt: new Date(),
       });
       const out = await runKbAgent();
       expect(out.skipPipeline).toBe(true);
       expect(out.status).toBe("failed");
-      expect(out.errorMessage).toBe("VLM timed out");
+      expect(out.errorMessage).toBe("OCR timed out");
     });
 
     it("parsing: placeholder status preserved from the existing row", async () => {
@@ -410,36 +410,36 @@ describe("backend/kb-agent", () => {
     });
   });
 
-  describe("vlmNode error path", () => {
-    it("marks the run failed when the VLM throws", async () => {
-      mocks.vlmStructuredInvoke.mockRejectedValueOnce(new Error("VLM gateway 502"));
+  describe("ocrNode error path", () => {
+    it("marks the run failed when the OCR throws", async () => {
+      mocks.ocrStructuredInvoke.mockRejectedValueOnce(new Error("OCR gateway 502"));
       const out = await runKbAgent();
       expect(out.status).toBe("failed");
-      expect(out.errorMessage).toMatch(/VLM gateway 502/);
+      expect(out.errorMessage).toMatch(/OCR gateway 502/);
     });
   });
 
   describe("chunkEmbedStoreNode", () => {
-    it("fails with 'empty markdown' when all VLM pages returned empty strings", async () => {
-      mocks.vlmStructuredInvoke.mockResolvedValue({ markdown: "" });
+    it("fails with 'empty markdown' when all OCR pages returned empty strings", async () => {
+      mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "" });
       const out = await runKbAgent();
       expect(out.status).toBe("failed");
       expect(out.errorMessage).toMatch(/empty markdown/i);
       expect(mocks.insertDoc).not.toHaveBeenCalled();
     });
 
-    it("extracts text from a markdown VLM response", async () => {
-      mocks.vlmStructuredInvoke.mockResolvedValueOnce({ markdown: "page one markdown" });
-      mocks.vlmStructuredInvoke.mockResolvedValueOnce({ markdown: "page two markdown" });
+    it("extracts text from a markdown OCR response", async () => {
+      mocks.ocrStructuredInvoke.mockResolvedValueOnce({ markdown: "page one markdown" });
+      mocks.ocrStructuredInvoke.mockResolvedValueOnce({ markdown: "page two markdown" });
       const out = await runKbAgent();
       expect(out.status).toBe("success");
       expect(out.chunks?.[0]?.content).toContain("page one");
     });
 
-    it("extracts text from a longer markdown VLM response", async () => {
-      mocks.vlmStructuredInvoke.mockReset();
-      mocks.vlmStructuredInvoke.mockResolvedValueOnce({ markdown: "alpha beta" });
-      mocks.vlmStructuredInvoke.mockResolvedValueOnce({ markdown: "gamma" });
+    it("extracts text from a longer markdown OCR response", async () => {
+      mocks.ocrStructuredInvoke.mockReset();
+      mocks.ocrStructuredInvoke.mockResolvedValueOnce({ markdown: "alpha beta" });
+      mocks.ocrStructuredInvoke.mockResolvedValueOnce({ markdown: "gamma" });
       const out = await runKbAgent();
       expect(out.status).toBe("success");
       // With 2 short pages, the splitter produces 1 chunk covering both.

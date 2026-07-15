@@ -5,7 +5,7 @@ import PQueue from "p-queue";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-import { getChatModel, getEmbeddingModel, getVlmModel } from "@/backend/model";
+import { getChatModel, getEmbeddingModel, getOcrModel } from "@/backend/model";
 import { KB_OCR_PAGE_PROMPT } from "@/backend/prompt/system";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 import { screenshotPdf } from "@/lib/kb/screenshot";
@@ -33,9 +33,9 @@ import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from
 // Flow:
 //   START → screenshot → (conditional) → chunkEmbedStore → END
 //                              ↓
-//                            vlm ────────────┘
+//                            ocr ────────────┘
 //
-// The conditional edge after screenshotNode skips vlm + chunkEmbedStore
+// The conditional edge after screenshotNode skips ocr + chunkEmbedStore
 // when the doc is a dedup hit (state.skipPipeline). Both the dedup-hit
 // path and the new-ingest path funnel through chunkEmbedStoreNode
 // (which appends the kb_ref to the last HumanMessage either way).
@@ -47,14 +47,14 @@ type PageResult = {
 };
 type ChunkSeed = { ordinal: number; content: string; entities: string[]; embedding: number[] };
 
-// ponytail: withStructuredOutput forces the VLM to emit {markdown:
+// ponytail: withStructuredOutput forces the OCR model to emit {markdown:
 // string}. The system prompt (KB_OCR_PAGE_PROMPT) gives the WHAT —
 // "you are extracting markdown from a PDF page". The schema's
 // .describe() gives the JSON-side instruction (same prose, structured
 // for the parser) and removes the "empty markdown" footgun — every
 // response is guaranteed to be either a string or a thrown parse
-// error. Replaces the prior string|array|"" shape-detection branch.
-const vlmPageSchema = z.object({
+// error. Replaces the prior string|array/"" shape-detection branch.
+const ocrPageSchema = z.object({
   markdown: z
     .string()
     .describe(
@@ -167,22 +167,22 @@ async function screenshotNode(
   };
 }
 
-// ponytail: cap VLM concurrency at 5 to stay under apimart's per-key
+// ponytail: cap OCR concurrency at 5 to stay under apimart's per-key
 // rate limit. A 30-page PDF otherwise fires 30 simultaneous requests.
 // Order is preserved by Promise.all — pages[i] always maps to results[i].
-const VLM_CONCURRENCY = 5;
+const OCR_CONCURRENCY = 5;
 
-async function vlmNode(state: KbAgentStateShape) {
+async function ocrNode(state: KbAgentStateShape) {
   if (state.skipPipeline) return {};
-  const vlm = await getVlmModel();
-  const queue = new PQueue({ concurrency: VLM_CONCURRENCY });
+  const ocr = await getOcrModel();
+  const queue = new PQueue({ concurrency: OCR_CONCURRENCY });
   // ponytail: hoist the system message + structured binding out of the
   // per-page loop — every page shares the same prompt + schema. The
   // page image is the only per-call variable, so it lives in the
   // HumanMessage. withStructuredOutput guarantees `out.markdown` is a
   // string (or the call throws), so no shape-detection branch below.
   const system = new SystemMessage(KB_OCR_PAGE_PROMPT);
-  const structured = vlm.withStructuredOutput(vlmPageSchema, { method: "jsonSchema" });
+  const structured = ocr.withStructuredOutput(ocrPageSchema, { method: "jsonSchema" });
   try {
     const results = await Promise.all(
       state.pages.map((p) =>
@@ -226,13 +226,13 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   // kbAgent forever (router short-circuit sees filePart still present
   // and re-routes here). The old code only appended kb_ref on the
   // success + skipPipeline branches, missing the "empty markdown after
-  // VLM" failure path. Doc status can still be "failed" — the UI shows
+  // OCR" failure path. Doc status can still be "failed" — the UI shows
   // it as Failed and the user can retry — but the loop must end.
   const last = findLastHumanMessage(state.messages);
   if (!last) return { status: "failed" as const, errorMessage: "no human message" };
   const rewritten = appendKbRef(state.messages, docId, attachmentId);
 
-  // Skip-path (dedup hit or vlm failed): no new chunks — bail.
+  // Skip-path (dedup hit or ocr failed): no new chunks — bail.
   if (state.skipPipeline) {
     return { messages: rewritten, status: state.status, errorMessage: state.errorMessage };
   }
@@ -246,7 +246,7 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
     return {
       messages: rewritten,
       status: "failed" as const,
-      errorMessage: "empty markdown after VLM",
+      errorMessage: "empty markdown after OCR",
     };
   }
   const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
@@ -254,7 +254,7 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   const chat = await getChatModel();
 
   // Entity extraction per chunk (best-effort — fall back to [] on parse).
-  // ponytail: same p-queue pattern as vlmNode — serial would be 30 chunks
+  // ponytail: same p-queue pattern as ocrNode — serial would be 30 chunks
   // × ~2s = 60s of LLM calls on a 30-page PDF. Cap at 5 to stay under
   // apimart's per-key rate limit.
   const entitySchema = z.array(z.string());
@@ -324,17 +324,17 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   return { chunks: seeds, messages: rewritten, status: "success", errorMessage: null };
 }
 
-function routeAfterScreenshot(state: KbAgentStateShape): "vlm" | "chunkEmbedStore" {
-  return state.skipPipeline ? "chunkEmbedStore" : "vlm";
+function routeAfterScreenshot(state: KbAgentStateShape): "ocr" | "chunkEmbedStore" {
+  return state.skipPipeline ? "chunkEmbedStore" : "ocr";
 }
 
 const builder = new StateGraph(KbAgentState)
   .addNode("screenshot", screenshotNode)
-  .addNode("vlm", vlmNode)
+  .addNode("ocr", ocrNode)
   .addNode("chunkEmbedStore", chunkEmbedStoreNode)
   .addEdge(START, "screenshot")
-  .addConditionalEdges("screenshot", routeAfterScreenshot, ["vlm", "chunkEmbedStore"])
-  .addEdge("vlm", "chunkEmbedStore")
+  .addConditionalEdges("screenshot", routeAfterScreenshot, ["ocr", "chunkEmbedStore"])
+  .addEdge("ocr", "chunkEmbedStore")
   .addEdge("chunkEmbedStore", END);
 
 export const kbAgent = builder.compile({

@@ -62,8 +62,8 @@ export type GetChatModelOpts = GetModelOpts;
 
 /**
  * ponytail: kind-aware cache key prefix. The first segment namespaces the
- * round-robin pool by kind so chat traffic and vlm traffic don't advance
- * each other's counters. Three prefixes exist today (chat/vlm/embed);
+ * round-robin pool by kind so chat traffic and ocr traffic don't advance
+ * each other's counters. Three prefixes exist today (chat/ocr/embed);
  * adding a fourth only touches this file and one wrapper.
  */
 function kindPrefix(kind: ModelKind): string {
@@ -92,15 +92,16 @@ export async function getChatModelFromDB(opts: GetModelOpts = {}): Promise<BaseC
 }
 
 /**
- * VLM = chat-capable model with vision (image_url content) support.
- * Today this is the same ChatOpenAI class — the only thing that
- * changes is which (provider, model, key) tuples are eligible. We
- * filter on `kind.includes("vlm")` so a chat-only model is never
- * picked for vision work even if the LLM happened to also accept
- * image_url. Pool is round-robin-independent from chat traffic.
+ * OCR = chat-capable model used to extract text from rendered PDF
+ * pages (image_url content → markdown). The kb agent's vlmNode/ocrNode
+ * is the only consumer today; the name matches the task rather than
+ * the underlying capability (it's still a vision-capable chat model).
+ * Filter on `kind.includes("ocr")` so a chat-only model is never
+ * picked for OCR work. Pool is round-robin-independent from chat
+ * traffic.
  */
-export async function getVlmModelFromDB(opts: GetModelOpts = {}): Promise<BaseChatModel> {
-  return getModelFromDB({ ...opts, kind: "vlm" }) as Promise<BaseChatModel>;
+export async function getOcrModelFromDB(opts: GetModelOpts = {}): Promise<BaseChatModel> {
+  return getModelFromDB({ ...opts, kind: "ocr" }) as Promise<BaseChatModel>;
 }
 
 /**
@@ -144,7 +145,7 @@ async function getModelFromDB(
     });
   }
 
-  // chat or vlm → ChatOpenAI. Vision support is opt-in via the
+  // chat or ocr → ChatOpenAI. Vision support is opt-in via the
   // model name (gpt-4o*, gpt-4.1*, etc.); the class doesn't differ.
   return new ChatOpenAI({
     model: picked.modelName,
@@ -194,8 +195,8 @@ async function collectTuples(opts: GetModelOpts & { kind: ModelKind }): Promise<
       if (opts.modelName && m.name !== opts.modelName) continue;
       // ponytail: omit kind ⇒ default ["chat"] for back-compat with rows
       // seeded before v1 KB. The match here is set-includes, so a model
-      // tagged ["chat","vlm"] is eligible for both pools; tagged ["chat"]
-      // only is excluded from vlm/embed pools.
+      // tagged ["chat","ocr"] is eligible for both pools; tagged ["chat"]
+      // only is excluded from ocr/embed pools.
       const kinds = m.kind ?? ["chat"];
       if (!kinds.includes(opts.kind)) continue;
       for (const k of p.apiKeys) {

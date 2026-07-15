@@ -19,7 +19,7 @@ export type ProviderApiKey = {
  * — frozen into credit_usage_log.credits on success; rate changes after
  * the fact are not retroactively recomputed (correct billing semantics).
  */
-export type ModelKind = "chat" | "vlm" | "embed";
+export type ModelKind = "chat" | "ocr" | "embed";
 
 /**
  * Per-model rate config inside `provider.models`.
@@ -34,7 +34,7 @@ export type ModelConfig = {
   inputPer1k: number; // credits / 1k input tokens
   outputPer1k: number; // credits / 1k output tokens
   // ponytail: which pool this model belongs to. A model can serve multiple
-  // kinds (gpt-4o-mini is both chat and vlm) so it's an array. Omitted ⇒
+  // kinds (gpt-4o-mini is both chat and ocr) so it's an array. Omitted ⇒
   // ["chat"] for back-compat with seed rows created before v1 KB.
   kind?: ModelKind[];
 };

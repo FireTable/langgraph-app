@@ -11,7 +11,7 @@ import { aesGcmEncrypt, loadKek } from "@/lib/auth/encryption";
 import {
   getChatModelFromDB,
   getEmbeddingModelFromDB,
-  getVlmModelFromDB,
+  getOcrModelFromDB,
   invalidateModelCache,
 } from "@/lib/provider/model-registry";
 import { resetRoundRobinCounters } from "@/lib/provider/model-registry";
@@ -242,11 +242,11 @@ describe("getChatModelFromDB", () => {
   });
 });
 
-describe("kind partition (vlm / embed)", () => {
-  it("getVlmModelFromDB only picks tuples whose kind includes 'vlm'", async () => {
+describe("kind partition (ocr / embed)", () => {
+  it("getOcrModelFromDB only picks tuples whose kind includes 'ocr'", async () => {
     await seedProvider({
       id: "primary",
-      apiKeys: [encryptFixtureKey("sk-primary-vlm")],
+      apiKeys: [encryptFixtureKey("sk-primary-ocr")],
       models: [
         { name: "gpt-4o", enabled: true, inputPer1k: 0, outputPer1k: 0, kind: ["chat"] },
         {
@@ -254,18 +254,18 @@ describe("kind partition (vlm / embed)", () => {
           enabled: true,
           inputPer1k: 0,
           outputPer1k: 0,
-          kind: ["chat", "vlm"],
+          kind: ["chat", "ocr"],
         },
       ],
     });
 
-    const vlm = await getVlmModelFromDB();
-    // ponytail: a vlm model is a chat-capable model with vision (image_url)
-    // support. We can't introspect the underlying model class beyond its
-    // .invoke surface, so just assert it's a working runnable — proves the
-    // registry didn't drop the request.
-    expect(typeof (vlm as { invoke: unknown }).invoke).toBe("function");
-    expect(typeof (vlm as { bindTools?: unknown }).bindTools).toBe("function");
+    const ocr = await getOcrModelFromDB();
+    // ponytail: an OCR model is a chat-capable model used to extract text
+    // from rendered page images. We can't introspect the underlying model
+    // class beyond its .invoke surface, so just assert it's a working
+    // runnable — proves the registry didn't drop the request.
+    expect(typeof (ocr as { invoke: unknown }).invoke).toBe("function");
+    expect(typeof (ocr as { bindTools?: unknown }).bindTools).toBe("function");
   });
 
   it("getEmbeddingModelFromDB returns an embeddings instance, not a chat model", async () => {
@@ -297,7 +297,7 @@ describe("kind partition (vlm / embed)", () => {
       models: [{ name: "gpt-4o", enabled: true, inputPer1k: 0, outputPer1k: 0, kind: ["chat"] }],
     });
 
-    await expect(getVlmModelFromDB()).rejects.toThrow(/no enabled.*vlm/i);
+    await expect(getOcrModelFromDB()).rejects.toThrow(/no enabled.*ocr/i);
     await expect(getEmbeddingModelFromDB()).rejects.toThrow(/no enabled.*embed/i);
   });
 
@@ -312,7 +312,7 @@ describe("kind partition (vlm / embed)", () => {
     expect(typeof (chat as { invoke: unknown }).invoke).toBe("function");
   });
 
-  it("chat and vlm round-robin counters are independent", async () => {
+  it("chat and ocr round-robin counters are independent", async () => {
     await seedProvider({
       id: "primary",
       apiKeys: [encryptFixtureKey("sk-shared-a"), encryptFixtureKey("sk-shared-b")],
@@ -322,18 +322,18 @@ describe("kind partition (vlm / embed)", () => {
           enabled: true,
           inputPer1k: 0,
           outputPer1k: 0,
-          kind: ["chat", "vlm"],
+          kind: ["chat", "ocr"],
         },
       ],
     });
 
     const chatRef = await getChatModelFromDB();
-    // Vlm call should NOT throw even though we've advanced the chat counter.
-    const vlmRef = await getVlmModelFromDB();
+    // OCR call should NOT throw even though we've advanced the chat counter.
+    const ocrRef = await getOcrModelFromDB();
     // Both should be usable runnables; identity distinct (per-call rebuild).
     expect(typeof (chatRef as { invoke: unknown }).invoke).toBe("function");
-    expect(typeof (vlmRef as { invoke: unknown }).invoke).toBe("function");
-    expect(chatRef).not.toBe(vlmRef);
+    expect(typeof (ocrRef as { invoke: unknown }).invoke).toBe("function");
+    expect(chatRef).not.toBe(ocrRef);
   });
 });
 

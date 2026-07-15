@@ -80,10 +80,10 @@ describe("lib/kb/resolve", () => {
 
     it("returns [Failed: <error>] for failed status with error message", async () => {
       getKbDocForResolve.mockResolvedValueOnce({
-        doc: docWithStatus("failed", "VLM timed out"),
+        doc: docWithStatus("failed", "OCR timed out"),
         chunks: [],
       });
-      expect(await resolveKbRef(DOC, USER)).toBe("[Failed: VLM timed out]");
+      expect(await resolveKbRef(DOC, USER)).toBe("[Failed: OCR timed out]");
     });
 
     it("returns [Failed: unknown error] for failed status with null error", async () => {
@@ -161,13 +161,13 @@ describe("lib/kb/resolve", () => {
 
     it("uses [Failed: <msg>] when status is failed", async () => {
       getKbDocForResolve.mockResolvedValueOnce({
-        doc: docWithStatus("failed", "VLM error"),
+        doc: docWithStatus("failed", "OCR error"),
         chunks: [],
       });
       const msgs = humanWithKbRef();
       const out = await resolveKbRefs(msgs, USER);
       const content = (out[0] as HumanMessage).content as Array<Record<string, unknown>>;
-      expect(content[1]).toEqual({ type: "text", text: "[Failed: VLM error]" });
+      expect(content[1]).toEqual({ type: "text", text: "[Failed: OCR error]" });
     });
 
     it("returns messages unchanged when the kb_ref docId doesn't match any part", async () => {

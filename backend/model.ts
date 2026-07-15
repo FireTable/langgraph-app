@@ -4,7 +4,7 @@ import type { Embeddings } from "@langchain/core/embeddings";
 import {
   getChatModelFromDB,
   getEmbeddingModelFromDB,
-  getVlmModelFromDB,
+  getOcrModelFromDB,
   invalidateModelCache,
   type GetChatModelOpts,
 } from "@/lib/provider/model-registry";
@@ -28,10 +28,11 @@ function buildEnvChatModel(): ChatOpenAI {
   });
 }
 
-// ponytail: vlm reuses the chat-model env vars today (vision-capable
-// chat models handle image_url content). When a non-chat VLM provider
-// lands (e.g. a vision-only upstream) this builder splits off.
-function buildEnvVlmModel(): ChatOpenAI {
+// ponytail: ocr reuses the chat-model env vars today (vision-capable
+// chat models handle image_url content for OCR). When a non-chat
+// vision upstream lands (e.g. a vision-only OCR service) this
+// builder splits off.
+function buildEnvOcrModel(): ChatOpenAI {
   return buildEnvChatModel();
 }
 
@@ -69,15 +70,16 @@ export async function getChatModel(opts: GetChatModelOpts = {}): Promise<ChatOpe
 }
 
 /**
- * VLM = chat-capable model with vision (image_url) support. Same
- * round-robin pool key as chat, but `kind="vlm"` filter — chat-only
- * models are excluded. Falls back to env-built ChatOpenAI on miss.
+ * OCR = chat-capable model used to extract text from rendered PDF
+ * pages (image_url → markdown). Same round-robin pool key as chat,
+ * but `kind="ocr"` filter — chat-only models are excluded. Falls
+ * back to env-built ChatOpenAI on miss.
  */
-export async function getVlmModel(opts: GetChatModelOpts = {}): Promise<ChatOpenAI> {
+export async function getOcrModel(opts: GetChatModelOpts = {}): Promise<ChatOpenAI> {
   try {
-    return (await getVlmModelFromDB(opts)) as ChatOpenAI;
+    return (await getOcrModelFromDB(opts)) as ChatOpenAI;
   } catch {
-    return buildEnvVlmModel();
+    return buildEnvOcrModel();
   }
 }
 
