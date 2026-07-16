@@ -72,6 +72,12 @@ const ocrPageSchema = z.object({
     ),
 });
 
+const entitySchema = z.object({
+  entities: z.array(
+    z.string().describe("Named entities (people, organizations, concepts, products)"),
+  ),
+});
+
 function makeError(message: string): Partial<KbAgentStateShape> {
   return { status: "failed", errorMessage: message, processedFiles: [] };
 }
@@ -495,7 +501,6 @@ async function generateChunkEmbedNode(
               throw new Error(`Document ${docId} has no markdown content extracted yet`);
             }
             const chat = await getChatModel();
-            const entitySchema = z.object({ entities: z.array(z.string()) });
             const embedder = await getEmbeddingModel();
             const splitter = new RecursiveCharacterTextSplitter({
               chunkSize: 1000,
@@ -532,6 +537,7 @@ async function generateChunkEmbedNode(
                     entities = out.entities.slice(0, 20);
                   } catch {
                     // best-effort
+                    console.error(`kbAgent generateChunkEmbedNode: failed for doc ${docId}`);
                   }
                   return {
                     ordinal: i,

@@ -1,6 +1,24 @@
 // ponytail: minimal MVP — in-memory only, no DB, no LangGraph wiring.
 // Just hook the 25 callbacks into one SpanRow-shaped list so we can see
 // what real payloads look like. Delete this whole file once §10 lands.
+//
+// ponytail: no embedding hook is implemented here, and none will be.
+// `@langchain/core`'s `BaseCallbackHandler` (1.2.1 — see
+// node_modules/.pnpm/@langchain+core@1.2.1_*/node_modules/@langchain/core/
+// dist/callbacks/base.d.ts `BaseCallbackHandlerMethodsClass`) exposes
+// only LLM / ChatModel / Chain / Tool / Retriever / Agent / Text / Custom
+// hooks — there is no `handleEmbedStart` / `onEmbedStart` / equivalent.
+// Root cause: `Embeddings.embedDocuments()` / `embedQuery()` signatures
+// take no `CallbackManager` / `runManager` parameter, so individual
+// providers (OpenAI / Cohere / Voyage / …) emit no callback events at
+// all. The Python `langchain` repo has `on_embed_start` / `on_embed_end`
+// since late 2024; `langchainjs` has no equivalent PR as of 1.2.x —
+// adding one would require touching every provider's implementation,
+// not just the type. Embed calls therefore do not produce spans here;
+// the observability panel will simply show no row for the kbAgent's
+// `embedder.embedDocuments(texts)` step. If that row is needed, wrap
+// the call site (e.g. `withEmbedSpan(model, texts, fn)`) rather than
+// expecting a callback to fire.
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { Serialized } from "@langchain/core/load/serializable";
 import type { LLMResult } from "@langchain/core/outputs";
