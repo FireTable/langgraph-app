@@ -17,6 +17,7 @@ import {
   type ProcessedFile,
 } from "@/backend/state";
 import { screenshotPdf } from "@/lib/kb/screenshot";
+import { extractPdfText } from "@/lib/kb/text";
 import {
   ensureDefaultKbFolder,
   findKbDocumentByContentHash,
@@ -39,9 +40,9 @@ import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
 // RouterNode ("PDF → kbAgent") and the sub-agents.
 //
 // Flow:
-//   START → prepareKBData → splitFileToImage → imageToMarkdown → rewriteMessages ─┬─▶ END
-//                                                                                 └─▶ generateChunkEmbed → END
-//                                                                                       (non-blocking, triggers generateChunkEmbedNode)
+//   START → prepareKBData → splitFilePage → pageToMarkdown → rewriteMessages ─┬─▶ END
+//                                                                             └─▶ generateChunkEmbed → END
+//                                                                                   (non-blocking, triggers generateChunkEmbedNode)
 //
 // Every PDF file part in EVERY HumanMessage gets one of three
 // outcomes:
@@ -203,10 +204,10 @@ async function prepareKBDataNode(
 }
 
 // ---------------------------------------------------------------------------
-// Node 2: splitFileToImageNode — PDF rendering + R2 upload
+// Node 2: splitFileToPageNode — PDF rendering + text extraction + R2 upload
 // ---------------------------------------------------------------------------
 
-async function splitFileToImageNode(state: KbAgentStateShape): Promise<Partial<KbAgentStateShape>> {
+async function splitFileToPageNode(state: KbAgentStateShape): Promise<Partial<KbAgentStateShape>> {
   const newDocs = state.processedFiles.filter(
     (p) => p.pipelineStatus === "new" && p.docId !== null && p.r2Key !== null,
   );
@@ -217,12 +218,21 @@ async function splitFileToImageNode(state: KbAgentStateShape): Promise<Partial<K
   for (const pf of newDocs) {
     try {
       const pdfBytes = await getObject(pf.r2Key!);
-      const rendered = await screenshotPdf({ pdfBytes, dpi: 200 });
+      const [rendered, extracted] = await Promise.all([
+        screenshotPdf({ pdfBytes, dpi: 250 }),
+        extractPdfText({ pdfBytes }),
+      ]);
+      const textByPage = Object.fromEntries(extracted.map((e) => [e.pageIndex, e.text]));
       const pages: PageResult[] = await Promise.all(
         rendered.map(async (p) => {
           const key = `kb-tmp/${state.userId}/${pf.docId}/page-${p.pageIndex}.png`;
           const imageUrl = await uploadKbImage({ key, body: p.png });
-          return { pageIndex: p.pageIndex, imageUrl, markdown: "" };
+          return {
+            pageIndex: p.pageIndex,
+            imageUrl,
+            markdown: "",
+            referenceText: textByPage[p.pageIndex] ?? "",
+          };
         }),
       );
       pagesByDocId[pf.docId!] = pages;
@@ -253,7 +263,7 @@ async function splitFileToImageNode(state: KbAgentStateShape): Promise<Partial<K
           });
         } catch (statusErr) {
           console.error(
-            `kbAgent splitFileToImageNode: updateKbDocumentStatus failed for ${pf.docId}`,
+            `kbAgent splitFileToPageNode: updateKbDocumentStatus failed for ${pf.docId}`,
             statusErr,
           );
         }
@@ -265,10 +275,10 @@ async function splitFileToImageNode(state: KbAgentStateShape): Promise<Partial<K
 }
 
 // ---------------------------------------------------------------------------
-// Node 3: imageToMarkdownNode — OCR + fullMarkdown + fire-and-forget chunk
+// Node 3: pageToMarkdownNode — OCR + fullMarkdown + fire-and-forget chunk
 // ---------------------------------------------------------------------------
 
-async function imageToMarkdownNode(state: KbAgentStateShape) {
+async function pageToMarkdownNode(state: KbAgentStateShape) {
   const ocr = await getOcrModel();
   const system = new SystemMessage(KB_OCR_PAGE_PROMPT);
   const structured = ocr.withStructuredOutput(ocrPageSchema, { method: "jsonSchema" });
@@ -292,19 +302,20 @@ async function imageToMarkdownNode(state: KbAgentStateShape) {
       queue.add(async () => {
         const pages = state.pagesByDocId[pf.docId!];
         const ocrResults = await Promise.all(
-          pages.map((p) =>
-            structured
-              .invoke(
-                [
-                  system,
-                  new HumanMessage({
-                    content: [{ type: "image_url", image_url: { url: p.imageUrl } }],
-                  }),
-                ],
-                { tags: ["nostream"] },
-              )
-              .then((out) => ({ ...p, markdown: out.markdown.trim() })),
-          ),
+          pages.map((p) => {
+            const contentParts: Array<{ type: string; [key: string]: unknown }> = [
+              { type: "image_url", image_url: { url: p.imageUrl } },
+            ];
+            if (p.referenceText?.trim()) {
+              contentParts.push({
+                type: "text",
+                text: `Reference text extracted directly from the PDF (may contain layout noise — trust the image for structure):\n\n${p.referenceText}`,
+              });
+            }
+            return structured
+              .invoke([system, new HumanMessage({ content: contentParts })], { tags: ["nostream"] })
+              .then((out) => ({ ...p, markdown: out.markdown.trim() }));
+          }),
         );
         return { docId: pf.docId!, pages: ocrResults, messageIndex: pf.messageIndex };
       }),
@@ -616,14 +627,14 @@ function routeAfterRewrite(state: KbAgentStateShape): (string | typeof END)[] {
 
 const builder = new StateGraph(KbAgentState)
   .addNode("prepareKBData", prepareKBDataNode)
-  .addNode("splitFileToImage", splitFileToImageNode)
-  .addNode("imageToMarkdown", imageToMarkdownNode)
+  .addNode("splitFilePage", splitFileToPageNode)
+  .addNode("pageToMarkdown", pageToMarkdownNode)
   .addNode("rewriteMessages", rewriteMessagesNode)
   .addNode("generateChunkEmbed", generateChunkEmbedNode)
   .addEdge(START, "prepareKBData")
-  .addEdge("prepareKBData", "splitFileToImage")
-  .addEdge("splitFileToImage", "imageToMarkdown")
-  .addEdge("imageToMarkdown", "rewriteMessages")
+  .addEdge("prepareKBData", "splitFilePage")
+  .addEdge("splitFilePage", "pageToMarkdown")
+  .addEdge("pageToMarkdown", "rewriteMessages")
   .addConditionalEdges("rewriteMessages", routeAfterRewrite, {
     generateChunkEmbed: "generateChunkEmbed",
     __end__: END,

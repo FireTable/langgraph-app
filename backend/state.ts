@@ -29,11 +29,14 @@ export type PageResult = {
   pageIndex: number;
   imageUrl: string;
   markdown: string;
+  /** Native text extracted from the PDF text layer by mupdf. Empty for scanned/image-only pages. */
+  referenceText?: string;
 };
 
 // Per-file record. One entry per PDF file part found across every
 // HumanMessage. Drives every node — prepareKBDataNode fills it,
-// imageToMarkdownNode updates page markdown, rewriteMessagesNode
+// splitFileToPageNode uploads images + extracts reference text,
+// pageToMarkdownNode updates page markdown, rewriteMessagesNode
 // uses it to rewrite HumanMessages. filePart.data is the join key
 // when matching back to the original HumanMessage content.
 export type ProcessedFile = {

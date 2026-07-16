@@ -17,8 +17,10 @@ import {
   Trash2,
   Copy,
   Check,
-  Image,
+  ScanText,
   Blocks,
+  ArrowRight,
+  FileImage,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -64,7 +66,7 @@ type KbDocument = {
   contentType: string;
   attachmentId: string | null;
   attachmentUrl: string | null;
-  pages?: Array<{ pageIndex: number; imageUrl: string; markdown: string }>;
+  pages?: Array<{ pageIndex: number; imageUrl: string; markdown: string; referenceText?: string }>;
   createdAt: string;
   updatedAt: string;
 };
@@ -795,7 +797,7 @@ function DocDetailDialog({
         }
       }}
     >
-      <DialogContent className="max-w-4xl">
+      <DialogContent className="!max-w-[75vw]">
         <DialogHeader className="min-w-0 max-w-3xl flex-1">
           <div className="flex items-start justify-between gap-3 min-w-0">
             <DialogTitle className="truncate min-w-0 max-w-[80%]">
@@ -882,7 +884,7 @@ function DocDetailDialog({
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <Image className="size-3.5 mr-1.5 shrink-0" />
+              <ScanText className="size-3.5 mr-1.5 shrink-0" />
               <span>Pages ({detail.doc.pages?.length ?? 0})</span>
             </button>
             <button
@@ -941,47 +943,106 @@ function DocDetailDialog({
               </div>
             </div>
           ) : activeTab === "pages" ? (
-            // Tab 2: Pages Contrast
+            // Tab 2: Pages — left (image + ref) → right (markdown)
             detail.doc.pages && detail.doc.pages.length > 0 ? (
               <div className="space-y-4 w-full">
                 {detail.doc.pages.map((p) => {
-                  const page = p as { pageIndex: number; imageUrl: string; markdown: string };
+                  const page = p as {
+                    pageIndex: number;
+                    imageUrl: string;
+                    markdown: string;
+                    referenceText?: string;
+                  };
+                  const hasRef = !!page.referenceText?.trim();
                   return (
                     <div
                       key={page.pageIndex}
                       className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md"
                     >
-                      <div className="flex items-center justify-between border-b px-4 py-2.5 bg-muted/40">
+                      {/* Card Header */}
+                      <div className="flex items-center border-b px-4 py-2.5 bg-muted/40">
                         <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
                           Page #{page.pageIndex + 1}
                         </span>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4">
-                        {/* Left: PDF Image (clickable for raw zoom) */}
-                        <div className="flex items-start justify-center md:col-span-1">
-                          <a
-                            href={page.imageUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="relative block group overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow hover:shadow-md cursor-zoom-in"
-                            title="Click to view full size raw page"
-                          >
-                            <img
-                              src={page.imageUrl}
-                              alt={`Page ${page.pageIndex + 1}`}
-                              className="max-h-[250px] w-auto object-contain transition-transform duration-300 group-hover:scale-[1.02]"
-                              loading="lazy"
-                            />
-                          </a>
+
+                      {/* Body: [Image + Ref] → [Markdown] */}
+                      <div className="grid grid-cols-[1fr_auto_2fr] items-stretch gap-0 p-4">
+                        {/* Left 1/3: Image stacked above "+" and Reference Text */}
+                        <div className="flex flex-col justify-between gap-2">
+                          {/* Page Image */}
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1">
+                              <FileImage className="size-3" />
+                              Page Image
+                            </span>
+                            <a
+                              href={page.imageUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block group overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow hover:shadow-md cursor-zoom-in"
+                              title="Click to view full size"
+                            >
+                              <img
+                                src={page.imageUrl}
+                                alt={`Page ${page.pageIndex + 1}`}
+                                className="w-full object-contain max-h-[200px] transition-transform duration-300 group-hover:scale-[1.02]"
+                                loading="lazy"
+                              />
+                            </a>
+                          </div>
+
+                          {/* + connector — matches ArrowRight size */}
+                          <div className="flex items-center justify-center">
+                            <span className="text-base font-light text-muted-foreground/35 select-none leading-none">
+                              +
+                            </span>
+                          </div>
+
+                          {/* Reference Text */}
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1">
+                              <ScanText className="size-3" />
+                              Reference Text
+                            </span>
+                            {hasRef ? (
+                              <div className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-foreground/80 bg-blue-500/5 border border-blue-500/20 p-2.5 rounded-lg min-h-[80px] max-h-[180px] overflow-y-auto">
+                                {page.referenceText}
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center justify-center min-h-[80px] bg-muted/10 rounded-lg border border-dashed text-muted-foreground/40 text-[11px] italic gap-1">
+                                <ScanText className="size-4 opacity-30" />
+                                <span>No text layer</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <div className="md:col-span-2 flex flex-col justify-start">
+
+                        {/* Center arrow */}
+                        <div className="flex items-center justify-center px-3 self-center">
+                          <ArrowRight className="size-4 text-muted-foreground/35" />
+                        </div>
+
+                        {/* Right 2/3: Markdown */}
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1">
+                            <FileText className="size-3" />
+                            Markdown
+                          </span>
                           {page.markdown ? (
-                            <div className="whitespace-pre-wrap break-all font-sans text-xs leading-relaxed text-foreground/90 bg-muted/20 p-3 rounded-lg border min-h-[120px] max-h-[250px] overflow-y-auto">
+                            <div
+                              className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-foreground/90 bg-emerald-500/5 border border-emerald-500/20 p-2.5 rounded-lg flex-1 overflow-y-auto"
+                              style={{ minHeight: "calc(100% - 20px)", maxHeight: "420px" }}
+                            >
                               {page.markdown}
                             </div>
                           ) : (
-                            <div className="flex items-center justify-center min-h-[120px] bg-muted/10 rounded-lg border border-dashed text-muted-foreground text-xs italic">
-                              Text extraction empty or pending...
+                            <div
+                              className="flex flex-col items-center justify-center bg-muted/10 rounded-lg border border-dashed text-muted-foreground/40 text-[11px] italic gap-1 flex-1"
+                              style={{ minHeight: "200px" }}
+                            >
+                              <FileText className="size-4 opacity-30" />
+                              <span>Pending…</span>
                             </div>
                           )}
                         </div>

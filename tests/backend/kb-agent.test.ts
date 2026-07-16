@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => {
   }));
 
   const screenshot = vi.fn();
+  const extractText = vi.fn();
   const getAttachment = vi.fn();
   const r2KeyFromPublic = vi.fn();
   const uploadKbImage = vi.fn();
@@ -48,6 +49,7 @@ const mocks = vi.hoisted(() => {
     ocrStructuredInvoke,
     ocrFactory,
     screenshot,
+    extractText,
     getAttachment,
     r2KeyFromPublic,
     uploadKbImage,
@@ -71,6 +73,7 @@ vi.mock("@/backend/model", () => ({
   getOcrModel: mocks.ocrFactory,
 }));
 vi.mock("@/lib/kb/screenshot", () => ({ screenshotPdf: mocks.screenshot }));
+vi.mock("@/lib/kb/text", () => ({ extractPdfText: mocks.extractText }));
 vi.mock("@/lib/attachments/queries", () => ({ findAttachmentByR2Key: mocks.getAttachment }));
 vi.mock("@/lib/r2/client", () => ({
   r2KeyFromPublicUrl: mocks.r2KeyFromPublic,
@@ -186,6 +189,11 @@ beforeEach(() => {
     { pageIndex: 0, png: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
     { pageIndex: 1, png: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
   ]);
+  // ponytail: splitFilePageNode now runs screenshot + extractPdfText in
+  // parallel. Default to empty text (vision-only OCR path) so existing
+  // vision-flow tests don't need to provide text. Per-test mocks for
+  // tests that want to exercise the reference-text branch.
+  mocks.extractText.mockResolvedValue([]);
   mocks.getObject.mockResolvedValue(Buffer.from("%PDF-1.4\n"));
   mocks.uploadKbImage.mockImplementation(async ({ key }: { key: string }) => `${BASE_URL}/${key}`);
   // ponytail: kbAgent now sanity-checks dim === 1024 (matches pgvector
@@ -470,7 +478,7 @@ describe("backend/kb-agent", () => {
     });
   });
 
-  describe("imageToMarkdownNode — single doc", () => {
+  describe("pageToMarkdownNode — single doc", () => {
     it("fails with 'empty markdown' when all OCR pages returned empty strings", async () => {
       mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "" });
       const out = await kbAgent.invoke(
@@ -483,12 +491,91 @@ describe("backend/kb-agent", () => {
       expect(mocks.insertChunks).not.toHaveBeenCalled();
       const processed = out.processedFiles as Array<Record<string, unknown>>;
       expect(processed[0]?.docId).toMatch(/^d-/);
-      // imageToMarkdownNode now correctly flips status="failed" for
+      // pageToMarkdownNode now correctly flips status="failed" for
       // empty-markdown docs (previously stayed at "parsing" forever).
       const failedUpdates = mocks.updateDocStatus.mock.calls.filter(
         ([, , patch]) => (patch as { status?: string }).status === "failed",
       );
       expect(failedUpdates).toHaveLength(1);
+    });
+
+    // ponytail: splitFilePageNode runs screenshot + extractPdfText in
+    // parallel; when extractPdfText returns non-empty text, pageToMarkdownNode
+    // should attach it as a SECOND text content part on the HumanMessage
+    // alongside the image_url part. The OCR call must receive the
+    // reference text in its content array — that's the whole point of
+    // the dual-source prompt (image for structure, text for ambiguous
+    // character accuracy).
+    it("passes reference text to the OCR call when extractPdfText returns content", async () => {
+      mocks.extractText.mockReset();
+      mocks.extractText.mockResolvedValue([
+        { pageIndex: 0, text: "extracted native text 0" },
+        { pageIndex: 1, text: "extracted native text 1" },
+      ]);
+      mocks.ocrStructuredInvoke.mockReset();
+      mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "cleaned markdown" });
+
+      await kbAgent.invoke(
+        { messages: [humanWithOnePdf()], userId: USER },
+        { configurable: { userId: USER } },
+      );
+
+      expect(mocks.extractText).toHaveBeenCalledTimes(1);
+      // 2 pages × 1 doc = 2 OCR calls; each must carry both an image_url
+      // part AND a text part citing the reference text.
+      expect(mocks.ocrStructuredInvoke).toHaveBeenCalledTimes(2);
+      for (const call of mocks.ocrStructuredInvoke.mock.calls) {
+        const messages = call[0] as Array<unknown>;
+        // ponytail: LangChain serializes messages into V2 envelopes at
+        // the model boundary. lc_namespace is sometimes truncated to
+        // its first two segments ("langchain_core","messages") with
+        // the class name living in `type` ("human" / "system"). Use
+        // `type === "human"` as the canonical selector. Content lives
+        // under `lc_kwargs.content`.
+        const userEnvelope = messages.find((m) => (m as { type?: string }).type === "human");
+        expect(userEnvelope).toBeDefined();
+        const content = (userEnvelope as { lc_kwargs?: { content?: unknown } }).lc_kwargs?.content;
+        const parts: Array<{ type?: string; text?: string }> = Array.isArray(content)
+          ? (content as Array<{ type?: string; text?: string }>)
+          : [];
+        const partTypes = parts.map((p) => p.type);
+        expect(partTypes).toContain("image_url");
+        expect(partTypes).toContain("text");
+        // The text part must mention "Reference text" so the model
+        // knows it's a spell-check aid and not a structural source.
+        const textPart = parts.find((p) => p.type === "text");
+        expect(textPart?.text).toMatch(/reference text/i);
+      }
+    });
+
+    // ponytail: empty reference text (scanned PDF) → no second text part;
+    // the OCR call only sees the image. Same as before the change.
+    it("omits reference text part when extractPdfText returns empty strings", async () => {
+      mocks.extractText.mockReset();
+      mocks.extractText.mockResolvedValue([
+        { pageIndex: 0, text: "" },
+        { pageIndex: 1, text: "" },
+      ]);
+      mocks.ocrStructuredInvoke.mockReset();
+      mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "vision only" });
+
+      await kbAgent.invoke(
+        { messages: [humanWithOnePdf()], userId: USER },
+        { configurable: { userId: USER } },
+      );
+
+      expect(mocks.ocrStructuredInvoke).toHaveBeenCalledTimes(2);
+      for (const call of mocks.ocrStructuredInvoke.mock.calls) {
+        const messages = call[0] as Array<unknown>;
+        const userEnvelope = messages.find((m) => (m as { type?: string }).type === "human");
+        const content = (userEnvelope as { lc_kwargs?: { content?: unknown } }).lc_kwargs?.content;
+        const parts: Array<{ type?: string; text?: string }> = Array.isArray(content)
+          ? (content as Array<{ type?: string; text?: string }>)
+          : [];
+        const partTypes = parts.map((p) => p.type);
+        // Only image_url — empty reference text is dropped (not passed as "").
+        expect(partTypes).toEqual(["image_url"]);
+      }
     });
 
     it("concatenates pages' markdown and fires background chunk", async () => {

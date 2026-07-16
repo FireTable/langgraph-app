@@ -180,13 +180,36 @@ ON FAILURE:
 // prompt has to stay generic — no document-level structure, just
 // "what's on this page?". Runs at OCR_CONCURRENCY=5 (see kb-agent.ts).
 //
-// Named KB_OCR_* because the task is OCR (extract text from image,
-// output markdown). The underlying model is still a vision-capable
-// chat model from `getOcrModel()` — the name change is task-scoped.
-export const KB_OCR_PAGE_PROMPT = `You are extracting text from a single PDF page rendered as an image.
-Output clean markdown: preserve headings, lists, code blocks, tables, and inline formatting.
-If the page is blank or contains only decorative images, output an empty string.
-Do not add commentary — return only the markdown content of the page.`;
+export const KB_OCR_PAGE_PROMPT = `You are a precise document digitizer. Your task is to convert a single PDF page image into clean, accurate Markdown.
+
+## Inputs
+- **Image** (always present): The rendered PDF page. This is your primary source for both text content and visual layout.
+- **Reference Text** (optional, appears after the image): Raw text programmatically extracted from the PDF's text layer. 
+  *WARNING: The reference text is often severely fragmented, out of order, and displaced due to PDF multi-column layout extraction. For example, dates, titles, or subtitles visible in a specific card on the image might be extracted at a completely different place in the reference text. It is NOT a reliable guide for reading order or layout structure.*
+
+## Rules
+
+### Segmentation & Layout — follow the IMAGE
+- Analyze the **Image** to determine how the content is grouped, partitioned, and structured. 
+- Do NOT use the reference text to segment or organize the content. The layout, section divisions, reading order, and block structure must come entirely from the visual flow of the image.
+- Use heading levels (#, ##, ###) matching the visual hierarchy in the image.
+- Preserve lists (bullet / numbered), tables (using GFM table syntax), and code blocks (\`\`\`) matching their visual representations in the image.
+
+### Completeness — transcribing EVERYTHING without omission
+- Convert **ALL** readable text and visible content from the Image.
+- Do NOT summarize, skip, truncate, or paraphrase any sections of the page.
+- Ensure every sentence, paragraph, table row, and cell visible in the image is completely translated into the markdown output.
+- If text is clearly visible in the image (e.g., job titles, dates, or company names) but is missing from its expected place in the reference text, you **must** transcribe it fully based on what you see in the image (and look for it elsewhere in the reference text if needed).
+
+### Character Disambiguation — use the REFERENCE TEXT
+- The reference text is provided **solely as a lookup reference** to help you resolve or verify individual characters that are hard to recognize visually (especially rare CJK characters like 焯 vs 炜, proper nouns, technical terms, and numbers).
+- Because the reference text is often out of order, do not expect it to align spatially with the image. Search the **entire** reference text to find the correct spelling/character for a given visual section.
+- Do NOT copy the whitespace, line breaks, or block grouping of the reference text.
+
+### Edge cases
+- If the page is blank or contains only decorative images with no readable text, return an empty string.
+- Do not add headings, summaries, or commentary that are not present in the image.
+- Output ONLY the Markdown content — no preamble, no explanation, no code fences wrapping the output.`;
 
 // ponytail: shared system-prompt skeleton — wraps the per-agent base
 // prompt (CHAT_AGENT_PROMPT, WEATHER_AGENT_PROMPT, etc.) with the
@@ -271,7 +294,7 @@ Each user message in this conversation represents one human turn and contains tw
 
 Example (two turns sent as two separate user messages):
 Part 1: "This turn ref is #1"  Part 2: {"ref":"#1","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi! how can I help?"}]}
-Part 1: "This turn ref is #2"  Part 2: {"ref":"#2","messages":[{"role":"user","content":"weather in BJ"},{"role":"assistant","content":"","tool_calls":[{"name":"get_weather","args":{"loc":"BJ"}}]},{"role":"tool","content":"{\"temp\":32}"}]}
+Part 1: "This turn ref is #2"  Part 2: {"ref":"#2","messages":[{"role":"user","content":"weather in BJ"},{"role":"assistant","content":"","tool_calls":[{"name":"get_weather","args":{"loc":"BJ"}}]},{"role":"tool","content":"{"temp":32}"}]}
 
 OUTPUT (strict JSON, no prose before or after)
 {
