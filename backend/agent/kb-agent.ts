@@ -21,6 +21,7 @@ import {
   ensureDefaultKbFolder,
   findKbDocumentByContentHash,
   findKbDocumentByAttachmentId,
+  findKbDocumentById,
   insertKbChunks,
   insertKbDocument,
   updateKbDocumentStatus,
@@ -399,107 +400,140 @@ async function imageToMarkdownNode(state: KbAgentStateShape) {
 }
 
 // ---------------------------------------------------------------------------
-// Background: runBackgroundChunkEmbedStore — chunk + embed + entity + insert
-// Not a graph node. Fire-and-forget from backgroundChunkEmbedStoreNode.
+// Node 6: generateChunkEmbedNode — chunk + embed + entity + insert
+// ponytail: This is registered as a LangGraph Node but uses a void IIFE
+// internally. It runs fire-and-forget so the graph node completes instantly
+// in milliseconds and NEVER blocks the main kbAgent or the RAG chat loop.
 // ---------------------------------------------------------------------------
 
-async function runBackgroundChunkEmbedStore(
-  userId: string,
-  docId: string,
-  fullMarkdown: string,
-): Promise<void> {
-  try {
-    const chat = await getChatModel();
-    const entitySchema = z.object({ entities: z.array(z.string()) });
-    const embedder = await getEmbeddingModel();
-    const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
-    const entityQueue = new PQueue({ concurrency: KB_ENTITY_CONCURRENCY });
+async function generateChunkEmbedNode(
+  state: KbAgentStateShape,
+): Promise<Partial<KbAgentStateShape>> {
+  if (state.userId) {
+    for (const pf of state.processedFiles) {
+      if (pf.pipelineStatus === "new" && pf.docId) {
+        const docId = pf.docId;
+        const userId = state.userId;
 
-    const splitDocs = await splitter.createDocuments([fullMarkdown]);
-    const texts = splitDocs.map((d) => d.pageContent);
-    const embeddings = await embedder.embedDocuments(texts);
-
-    // ponytail: schema expects vector(1024) (kb_chunk.embedding +
-    // HNSW index). If the embedder returns anything else, pgvector
-    // rejects every insert with 22P02 — caught too late to be useful.
-    // Fail fast with a single clear sentence instead.
-    const actualDim = embeddings[0]?.length ?? 0;
-    if (actualDim !== EMBEDDING_DIM) {
-      throw new Error(
-        `embedding dimension mismatch: schema expects ${EMBEDDING_DIM}, embedder returned ${actualDim}. Update lib/kb/schema.ts EMBEDDING_DIM + run the matching ALTER COLUMN migration.`,
-      );
-    }
-
-    const seeds: ChunkSeed[] = await Promise.all(
-      texts.map((text, i) =>
-        entityQueue.add(async (): Promise<ChunkSeed> => {
-          let entities: string[] = [];
+        // ponytail: fire-and-forget async invocation so the graph node
+        // completes in milliseconds and doesn't block the main agent.
+        void (async () => {
           try {
-            const out = await chat
-              .withStructuredOutput(entitySchema, { method: "jsonSchema" })
-              .invoke(
-                `Extract named entities (people, orgs, concepts, products) from this passage:\n\n${text}`,
-                { tags: ["nostream"] },
-              );
-            entities = out.entities.slice(0, 20);
-          } catch {
-            // best-effort
-          }
-          return {
-            ordinal: i,
-            content: text,
-            entities,
-            embedding: embeddings[i] ?? [],
-          };
-        }),
-      ),
-    );
+            const doc = await findKbDocumentById(userId, docId);
+            if (!doc) {
+              throw new Error(`Document ${docId} not found`);
+            }
+            const pages = (doc.pages ?? []) as Array<{
+              pageIndex: number;
+              imageUrl: string;
+              markdown: string;
+            }>;
+            const fullMarkdown = pages
+              .map((p) => p.markdown)
+              .filter((m) => m && m.length > 0)
+              .join("\n\n");
+            if (!fullMarkdown) {
+              throw new Error(`Document ${docId} has no markdown content extracted yet`);
+            }
+            const chat = await getChatModel();
+            const entitySchema = z.object({ entities: z.array(z.string()) });
+            const embedder = await getEmbeddingModel();
+            const splitter = new RecursiveCharacterTextSplitter({
+              chunkSize: 1000,
+              chunkOverlap: 200,
+            });
+            const entityQueue = new PQueue({ concurrency: KB_ENTITY_CONCURRENCY });
 
-    await withKbTx(async (tx) => {
-      await insertKbChunks(
-        tx,
-        seeds.map((s) => ({
-          id: `c-${randomUUID()}`,
-          documentId: docId,
-          ordinal: s.ordinal,
-          content: s.content,
-          embedding: s.embedding,
-          entities: s.entities,
-        })) as never,
-      );
-    });
-    invalidateKbDoc(userId, docId);
-  } catch (err) {
-    // ponytail: postgres.js throws FailedQueryError whose `.message`
-    // is the full SQL + params dump. Surface the PG SQLSTATE / detail
-    // for debugging; keep user-facing errorMessage small.
-    const pgErr = err as Error & {
-      code?: string;
-      detail?: string;
-      hint?: string;
-    };
-    const reason = pgErr.code
-      ? `${pgErr.code}: ${pgErr.detail ?? pgErr.message}${pgErr.hint ? ` (${pgErr.hint})` : ""}`
-      : pgErr.message;
-    console.error(
-      `kbAgent runBackgroundChunkEmbedStore: failed for doc ${docId}: ${reason}`,
-      pgErr,
-    );
-    // ponytail: triggerChunkNode already flipped status="success".
-    // If chunk/embed fails, roll back to "failed" so Settings UI shows
-    // the failure and the user can reprocess.
-    try {
-      await updateKbDocumentStatus(userId, docId, {
-        status: "failed",
-        errorMessage: reason,
-      });
-    } catch (statusErr) {
-      console.error(
-        `kbAgent runBackgroundChunkEmbedStore: status=failed flip failed for ${docId}`,
-        statusErr,
-      );
+            const splitDocs = await splitter.createDocuments([fullMarkdown]);
+            const texts = splitDocs.map((d) => d.pageContent);
+            const embeddings = await embedder.embedDocuments(texts);
+
+            // ponytail: schema expects vector(1024) (kb_chunk.embedding +
+            // HNSW index). If the embedder returns anything else, pgvector
+            // rejects every insert with 22P02 — caught too late to be useful.
+            // Fail fast with a single clear sentence instead.
+            const actualDim = embeddings[0]?.length ?? 0;
+            if (actualDim !== EMBEDDING_DIM) {
+              throw new Error(
+                `embedding dimension mismatch: schema expects ${EMBEDDING_DIM}, embedder returned ${actualDim}. Update lib/kb/schema.ts EMBEDDING_DIM + run the matching ALTER COLUMN migration.`,
+              );
+            }
+
+            const seeds: ChunkSeed[] = await Promise.all(
+              texts.map((text, i) =>
+                entityQueue.add(async (): Promise<ChunkSeed> => {
+                  let entities: string[] = [];
+                  try {
+                    const out = await chat
+                      .withStructuredOutput(entitySchema, { method: "jsonSchema" })
+                      .invoke(
+                        `Extract named entities (people, orgs, concepts, products) from this passage:\n\n${text}`,
+                        { tags: ["nostream"] },
+                      );
+                    entities = out.entities.slice(0, 20);
+                  } catch {
+                    // best-effort
+                  }
+                  return {
+                    ordinal: i,
+                    content: text,
+                    entities,
+                    embedding: embeddings[i] ?? [],
+                  };
+                }),
+              ),
+            );
+
+            await withKbTx(async (tx) => {
+              await insertKbChunks(
+                tx,
+                seeds.map((s) => ({
+                  id: `c-${randomUUID()}`,
+                  documentId: docId,
+                  ordinal: s.ordinal,
+                  content: s.content,
+                  embedding: s.embedding,
+                  entities: s.entities,
+                })) as never,
+              );
+            });
+            invalidateKbDoc(userId, docId);
+          } catch (err) {
+            // ponytail: postgres.js throws FailedQueryError whose `.message`
+            // is the full SQL + params dump. Surface the PG SQLSTATE / detail
+            // for debugging; keep user-facing errorMessage small.
+            const pgErr = err as Error & {
+              code?: string;
+              detail?: string;
+              hint?: string;
+            };
+            const reason = pgErr.code
+              ? `${pgErr.code}: ${pgErr.detail ?? pgErr.message}${pgErr.hint ? ` (${pgErr.hint})` : ""}`
+              : pgErr.message;
+            console.error(
+              `kbAgent generateChunkEmbedNode: failed for doc ${docId}: ${reason}`,
+              pgErr,
+            );
+            // ponytail: triggerChunkNode already flipped status="success".
+            // If chunk/embed fails, roll back to "failed" so Settings UI shows
+            // the failure and the user can reprocess.
+            try {
+              await updateKbDocumentStatus(userId, docId, {
+                status: "failed",
+                errorMessage: reason,
+              });
+            } catch (statusErr) {
+              console.error(
+                `kbAgent generateChunkEmbedNode: status=failed flip failed for ${docId}`,
+                statusErr,
+              );
+            }
+          }
+        })();
+      }
     }
   }
+  return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -587,28 +621,6 @@ function rewriteMessagesNode(state: KbAgentStateShape): Partial<KbAgentStateShap
 // Node 6: backgroundChunkEmbedStoreNode — non-blocking dispatch of index task
 // ---------------------------------------------------------------------------
 
-async function backgroundChunkEmbedStoreNode(
-  state: KbAgentStateShape,
-): Promise<Partial<KbAgentStateShape>> {
-  if (state.userId) {
-    for (const pf of state.processedFiles) {
-      if (pf.pipelineStatus === "new" && pf.docId) {
-        const pages = state.pagesByDocId[pf.docId] ?? [];
-        const md = pages
-          .map((p) => p.markdown)
-          .filter((m) => m.length > 0)
-          .join("\n\n");
-        if (md) {
-          // ponytail: fire-and-forget async invocation so the graph node
-          // completes in milliseconds and doesn't block the main agent.
-          void runBackgroundChunkEmbedStore(state.userId, pf.docId, md);
-        }
-      }
-    }
-  }
-  return {};
-}
-
 // ---------------------------------------------------------------------------
 // Graph builder + dual compilation
 // ---------------------------------------------------------------------------
@@ -617,7 +629,7 @@ function routeAfterRewrite(state: KbAgentStateShape): (string | typeof END)[] {
   const destinations: (string | typeof END)[] = [END];
   const hasNew = state.processedFiles.some((p) => p.pipelineStatus === "new");
   if (hasNew) {
-    destinations.push("backgroundChunkEmbedStore");
+    destinations.push("generateChunkEmbed");
   }
   return destinations;
 }
@@ -627,16 +639,16 @@ const builder = new StateGraph(KbAgentState)
   .addNode("splitFileToImage", splitFileToImageNode)
   .addNode("imageToMarkdown", imageToMarkdownNode)
   .addNode("rewriteMessages", rewriteMessagesNode)
-  .addNode("backgroundChunkEmbedStore", backgroundChunkEmbedStoreNode)
+  .addNode("generateChunkEmbed", generateChunkEmbedNode)
   .addEdge(START, "prepareKBData")
   .addEdge("prepareKBData", "splitFileToImage")
   .addEdge("splitFileToImage", "imageToMarkdown")
   .addEdge("imageToMarkdown", "rewriteMessages")
   .addConditionalEdges("rewriteMessages", routeAfterRewrite, {
-    backgroundChunkEmbedStore: "backgroundChunkEmbedStore",
+    generateChunkEmbed: "generateChunkEmbed",
     __end__: END,
   })
-  .addEdge("backgroundChunkEmbedStore", END);
+  .addEdge("generateChunkEmbed", END);
 
 // ponytail: TWO compiled graphs from the same builder.
 // - `kbAgent` (in-process subgraph): empty subgraphCheckpointerConfig.

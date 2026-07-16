@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => {
   const ensureFolder = vi.fn();
   const findByHash = vi.fn();
   const findByAtt = vi.fn();
+  const findById = vi.fn();
   const insertDoc = vi.fn();
   const insertChunks = vi.fn();
   const withTx = vi.fn();
@@ -55,6 +56,7 @@ const mocks = vi.hoisted(() => {
     ensureFolder,
     findByHash,
     findByAtt,
+    findById,
     insertDoc,
     insertChunks,
     withTx,
@@ -80,6 +82,7 @@ vi.mock("@/lib/kb/queries", () => ({
   ensureDefaultKbFolder: mocks.ensureFolder,
   findKbDocumentByContentHash: mocks.findByHash,
   findKbDocumentByAttachmentId: mocks.findByAtt,
+  findKbDocumentById: mocks.findById,
   insertKbDocument: mocks.insertDoc,
   insertKbChunks: mocks.insertChunks,
   updateKbDocumentStatus: mocks.updateDocStatus,
@@ -159,6 +162,23 @@ beforeEach(() => {
       updatedAt: new Date(),
     }),
   );
+  mocks.findById.mockImplementation(async (userId: string, id: string) => ({
+    id,
+    userId,
+    folderId: FOLDER_ID,
+    attachmentId: "att-x",
+    title: "doc.pdf",
+    contentType: "application/pdf",
+    contentHash: "sha-x",
+    status: "success" as const,
+    errorMessage: null,
+    pages: [
+      { pageIndex: 0, imageUrl: "img-0", markdown: "mock page text" },
+      { pageIndex: 1, imageUrl: "img-1", markdown: "mock page text" },
+    ],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }));
   mocks.withTx.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn({}));
   mocks.insertChunks.mockResolvedValue(undefined);
   mocks.updateDocStatus.mockResolvedValue(undefined);
@@ -577,7 +597,9 @@ describe("backend/kb-agent", () => {
       expect(processed).toHaveLength(2);
       expect(processed.map((p) => p.pipelineStatus)).toEqual(["new", "new"]);
       expect(mocks.insertDoc).toHaveBeenCalledTimes(2);
-      expect(mocks.insertChunks).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => {
+        expect(mocks.insertChunks).toHaveBeenCalledTimes(2);
+      });
       // Both file parts preserved with kb_ref sibling (NOT replaced).
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
       expect(content.filter((p) => p.type === "file" && p.kb_ref)).toHaveLength(2);
