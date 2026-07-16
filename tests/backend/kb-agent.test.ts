@@ -798,5 +798,84 @@ describe("backend/kb-agent", () => {
       expect(content.filter((p) => p.type === "file")).toHaveLength(1);
       expect(content.filter((p) => p.type === "text")).toHaveLength(1);
     });
+
+    // ponytail: regression guard for the multi-turn case. State.messages
+    // carries the kbAgent-rewritten file part from turn 1 forward into
+    // turn 2 (state.messages is append-only under the langgraph
+    // addMessages reducer). chunkEmbedStoreNode's rewrite iterates
+    // EVERY HumanMessage — for the older one the file part already
+    // carries a kb_ref sibling, so fileToDoc.get(part.data) misses
+    // (fileToDoc is built from THIS round's processedFiles) and the
+    // pre-fix code `continue`d past it, stripping the file part (and
+    // its filename prefix) from the older message. Symptom in the UI:
+    // turn 1's KB tile disappeared the moment turn 2's kbAgent ran.
+    //
+    // Fix: skip file parts with an existing kb_ref sibling and carry
+    // them through unchanged. This test pins that behavior.
+    it("multi-turn rewrite preserves already-stamped file parts in older HumanMessages", async () => {
+      mocks.ocrStructuredInvoke.mockReset();
+      mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "doc text ".repeat(40) });
+
+      // Turn 1: prior round stamped the kb_ref sibling + filename
+      // prefix on alpha. This is the round we're simulating the AFTER
+      // state of — turn 2 is the new upload we're about to process.
+      const priorAlphaUrl = urlFor("alpha");
+      const priorStampedFilename = `[kb:d-prior] alpha.pdf`;
+      const turn1Message = new HumanMessage({
+        content: [
+          { type: "text", text: "first upload" },
+          {
+            type: "file",
+            data: priorAlphaUrl,
+            mime_type: "application/pdf",
+            filename: priorStampedFilename,
+            metadata: { filename: priorStampedFilename },
+            kb_ref: { docId: "d-prior", attachmentId: "att-prior" },
+          },
+        ] as never,
+        id: "m-1",
+      });
+
+      // Turn 2: brand-new PDF, no kb_ref yet. This is what THIS
+      // kbAgent invocation will process.
+      const messages = [
+        turn1Message,
+        new HumanMessage({
+          content: [{ type: "text", text: "what's this?" }, pdfFilePart(urlFor("beta"))] as never,
+          id: "m-2",
+        }),
+      ];
+
+      const out = await kbAgent.invoke(
+        { messages, userId: USER },
+        { configurable: { userId: USER } },
+      );
+      expect(out.status).toBe("success");
+
+      // Turn 1's HumanMessage is preserved BY IDENTITY (rewrite only
+      // constructs a new HumanMessage when it had to drop a part) —
+      // chunkEmbedStoreNode's `if (!changed) return m` branch. With
+      // the fix it returns the original message untouched; without
+      // the fix it would build a new HumanMessage missing the file
+      // part entirely.
+      const rewrittenM1 = (out.messages as HumanMessage[]).find((m) => m.id === "m-1");
+      const c1 = rewrittenM1?.content as Array<Record<string, unknown>>;
+      const alphaPart = c1.find(
+        (p) => p.type === "file" && (p.data as string) === priorAlphaUrl,
+      ) as Record<string, unknown>;
+      expect(alphaPart).toBeDefined();
+      // kb_ref sibling preserved verbatim.
+      expect(alphaPart.kb_ref).toEqual({ docId: "d-prior", attachmentId: "att-prior" });
+      // Filename prefix preserved verbatim (idempotent stamp on re-write).
+      expect(alphaPart.filename).toBe(priorStampedFilename);
+      expect((alphaPart.metadata as Record<string, unknown>)?.filename).toBe(priorStampedFilename);
+
+      // Turn 2's HumanMessage gets a new kb_ref sibling + filename prefix.
+      const rewrittenM2 = (out.messages as HumanMessage[]).find((m) => m.id === "m-2");
+      const c2 = rewrittenM2?.content as Array<Record<string, unknown>>;
+      const betaPart = c2.find((p) => p.type === "file") as Record<string, unknown>;
+      expect(betaPart.kb_ref).toMatchObject({ docId: expect.stringMatching(/^d-/) });
+      expect(betaPart.filename as string).toMatch(/^\[kb:d-/);
+    });
   });
 });

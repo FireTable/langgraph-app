@@ -568,9 +568,9 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   }
   await Promise.allSettled(finalized);
 
-  // ponytail: rewrite EVERY HumanMessage that had a PDF file part.
-  // For each PDF we matched to a kb_document, KEEP the original file
-  // part and stamp the marker on TWO channels:
+  // ponytail: rewrite every file part in every HumanMessage. For each
+  // PDF we matched to a kb_document, KEEP the original file part and
+  // stamp the marker on TWO channels:
   //   (a) `kb_ref: { docId, attachmentId? }` sibling — canonical
   //       back-end channel. hasUnprocessedPdf / collectKbRefs /
   //       resolveKbRefs all read this. Backend state.messages is
@@ -585,7 +585,16 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   //       parses the prefix off `attachment.name` for the deep-link
   //       and to swap the fallback icon to BookOpen.
   //
-  // Failure modes:
+  // Per-part outcomes:
+  //  - already-stamped (`part.kb_ref` set): carry the part through
+  //    untouched. extractAllPdfParts filters those out at the top of
+  //    kbAgent, so fileToDoc won't have an entry for them — without
+  //    this branch the fileToDoc miss would drop the part from an
+  //    older HumanMessage and erase the previous turn's KB tile.
+  //    Reproducer: upload PDF A in turn 1, upload PDF B in turn 2 →
+  //    chunkEmbedStoreNode rewrites turn 2's message; without this
+  //    guard the rewrite would also iterate turn 1's file part, miss
+  //    fileToDoc (different data URL), and `continue` past it.
   //  - matched PDF (new / dedup / parsing): file part with both
   //    channels stamped.
   //  - non-PDF file part: drop (kbAgent never surfaces these to the
@@ -605,6 +614,16 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
     const newContent: unknown[] = [];
     for (const part of m.content) {
       if (isFilePart(part)) {
+        // ponytail: already-stamped parts carry through untouched —
+        // see the "Per-part outcomes" comment above. fileToDoc is
+        // built from THIS round's processedFiles and won't have an
+        // entry for a previous round's PDF, so without this guard
+        // the fileToDoc miss below would drop the part from the
+        // older HumanMessage and erase its KB tile.
+        if (part.kb_ref) {
+          newContent.push(part);
+          continue;
+        }
         const matched = fileToDoc.get(part.data);
         if (!matched) {
           // non-PDF or unknown/failed PDF with no docId → drop
