@@ -673,8 +673,8 @@ function DocRow({
             items-center only aligns the cell box, not the text inside
             a bare div — text baseline sits above the cell's geometric
             center. */}
-        <div className="flex min-w-0 items-center truncate font-medium" title={doc.title}>
-          {doc.title}
+        <div className="flex min-w-0 items-center font-medium" title={doc.title}>
+          <span className="truncate min-w-0 flex-1">{doc.title}</span>
         </div>
         <div className="text-muted-foreground flex items-center truncate text-xs">{type}</div>
         <time
