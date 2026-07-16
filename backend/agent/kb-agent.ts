@@ -73,9 +73,9 @@ const ocrPageSchema = z.object({
 });
 
 const entitySchema = z.object({
-  entities: z.array(
-    z.string().describe("Named entities (people, organizations, concepts, products)"),
-  ),
+  entities: z
+    .array(z.string().describe("Named entities (eg: people, organizations, concepts, products)"))
+    .describe("Named entities list, one entry per word"),
 });
 
 function makeError(message: string): Partial<KbAgentStateShape> {

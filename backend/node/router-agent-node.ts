@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { getChatModel } from "@/backend/model";
 import { ROUTER_AGENT_PROMPT } from "@/backend/prompt/system";
-import { hasUnprocessedPdf } from "@/lib/kb/extract";
+import { hasUnprocessedPdf, stripFileParts } from "@/lib/kb/extract";
 import { trimMessagesForInvoke } from "@/backend/memory/template";
 import { extractUserId } from "@/backend/memory/recall";
 
@@ -39,19 +39,6 @@ export async function routerAgentNode(
   const userId = extractUserId(config);
   const trimmed = await trimMessagesForInvoke(state.messages, [], userId ?? undefined);
 
-  // ponytail: strip file content parts before sending to the LLM —
-  // apimart's Azure Responses API rejects image_url/file content with
-  // non-base64 data ("Invalid file data" 400). The model has already
-  // routed to kbAgent (kb_ref sibling on every PDF file part) or it's
-  // not a PDF — either way the file part is irrelevant for routing.
-  function stripFileParts(msg: BaseMessage): BaseMessage {
-    if (!Array.isArray(msg.content)) return msg;
-    const cleaned = msg.content.filter(
-      (p) => typeof p === "object" && p !== null && (p as { type?: string }).type !== "file",
-    );
-    if (cleaned.length === msg.content.length) return msg;
-    return new HumanMessage({ content: cleaned as never, id: msg.id });
-  }
   const trimmedClean = trimmed.map(stripFileParts);
   const lastClean = lastUserMessage ? stripFileParts(lastUserMessage) : null;
 

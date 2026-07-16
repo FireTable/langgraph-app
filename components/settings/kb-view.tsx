@@ -796,9 +796,11 @@ function DocDetailDialog({
       }}
     >
       <DialogContent className="max-w-4xl">
-        <DialogHeader>
-          <div className="flex items-start justify-between gap-3">
-            <DialogTitle className="truncate">{detail?.doc.title ?? "Loading…"}</DialogTitle>
+        <DialogHeader className="min-w-0 max-w-3xl flex-1">
+          <div className="flex items-start justify-between gap-3 min-w-0">
+            <DialogTitle className="truncate min-w-0 max-w-[80%]">
+              {detail?.doc.title ?? "Loading…"}
+            </DialogTitle>
             {detail?.doc.attachmentUrl && (
               <Button asChild size="sm" variant="outline" className="shrink-0 gap-1.5">
                 <a href={detail.doc.attachmentUrl} target="_blank" rel="noopener noreferrer">
