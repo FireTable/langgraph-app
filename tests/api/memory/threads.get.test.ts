@@ -68,7 +68,7 @@ function summary(threadId: string, sequence: number, createdAt: string) {
     endMessageIndex: 0,
     messageCount: 1,
     messageIds: ["m0"],
-    summary: { entries: [{ question: "...", answer: "...", refs: ["#1"] }] },
+    summary: { entries: [{ question: "...", answer: "...", refs: [1] }] },
     createdAt,
   };
 }

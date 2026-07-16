@@ -52,7 +52,7 @@ const PROFILE_WITH_THREADS = {
         messageCount: 7,
         messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
         summary: {
-          entries: [{ question: "intro question", answer: "met answer", refs: ["#1-#4"] }],
+          entries: [{ question: "intro question", answer: "met answer", refs: [1, 2, 3, 4] }],
         },
         createdAt: "2026-07-02T00:00:00.000Z",
       },
@@ -68,7 +68,7 @@ const PROFILE_WITH_THREADS = {
         messageCount: 3,
         messageIds: ["m7", "m8", "m9"],
         summary: {
-          entries: [{ question: "follow-up", answer: "follow-up answer", refs: ["#8-#9"] }],
+          entries: [{ question: "follow-up", answer: "follow-up answer", refs: [8, 9] }],
         },
         createdAt: "2026-07-02T01:00:00.000Z",
       },

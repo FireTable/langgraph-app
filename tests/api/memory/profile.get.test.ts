@@ -51,7 +51,7 @@ describe("GET /api/memory/profile", () => {
           endMessageIndex: 6,
           messageCount: 7,
           messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
-          summary: { entries: [{ question: "...", answer: "...", refs: ["#1-#4"] }] },
+          summary: { entries: [{ question: "...", answer: "...", refs: [1, 2, 3, 4] }] },
           createdAt: "2026-07-02T00:00:00.000Z",
         },
         // ponytail: enrich the wire shape — null when the rename

@@ -19,6 +19,10 @@
 // spans land in the same observability row set as the chat invoke.
 import { langGraphClient } from "@/lib/langgraph/client";
 import { lastHumanMessageId } from "@/lib/langgraph/last-human-message-id";
+import {
+  trimMessagesForInvoke,
+} from "@/backend/memory/template";
+import type { BaseMessage } from "@langchain/core/messages";
 
 type ScheduleConfig = {
   configurable?: {
@@ -42,16 +46,18 @@ type PreparedCall = {
   parentMessageId: string | null;
 };
 
-function readBackgroundCall(state: ScheduleState, config: ScheduleConfig): PreparedCall | null {
+async function readBackgroundCall(state: ScheduleState, config: ScheduleConfig): Promise<PreparedCall | null> {
   const userId = config.configurable?.userId;
   const threadId = config.configurable?.thread_id;
   if (typeof userId !== "string" || userId.length === 0) return null;
   if (typeof threadId !== "string" || threadId.length === 0) return null;
 
+  const messages = await trimMessagesForInvoke((state.messages ?? []) as BaseMessage[], [], userId ?? undefined);
+
   return {
     userId,
     threadId,
-    messages: state.messages ?? [],
+    messages,
     parentMessageId: lastHumanMessageId(state.messages),
   };
 }
@@ -83,7 +89,7 @@ export async function triggerBackgroundAgentNode(
   state: ScheduleState,
   config: ScheduleConfig,
 ): Promise<Record<string, never>> {
-  const prepared = readBackgroundCall(state, config);
+  const prepared = await readBackgroundCall(state, config);
   if (!prepared) return {};
 
   // ponytail: must await so SDK rejections propagate to the catch

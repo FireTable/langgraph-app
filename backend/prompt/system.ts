@@ -258,43 +258,45 @@ OBJECTIVE
 Produce the smallest set of self-contained Q&A entries that capture: the topic being asked, the substance of the answer, and any concrete data the tools returned. Skip filler. The entries MUST cover every #N exactly once (or mark it as skipped).
 
 INPUT
-JSONL — one line per human turn in the THREAD, 1-indexed globally ("#1" is the very first User message in this thread, "#3" is the fourth, etc.). Each line is a JSON object: {"id": "#N", "messages": [...]}. Lines are separated by a single newline; do NOT wrap the whole payload in an array.
+Each user message in this conversation represents one human turn and contains two text parts:
+  1. A short label: "This turn ref is #N" — use this #N verbatim in OUTPUT refs.
+  2. A JSON object: {"ref": "#N", "messages": [...]}
 
-Inside each line:
-  - "id": the #N label, byte-for-byte the value the model must put in OUTPUT refs. This is the SAME numbering used by SummaryEntry.startMessageIndex..endMessageIndex and by the Memory tab's "messages [start..end]" header.
-  - "messages": the ordered list of this turn's messages. Each message has:
-    - "role": "user" | "assistant" | "tool" (assistant covers both "ai" and "assistant"; tool covers ToolMessage results).
-    - "content": the message text. tool results are stringified JSON objects — read them as data, not as chat prose.
-    - "tool_calls" (assistant only, optional): array of {name, args} describing which tools the assistant invoked that turn. The matching tool message's "content" IS the answer's data — surface it verbatim. Don't narrate the call ("called get_weather", "queried the API"); treat the tool as an implementation detail of how the data was sourced, not part of the answer itself.
+#N is 1-indexed globally across the entire thread (not slice-local). It maps byte-for-byte to the Memory tab's "messages [start..end]" header.
 
-Example shape (covering #1..#2):
-{"id":"#1","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi! how can I help?"}]}
-{"id":"#2","messages":[{"role":"user","content":"weather in BJ"},{"role":"assistant","content":"","tool_calls":[{"name":"get_weather","args":{"loc":"BJ"}}]},{"role":"tool","content":"{...}"}]}
+"messages" is the ordered list of messages in this turn. Each item has:
+  - "role": "user" | "assistant" | "tool"
+  - "content": the message text. tool results are often stringified JSON — read them as data, not as chat prose.
+  - "tool_calls" (assistant only, optional): array of {name, args} describing which tools were invoked. Read the matching tool message's "content" as source data — summarize its key outcome, do not reproduce it verbatim.
+
+Example (two turns sent as two separate user messages):
+Part 1: "This turn ref is #1"  Part 2: {"ref":"#1","messages":[{"role":"user","content":"hello"},{"role":"assistant","content":"hi! how can I help?"}]}
+Part 1: "This turn ref is #2"  Part 2: {"ref":"#2","messages":[{"role":"user","content":"weather in BJ"},{"role":"assistant","content":"","tool_calls":[{"name":"get_weather","args":{"loc":"BJ"}}]},{"role":"tool","content":"{\"temp\":32}"}]}
 
 OUTPUT (strict JSON, no prose before or after)
 {
   "entries": [
     {
-      "question": "<the user's ask>",
-      "answer": "<the answer itself, as if directly answering the Q — 1-3 sentences, no narration of who did what>",
+      "question": "<the topic being asked>",
+      "answer": "<substance of the answer — what was found, decided, or done, including any key tool results>",
       "refs": ["#1"]
     }
   ]
 }
 
 INSTRUCTIONS
-- One entry covers ONE topic or ONE resolved question. Group consecutive turns on the same topic into one entry; use refs to list every covered turn.
-- For consecutive labels, abbreviate refs: ["#1", "#2", "#3"] → ["#1-#3"]. Do NOT abbreviate non-consecutive.
-- Order entries chronologically (matching the #N labels).
-- Preserve concrete facts the user or tools shared — numbers, names, places, IDs, URLs, command outputs — verbatim when they fit.
-- Skip turns that carry no information (greetings, "ok", empty tool errors, system chatter). Do not emit entries with empty questions or answers.
-- Take a third-party observer's voice. Q names the topic being asked; A states the substantive content of the answer. Skip the interaction scaffolding — no meta-verbs (提供了/请求了/询问了/回应了/请选择), no first/second-person pronouns (我/你/我们/您) in your own prose. When roles need to be named for clarity, use third-person tags (用户/助手). Verbatim quotes from the original transcript are the only place first/second-person text may appear.
+- One entry covers ONE topic or ONE coherent task. Group related turns (consecutive or not) into a single entry; list every covered ref in \`refs\`.
+- For consecutive refs, abbreviate: ["#1", "#2", "#3"] → ["#1-#3"]. Do NOT abbreviate non-consecutive refs.
+- Order entries chronologically by the earliest ref they contain.
+- If the assistant called tools to get the answer, briefly name the tool and summarize the key outcome (e.g., "通过 get_weather 查询到北京气温为 32°C" — one clause, not a data dump). Do not reproduce raw JSON, long lists, or intermediate steps verbatim.
+- Skip turns that carry no information (greetings, "ok", empty errors, system chatter). Do not emit entries with empty questions or answers.
+- Write from a third-party observer's perspective. Do not use first/second-person pronouns (我/你/我们/您) in your own prose; use (用户/助手) when roles need to be named. Verbatim quotes from the transcript are the only place first/second-person text may appear.
 
 CONSTRAINTS
 - Match the dominant language of the transcript. If the transcript mixes languages, match the language the user used most.
-- Each entry is a self-contained Q&A — the future reader sees only the entry, not the surrounding context. Don't refer to "this thread", "the conversation", the assistant, the user, or anyone's first/second-person voice; describe only the concrete content being exchanged.
+- Each entry is self-contained — the future reader sees only the entry, not the surrounding context. Do not refer to "this thread" or "the conversation"; describe only the concrete content exchanged.
 
 SELF-CHECK before emitting
-- Every #N from 1 to last is referenced exactly once across all entries (or marked skipped).
+- Every #N in the input is referenced exactly once across all entries (or intentionally skipped).
 - All refs use the #N form, never bare numbers.
 - JSON is valid (no trailing commas, no comments).`;

@@ -38,7 +38,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
       summaries: [
         {
           sequence: 1,
-          summary: { entries: [{ question: "hello", answer: "world", refs: ["#1"] }] },
+          summary: { entries: [{ question: "hello", answer: "world", refs: [1] }] },
           startMessageIndex: 0,
           endMessageIndex: 9,
           triggerReason: "turn_based" as const,
@@ -68,8 +68,8 @@ describe("createSystemPromptWithMemoryTemplate", () => {
           sequence: 1,
           summary: {
             entries: [
-              { question: "hello", answer: "world", refs: ["#1"] },
-              { question: "follow-up", answer: "second", refs: ["#2"] },
+              { question: "hello", answer: "world", refs: [1] },
+              { question: "follow-up", answer: "second", refs: [2] },
             ],
           },
           startMessageIndex: 0,
@@ -81,7 +81,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
         },
         {
           sequence: 2,
-          summary: { entries: [{ question: "next", answer: "answer", refs: ["#10"] }] },
+          summary: { entries: [{ question: "next", answer: "answer", refs: [10] }] },
           startMessageIndex: 10,
           endMessageIndex: 19,
           triggerReason: "turn_based" as const,
@@ -365,7 +365,7 @@ describe("loadThreadSummariesForPrompt", () => {
   const baseEntry = {
     threadId: "t1",
     sequence: 1,
-    summary: { entries: [{ question: "q", answer: "a", refs: ["#1"] }] },
+    summary: { entries: [{ question: "q", answer: "a", refs: [1] }] },
     startMessageIndex: 0,
     endMessageIndex: 9,
     messageCount: 10,
