@@ -115,13 +115,18 @@ export async function resetKbDocumentForReprocess(
 export async function updateKbDocumentStatus(
   userId: string,
   docId: string,
-  patch: { status: KbDocument["status"]; errorMessage?: string | null },
+  patch: {
+    status: KbDocument["status"];
+    errorMessage?: string | null;
+    pages?: unknown[] | null;
+  },
 ): Promise<KbDocument | null> {
   const set: Partial<KbDocument> & { updatedAt: Date } = {
     status: patch.status,
     updatedAt: new Date(),
   };
   if (patch.errorMessage !== undefined) set.errorMessage = patch.errorMessage;
+  if (patch.pages !== undefined) set.pages = patch.pages;
   const [out] = await db
     .update(kbDocument)
     .set(set)

@@ -102,12 +102,23 @@ describe("lib/kb/resolve", () => {
     // context; [Processing...] is the closest existing placeholder
     // ("the doc is being prepared, ask again in a moment") which
     // matches the on-the-wire intent for the model.
-    it("returns [Processing...] when status is success but chunks are empty", async () => {
+    it("returns [Processing...] when status is success but chunks are empty and pages is null", async () => {
       getKbDocForResolve.mockResolvedValueOnce({
         doc: docWithStatus("success"),
         chunks: [],
       });
       expect(await resolveKbRef(DOC, USER)).toBe("[Processing...]");
+    });
+
+    it("falls back to doc.pages when success but chunks are empty", async () => {
+      getKbDocForResolve.mockResolvedValueOnce({
+        doc: {
+          ...docWithStatus("success"),
+          pages: [{ pageIndex: 0, imageUrl: "img", markdown: "persisted page text" }],
+        },
+        chunks: [],
+      });
+      expect(await resolveKbRef(DOC, USER)).toBe("persisted page text");
     });
   });
 

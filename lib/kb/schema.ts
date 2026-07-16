@@ -9,6 +9,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  jsonb,
 } from "drizzle-orm/pg-core";
 
 import { user } from "@/lib/auth/schema";
@@ -104,6 +105,7 @@ export const kbDocument = pgTable(
     contentHash: text("content_hash").notNull(),
     status: kbDocStatusEnum("status").notNull().default("pending"),
     errorMessage: text("error_message"),
+    pages: jsonb("pages").$type<unknown[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

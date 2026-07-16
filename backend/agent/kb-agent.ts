@@ -1,4 +1,4 @@
-import { END, START, StateGraph, StateSchema } from "@langchain/langgraph";
+import { END, START, StateGraph } from "@langchain/langgraph";
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import PQueue from "p-queue";
@@ -10,6 +10,12 @@ import { KB_OCR_PAGE_PROMPT } from "@/backend/prompt/system";
 import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
 import { checkpointer, subgraphCheckpointerConfig } from "@/backend/checkpointer";
 import { store } from "@/backend/store";
+import {
+  KbAgentState,
+  type KbAgentStateShape,
+  type PageResult,
+  type ProcessedFile,
+} from "@/backend/state";
 import { screenshotPdf } from "@/lib/kb/screenshot";
 import {
   ensureDefaultKbFolder,
@@ -21,12 +27,7 @@ import {
   withKbTx,
 } from "@/lib/kb/queries";
 import { findAttachmentByR2Key } from "@/lib/attachments/queries";
-import {
-  extractAllPdfParts,
-  isFilePart,
-  stampKbRefOnFilename,
-  type FilePart,
-} from "@/lib/kb/extract";
+import { extractAllPdfParts, isFilePart, stampKbRefOnFilename } from "@/lib/kb/extract";
 import { invalidateKbDoc } from "@/lib/kb/cache";
 import { EMBEDDING_DIM } from "@/lib/kb/schema";
 import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from "@/lib/r2/client";
@@ -37,7 +38,9 @@ import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
 // RouterNode ("PDF → kbAgent") and the sub-agents.
 //
 // Flow:
-//   START → screenshot → ocr → chunkEmbedStore → END
+//   START → prepareKBData → splitFileToImage → imageToMarkdown → rewriteMessages ─┬─▶ END
+//                                                                                 └─▶ backgroundChunkEmbedStore → END
+//                                                                                       (non-blocking, triggers runBackgroundChunkEmbedStore)
 //
 // Every PDF file part in EVERY HumanMessage gets one of three
 // outcomes:
@@ -55,36 +58,7 @@ import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
 // filter on `!p.kb_ref` so the second router pass won't re-dispatch
 // kbAgent.
 
-type PageResult = {
-  pageIndex: number;
-  imageUrl: string;
-  markdown: string;
-};
 type ChunkSeed = { ordinal: number; content: string; entities: string[]; embedding: number[] };
-
-// ponytail: per-file record. One entry per PDF file part found across
-// every HumanMessage. Drives every node — screenshotNode fills it,
-// ocrNode updates page markdown, chunkEmbedStoreNode writes DB rows
-// and uses it to rewrite HumanMessages. filePart.data is the join key
-// when matching back to the original HumanMessage content.
-type ProcessedFile = {
-  messageIndex: number;
-  filePart: FilePart;
-  docId: string | null;
-  attachmentId: string | null;
-  r2Key: string | null;
-  title: string | null;
-  contentHash: string | null;
-  // "new" = docId freshly generated, needs OCR + chunk + insert.
-  // "dedup" = existing docId, skip the heavy pipeline.
-  // "failed" = OCR failed (or empty markdown); docId may or may not
-  //            exist in DB — resolve layer shows [Failed: ...] for
-  //            the file part's kb_ref prefix, or strips the file
-  //            part entirely if no docId was ever written.
-  // "unknown" = attachment row missing, no docId at all.
-  pipelineStatus: "new" | "dedup" | "failed" | "unknown";
-  errorMessage: string | null;
-};
 
 const ocrPageSchema = z.object({
   markdown: z
@@ -97,35 +71,15 @@ const ocrPageSchema = z.object({
     ),
 });
 
-const KbAgentState = new StateSchema({
-  // From parent — populated by RouterNode at invoke time.
-  messages: z.array(z.custom<BaseMessage>()),
-  userId: z.string().nullable().default(null),
-  // Internal.
-  pagesByDocId: z.record(z.string(), z.array(z.custom<PageResult>())).default({}),
-  chunksByDocId: z.record(z.string(), z.array(z.custom<ChunkSeed>())).default({}),
-  processedFiles: z.array(z.custom<ProcessedFile>()).default([]),
-  status: z.enum(["pending", "parsing", "success", "failed"]).default("pending"),
-  errorMessage: z.string().nullable().default(null),
-});
-
-// ponytail: derive the state shape once and reuse. mirrors
-// chat-agent.ts's inline BaseMessage[] pattern.
-type KbAgentStateShape = {
-  messages: BaseMessage[];
-  userId: string | null;
-  pagesByDocId: Record<string, PageResult[]>;
-  chunksByDocId: Record<string, ChunkSeed[]>;
-  processedFiles: ProcessedFile[];
-  status: "pending" | "parsing" | "success" | "failed";
-  errorMessage: string | null;
-};
-
 function makeError(message: string): Partial<KbAgentStateShape> {
   return { status: "failed", errorMessage: message, processedFiles: [] };
 }
 
-async function screenshotNode(
+// ---------------------------------------------------------------------------
+// Node 1: prepareKBDataNode — DB queries + dedup + insert kb_documents row
+// ---------------------------------------------------------------------------
+
+async function prepareKBDataNode(
   state: KbAgentStateShape,
   config?: { configurable?: { userId?: string } },
 ): Promise<Partial<KbAgentStateShape>> {
@@ -140,10 +94,7 @@ async function screenshotNode(
   // ponytail: per-PDF processing runs in parallel — each PDF is
   // independent, failures isolated to one entry, and the LRU on
   // findKbDocumentByContentHash makes repeat lookups free within a
-  // single invocation. try/catch keeps the whole pipeline moving if
-  // one PDF errors out — the failure shows up as a "failed" entry
-  // with no docId, kbAgent still stamps a kb_ref sibling or strips
-  // the file part cleanly.
+  // single invocation.
   const processed = await Promise.all(
     pdfs.map(async ({ messageIndex, filePart }): Promise<ProcessedFile> => {
       const r2Key = r2KeyFromPublicUrl(filePart.data, base);
@@ -212,13 +163,7 @@ async function screenshotNode(
   // Settings UI sees the doc immediately (2s poll picks it up), and so
   // a later OCR / chunk failure still leaves a row in kb_documents —
   // resolveKbRefs then renders "[Failed: ...]" instead of silently
-  // dropping the document context. folderId is required by the schema,
-  // so we resolve the default folder up-front (was previously deferred
-  // to chunkEmbedStoreNode — moving it here is the cheapest way to get
-  // the row visible early). Each insert is independent; if it throws
-  // (DB hiccup, race with the dedup insert from /api/kb/upload for a
-  // duplicate sha256) we keep going — the in-memory docId is still
-  // useful as a placeholder, and a future reprocess can recover.
+  // dropping the document context.
   const folder = await ensureDefaultKbFolder(userId, "Attachments");
   const newDocs = processed.filter(
     (p) => p.pipelineStatus === "new" && p.docId !== null && p.attachmentId !== null,
@@ -238,60 +183,85 @@ async function screenshotNode(
           errorMessage: null,
         });
       } catch (err) {
-        console.error(`kbAgent screenshotNode: insertKbDocument failed for ${pf.docId}`, err);
+        console.error(`kbAgent prepareKBDataNode: insertKbDocument failed for ${pf.docId}`, err);
       }
     }),
   );
 
-  // ponytail: render + upload pages for every new doc. We can't run
-  // screenshotPdf until we know which PDFs are new, so this second
-  // pass resolves pages. Done sequentially per-doc (screenshotPdf is
-  // CPU-ish), but upload to R2 is awaited in parallel inside.
-  const pagesByDocId: Record<string, PageResult[]> = {};
-  for (const pf of processed) {
-    if (pf.pipelineStatus !== "new" || !pf.docId || !pf.r2Key) continue;
-    try {
-      const pdfBytes = await getObject(pf.r2Key);
-      const rendered = await screenshotPdf({ pdfBytes, dpi: 200 });
-      const pages: PageResult[] = await Promise.all(
-        rendered.map(async (p) => {
-          const key = `kb-tmp/${userId}/${pf.docId}/page-${p.pageIndex}.png`;
-          const imageUrl = await uploadKbImage({ key, body: p.png });
-          return { pageIndex: p.pageIndex, imageUrl, markdown: "" };
-        }),
-      );
-      pagesByDocId[pf.docId] = pages;
-    } catch (err) {
-      // ponytail: render failure flips this PDF to "failed" — keep the
-      // docId so the rewritten HumanMessage still carries a kb_ref
-      // sibling, and
-      // persist the failure on the row so the [Failed: ...] placeholder
-      // resolves correctly in resolveKbRefs.
-      pf.pipelineStatus = "failed";
-      pf.errorMessage = (err as Error).message;
-      try {
-        await updateKbDocumentStatus(userId, pf.docId!, {
-          status: "failed",
-          errorMessage: pf.errorMessage,
-        });
-      } catch (statusErr) {
-        console.error(
-          `kbAgent screenshotNode: updateKbDocumentStatus failed for ${pf.docId}`,
-          statusErr,
-        );
-      }
-    }
-  }
-
   return {
     userId,
     processedFiles: processed,
-    pagesByDocId,
     status: "parsing",
   };
 }
 
-async function ocrNode(state: KbAgentStateShape) {
+// ---------------------------------------------------------------------------
+// Node 2: splitFileToImageNode — PDF rendering + R2 upload
+// ---------------------------------------------------------------------------
+
+async function splitFileToImageNode(state: KbAgentStateShape): Promise<Partial<KbAgentStateShape>> {
+  const newDocs = state.processedFiles.filter(
+    (p) => p.pipelineStatus === "new" && p.docId !== null && p.r2Key !== null,
+  );
+
+  const pagesByDocId: Record<string, PageResult[]> = {};
+  const updatedProcessed = state.processedFiles.map((p) => ({ ...p }));
+
+  for (const pf of newDocs) {
+    try {
+      const pdfBytes = await getObject(pf.r2Key!);
+      const rendered = await screenshotPdf({ pdfBytes, dpi: 200 });
+      const pages: PageResult[] = await Promise.all(
+        rendered.map(async (p) => {
+          const key = `kb-tmp/${state.userId}/${pf.docId}/page-${p.pageIndex}.png`;
+          const imageUrl = await uploadKbImage({ key, body: p.png });
+          return { pageIndex: p.pageIndex, imageUrl, markdown: "" };
+        }),
+      );
+      pagesByDocId[pf.docId!] = pages;
+      if (state.userId && pf.docId) {
+        await updateKbDocumentStatus(state.userId, pf.docId, {
+          status: "parsing",
+          pages,
+        });
+      }
+    } catch (err) {
+      // ponytail: render failure flips this PDF to "failed" — keep the
+      // docId so the rewritten HumanMessage still carries a kb_ref
+      // sibling, and persist the failure on the row so the [Failed: ...]
+      // placeholder resolves correctly in resolveKbRefs.
+      const idx = state.processedFiles.indexOf(pf);
+      if (idx >= 0) {
+        updatedProcessed[idx] = {
+          ...updatedProcessed[idx],
+          pipelineStatus: "failed",
+          errorMessage: (err as Error).message,
+        };
+      }
+      if (state.userId && pf.docId) {
+        try {
+          await updateKbDocumentStatus(state.userId, pf.docId, {
+            status: "failed",
+            errorMessage: (err as Error).message,
+          });
+        } catch (statusErr) {
+          console.error(
+            `kbAgent splitFileToImageNode: updateKbDocumentStatus failed for ${pf.docId}`,
+            statusErr,
+          );
+        }
+      }
+    }
+  }
+
+  return { pagesByDocId, processedFiles: updatedProcessed };
+}
+
+// ---------------------------------------------------------------------------
+// Node 3: imageToMarkdownNode — OCR + fullMarkdown + fire-and-forget chunk
+// ---------------------------------------------------------------------------
+
+async function imageToMarkdownNode(state: KbAgentStateShape) {
   const ocr = await getOcrModel();
   const system = new SystemMessage(KB_OCR_PAGE_PROMPT);
   const structured = ocr.withStructuredOutput(ocrPageSchema, { method: "jsonSchema" });
@@ -334,18 +304,16 @@ async function ocrNode(state: KbAgentStateShape) {
     ),
   );
 
+  // ponytail: apply OCR results. `newDocs` and `results` share the
+  // same index — filter preserves order. For failures, find the
+  // matching index in updatedProcessed by scanning the original
+  // state.processedFiles (filter returns original references, so
+  // indexOf with === works on the original array).
   results.forEach((r, i) => {
     const pf = newDocs[i];
     if (r.status === "fulfilled") {
       updatedPagesByDocId[r.value.docId] = r.value.pages;
     } else {
-      // ponytail: updatedProcessed is a shallow copy of state.processedFiles —
-      // `===` never matches. Find the index in the ORIGINAL array and apply
-      // the update at the same slot in the copy. Order is preserved by filter.
-      // KEEP docId so the rewritten HumanMessage's file part still
-      // carries a kb_ref sibling — resolveKbRefs then renders
-      // "[Failed: ...]" via the doc row we already wrote in
-      // screenshotNode.
       const idx = state.processedFiles.indexOf(pf);
       if (idx >= 0) {
         updatedProcessed[idx] = {
@@ -357,250 +325,190 @@ async function ocrNode(state: KbAgentStateShape) {
     }
   });
 
-  // ponytail: persist OCR failures to db so resolveKbRefs renders
-  // [Failed: ...] (not "[Pending]") for the file part's kb_ref sibling
-  // in the user's message. Best-effort — a DB hiccup here doesn't
-  // change the agent's in-memory state, only what future resolves
-  // show. ocrNode only touches "new" entries; "unknown" / pre-existing
-  // "failed" rows (from screenshotNode render errors) don't get
-  // re-updated here.
-  const failedNew = updatedProcessed.filter(
+  // ponytail: compute fullMarkdown and update doc status.
+  // We flip status="success" or status="failed" here so that external
+  // consumers (like resolveKbRefs during router pass) see the final doc
+  // state immediately after this node.
+  const successfulDocIds: string[] = [];
+  const failedNewDocs: ProcessedFile[] = [];
+
+  for (let i = 0; i < updatedProcessed.length; i++) {
+    const pf = updatedProcessed[i];
+    if (pf.pipelineStatus !== "new" || !pf.docId) continue;
+    const pages = updatedPagesByDocId[pf.docId] ?? [];
+    const md = pages
+      .map((p) => p.markdown)
+      .filter((m) => m.length > 0)
+      .join("\n\n");
+    if (md) {
+      successfulDocIds.push(pf.docId);
+    } else {
+      updatedProcessed[i] = {
+        ...pf,
+        pipelineStatus: "failed",
+        errorMessage: "empty markdown after OCR",
+      };
+      failedNewDocs.push(updatedProcessed[i]);
+    }
+  }
+
+  // ponytail: persist failures to database. This covers OCR LLM errors
+  // and empty-markdown failures.
+  const failedOcrDocs = updatedProcessed.filter(
     (p) =>
       p.pipelineStatus === "failed" &&
       p.docId !== null &&
-      // only flip docs that came from this ocrNode pass, not entries
-      // that screenshotNode already marked failed (those carry the
-      // render error and were updated there).
-      !state.processedFiles.find(
-        (orig) => orig.docId === p.docId && orig.pipelineStatus === "failed",
-      ),
+      state.pagesByDocId[p.docId] !== undefined &&
+      !failedNewDocs.some((orig) => orig.docId === p.docId),
   );
-  if (failedNew.length > 0 && state.userId) {
+  const allFailedNew = [...failedNewDocs, ...failedOcrDocs];
+
+  if (state.userId) {
     const userId = state.userId;
-    await Promise.allSettled(
-      failedNew.map(async (p) => {
+    await Promise.allSettled([
+      ...allFailedNew.map(async (p) => {
         try {
           await updateKbDocumentStatus(userId, p.docId!, {
             status: "failed",
             errorMessage: p.errorMessage,
           });
         } catch (err) {
-          console.error(`kbAgent ocrNode: updateKbDocumentStatus failed for ${p.docId}`, err);
+          console.error(
+            `kbAgent imageToMarkdownNode: status=failed update failed for ${p.docId}`,
+            err,
+          );
         }
       }),
-    );
+      ...successfulDocIds.map(async (docId) => {
+        try {
+          await updateKbDocumentStatus(userId, docId, {
+            status: "success",
+            pages: updatedPagesByDocId[docId],
+          });
+        } catch (err) {
+          console.error(
+            `kbAgent imageToMarkdownNode: status=success update failed for ${docId}`,
+            err,
+          );
+        }
+      }),
+    ]);
   }
 
   return { pagesByDocId: updatedPagesByDocId, processedFiles: updatedProcessed };
 }
 
-async function chunkEmbedStoreNode(state: KbAgentStateShape) {
-  const userId = state.userId;
-  if (!userId) return { status: "failed" as const, errorMessage: "no userId" };
+// ---------------------------------------------------------------------------
+// Background: runBackgroundChunkEmbedStore — chunk + embed + entity + insert
+// Not a graph node. Fire-and-forget from backgroundChunkEmbedStoreNode.
+// ---------------------------------------------------------------------------
 
-  // ponytail: per-doc chunk + embed + entity extract. Process all new
-  // docs in parallel — each is independent. Failure of one doc flips
-  // that entry to "failed" and we continue. The kb_documents row was
-  // already written by screenshotNode (status="parsing"); we only
-  // INSERT chunks here and then UPDATE the doc row to success/failed
-  // once we're done. Keeping docId on failed entries so the rewritten
-  // HumanMessage's file part still carries a kb_ref sibling →
-  // resolveKbRefs renders [Failed: ...] instead of silently dropping
-  // the document context.
-  const newDocs = state.processedFiles.filter(
-    (p) => p.pipelineStatus === "new" && p.docId !== null,
-  );
+async function runBackgroundChunkEmbedStore(
+  userId: string,
+  docId: string,
+  fullMarkdown: string,
+): Promise<void> {
+  try {
+    const chat = await getChatModel();
+    const entitySchema = z.object({ entities: z.array(z.string()) });
+    const embedder = await getEmbeddingModel();
+    const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
+    const entityQueue = new PQueue({ concurrency: KB_ENTITY_CONCURRENCY });
 
-  const chat = await getChatModel();
-  const entitySchema = z.object({ entities: z.array(z.string()) });
-  const embedder = await getEmbeddingModel();
+    const splitDocs = await splitter.createDocuments([fullMarkdown]);
+    const texts = splitDocs.map((d) => d.pageContent);
+    const embeddings = await embedder.embedDocuments(texts);
 
-  const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
-  const entityQueue = new PQueue({ concurrency: KB_ENTITY_CONCURRENCY });
+    // ponytail: schema expects vector(1024) (kb_chunk.embedding +
+    // HNSW index). If the embedder returns anything else, pgvector
+    // rejects every insert with 22P02 — caught too late to be useful.
+    // Fail fast with a single clear sentence instead.
+    const actualDim = embeddings[0]?.length ?? 0;
+    if (actualDim !== EMBEDDING_DIM) {
+      throw new Error(
+        `embedding dimension mismatch: schema expects ${EMBEDDING_DIM}, embedder returned ${actualDim}. Update lib/kb/schema.ts EMBEDDING_DIM + run the matching ALTER COLUMN migration.`,
+      );
+    }
 
-  const updatedChunksByDocId: Record<string, ChunkSeed[]> = { ...state.chunksByDocId };
-  const updatedProcessed = state.processedFiles.map((p) => ({ ...p }));
-  const successfulDocIds: string[] = [];
-
-  await Promise.allSettled(
-    newDocs.map(async (pf) => {
-      const docId = pf.docId!;
-      const pages = state.pagesByDocId[docId] ?? [];
-      const fullMarkdown = pages
-        .map((p) => p.markdown)
-        .filter((m) => m.length > 0)
-        .join("\n\n");
-
-      if (!fullMarkdown) {
-        const idx = state.processedFiles.indexOf(pf);
-        if (idx >= 0) {
-          updatedProcessed[idx] = {
-            ...updatedProcessed[idx],
-            pipelineStatus: "failed",
-            errorMessage: "empty markdown after OCR",
+    const seeds: ChunkSeed[] = await Promise.all(
+      texts.map((text, i) =>
+        entityQueue.add(async (): Promise<ChunkSeed> => {
+          let entities: string[] = [];
+          try {
+            const out = await chat
+              .withStructuredOutput(entitySchema, { method: "jsonSchema" })
+              .invoke(
+                `Extract named entities (people, orgs, concepts, products) from this passage:\n\n${text}`,
+                { tags: ["nostream"] },
+              );
+            entities = out.entities.slice(0, 20);
+          } catch {
+            // best-effort
+          }
+          return {
+            ordinal: i,
+            content: text,
+            entities,
+            embedding: embeddings[i] ?? [],
           };
-        }
-        return;
-      }
-
-      try {
-        const splitDocs = await splitter.createDocuments([fullMarkdown]);
-        const texts = splitDocs.map((d) => d.pageContent);
-        const embeddings = await embedder.embedDocuments(texts);
-
-        // ponytail: schema expects vector(1024) (kb_chunk.embedding +
-        // HNSW index). If the embedder returns anything else, pgvector
-        // rejects every insert with 22P02 — caught too late to be useful.
-        // Fail fast with a single clear sentence instead.
-        const actualDim = embeddings[0]?.length ?? 0;
-        if (actualDim !== EMBEDDING_DIM) {
-          throw new Error(
-            `embedding dimension mismatch: schema expects ${EMBEDDING_DIM}, embedder returned ${actualDim}. Update lib/kb/schema.ts EMBEDDING_DIM + run the matching ALTER COLUMN migration.`,
-          );
-        }
-
-        const seeds: ChunkSeed[] = await Promise.all(
-          texts.map((text, i) =>
-            entityQueue.add(async (): Promise<ChunkSeed> => {
-              let entities: string[] = [];
-              try {
-                const out = await chat
-                  .withStructuredOutput(entitySchema, { method: "jsonSchema" })
-                  .invoke(
-                    `Extract named entities (people, orgs, concepts, products) from this passage:\n\n${text}`,
-                    {
-                      tags: ["nostream"],
-                    },
-                  );
-                entities = out.entities.slice(0, 20);
-              } catch {
-                // best-effort
-              }
-              return {
-                ordinal: i,
-                content: text,
-                entities,
-                embedding: embeddings[i] ?? [],
-              };
-            }),
-          ),
-        );
-
-        await withKbTx(async (tx) => {
-          await insertKbChunks(
-            tx,
-            seeds.map((s) => ({
-              id: `c-${randomUUID()}`,
-              documentId: docId,
-              ordinal: s.ordinal,
-              content: s.content,
-              embedding: s.embedding,
-              entities: s.entities,
-            })) as never,
-          );
-        });
-        invalidateKbDoc(userId, docId);
-        updatedChunksByDocId[docId] = seeds;
-        successfulDocIds.push(docId);
-      } catch (err) {
-        const idx = state.processedFiles.indexOf(pf);
-        // ponytail: postgres.js throws FailedQueryError whose `.message`
-        // is the full SQL + params dump (multi-KB), but the actual PG
-        // SQLSTATE / detail / hint / constraint live on the error itself
-        // (code/severity/detail/hint/constraint fields). Surface those
-        // so the failure reason isn't buried in noise — user-facing
-        // errorMessage stays small, verbose form goes to console.error
-        // for debugging.
-        const pgErr = err as Error & {
-          code?: string;
-          severity?: string;
-          detail?: string;
-          hint?: string;
-          constraint?: string;
-          position?: string;
-          schema?: string;
-          table?: string;
-          column?: string;
-          dataType?: string;
-        };
-        const reason = pgErr.code
-          ? `${pgErr.code}: ${pgErr.detail ?? pgErr.message}${pgErr.hint ? ` (${pgErr.hint})` : ""}`
-          : pgErr.message;
-        console.error(
-          `kbAgent chunkEmbedStoreNode: insertKbChunks failed for doc ${docId}: ${reason}`,
-          pgErr,
-        );
-        if (idx >= 0) {
-          updatedProcessed[idx] = {
-            ...updatedProcessed[idx],
-            pipelineStatus: "failed",
-            errorMessage: reason || pgErr.message,
-          };
-        }
-      }
-    }),
-  );
-
-  // ponytail: finalize each doc row in kb_documents. Successful docs
-  // (chunks written) flip to "success". Failed entries are NOT
-  // downgraded to status="failed" — OCR succeeded and the row already
-  // says "parsing"; overwriting that would lose the OCR artifact and
-  // mark the doc broken from the user's view even though retrying just
-  // the chunk/embed step would rebuild the index. Leaving the row in
-  // parsing keeps the OCR data visible (resolveKbRefs finds the row,
-  // empty chunks → [Processing...] placeholder) and the Settings UI
-  // badge stays "Parsing" until the user retries or the run finishes
-  // a follow-up rebuild pass.
-  //
-  // in-memory `pipelineStatus: "failed"` still drives the HumanMessage
-  // rewrite below — failed entries get a kb_ref sibling (so
-  // resolveKbRefs can
-  // surface the trace) but the doc row itself stays healthy.
-  const finalized: Promise<unknown>[] = [];
-  for (const docId of successfulDocIds) {
-    finalized.push(
-      updateKbDocumentStatus(userId, docId, { status: "success" }).catch((err) => {
-        console.error(`kbAgent chunkEmbedStoreNode: status=success failed for ${docId}`, err);
-      }),
+        }),
+      ),
     );
-  }
-  await Promise.allSettled(finalized);
 
-  // ponytail: rewrite every file part in every HumanMessage. For each
-  // PDF we matched to a kb_document, KEEP the original file part and
-  // stamp the marker on TWO channels:
-  //   (a) `kb_ref: { docId, attachmentId? }` sibling — canonical
-  //       back-end channel. hasUnprocessedPdf / collectKbRefs /
-  //       resolveKbRefs all read this. Backend state.messages is
-  //       append-only and never goes through the SDK's
-  //       `contentToParts` rebuild, so the sibling survives intact.
-  //   (b) `[kb:<docId>]` prefix on `filename` + `metadata.filename`
-  //       — the front-end channel. The SDK's `contentToParts`
-  //       rebuilds file parts from scratch with only {type,
-  //       filename, data, mimeType} and drops the `kb_ref` sibling;
-  //       the filename prefix is the one signal that survives the
-  //       round-trip to the rendered tile. MessageAttachmentCard
-  //       parses the prefix off `attachment.name` for the deep-link
-  //       and to swap the fallback icon to BookOpen.
-  //
-  // Per-part outcomes:
-  //  - already-stamped (`part.kb_ref` set): carry the part through
-  //    untouched. extractAllPdfParts filters those out at the top of
-  //    kbAgent, so fileToDoc won't have an entry for them — without
-  //    this branch the fileToDoc miss would drop the part from an
-  //    older HumanMessage and erase the previous turn's KB tile.
-  //    Reproducer: upload PDF A in turn 1, upload PDF B in turn 2 →
-  //    chunkEmbedStoreNode rewrites turn 2's message; without this
-  //    guard the rewrite would also iterate turn 1's file part, miss
-  //    fileToDoc (different data URL), and `continue` past it.
-  //  - matched PDF (new / dedup / parsing): file part with both
-  //    channels stamped.
-  //  - non-PDF file part: drop (kbAgent never surfaces these to the
-  //    model anyway — same as the prior behavior).
-  //  - unknown / failed PDF with no docId: drop the file part (no
-  //    docId to attach).
+    await withKbTx(async (tx) => {
+      await insertKbChunks(
+        tx,
+        seeds.map((s) => ({
+          id: `c-${randomUUID()}`,
+          documentId: docId,
+          ordinal: s.ordinal,
+          content: s.content,
+          embedding: s.embedding,
+          entities: s.entities,
+        })) as never,
+      );
+    });
+    invalidateKbDoc(userId, docId);
+  } catch (err) {
+    // ponytail: postgres.js throws FailedQueryError whose `.message`
+    // is the full SQL + params dump. Surface the PG SQLSTATE / detail
+    // for debugging; keep user-facing errorMessage small.
+    const pgErr = err as Error & {
+      code?: string;
+      detail?: string;
+      hint?: string;
+    };
+    const reason = pgErr.code
+      ? `${pgErr.code}: ${pgErr.detail ?? pgErr.message}${pgErr.hint ? ` (${pgErr.hint})` : ""}`
+      : pgErr.message;
+    console.error(
+      `kbAgent runBackgroundChunkEmbedStore: failed for doc ${docId}: ${reason}`,
+      pgErr,
+    );
+    // ponytail: triggerChunkNode already flipped status="success".
+    // If chunk/embed fails, roll back to "failed" so Settings UI shows
+    // the failure and the user can reprocess.
+    try {
+      await updateKbDocumentStatus(userId, docId, {
+        status: "failed",
+        errorMessage: reason,
+      });
+    } catch (statusErr) {
+      console.error(
+        `kbAgent runBackgroundChunkEmbedStore: status=failed flip failed for ${docId}`,
+        statusErr,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Node 5: rewriteMessagesNode — stamp kb_ref on file parts + compute status
+// ---------------------------------------------------------------------------
+
+function rewriteMessagesNode(state: KbAgentStateShape): Partial<KbAgentStateShape> {
   const fileToDoc = new Map<string, { docId: string; attachmentId: string | null }>();
-  for (const pf of updatedProcessed) {
+  for (const pf of state.processedFiles) {
     if (pf.docId) {
       fileToDoc.set(pf.filePart.data, { docId: pf.docId, attachmentId: pf.attachmentId });
     }
@@ -612,12 +520,7 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
     const newContent: unknown[] = [];
     for (const part of m.content) {
       if (isFilePart(part)) {
-        // ponytail: already-stamped parts carry through untouched —
-        // see the "Per-part outcomes" comment above. fileToDoc is
-        // built from THIS round's processedFiles and won't have an
-        // entry for a previous round's PDF, so without this guard
-        // the fileToDoc miss below would drop the part from the
-        // older HumanMessage and erase its KB tile.
+        // ponytail: already-stamped parts carry through untouched.
         if (part.kb_ref) {
           newContent.push(part);
           continue;
@@ -630,11 +533,8 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
         }
         changed = true;
         // ponytail: stamp BOTH the kb_ref sibling AND the filename
-        // prefix on the same write. The sibling is the back-end
-        // canonical channel; the prefix is the front-end fallback
-        // because the SDK drops sibling fields on file parts in
-        // `contentToParts`. stampKbRefOnFilename is idempotent so a
-        // re-stamp is a no-op.
+        // prefix on the same write. stampKbRefOnFilename is idempotent
+        // so a re-stamp is a no-op.
         const baseFilename =
           typeof part.filename === "string"
             ? part.filename
@@ -659,15 +559,13 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
     return new HumanMessage({ content: newContent as never, id: m.id });
   });
 
-  const hasFailure = updatedProcessed.some((p) => p.pipelineStatus === "failed");
-  const allUnknown = updatedProcessed.every((p) => p.pipelineStatus === "unknown");
-  const newDocCount = updatedProcessed.filter((p) => p.pipelineStatus === "new").length;
-  const dedupCount = updatedProcessed.filter((p) => p.pipelineStatus === "dedup").length;
-
   // ponytail: status follows the loudest outcome. If anything failed
-  // (OCR / chunk / render) the run is "failed" overall. Otherwise
-  // "success". "parsing"/"pending" statuses live on the docs themselves
-  // and surface through the resolve layer's placeholders.
+  // (OCR / render) the run is "failed" overall. Otherwise "success".
+  const hasFailure = state.processedFiles.some((p) => p.pipelineStatus === "failed");
+  const allUnknown = state.processedFiles.every((p) => p.pipelineStatus === "unknown");
+  const newDocCount = state.processedFiles.filter((p) => p.pipelineStatus === "new").length;
+  const dedupCount = state.processedFiles.filter((p) => p.pipelineStatus === "dedup").length;
+
   let status: KbAgentStateShape["status"] = "success";
   let errorMessage: string | null = null;
   if (allUnknown) {
@@ -675,30 +573,70 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
     errorMessage = "no PDF could be processed";
   } else if (hasFailure) {
     status = "failed";
-    const firstFailure = updatedProcessed.find((p) => p.pipelineStatus === "failed");
+    const firstFailure = state.processedFiles.find((p) => p.pipelineStatus === "failed");
     errorMessage = firstFailure?.errorMessage ?? "kbAgent failed";
   } else if (newDocCount === 0 && dedupCount === 0) {
     status = "failed";
     errorMessage = "no PDF could be processed";
   }
 
-  return {
-    messages,
-    processedFiles: updatedProcessed,
-    chunksByDocId: updatedChunksByDocId,
-    status,
-    errorMessage,
-  };
+  return { messages, status, errorMessage };
+}
+
+// ---------------------------------------------------------------------------
+// Node 6: backgroundChunkEmbedStoreNode — non-blocking dispatch of index task
+// ---------------------------------------------------------------------------
+
+async function backgroundChunkEmbedStoreNode(
+  state: KbAgentStateShape,
+): Promise<Partial<KbAgentStateShape>> {
+  if (state.userId) {
+    for (const pf of state.processedFiles) {
+      if (pf.pipelineStatus === "new" && pf.docId) {
+        const pages = state.pagesByDocId[pf.docId] ?? [];
+        const md = pages
+          .map((p) => p.markdown)
+          .filter((m) => m.length > 0)
+          .join("\n\n");
+        if (md) {
+          // ponytail: fire-and-forget async invocation so the graph node
+          // completes in milliseconds and doesn't block the main agent.
+          void runBackgroundChunkEmbedStore(state.userId, pf.docId, md);
+        }
+      }
+    }
+  }
+  return {};
+}
+
+// ---------------------------------------------------------------------------
+// Graph builder + dual compilation
+// ---------------------------------------------------------------------------
+
+function routeAfterRewrite(state: KbAgentStateShape): (string | typeof END)[] {
+  const destinations: (string | typeof END)[] = [END];
+  const hasNew = state.processedFiles.some((p) => p.pipelineStatus === "new");
+  if (hasNew) {
+    destinations.push("backgroundChunkEmbedStore");
+  }
+  return destinations;
 }
 
 const builder = new StateGraph(KbAgentState)
-  .addNode("screenshot", screenshotNode)
-  .addNode("ocr", ocrNode)
-  .addNode("chunkEmbedStore", chunkEmbedStoreNode)
-  .addEdge(START, "screenshot")
-  .addEdge("screenshot", "ocr")
-  .addEdge("ocr", "chunkEmbedStore")
-  .addEdge("chunkEmbedStore", END);
+  .addNode("prepareKBData", prepareKBDataNode)
+  .addNode("splitFileToImage", splitFileToImageNode)
+  .addNode("imageToMarkdown", imageToMarkdownNode)
+  .addNode("rewriteMessages", rewriteMessagesNode)
+  .addNode("backgroundChunkEmbedStore", backgroundChunkEmbedStoreNode)
+  .addEdge(START, "prepareKBData")
+  .addEdge("prepareKBData", "splitFileToImage")
+  .addEdge("splitFileToImage", "imageToMarkdown")
+  .addEdge("imageToMarkdown", "rewriteMessages")
+  .addConditionalEdges("rewriteMessages", routeAfterRewrite, {
+    backgroundChunkEmbedStore: "backgroundChunkEmbedStore",
+    __end__: END,
+  })
+  .addEdge("backgroundChunkEmbedStore", END);
 
 // ponytail: TWO compiled graphs from the same builder.
 // - `kbAgent` (in-process subgraph): empty subgraphCheckpointerConfig.

@@ -15,6 +15,10 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  Copy,
+  Check,
+  Image,
+  Blocks,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -60,6 +64,7 @@ type KbDocument = {
   contentType: string;
   attachmentId: string | null;
   attachmentUrl: string | null;
+  pages?: Array<{ pageIndex: number; imageUrl: string; markdown: string }>;
   createdAt: string;
   updatedAt: string;
 };
@@ -101,9 +106,14 @@ function StatusBadge({ status, errorMessage }: { status: KbStatus; errorMessage:
           ? "Failed"
           : "Pending";
   const chip = (
-    <Badge variant={variant} className="gap-1 font-medium">
-      <StatusIcon status={status} />
-      {label}
+    <Badge
+      variant={variant}
+      className="inline-flex items-center gap-1 py-0.5 font-medium leading-none"
+    >
+      <span className="inline-flex items-center justify-center shrink-0 leading-none">
+        <StatusIcon status={status} />
+      </span>
+      <span className="leading-none">{label}</span>
     </Badge>
   );
   if (status === "failed" && errorMessage) {
@@ -227,40 +237,21 @@ function KbViewContent({ className }: { className?: string }) {
           </p>
         </section>
 
-        {data.groups.length === 0 ? (
-          <Card className="p-0">
-            <CardContent className="p-0">
-              <div className="p-8 text-center">
-                <div className="bg-muted mx-auto mb-3 flex size-9 items-center justify-center rounded-full">
-                  <Folder className="text-muted-foreground size-4" aria-hidden />
-                </div>
-                <p className="mb-1 text-sm font-medium">No folders yet</p>
-                <p className="text-muted-foreground mx-auto max-w-xs text-xs leading-relaxed">
-                  Create your first folder to start organizing documents.
-                </p>
-                <Button className="mt-4" onClick={() => setNewFolderOpen(true)}>
-                  <Plus className="mr-1 size-3.5" /> New folder
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid items-start gap-4 md:grid-cols-[260px_1fr]">
-            <FolderSidebar
-              groups={data.groups}
-              selectedId={selectedFolderId}
-              onSelect={setSelectedFolderId}
-              onNewFolder={() => setNewFolderOpen(true)}
-              onRefresh={load}
-            />
-            <DocTable
-              group={selectedGroup}
-              focusDocId={focusDocId}
-              onAddDoc={() => fileInputRef.current?.click()}
-              onRefresh={load}
-            />
-          </div>
-        )}
+        <div className="grid items-start gap-4 md:grid-cols-[260px_1fr]">
+          <FolderSidebar
+            groups={data.groups}
+            selectedId={selectedFolderId}
+            onSelect={setSelectedFolderId}
+            onNewFolder={() => setNewFolderOpen(true)}
+            onRefresh={load}
+          />
+          <DocTable
+            group={selectedGroup}
+            focusDocId={focusDocId}
+            onAddDoc={() => fileInputRef.current?.click()}
+            onRefresh={load}
+          />
+        </div>
 
         <input
           ref={fileInputRef}
@@ -342,70 +333,78 @@ function FolderSidebar({
               matches the skeleton. The list itself has px-2 so the
               rounded row backgrounds sit inset from the card edge. */}
           <ul className="space-y-0.5 p-2">
-            {groups.map((g) => {
-              const active = g.folder.id === selectedId;
-              const menuOpen = openFolderId === g.folder.id;
-              return (
-                <li
-                  key={g.folder.id}
-                  data-menu-open={menuOpen || undefined}
-                  className="group/folder relative"
-                >
-                  <button
-                    type="button"
-                    onClick={() => onSelect(g.folder.id)}
-                    data-active={active || undefined}
-                    className={cn(
-                      "hover:bg-muted/60 data-[active=true]:bg-muted flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
-                      active && "font-medium",
-                    )}
+            {groups.length === 0 ? (
+              <div className="py-8 px-4 text-center">
+                <span className="text-[11px] text-muted-foreground/60 italic leading-normal">
+                  No folders yet
+                </span>
+              </div>
+            ) : (
+              groups.map((g) => {
+                const active = g.folder.id === selectedId;
+                const menuOpen = openFolderId === g.folder.id;
+                return (
+                  <li
+                    key={g.folder.id}
+                    data-menu-open={menuOpen || undefined}
+                    className="group/folder relative"
                   >
-                    <Folder className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
-                    <span className="truncate">{g.folder.name}</span>
-                    <span className="ml-auto flex items-center gap-1">
-                      <span className="text-muted-foreground text-xs tabular-nums transition-opacity group-hover/folder:opacity-0 group-data-[menu-open]/folder:opacity-0 mr-2">
-                        {g.documents.length}
+                    <button
+                      type="button"
+                      onClick={() => onSelect(g.folder.id)}
+                      data-active={active || undefined}
+                      className={cn(
+                        "hover:bg-muted/60 data-[active=true]:bg-muted flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                        active && "font-medium",
+                      )}
+                    >
+                      <Folder className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
+                      <span className="truncate">{g.folder.name}</span>
+                      <span className="ml-auto flex items-center gap-1">
+                        <span className="text-muted-foreground text-xs tabular-nums transition-opacity group-hover/folder:opacity-0 group-data-[menu-open]/folder:opacity-0 mr-2">
+                          {g.documents.length}
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                  <DropdownMenu
-                    open={menuOpen}
-                    onOpenChange={(o) => setOpenFolderId(o ? g.folder.id : null)}
-                  >
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="absolute top-1/2 right-2 size-6 -translate-y-1/2 opacity-0 transition-opacity group-hover/folder:opacity-100 group-data-[active=true]/folder:opacity-100 group-data-[menu-open]/folder:opacity-100"
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label={`Folder actions: ${g.folder.name}`}
-                      >
-                        <MoreHorizontal className="size-3.5" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={() => setEditTarget(g.folder)}
-                        className="hover:bg-muted focus:bg-muted flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none"
-                      >
-                        <Pencil className="size-3.5" />
-                        Edit
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => setDeleteTarget(g.folder)}
-                        // ponytail: matches thread-list delete styling
-                        // (components/assistant-ui/thread-list.tsx) — red
-                        // text + red-tinted background on hover/focus.
-                        className="text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none"
-                      >
-                        <Trash2 className="size-3.5 text-destructive" />
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </li>
-              );
-            })}
+                    </button>
+                    <DropdownMenu
+                      open={menuOpen}
+                      onOpenChange={(o) => setOpenFolderId(o ? g.folder.id : null)}
+                    >
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-1/2 right-2 size-6 -translate-y-1/2 opacity-0 transition-opacity group-hover/folder:opacity-100 group-data-[active=true]/folder:opacity-100 group-data-[menu-open]/folder:opacity-100"
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Folder actions: ${g.folder.name}`}
+                        >
+                          <MoreHorizontal className="size-3.5" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => setEditTarget(g.folder)}
+                          className="hover:bg-muted focus:bg-muted flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none"
+                        >
+                          <Pencil className="size-3.5" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setDeleteTarget(g.folder)}
+                          // ponytail: matches thread-list delete styling
+                          // (components/assistant-ui/thread-list.tsx) — red
+                          // text + red-tinted background on hover/focus.
+                          className="text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none"
+                        >
+                          <Trash2 className="size-3.5 text-destructive" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </li>
+                );
+              })
+            )}
           </ul>
         </CardContent>
       </Card>
@@ -621,7 +620,7 @@ function DocRow({
     </>
   );
   const meta = (
-    <span className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+    <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
       <span className="truncate">{type}</span>
       <span aria-hidden>·</span>
       <time dateTime={doc.updatedAt} className="tabular-nums">
@@ -629,7 +628,7 @@ function DocRow({
       </time>
       <span aria-hidden>·</span>
       <StatusBadge status={doc.status} errorMessage={doc.errorMessage} />
-    </span>
+    </div>
   );
   return (
     <div
@@ -737,6 +736,8 @@ function DocDetailDialog({
 }) {
   const [detail, setDetail] = useState<KbDocDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<"full_markdown" | "pages" | "chunks">("full_markdown");
+  const [copied, setCopied] = useState(false);
 
   // ponytail: React StrictMode in dev mounts every effect twice
   // (mount → unmount → mount), so without an abort controller the
@@ -766,6 +767,23 @@ function DocDetailDialog({
     return () => controller.abort();
   }, [open, docId]);
 
+  const handleCopy = useCallback((text: string) => {
+    void navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, []);
+
+  const fullMarkdown = useMemo(() => {
+    if (!detail) return "";
+    if (detail.doc.pages && detail.doc.pages.length > 0) {
+      return detail.doc.pages
+        .map((p: any) => p.markdown)
+        .filter((m) => typeof m === "string" && m.length > 0)
+        .join("\n\n");
+    }
+    return detail.chunks.map((c) => c.content).join("\n\n");
+  }, [detail]);
+
   return (
     <Dialog
       open={open}
@@ -777,7 +795,7 @@ function DocDetailDialog({
         }
       }}
     >
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <div className="flex items-start justify-between gap-3">
             <DialogTitle className="truncate">{detail?.doc.title ?? "Loading…"}</DialogTitle>
@@ -790,43 +808,237 @@ function DocDetailDialog({
               </Button>
             )}
           </div>
-          <DialogDescription>
-            {detail && (
-              <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          <DialogDescription asChild>
+            {detail ? (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs select-none">
                 <StatusBadge status={detail.doc.status} errorMessage={detail.doc.errorMessage} />
-                <span className="text-muted-foreground">·</span>
-                <span className="text-muted-foreground">{detail.doc.contentType}</span>
-                <span className="text-muted-foreground">·</span>
-                <span className="text-muted-foreground">{detail.chunks.length} chunks</span>
-              </span>
+                <span className="size-1 rounded-full bg-muted-foreground/30 shrink-0" aria-hidden />
+
+                <Badge
+                  variant="outline"
+                  className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
+                >
+                  <span>{detail.doc.contentType}</span>
+                </Badge>
+
+                {detail.doc.pages && detail.doc.pages.length > 0 && (
+                  <>
+                    <span
+                      className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
+                      aria-hidden
+                    />
+                    <Badge
+                      variant="outline"
+                      className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
+                    >
+                      <span>{detail.doc.pages.length} pages</span>
+                    </Badge>
+                  </>
+                )}
+
+                {detail.chunks.length > 0 && (
+                  <>
+                    <span
+                      className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
+                      aria-hidden
+                    />
+                    <Badge
+                      variant="outline"
+                      className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
+                    >
+                      <span>{detail.chunks.length} chunks</span>
+                    </Badge>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="h-4" />
             )}
           </DialogDescription>
         </DialogHeader>
-        <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
+
+        {detail && (
+          <div className="inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground w-fit shrink-0">
+            <button
+              onClick={() => setActiveTab("full_markdown")}
+              className={cn(
+                "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7",
+                activeTab === "full_markdown"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <FileText className="size-3.5 mr-1.5 shrink-0" />
+              <span>Markdown</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("pages")}
+              className={cn(
+                "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7",
+                activeTab === "pages"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Image className="size-3.5 mr-1.5 shrink-0" />
+              <span>Pages ({detail.doc.pages?.length ?? 0})</span>
+            </button>
+            <button
+              onClick={() => setActiveTab("chunks")}
+              className={cn(
+                "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7",
+                activeTab === "chunks"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Blocks className="size-3.5 mr-1.5 shrink-0" />
+              <span>Chunks ({detail.chunks.length})</span>
+            </button>
+          </div>
+        )}
+
+        <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1 min-h-[300px] flex flex-col justify-start">
           {loading ? (
-            <Skeleton className="h-32 w-full" />
+            <div className="space-y-3 w-full flex-1">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
           ) : !detail ? (
             <p className="text-muted-foreground text-sm">Failed to load.</p>
-          ) : detail.chunks.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              {detail.doc.status === "success"
-                ? "No chunks."
-                : detail.doc.status === "failed"
-                  ? "Ingestion failed — chunks not produced."
-                  : "Ingestion in progress…"}
-            </p>
-          ) : (
-            detail.chunks.map((c) => (
-              <div key={c.ordinal} className="rounded-md border p-3 text-xs">
-                <div className="text-muted-foreground mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wide">
-                  <span>#{c.ordinal}</span>
-                  {c.entities.length > 0 && (
-                    <span className="truncate">· {c.entities.slice(0, 6).join(", ")}</span>
-                  )}
-                </div>
-                <p className="text-foreground/90 whitespace-pre-wrap">{c.content}</p>
+          ) : activeTab === "full_markdown" ? (
+            // Tab 1: Full Markdown
+            <div className="relative flex-1 flex flex-col border rounded-xl bg-muted/10 overflow-hidden min-h-[300px]">
+              <div className="flex items-center justify-between border-b px-4 py-2 bg-muted/40 shrink-0">
+                <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
+                  Markdown
+                </span>
+                {fullMarkdown && (
+                  <button
+                    onClick={() => handleCopy(fullMarkdown)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-semibold text-muted-foreground hover:text-foreground hover:bg-muted rounded border bg-background transition-all"
+                  >
+                    {copied ? (
+                      <>
+                        <Check className="size-3.5 text-green-500" />
+                        <span className="text-green-500 text-[10px] font-semibold">Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="size-3.5" />
+                        <span className="text-[10px] font-semibold">Copy</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
-            ))
+              <div className="p-4 flex-1 overflow-y-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90 max-h-[50vh]">
+                {fullMarkdown || (
+                  <span className="text-muted-foreground italic">No text extracted yet.</span>
+                )}
+              </div>
+            </div>
+          ) : activeTab === "pages" ? (
+            // Tab 2: Pages Contrast
+            detail.doc.pages && detail.doc.pages.length > 0 ? (
+              <div className="space-y-4 w-full">
+                {detail.doc.pages.map((p) => {
+                  const page = p as { pageIndex: number; imageUrl: string; markdown: string };
+                  return (
+                    <div
+                      key={page.pageIndex}
+                      className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md"
+                    >
+                      <div className="flex items-center justify-between border-b px-4 py-2.5 bg-muted/40">
+                        <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
+                          Page #{page.pageIndex + 1}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4">
+                        {/* Left: PDF Image (clickable for raw zoom) */}
+                        <div className="flex items-start justify-center md:col-span-1">
+                          <a
+                            href={page.imageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="relative block group overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow hover:shadow-md cursor-zoom-in"
+                            title="Click to view full size raw page"
+                          >
+                            <img
+                              src={page.imageUrl}
+                              alt={`Page ${page.pageIndex + 1}`}
+                              className="max-h-[250px] w-auto object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+                              loading="lazy"
+                            />
+                          </a>
+                        </div>
+                        <div className="md:col-span-2 flex flex-col justify-start">
+                          {page.markdown ? (
+                            <div className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground/90 bg-muted/20 p-3 rounded-lg border min-h-[120px] max-h-[250px] overflow-y-auto">
+                              {page.markdown}
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-center min-h-[120px] bg-muted/10 rounded-lg border border-dashed text-muted-foreground text-xs italic">
+                              Text extraction empty or pending...
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-xs italic text-center p-8 border border-dashed rounded-lg bg-muted/5 w-full">
+                No page screenshots available for this document (e.g. legacy or non-PDF format).
+              </p>
+            )
+          ) : (
+            // Tab 3: Embed Chunks
+            <div className="space-y-3 w-full">
+              {detail.chunks.length === 0 ? (
+                <p className="text-muted-foreground text-xs italic text-center p-8 border border-dashed rounded-lg bg-muted/5 w-full">
+                  {detail.doc.status === "success"
+                    ? "Embedding chunks are still being calculated in the background. They will appear here in a few moments."
+                    : detail.doc.status === "failed"
+                      ? "Ingestion failed — chunks not produced."
+                      : "Ingestion in progress…"}
+                </p>
+              ) : (
+                detail.chunks.map((c) => (
+                  <div
+                    key={c.ordinal}
+                    className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md"
+                  >
+                    {/* Card Header */}
+                    <div className="flex items-center justify-between border-b px-4 py-2.5 bg-muted/40">
+                      <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
+                        Chunk #{c.ordinal + 1}
+                      </span>
+                      {c.entities.length > 0 && (
+                        <div className="flex items-center gap-1 max-w-[60%] truncate">
+                          <span className="text-[10px] text-muted-foreground shrink-0">
+                            Entities:
+                          </span>
+                          <span
+                            className="text-[10px] text-muted-foreground/80 truncate"
+                            title={c.entities.join(", ")}
+                          >
+                            {c.entities.slice(0, 6).join(", ")}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    {/* Card Body */}
+                    <div className="p-4">
+                      <p className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed">
+                        {c.content}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           )}
         </div>
       </DialogContent>
@@ -887,10 +1099,20 @@ function DocDeleteDialog({
         </DialogHeader>
         {error && <p className="text-destructive text-xs">{error}</p>}
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            variant="ghost"
+            className="w-full sm:w-auto"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             Cancel
           </Button>
-          <Button onClick={() => void submit()} disabled={submitting} variant="destructive">
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => void submit()}
+            disabled={submitting}
+            variant="destructive"
+          >
             {submitting ? <Loader2 className="size-3.5 animate-spin" /> : "Delete"}
           </Button>
         </DialogFooter>
@@ -962,10 +1184,15 @@ function DocReprocessDialog({
         </DialogHeader>
         {error && <p className="text-destructive text-xs">{error}</p>}
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            variant="ghost"
+            className="w-full sm:w-auto"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             Cancel
           </Button>
-          <Button onClick={() => void submit()} disabled={submitting}>
+          <Button className="w-full sm:w-auto" onClick={() => void submit()} disabled={submitting}>
             {submitting ? <Loader2 className="size-3.5 animate-spin" /> : "Reprocess"}
           </Button>
         </DialogFooter>
@@ -1038,10 +1265,20 @@ function FolderDeleteDialog({
         </DialogHeader>
         {error && <p className="text-destructive text-xs">{error}</p>}
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            variant="ghost"
+            className="w-full sm:w-auto"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             Cancel
           </Button>
-          <Button onClick={() => void submit()} disabled={submitting} variant="destructive">
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => void submit()}
+            disabled={submitting}
+            variant="destructive"
+          >
             {submitting ? <Loader2 className="size-3.5 animate-spin" /> : "Delete"}
           </Button>
         </DialogFooter>
@@ -1169,10 +1406,19 @@ function FolderNameDialog({
           {error && <p className="text-destructive text-xs">{error}</p>}
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            variant="ghost"
+            className="w-full sm:w-auto"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             Cancel
           </Button>
-          <Button onClick={() => void submit()} disabled={submitting || !name.trim()}>
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => void submit()}
+            disabled={submitting || !name.trim()}
+          >
             {submitting ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : mode === "create" ? (
@@ -1292,6 +1538,7 @@ function KbViewSkeleton({ className }: { className?: string }) {
                 <div className="space-y-2 px-4 py-3 md:hidden">
                   <div className="flex items-start gap-2">
                     <Skeleton className="h-4 flex-1" />
+                    <Skeleton className="size-7 rounded-md" />
                     <Skeleton className="size-7 rounded-md" />
                     <Skeleton className="size-7 rounded-md" />
                   </div>

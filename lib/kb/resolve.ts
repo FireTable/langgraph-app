@@ -1,5 +1,4 @@
-import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
-
+import { type BaseMessage, HumanMessage } from "@langchain/core/messages";
 import { collectKbRefs, isFilePart, isKbRefPart } from "./extract";
 import { getKbDocForResolve } from "./cache";
 
@@ -56,14 +55,15 @@ export async function resolveKbRef(docId: string, userId: string): Promise<strin
   const { doc, chunks } = entry;
   switch (doc.status) {
     case "success":
-      // ponytail: data-integrity guard. kbAgent writes chunks before
-      // flipping status=success, so this branch is normally unreachable
-      // — but a manual SQL edit, a backfill script, or a future
-      // reprocess path could leave a success row with no chunks.
-      // Returning "" would silently drop the doc context for the model;
-      // [Processing...] is the closest existing placeholder ("the doc
-      // is being prepared, ask again in a moment") which preserves the
-      // trace.
+      // ponytail: if pages array is populated with OCR results, join
+      // them directly to reconstruct the full text. This avoids duplicate
+      // chunks with overlapping segments and guarantees immediate context.
+      if (Array.isArray(doc.pages) && doc.pages.length > 0) {
+        return doc.pages
+          .map((p) => (p as { markdown?: string }).markdown)
+          .filter((m): m is string => typeof m === "string" && m.length > 0)
+          .join("\n\n");
+      }
       if (chunks.length === 0) return PLACEHOLDER_PROCESSING;
       return chunks.map((c) => c.content).join("\n\n");
     case "parsing":

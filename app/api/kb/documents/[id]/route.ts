@@ -32,6 +32,7 @@ export const GET = withAuth<{ id: string }>(async (_req, { user, params }) => {
       attachmentId: doc.attachmentId,
       folderId: doc.folderId,
       contentHash: doc.contentHash,
+      pages: doc.pages,
       createdAt: doc.createdAt.toISOString(),
       updatedAt: doc.updatedAt.toISOString(),
     },
