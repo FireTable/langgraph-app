@@ -42,8 +42,8 @@ export async function routerAgentNode(
   // ponytail: strip file content parts before sending to the LLM —
   // apimart's Azure Responses API rejects image_url/file content with
   // non-base64 data ("Invalid file data" 400). The model has already
-  // routed to kbAgent (kb_ref in state) or it's not a PDF — either
-  // way the file part is irrelevant for routing.
+  // routed to kbAgent (kb_ref sibling on every PDF file part) or it's
+  // not a PDF — either way the file part is irrelevant for routing.
   function stripFileParts(msg: BaseMessage): BaseMessage {
     if (!Array.isArray(msg.content)) return msg;
     const cleaned = msg.content.filter(

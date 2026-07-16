@@ -1,20 +1,24 @@
 import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
 
-import { collectKbRefs, isKbRefPart } from "./extract";
+import { collectKbRefs, isFilePart, isKbRefPart } from "./extract";
 import { getKbDocForResolve } from "./cache";
 
 // ponytail: kb_ref → resolved text. Called from trimMessagesForInvoke
-// at LLM-invoke time (state.messages carries the kb_ref part as-is).
-// Replaces kb_ref parts on EVERY HumanMessage with a text part
+// at LLM-invoke time (state.messages carries the kb_ref as-is).
+// Replaces kb_ref-bearing parts on EVERY HumanMessage with a text part
 // containing either the concatenated chunks or a status placeholder —
 // never modifies state at rest.
+//
+// Two shapes carry a kb_ref today:
+//  1. legacy standalone `{ type: "kb_ref", docId }` part (older threads)
+//  2. file part with `kb_ref: { docId, attachmentId? }` sibling (new
+//     ingest path) — the file part itself gets replaced with the
+//     resolved text; the sibling is dropped because the docId is now
+//     inlined into the text.
 //
 // state.messages is append-only under the LangGraph addMessages
 // reducer, so a kb_ref from an earlier turn can sit in an earlier
 // HumanMessage while the current turn's HumanMessage has plain text.
-// The earlier fix only touched the LAST HumanMessage, which silently
-// dropped prior-turn doc content from the model's view.
-//
 // "not found" returns null — caller drops the kb_ref entirely so the
 // model never sees a stale id. Matches cross-user 404 semantics from
 // docs/AUTH.md.
@@ -23,6 +27,20 @@ const PLACEHOLDER_PROCESSING = "[Processing...]";
 const PLACEHOLDER_PENDING = "[Pending]";
 function placeholderFailed(msg: string | null): string {
   return `[Failed: ${msg ?? "unknown error"}]`;
+}
+
+function readKbRefFromPart(part: unknown): { docId: string; attachmentId?: string } | null {
+  if (isFilePart(part) && part.kb_ref && typeof part.kb_ref.docId === "string") {
+    return part.kb_ref;
+  }
+  if (isKbRefPart(part)) {
+    return { docId: part.docId, attachmentId: part.attachmentId };
+  }
+  return null;
+}
+
+function hasKbRef(part: unknown): boolean {
+  return readKbRefFromPart(part) !== null;
 }
 
 export async function resolveKbRef(docId: string, userId: string): Promise<string | null> {
@@ -78,30 +96,34 @@ export async function resolveKbRefs(
     if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) return m;
     // ponytail: early-out if this message has no kb_ref — keeps the
     // happy path reference-equal and avoids needless new HumanMessage
-    // allocations on the checkpointer write-back path.
-    if (!m.content.some((p) => isKbRefPart(p))) return m;
+    // allocations on the checkpointer write-back path. Check both
+    // shapes: standalone kb_ref part AND file part with kb_ref sibling.
+    if (!m.content.some(hasKbRef)) return m;
 
     const newContent: unknown[] = [];
     let replaced = false;
     for (const part of m.content) {
-      if (isKbRefPart(part)) {
-        const text = resolved.get(part.docId);
-        if (text === undefined) {
-          // unknown docId — collectKbRefs sourced this so it shouldn't
-          // happen; leave the part as-is rather than crash.
-          newContent.push(part);
-          continue;
-        }
-        if (text === null) {
-          // doc not found (404 / cross-user) → drop the kb_ref part.
-          replaced = true;
-          continue;
-        }
-        newContent.push({ type: "text", text });
-        replaced = true;
-      } else {
+      const marker = readKbRefFromPart(part);
+      if (!marker) {
         newContent.push(part);
+        continue;
       }
+      const text = resolved.get(marker.docId);
+      if (text === undefined) {
+        // unknown docId — collectKbRefs sourced this so it shouldn't
+        // happen; leave the part as-is rather than crash.
+        newContent.push(part);
+        continue;
+      }
+      if (text === null) {
+        // doc not found (404 / cross-user) → drop the kb_ref entirely.
+        // For sibling-file, drop the whole file part; for standalone,
+        // drop just the part.
+        replaced = true;
+        continue;
+      }
+      newContent.push({ type: "text", text });
+      replaced = true;
     }
     if (!replaced) return m;
     // ponytail: preserve id so the LangGraph addMessages reducer's

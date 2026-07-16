@@ -35,16 +35,19 @@ import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from
 //
 // Every PDF file part in EVERY HumanMessage gets one of three
 // outcomes:
-//   1. kb_ref appended to its HumanMessage (success, dedup, or
-//      [Processing...]/[Failed: ...] placeholders resolved later by
-//      trimMessagesForInvoke → resolveKbRefs).
+//   1. `kb_ref` sibling stamped onto the file part (success, dedup,
+//      failed with a docId, or parsing). The file part is PRESERVED —
+//      the sibling just marks it as ingested so the next router pass
+//      skips re-processing. The resolve layer (lib/kb/resolve.ts)
+//      replaces the file part with resolved text at LLM-invoke time.
 //   2. file part stripped (unknown attachment, can't even dedup).
 //   3. carried over as a non-PDF file (images etc. — preserved).
 //
-// No skipPipeline state. After one kbAgent invocation there are zero
-// PDF file parts left in state.messages; every PDF has been either
-// ingested or stripped. The router's second pass routes to a chat
-// sub-agent cleanly.
+// After one kbAgent invocation there are zero UNSTAMPED PDF file
+// parts left in state.messages — every PDF either carries a kb_ref
+// sibling or has been stripped. extractAllPdfParts / hasUnprocessedPdf
+// filter on `!p.kb_ref` so the second router pass won't re-dispatch
+// kbAgent.
 
 type PageResult = {
   pageIndex: number;
@@ -69,8 +72,9 @@ type ProcessedFile = {
   // "new" = docId freshly generated, needs OCR + chunk + insert.
   // "dedup" = existing docId, skip the heavy pipeline.
   // "failed" = OCR failed (or empty markdown); docId may or may not
-  //            exist in DB — resolve layer shows [Failed: ...] or
-  //            strips the kb_ref.
+  //            exist in DB — resolve layer shows [Failed: ...] for
+  //            the file part's kb_ref sibling, or strips the file
+  //            part entirely if no docId was ever written.
   // "unknown" = attachment row missing, no docId at all.
   pipelineStatus: "new" | "dedup" | "failed" | "unknown";
   errorMessage: string | null;
@@ -135,7 +139,8 @@ async function screenshotNode(
   // findKbDocumentByContentHash makes repeat lookups free within a
   // single invocation. try/catch keeps the whole pipeline moving if
   // one PDF errors out — the failure shows up as a "failed" entry
-  // with no docId, kbAgent still appends a kb_ref or strips cleanly.
+  // with no docId, kbAgent still stamps a kb_ref sibling or strips
+  // the file part cleanly.
   const processed = await Promise.all(
     pdfs.map(async ({ messageIndex, filePart }): Promise<ProcessedFile> => {
       const r2Key = r2KeyFromPublicUrl(filePart.data, base);
@@ -255,7 +260,8 @@ async function screenshotNode(
       pagesByDocId[pf.docId] = pages;
     } catch (err) {
       // ponytail: render failure flips this PDF to "failed" — keep the
-      // docId so the rewritten HumanMessage still carries a kb_ref, and
+      // docId so the rewritten HumanMessage still carries a kb_ref
+      // sibling, and
       // persist the failure on the row so the [Failed: ...] placeholder
       // resolves correctly in resolveKbRefs.
       pf.pipelineStatus = "failed";
@@ -333,9 +339,10 @@ async function ocrNode(state: KbAgentStateShape) {
       // ponytail: updatedProcessed is a shallow copy of state.processedFiles —
       // `===` never matches. Find the index in the ORIGINAL array and apply
       // the update at the same slot in the copy. Order is preserved by filter.
-      // KEEP docId so the rewritten HumanMessage still carries a kb_ref —
-      // resolveKbRefs then renders "[Failed: ...]" via the doc row we
-      // already wrote in screenshotNode.
+      // KEEP docId so the rewritten HumanMessage's file part still
+      // carries a kb_ref sibling — resolveKbRefs then renders
+      // "[Failed: ...]" via the doc row we already wrote in
+      // screenshotNode.
       const idx = state.processedFiles.indexOf(pf);
       if (idx >= 0) {
         updatedProcessed[idx] = {
@@ -348,11 +355,12 @@ async function ocrNode(state: KbAgentStateShape) {
   });
 
   // ponytail: persist OCR failures to db so resolveKbRefs renders
-  // [Failed: ...] (not "[Pending]") for the kb_ref in the user's
-  // message. Best-effort — a DB hiccup here doesn't change the agent's
-  // in-memory state, only what future resolves show. ocrNode only
-  // touches "new" entries; "unknown" / pre-existing "failed" rows
-  // (from screenshotNode render errors) don't get re-updated here.
+  // [Failed: ...] (not "[Pending]") for the file part's kb_ref sibling
+  // in the user's message. Best-effort — a DB hiccup here doesn't
+  // change the agent's in-memory state, only what future resolves
+  // show. ocrNode only touches "new" entries; "unknown" / pre-existing
+  // "failed" rows (from screenshotNode render errors) don't get
+  // re-updated here.
   const failedNew = updatedProcessed.filter(
     (p) =>
       p.pipelineStatus === "failed" &&
@@ -393,8 +401,9 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   // already written by screenshotNode (status="parsing"); we only
   // INSERT chunks here and then UPDATE the doc row to success/failed
   // once we're done. Keeping docId on failed entries so the rewritten
-  // HumanMessage still carries a kb_ref → resolveKbRefs renders
-  // [Failed: ...] instead of silently dropping the document context.
+  // HumanMessage's file part still carries a kb_ref sibling →
+  // resolveKbRefs renders [Failed: ...] instead of silently dropping
+  // the document context.
   const newDocs = state.processedFiles.filter(
     (p) => p.pipelineStatus === "new" && p.docId !== null,
   );
@@ -552,7 +561,8 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   // a follow-up rebuild pass.
   //
   // in-memory `pipelineStatus: "failed"` still drives the HumanMessage
-  // rewrite below — failed entries get a kb_ref (so resolveKbRefs can
+  // rewrite below — failed entries get a kb_ref sibling (so
+  // resolveKbRefs can
   // surface the trace) but the doc row itself stays healthy.
   const finalized: Promise<unknown>[] = [];
   for (const docId of successfulDocIds) {

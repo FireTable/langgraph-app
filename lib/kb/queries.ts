@@ -109,8 +109,9 @@ export async function resetKbDocumentForReprocess(
 // chunkEmbedStoreNode flip them to success / failed + errorMessage as
 // work progresses. A failed row stays in the table so resolveKbRefs
 // can render "[Failed: ...]" instead of silently dropping the doc
-// context (the kb_ref part in the user's message is preserved across
-// agent runs and stays meaningful even when chunking never happened).
+// context (the kb_ref sibling on the file part in the user's
+// message is preserved across agent runs and stays meaningful even
+// when chunking never happened).
 export async function updateKbDocumentStatus(
   userId: string,
   docId: string,

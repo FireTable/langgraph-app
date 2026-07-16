@@ -19,10 +19,12 @@ import { isFilePart } from "@/lib/kb/extract";
 // After the router speaks, decide which sub-agent gets the turn AND
 // whether to fan out to renameThreadAgent in parallel. Falls back to
 // chatAgent if the router hasn't run yet or its decision didn't make
-// it into state. kbAgent routes back to the router after appending
-// the kb_ref so a SECOND router pass picks the final sub-agent (chat
-// / weather / etc.) now that the PDF is gone — and on that second
-// pass the rename fanout also fires (file part gone → rename runs).
+// it into state. kbAgent routes back to the router after stamping a
+// `kb_ref` sibling onto the PDF file part, so a SECOND router pass
+// picks the final sub-agent (chat / weather / etc.) — the PDF is
+// still in the message (file part preserved) but the kb_ref sibling
+// marks it as already-ingested, so the PDF-short-circuit no longer
+// fires. On that second pass the rename fanout also fires.
 //
 // Returning an ARRAY of destinations makes LangGraph run the listed
 // nodes in parallel; returning a single string is the normal one-shot
@@ -76,9 +78,11 @@ export const builder = new StateGraph(RouterAgentState)
   //   START ──▶ routerAgent ──┬──▶ (sub-agent | kbAgent) ──▶ triggerBackgroundAgent ──▶ END
   //                           └──▶ renameThreadAgent   (terminal, no outgoing edge needed)
   //
-  // kbAgent loops back to routerAgent after appending the kb_ref, so
-  // a SECOND router pass picks the final sub-agent (chat / weather /
-  // etc.) now that the PDF file part has been replaced with a kb_ref.
+  // kbAgent loops back to routerAgent after stamping a `kb_ref`
+  // sibling onto the PDF file part, so a SECOND router pass picks
+  // the final sub-agent (chat / weather / etc.) — the file part is
+  // preserved (not replaced), but the kb_ref sibling marks it as
+  // already-ingested and the PDF-short-circuit no longer fires.
   //
   // ask_location's picker card is owned by the weather subgraph
   // (see backend/agent/weather-agent.ts + components/tool-ui/ask-location).
@@ -114,9 +118,11 @@ export const builder = new StateGraph(RouterAgentState)
   .addEdge("weatherAgent", "triggerBackgroundAgent")
   .addEdge("cryptoAgent", "triggerBackgroundAgent")
   .addEdge("codeAgent", "triggerBackgroundAgent")
-  // ponytail: kbAgent loops back to the router — after it appends
-  // the kb_ref part, the router's PDF-short-circuit no longer fires
-  // and it routes to the final sub-agent (chatAgent for PDFs, etc.).
+  // ponytail: kbAgent loops back to the router — after it stamps a
+  // `kb_ref` sibling onto the PDF file part, the router's
+  // PDF-short-circuit no longer fires (the PDF is still in the
+  // message but it's marked as already-ingested via the sibling) and
+  // the router routes to the final sub-agent (chatAgent, etc.).
   .addEdge("kbAgent", "routerAgent")
   .addEdge("triggerBackgroundAgent", END);
 

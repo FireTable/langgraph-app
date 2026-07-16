@@ -409,11 +409,29 @@ function buildKbRefAttachment(docId: string, name: string, key: string): Complet
   };
 }
 
+// ponytail: read a `kb_ref` sibling off a content part's raw record.
+// The sibling may not have survived the SDK's `contentToParts` switch
+// (it rebuilds the object from scratch with a fixed shape per type) —
+// if it didn't, the runtime delivers the part without the sibling and
+// we fall through to the plain image / file branch. Shape matches
+// lib/kb/extract.ts:KbRefMarker, narrowed inline so this file stays
+// free of @/lib/* imports.
+function readKbRefSibling(
+  r: Record<string, unknown>,
+): { docId: string; attachmentId?: string } | null {
+  const raw = r.kb_ref;
+  if (typeof raw !== "object" || raw === null) return null;
+  const docId = (raw as { docId?: unknown }).docId;
+  if (typeof docId !== "string") return null;
+  return raw as { docId: string; attachmentId?: string };
+}
+
 // ponytail: pure projection of message.content → CompleteAttachment[].
-// For each file part, check if kbAgent stamped a `kb_ref` sibling —
-// if so, re-tag the tile as type="kb_ref" so the card can deep-link
-// into /settings/knowledge-base?doc=<id>. image / file / kb_ref
-// branches mirror the pre-refactor inline implementation.
+// For each file part with a `kb_ref` sibling (stamped by kbAgent when
+// the PDF got ingested), re-tag the tile as type="kb_ref" so the card
+// can deep-link into /settings/knowledge-base?doc=<id>. Image parts
+// don't carry the sibling — the SDK's image case also rebuilds the
+// object and drops unknown fields, so image tiles always render plain.
 function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachment[] {
   const seen = new Set<string>();
   const out: CompleteAttachment[] = [];
@@ -426,31 +444,15 @@ function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachm
     if (type === "image" && typeof r.image === "string") {
       const url = r.image;
       const name = filenameFromImageUrl(url);
-      // ponytail: kbAgent stamps a `kb_ref` sibling onto a file part
-      // (NOT a standalone part — the SDK's contentToParts filters
-      // unknown types to null). Image parts don't currently carry the
-      // sibling because R2 image uploads don't route through kbAgent,
-      // but the field shape is reserved for future ingestion paths.
-      const kbRef =
-        typeof r.kb_ref === "object" &&
-        r.kb_ref !== null &&
-        typeof (r.kb_ref as { docId?: unknown }).docId === "string"
-          ? (r.kb_ref as { docId: string; attachmentId?: string })
-          : null;
-      if (kbRef) {
-        key = `kb_ref:${kbRef.docId}`;
-        complete = buildKbRefAttachment(kbRef.docId, name, key);
-      } else {
-        key = url;
-        complete = {
-          id: url,
-          type: "image",
-          name,
-          contentType: "image",
-          status: { type: "complete" },
-          content: [{ type: "image", image: url, filename: name }],
-        };
-      }
+      key = url;
+      complete = {
+        id: url,
+        type: "image",
+        name,
+        contentType: "image",
+        status: { type: "complete" },
+        content: [{ type: "image", image: url, filename: name }],
+      };
     } else if (type === "file" && typeof r.data === "string") {
       // ponytail: SDK's contentToParts defaults filename to "file"
       // when the source part lacks `metadata.filename`, but the type
@@ -458,16 +460,7 @@ function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachm
       // have a non-empty id / name.
       const fileName = (typeof r.filename === "string" && r.filename) || "file";
       const mimeType = typeof r.mimeType === "string" ? r.mimeType : "";
-      // ponytail: kbAgent stamps `kb_ref` directly onto the file part
-      // as a sibling field. If it survives the SDK filter, we render
-      // the tile as a KB-doc deep-link; otherwise we fall through to
-      // the plain-file branch and the tile is just a download.
-      const kbRef =
-        typeof r.kb_ref === "object" &&
-        r.kb_ref !== null &&
-        typeof (r.kb_ref as { docId?: unknown }).docId === "string"
-          ? (r.kb_ref as { docId: string; attachmentId?: string })
-          : null;
+      const kbRef = readKbRefSibling(r);
       if (kbRef) {
         key = `kb_ref:${kbRef.docId}`;
         complete = buildKbRefAttachment(kbRef.docId, fileName, key);
