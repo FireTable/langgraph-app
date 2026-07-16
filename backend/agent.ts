@@ -33,7 +33,10 @@ import { isFilePart } from "@/lib/kb/extract";
 // source node" rule.
 function hasPendingFilePart(messages: { content: unknown }[]): boolean {
   return messages.some(
-    (m) => m instanceof HumanMessage && Array.isArray(m.content) && m.content.some(isFilePart),
+    (m) =>
+      m instanceof HumanMessage &&
+      Array.isArray(m.content) &&
+      m.content.some((item) => isFilePart(item) && !item?.kb_ref),
   );
 }
 
