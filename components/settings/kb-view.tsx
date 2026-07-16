@@ -898,7 +898,7 @@ function DocDetailDialog({
           </div>
         )}
 
-        <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1 min-h-[300px] flex flex-col justify-start">
+        <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1 min-h-[300px] flex flex-col justify-start min-w-0">
           {loading ? (
             <div className="space-y-3 w-full flex-1">
               <Skeleton className="h-24 w-full" />
@@ -932,7 +932,7 @@ function DocDetailDialog({
                   </button>
                 )}
               </div>
-              <div className="p-4 flex-1 overflow-y-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-foreground/90 max-h-[50vh]">
+              <div className="p-4 flex-1 overflow-y-auto whitespace-pre-wrap break-all font-mono text-xs leading-relaxed text-foreground/90 max-h-[50vh]">
                 {fullMarkdown || (
                   <span className="text-muted-foreground italic">No text extracted yet.</span>
                 )}
@@ -974,7 +974,7 @@ function DocDetailDialog({
                         </div>
                         <div className="md:col-span-2 flex flex-col justify-start">
                           {page.markdown ? (
-                            <div className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground/90 bg-muted/20 p-3 rounded-lg border min-h-[120px] max-h-[250px] overflow-y-auto">
+                            <div className="whitespace-pre-wrap break-all font-sans text-xs leading-relaxed text-foreground/90 bg-muted/20 p-3 rounded-lg border min-h-[120px] max-h-[250px] overflow-y-auto">
                               {page.markdown}
                             </div>
                           ) : (
@@ -1031,7 +1031,7 @@ function DocDetailDialog({
                     </div>
                     {/* Card Body */}
                     <div className="p-4">
-                      <p className="text-xs text-foreground/90 whitespace-pre-wrap leading-relaxed">
+                      <p className="text-xs text-foreground/90 whitespace-pre-wrap break-all leading-relaxed">
                         {c.content}
                       </p>
                     </div>
