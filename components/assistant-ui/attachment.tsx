@@ -1,8 +1,7 @@
 "use client";
 
 import { type PropsWithChildren, useEffect, useMemo, useState, type FC } from "react";
-import { useRouter } from "next/navigation";
-import { XIcon, PlusIcon, FileText, Loader2Icon } from "lucide-react";
+import { XIcon, PlusIcon, FileText, BookOpen, Loader2Icon } from "lucide-react";
 import { AttachmentPrimitive, ComposerPrimitive, useAuiState, useAui } from "@assistant-ui/react";
 import type { CompleteAttachment } from "@assistant-ui/react";
 import { useShallow } from "zustand/shallow";
@@ -12,6 +11,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
 import { useUploadStore } from "@/lib/attachments/upload-store";
+import { extractKbRefFromFilename, stripKbRefFromFilename } from "@/lib/kb/extract";
 
 const KB_SETTINGS_PATH = "/settings/knowledge-base";
 
@@ -150,7 +150,12 @@ const AttachmentPreviewDialogWithSdk: FC<PropsWithChildren> = ({ children }) => 
   return <AttachmentPreviewDialog src={src}>{children}</AttachmentPreviewDialog>;
 };
 
-const AttachmentThumb: FC<{ src?: string }> = ({ src }) => {
+type IconComponent = FC<{ className?: string }>;
+
+const AttachmentThumb: FC<{ src?: string; fallbackIcon?: IconComponent }> = ({
+  src,
+  fallbackIcon: FallbackIcon = FileText,
+}) => {
   return (
     <Avatar className="aui-attachment-tile-avatar h-full w-full rounded-none">
       <AvatarImage
@@ -159,7 +164,7 @@ const AttachmentThumb: FC<{ src?: string }> = ({ src }) => {
         className="aui-attachment-tile-image object-cover"
       />
       <AvatarFallback>
-        <FileText className="aui-attachment-tile-fallback-icon text-muted-foreground size-8" />
+        <FallbackIcon className="aui-attachment-tile-fallback-icon text-muted-foreground size-8" />
       </AvatarFallback>
     </Avatar>
   );
@@ -273,26 +278,26 @@ type MessageAttachmentCardProps = {
 };
 
 const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) => {
-  const router = useRouter();
   const src = useMemo(
     () => attachment.content?.find((c) => c.type === "image")?.image,
     [attachment],
   );
   const isImage = attachment.type === "image";
-  // ponytail: kbAgent stamps a `kb_ref` content part onto a file tile
-  // when the file got ingested into KB. We read it once and use it to
-  // (a) override the click target (deep-link into /settings/... rather
-  // than open the file preview dialog) and (b) rename the tile label
-  // from "File" to "KB document". No custom aUI tile type — the
-  // CompleteAttachment is still `type: "file"`, the marker just rides
-  // in content.
+  // ponytail: kbAgent stamps a `[kb:<docId>]` prefix onto the file
+  // part's filename (both `filename` and `metadata.filename`). We
+  // parse it once and use it to (a) override the click target
+  // (deep-link into /settings/... rather than open the file preview
+  // dialog) and (b) rename the tile label from "File" to "KB
+  // document". The user-facing filename has the prefix stripped so
+  // the bracket is invisible — `attachment.name` is the SDK's view of
+  // the post-round-trip filename, so this is the only place we need
+  // to scrub.
   const kbRefDocId = useMemo(() => {
-    const part = attachment.content?.find(
-      (c) => (c as unknown as { type?: string }).type === "kb_ref",
-    ) as { docId?: string } | undefined;
-    return part?.docId ?? null;
-  }, [attachment]);
+    const ref = extractKbRefFromFilename(attachment.name);
+    return ref?.docId ?? null;
+  }, [attachment.name]);
   const isKbDoc = kbRefDocId !== null;
+  const displayName = useMemo(() => stripKbRefFromFilename(attachment.name), [attachment.name]);
   const typeLabel = useMemo(() => {
     if (isKbDoc) return "KB document";
     switch (attachment.type) {
@@ -308,7 +313,17 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
   }, [attachment.type, isKbDoc]);
 
   const activate = () => {
-    if (kbRefDocId) router.push(`${KB_SETTINGS_PATH}?doc=${encodeURIComponent(kbRefDocId)}`);
+    if (kbRefDocId) {
+      // ponytail: open in a new tab so the chat stays put — users
+      // typically want to peek at the KB doc + come back without
+      // losing scroll/state. router.push would unmount the chat
+      // thread and force a re-fetch of all messages on return.
+      window.open(
+        `${KB_SETTINGS_PATH}?doc=${encodeURIComponent(kbRefDocId)}`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    }
   };
 
   return (
@@ -335,7 +350,7 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
                 }
               }}
             >
-              <AttachmentThumb src={undefined} />
+              <AttachmentThumb src={undefined} fallbackIcon={BookOpen} />
             </div>
           </TooltipTrigger>
         ) : (
@@ -353,7 +368,7 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
           </AttachmentPreviewDialog>
         )}
       </div>
-      <TooltipContent side="top">{attachment.name}</TooltipContent>
+      <TooltipContent side="top">{displayName}</TooltipContent>
     </Tooltip>
   );
 };
@@ -398,31 +413,16 @@ function asRecord(part: unknown): Record<string, unknown> {
   return part as Record<string, unknown>;
 }
 
-// ponytail: read a `kb_ref` sibling off a content part's raw record.
-// The sibling may not have survived the SDK's `contentToParts` switch
-// (it rebuilds the object from scratch with a fixed shape per type) —
-// if it didn't, the runtime delivers the part without the sibling and
-// we fall through to the plain image / file branch. Shape matches
-// lib/kb/extract.ts:KbRefMarker, narrowed inline so this file stays
-// free of @/lib/* imports.
-function readKbRefSibling(
-  r: Record<string, unknown>,
-): { docId: string; attachmentId?: string } | null {
-  const raw = r.kb_ref;
-  if (typeof raw !== "object" || raw === null) return null;
-  const docId = (raw as { docId?: unknown }).docId;
-  if (typeof docId !== "string") return null;
-  return raw as { docId: string; attachmentId?: string };
-}
-
 // ponytail: pure projection of message.content → CompleteAttachment[].
-// File tiles always come out as `type: "file"`; if the source part
-// carries a `kb_ref` sibling, the same tile gets a marker content
-// part `{ type: "kb_ref", docId }` appended. MessageAttachmentCard
-// reads the marker to decide whether to deep-link into /settings/
-// knowledge-base or open the file preview. Image parts don't carry
-// the sibling (SDK's image case drops unknown fields), so they
-// always render plain.
+// File tiles always come out as `type: "file"`; the KB marker rides
+// on the file part's filename as a `[kb:<docId>]` prefix (both
+// `filename` and `metadata.filename`) — the SDK's `contentToParts`
+// round-trip preserves that filename, so the projection just copies
+// it through. MessageAttachmentCard parses the prefix off
+// `attachment.name` to decide whether to deep-link into /settings/
+// knowledge-base and to strip the prefix before showing the filename
+// in the tooltip. Image parts never carry the prefix so they always
+// render plain.
 function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachment[] {
   const seen = new Set<string>();
   const out: CompleteAttachment[] = [];
@@ -450,7 +450,7 @@ function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachm
       // have a non-empty id / name.
       const fileName = (typeof r.filename === "string" && r.filename) || "file";
       const mimeType = typeof r.mimeType === "string" ? r.mimeType : "";
-      const kbRef = readKbRefSibling(r);
+      const kbRef = extractKbRefFromFilename(fileName);
       // ponytail: dedupe on docId when the file is KB-tagged, otherwise
       // on filename. A retried / duplicate upload with the same name
       // but a different docId would otherwise show two tiles; the same
@@ -458,33 +458,26 @@ function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachm
       const key = kbRef ? `kb_ref:${kbRef.docId}` : fileName;
       if (seen.has(key)) continue;
       seen.add(key);
-      const fileContent = {
-        type: "file" as const,
-        data: r.data,
-        mimeType,
-        filename: fileName,
-      };
       out.push({
         id: key,
         type: "file",
         name: fileName,
         contentType: mimeType,
         status: { type: "complete" },
-        content: kbRef
-          ? [
-              fileContent,
-              {
-                type: "kb_ref",
-                docId: kbRef.docId,
-              } as unknown as CompleteAttachment["content"][number],
-            ]
-          : [fileContent],
+        content: [
+          {
+            type: "file" as const,
+            data: r.data,
+            mimeType,
+            filename: fileName,
+          },
+        ],
       });
     }
     // legacy standalone `{ type: "kb_ref", docId }` parts (older
     // threads) are dropped here — the parent message still has the
     // file part that produced the original upload, and that file
-    // part will carry a kb_ref sibling on any subsequent re-ingest.
+    // part will carry the kb_ref prefix on any subsequent re-ingest.
   }
   return out;
 }

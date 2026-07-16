@@ -21,7 +21,12 @@ import {
   withKbTx,
 } from "@/lib/kb/queries";
 import { findAttachmentByR2Key } from "@/lib/attachments/queries";
-import { extractAllPdfParts, isFilePart, type FilePart } from "@/lib/kb/extract";
+import {
+  extractAllPdfParts,
+  isFilePart,
+  stampKbRefOnFilename,
+  type FilePart,
+} from "@/lib/kb/extract";
 import { invalidateKbDoc } from "@/lib/kb/cache";
 import { EMBEDDING_DIM } from "@/lib/kb/schema";
 import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from "@/lib/r2/client";
@@ -73,7 +78,7 @@ type ProcessedFile = {
   // "dedup" = existing docId, skip the heavy pipeline.
   // "failed" = OCR failed (or empty markdown); docId may or may not
   //            exist in DB — resolve layer shows [Failed: ...] for
-  //            the file part's kb_ref sibling, or strips the file
+  //            the file part's kb_ref prefix, or strips the file
   //            part entirely if no docId was ever written.
   // "unknown" = attachment row missing, no docId at all.
   pipelineStatus: "new" | "dedup" | "failed" | "unknown";
@@ -525,18 +530,7 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
           : pgErr.message;
         console.error(
           `kbAgent chunkEmbedStoreNode: insertKbChunks failed for doc ${docId}: ${reason}`,
-          {
-            code: pgErr.code,
-            severity: pgErr.severity,
-            detail: pgErr.detail,
-            hint: pgErr.hint,
-            constraint: pgErr.constraint,
-            position: pgErr.position,
-            schema: pgErr.schema,
-            table: pgErr.table,
-            column: pgErr.column,
-            dataType: pgErr.dataType,
-          },
+          pgErr,
         );
         if (idx >= 0) {
           updatedProcessed[idx] = {
@@ -576,21 +570,24 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
 
   // ponytail: rewrite EVERY HumanMessage that had a PDF file part.
   // For each PDF we matched to a kb_document, KEEP the original file
-  // part and stamp a `kb_ref` sibling onto it — `{docId, attachmentId?}`.
-  // The front-end reads that sibling to deep-link the rendered file
-  // tile into /settings/knowledge-base?doc=<id>.
-  //
-  // Why not emit a standalone kb_ref part: @assistant-ui/react-langgraph's
-  // `contentToParts` filters unknown part types to null (default branch
-  // returns null), so a `{ type: "kb_ref" }` part never reaches the
-  // runtime. The SDK's `file` switch rebuilds the object from scratch
-  // with only {type, filename, data, mimeType} — sibling fields might
-  // also be stripped. We're trying the sibling-field approach first;
-  // if the SDK proves to drop it, fall back to a patched SDK or a
-  // custom message converter.
+  // part and stamp the marker on TWO channels:
+  //   (a) `kb_ref: { docId, attachmentId? }` sibling — canonical
+  //       back-end channel. hasUnprocessedPdf / collectKbRefs /
+  //       resolveKbRefs all read this. Backend state.messages is
+  //       append-only and never goes through the SDK's
+  //       `contentToParts` rebuild, so the sibling survives intact.
+  //   (b) `[kb:<docId>]` prefix on `filename` + `metadata.filename`
+  //       — the front-end channel. The SDK's `contentToParts`
+  //       rebuilds file parts from scratch with only {type,
+  //       filename, data, mimeType} and drops the `kb_ref` sibling;
+  //       the filename prefix is the one signal that survives the
+  //       round-trip to the rendered tile. MessageAttachmentCard
+  //       parses the prefix off `attachment.name` for the deep-link
+  //       and to swap the fallback icon to BookOpen.
   //
   // Failure modes:
-  //  - matched PDF (new / dedup / parsing): file part + kb_ref sibling.
+  //  - matched PDF (new / dedup / parsing): file part with both
+  //    channels stamped.
   //  - non-PDF file part: drop (kbAgent never surfaces these to the
   //    model anyway — same as the prior behavior).
   //  - unknown / failed PDF with no docId: drop the file part (no
@@ -615,12 +612,27 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
           continue;
         }
         changed = true;
+        // ponytail: stamp BOTH the kb_ref sibling AND the filename
+        // prefix on the same write. The sibling is the back-end
+        // canonical channel; the prefix is the front-end fallback
+        // because the SDK drops sibling fields on file parts in
+        // `contentToParts`. stampKbRefOnFilename is idempotent so a
+        // re-stamp is a no-op.
+        const baseFilename =
+          typeof part.filename === "string"
+            ? part.filename
+            : typeof part.metadata?.filename === "string"
+              ? part.metadata.filename
+              : undefined;
+        const stampedFilename = stampKbRefOnFilename(baseFilename, matched.docId);
         newContent.push({
           ...part,
           kb_ref: {
             docId: matched.docId,
             ...(matched.attachmentId ? { attachmentId: matched.attachmentId } : {}),
           },
+          filename: stampedFilename,
+          metadata: { ...part.metadata, filename: stampedFilename },
         });
         continue;
       }

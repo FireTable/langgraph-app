@@ -10,11 +10,18 @@ import { getKbDocForResolve } from "./cache";
 // never modifies state at rest.
 //
 // Two shapes carry a kb_ref today:
-//  1. legacy standalone `{ type: "kb_ref", docId }` part (older threads)
-//  2. file part with `kb_ref: { docId, attachmentId? }` sibling (new
-//     ingest path) — the file part itself gets replaced with the
-//     resolved text; the sibling is dropped because the docId is now
-//     inlined into the text.
+//  1. file part with `kb_ref: { docId, attachmentId? }` sibling
+//     (canonical, new ingest path) — the file part itself gets
+//     replaced with the resolved text; the sibling is dropped because
+//     the docId is now inlined into the text.
+//  2. legacy standalone `{ type: "kb_ref", docId }` part (older
+//     threads) — kept for backward compat.
+//
+// The filename prefix `[kb:<docId>]` is NOT read here: backend has
+// access to the canonical sibling and the sibling is the source of
+// truth for the resolve layer. The prefix exists purely so the
+// front-end (which loses the sibling through the SDK's
+// `contentToParts` round-trip) can still recover the docId.
 //
 // state.messages is append-only under the LangGraph addMessages
 // reducer, so a kb_ref from an earlier turn can sit in an earlier

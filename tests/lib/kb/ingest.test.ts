@@ -102,7 +102,8 @@ describe("lib/kb/ingest", () => {
         type: "file",
         data: expect.stringContaining(ATTACHMENT.r2Key) as unknown as string,
         mime_type: ATTACHMENT.contentType,
-        filename: ATTACHMENT.name,
+        filename: `[kb:d-abc] ${ATTACHMENT.name}`,
+        metadata: { filename: `[kb:d-abc] ${ATTACHMENT.name}` },
       });
     });
 

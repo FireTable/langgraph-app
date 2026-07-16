@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { langGraphClient } from "@/lib/langgraph/client";
+import { stampKbRefOnFilename } from "@/lib/kb/extract";
 
 // ponytail: shared ingestion path for the KB Settings "+" and the
 // per-row reprocess button. Both call `fireIngestionRun` with a
@@ -49,6 +50,16 @@ export async function fireIngestionRun({
   // JSON-serializable message shape — the graph's MessagesValue reducer
   // reconstructs HumanMessage on the server. file_part matches the
   // assistant-ui wire format that kbAgent expects.
+  //
+  // ponytail: stamp the kb_ref prefix on the filename BEFORE handing the
+  // message to kbAgent. The Settings → Add Doc / Reprocess paths both
+  // already know the docId at fire time (we generated it before calling
+  // fireIngestionRun), so we can put the marker on from the start —
+  // kbAgent's rewrite then sees an already-stamped file part and
+  // stampKbRefOnFilename's idempotency makes that a no-op. Marking
+  // here also keeps the marker consistent with chat ingest, where
+  // kbAgent stamps on the user's HumanMessage right after the pipeline
+  // finishes.
   const input = {
     messages: [
       {
@@ -59,7 +70,8 @@ export async function fireIngestionRun({
             type: "file",
             data: publicUrl,
             mime_type: attachment.contentType,
-            filename: attachment.name,
+            filename: stampKbRefOnFilename(attachment.name, docId),
+            metadata: { filename: stampKbRefOnFilename(attachment.name, docId) },
           },
         ],
       },

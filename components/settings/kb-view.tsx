@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   CheckCircle2,
@@ -122,7 +123,30 @@ function formatTimestamp(iso: string): string {
   return d.toLocaleString();
 }
 
+// ponytail: KbView is mounted by better-auth-ui's <Settings> without
+// a Suspense boundary. `useSearchParams` forces a Suspense boundary
+// during SSR (otherwise the entire route opts into dynamic rendering
+// or Next.js throws at build time), so we split into a thin wrapper
+// that supplies the boundary and an inner component that actually
+// reads the param. The fallback is the same skeleton the data-load
+// path renders, so the user sees no visible difference between the
+// two loading states.
 export function KbView({ className }: { className?: string }) {
+  return (
+    <Suspense fallback={<KbViewSkeleton className={className} />}>
+      <KbViewContent className={className} />
+    </Suspense>
+  );
+}
+
+function KbViewContent({ className }: { className?: string }) {
+  const searchParams = useSearchParams();
+  // ponytail: chat tiles deep-link here with `?doc=<docId>` (see
+  // MessageAttachmentCard). KbView only honors the param on the
+  // initial selection — once the user clicks a folder, their
+  // explicit choice takes over (we don't want to yank them back if
+  // the URL keeps the param from a previous visit).
+  const focusDocId = searchParams.get("doc");
   const [data, setData] = useState<KbResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
@@ -138,17 +162,24 @@ export function KbView({ className }: { className?: string }) {
       }
       const body = (await res.json()) as KbResponse;
       setData(body);
-      // Auto-select first folder (with docs if any). Skip on re-renders
-      // so the user's explicit choice persists across refreshes.
+      // Auto-select: prefer the folder containing the deep-linked
+      // doc, then preserve the user's previous selection, then fall
+      // back to the first folder with docs. `prev` always wins once
+      // set so refreshes don't yank the user out of the folder they
+      // clicked on.
       setSelectedFolderId((prev) => {
         if (prev && body.groups.some((g) => g.folder.id === prev)) return prev;
+        if (focusDocId) {
+          const owning = body.groups.find((g) => g.documents.some((d) => d.id === focusDocId));
+          if (owning) return owning.folder.id;
+        }
         const firstWithDocs = body.groups.find((g) => g.documents.length > 0);
         return firstWithDocs?.folder.id ?? body.groups[0]?.folder.id ?? null;
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [focusDocId]);
 
   useEffect(() => {
     void load();
@@ -182,65 +213,7 @@ export function KbView({ className }: { className?: string }) {
   }
 
   if (!data) {
-    return (
-      <div className={cn("flex w-full flex-col gap-4", className)}>
-        <div className="flex flex-col gap-3">
-          <Skeleton className="mb-1 h-4 w-32" />
-          <Skeleton className="mb-3 h-3 w-96 max-w-full" />
-        </div>
-        <div className="grid items-start gap-4 md:grid-cols-[260px_1fr]">
-          <Card className="h-fit p-0">
-            <CardContent className="p-0">
-              <div className="flex h-9 items-center justify-between px-4">
-                <Skeleton className="h-3 w-16" />
-                <Skeleton className="size-6 rounded-md" />
-              </div>
-              <Separator />
-              <div className="space-y-0.5 p-2">
-                {[0, 1].map((i) => (
-                  <Skeleton key={i} className="h-7 rounded-md" />
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="p-0">
-            <CardContent className="p-0">
-              <div className="flex h-9 items-center justify-between px-4">
-                <Skeleton className="h-3 w-32" />
-                <Skeleton className="size-6 rounded-md" />
-              </div>
-              <Separator />
-              {[0, 1, 2].map((i) => (
-                <div key={i}>
-                  {i > 0 && <Separator />}
-                  {/* Mobile skeleton */}
-                  <div className="space-y-2 px-4 py-3 md:hidden">
-                    <div className="flex items-start gap-2">
-                      <Skeleton className="h-4 flex-1" />
-                      <Skeleton className="size-7 rounded-md" />
-                      <Skeleton className="size-7 rounded-md" />
-                    </div>
-                    <Skeleton className="h-3 w-3/4" />
-                  </div>
-                  {/* Desktop skeleton */}
-                  <div className="hidden md:grid md:grid-cols-[minmax(0,1fr)_auto_120px_auto_84px] md:items-center md:gap-x-3 md:px-4 md:py-3">
-                    <Skeleton className="h-4" />
-                    <Skeleton className="h-3 w-8" />
-                    <Skeleton className="h-3 w-24" />
-                    <Skeleton className="h-5 w-16 rounded-full" />
-                    <div className="flex justify-end gap-0.5">
-                      <Skeleton className="size-7 rounded-md" />
-                      <Skeleton className="size-7 rounded-md" />
-                      <Skeleton className="size-7 rounded-md" />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
+    return <KbViewSkeleton className={className} />;
   }
 
   return (
@@ -282,6 +255,7 @@ export function KbView({ className }: { className?: string }) {
             />
             <DocTable
               group={selectedGroup}
+              focusDocId={focusDocId}
               onAddDoc={() => fileInputRef.current?.click()}
               onRefresh={load}
             />
@@ -475,10 +449,12 @@ function HeaderBar({ label, action }: { label: string; action: React.ReactNode }
 
 function DocTable({
   group,
+  focusDocId,
   onAddDoc,
   onRefresh,
 }: {
   group: KbResponse["groups"][number] | null;
+  focusDocId: string | null;
   onAddDoc: () => void;
   onRefresh: () => Promise<void> | void;
 }) {
@@ -521,7 +497,7 @@ function DocTable({
             PDF.
           </div>
         ) : (
-          <DocTableRows docs={group.documents} onRefresh={onRefresh} />
+          <DocTableRows docs={group.documents} focusDocId={focusDocId} onRefresh={onRefresh} />
         )}
       </CardContent>
     </Card>
@@ -530,9 +506,11 @@ function DocTable({
 
 function DocTableRows({
   docs,
+  focusDocId,
   onRefresh,
 }: {
   docs: KbDocument[];
+  focusDocId: string | null;
   onRefresh: () => Promise<void> | void;
 }) {
   return (
@@ -540,18 +518,42 @@ function DocTableRows({
       {docs.map((doc, i) => (
         <div key={doc.id}>
           {i > 0 && <Separator />}
-          <DocRow doc={doc} onRefresh={onRefresh} />
+          <DocRow doc={doc} isFocused={doc.id === focusDocId} onRefresh={onRefresh} />
         </div>
       ))}
     </div>
   );
 }
 
-function DocRow({ doc, onRefresh }: { doc: KbDocument; onRefresh: () => Promise<void> | void }) {
+function DocRow({
+  doc,
+  isFocused,
+  onRefresh,
+}: {
+  doc: KbDocument;
+  isFocused: boolean;
+  onRefresh: () => Promise<void> | void;
+}) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [reprocessOpen, setReprocessOpen] = useState(false);
   const type = doc.contentType.replace("application/", "");
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  // ponytail: when the row is the deep-link target (?doc=<id> in
+  // the URL), scroll it into view once it's mounted. The data
+  // fetch + folder switch + render is async, so we wait a tick
+  // before scrolling; `block: "center"` keeps it visually anchored
+  // rather than glued to the top of the scroll container. Runs
+  // once per focus target — `behavior: "smooth"` is fine because
+  // the scroll distance is usually small (a few folders down at
+  // most) and the user just opened this view from a chat tile.
+  useEffect(() => {
+    if (!isFocused) return;
+    const t = setTimeout(() => {
+      rowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 50);
+    return () => clearTimeout(t);
+  }, [isFocused]);
   // ponytail: in-flight ingest/processing disables the refresh button so
   // a double-click can't kick off a parallel OCR pass against the same
   // attachment (server side also returns 409, but UI guard avoids a
@@ -630,7 +632,22 @@ function DocRow({ doc, onRefresh }: { doc: KbDocument; onRefresh: () => Promise<
     </span>
   );
   return (
-    <>
+    <div
+      ref={rowRef}
+      // ponytail: the deep-link target row gets a 3s pulse so the
+      // user can find the doc they just clicked from chat, then
+      // settles. The pulse ring fades in and out via Tailwind's
+      // built-in `animate-pulse` keyframes; `[animation-iteration-count:1]`
+      // pins the cycle to a single pass (otherwise the pulse loops
+      // forever). `rounded-md` matches the row's intended corner
+      // radius. `bg-accent/40` stays as the resting tint after the
+      // pulse ends so the row remains visually anchored.
+      data-focused={isFocused || undefined}
+      className={cn(
+        isFocused &&
+          "bg-accent/40 ring-primary/40 rounded-md ring-2 ring-inset animate-pulse [animation-iteration-count:1] [animation-duration:3s]",
+      )}
+    >
       {/* Mobile: title + meta below + actions inline at bottom. */}
       <div className="space-y-2 px-4 py-3 text-sm md:hidden" role="row">
         <div className="flex items-center gap-2">
@@ -703,7 +720,7 @@ function DocRow({ doc, onRefresh }: { doc: KbDocument; onRefresh: () => Promise<
           }}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -721,14 +738,32 @@ function DocDetailDialog({
   const [detail, setDetail] = useState<KbDocDetail | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // ponytail: React StrictMode in dev mounts every effect twice
+  // (mount → unmount → mount), so without an abort controller the
+  // dev preview fetch goes out 2× and the slow one wins the
+  // setDetail race. Aborting the first request on cleanup cancels
+  // it at the network layer — the devtools Network tab shows 1
+  // cancelled request instead of 2 successful ones. Prod builds
+  // don't double-invoke so this is a no-op there.
   useEffect(() => {
     if (!open) return;
+    const controller = new AbortController();
     setLoading(true);
-    void fetch(`/api/kb/documents/${docId}`)
+    void fetch(`/api/kb/documents/${docId}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
-      .then((body: KbDocDetail) => setDetail(body))
-      .catch(() => setDetail(null))
-      .finally(() => setLoading(false));
+      .then((body: KbDocDetail) => {
+        if (!controller.signal.aborted) setDetail(body);
+      })
+      .catch((err) => {
+        // ponytail: AbortError is expected on cleanup — don't reset
+        // state to null, otherwise the second mount flashes an
+        // empty dialog before its fetch resolves.
+        if (err?.name !== "AbortError") setDetail(null);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [open, docId]);
 
   return (
@@ -1216,4 +1251,68 @@ async function handleAddDoc(file: File, folderId: string, onRefresh: () => Promi
   } catch (err) {
     console.error("Add Doc failed", err);
   }
+}
+
+// ponytail: shared by the !data branch and the Suspense fallback in
+// KbView. Kept here so the two loading states are visually identical —
+// switching to/from the deep-link path should never flash a different
+// shape at the user.
+function KbViewSkeleton({ className }: { className?: string }) {
+  return (
+    <div className={cn("flex w-full flex-col gap-4", className)}>
+      <div className="flex flex-col gap-3">
+        <Skeleton className="mb-1 h-4 w-32" />
+        <Skeleton className="mb-3 h-3 w-96 max-w-full" />
+      </div>
+      <div className="grid items-start gap-4 md:grid-cols-[260px_1fr]">
+        <Card className="h-fit p-0">
+          <CardContent className="p-0">
+            <div className="flex h-9 items-center justify-between px-4">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="size-6 rounded-md" />
+            </div>
+            <Separator />
+            <div className="space-y-0.5 p-2">
+              {[0, 1].map((i) => (
+                <Skeleton key={i} className="h-7 rounded-md" />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="p-0">
+          <CardContent className="p-0">
+            <div className="flex h-9 items-center justify-between px-4">
+              <Skeleton className="h-3 w-32" />
+              <Skeleton className="size-6 rounded-md" />
+            </div>
+            <Separator />
+            {[0, 1, 2].map((i) => (
+              <div key={i}>
+                {i > 0 && <Separator />}
+                <div className="space-y-2 px-4 py-3 md:hidden">
+                  <div className="flex items-start gap-2">
+                    <Skeleton className="h-4 flex-1" />
+                    <Skeleton className="size-7 rounded-md" />
+                    <Skeleton className="size-7 rounded-md" />
+                  </div>
+                  <Skeleton className="h-3 w-3/4" />
+                </div>
+                <div className="hidden md:grid md:grid-cols-[minmax(0,1fr)_auto_120px_auto_84px] md:items-center md:gap-x-3 md:px-4 md:py-3">
+                  <Skeleton className="h-4" />
+                  <Skeleton className="h-3 w-8" />
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-5 w-16 rounded-full" />
+                  <div className="flex justify-end gap-0.5">
+                    <Skeleton className="size-7 rounded-md" />
+                    <Skeleton className="size-7 rounded-md" />
+                    <Skeleton className="size-7 rounded-md" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
 }
