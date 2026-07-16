@@ -13,7 +13,6 @@ import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button
 import { cn } from "@/lib/utils";
 import { useUploadStore } from "@/lib/attachments/upload-store";
 import { useKbRefsStore } from "@/lib/kb/kb-refs-store";
-import { buildUserMessageAttachments } from "@/components/assistant-ui/build-user-message-attachments";
 
 const KB_SETTINGS_PATH = "/settings/knowledge-base";
 
@@ -386,6 +385,120 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
 // and delete the message.content parser below. The visual is identical
 // (same `MessageAttachmentCard` shape), so no UX change is needed at
 // switchover.
+// ponytail: image parts in message.content carry only the URL — the
+// SDK's `contentToParts` drops `filename` on the round trip through
+// `image_url`. R2 keys look like `u/<userId>/<uuid>-<filename>`, so
+// the last URL segment is the original filename with the uuid prefix
+// stripped.
+function filenameFromImageUrl(url: string): string {
+  try {
+    const last = new URL(url).pathname.split("/").pop() ?? "";
+    const decoded = decodeURIComponent(last);
+    const stripped = decoded.replace(/^[0-9a-f-]{36}-/, "");
+    return stripped || "image";
+  } catch {
+    return "image";
+  }
+}
+
+function asRecord(part: unknown): Record<string, unknown> {
+  return part as Record<string, unknown>;
+}
+
+function buildKbRefAttachment(docId: string, name: string, key: string): CompleteAttachment {
+  return {
+    id: key,
+    type: "kb_ref",
+    name,
+    contentType: "kb_ref",
+    status: { type: "complete" },
+    content: [{ type: "kb_ref", docId } as unknown as CompleteAttachment["content"][number]],
+  };
+}
+
+// ponytail: pure projection of message.content → CompleteAttachment[].
+// Reads the kbRefs sidecar from useKbRefsStore so a tile whose URL
+// matches an ingested kb_document can be re-tagged as type="kb_ref"
+// for deep-link rendering. image / file / kb_ref branches mirror the
+// pre-refactor inline implementation; kbRefs lookup is the only new
+// wrinkle vs. the original.
+function buildUserMessageAttachments(
+  parts: readonly unknown[],
+  kbRefs: Record<string, { docId: string; attachmentId?: string }>,
+): CompleteAttachment[] {
+  const seen = new Set<string>();
+  const out: CompleteAttachment[] = [];
+  for (const part of parts) {
+    const r = asRecord(part);
+    const type = r.type;
+    let key: string | undefined;
+    let complete: CompleteAttachment | undefined;
+
+    if (type === "image" && typeof r.image === "string") {
+      const url = r.image;
+      const name = filenameFromImageUrl(url);
+      const kbRef = kbRefs[url];
+      if (kbRef) {
+        // ponytail: image upload was a PDF (or image that later got
+        // ingested into KB). Surface as a KB-doc tile so the user can
+        // click through to /settings/knowledge-base?doc=<id>.
+        key = `kb_ref:${kbRef.docId}`;
+        complete = buildKbRefAttachment(kbRef.docId, name, key);
+      } else {
+        key = url;
+        complete = {
+          id: url,
+          type: "image",
+          name,
+          contentType: "image",
+          status: { type: "complete" },
+          content: [{ type: "image", image: url, filename: name }],
+        };
+      }
+    } else if (type === "file" && typeof r.data === "string") {
+      // ponytail: SDK's contentToParts defaults filename to "file"
+      // when the source part lacks `metadata.filename`, but the type
+      // still allows undefined. Fall back to "file" so we always
+      // have a non-empty id / name.
+      const fileName = (typeof r.filename === "string" && r.filename) || "file";
+      const mimeType = typeof r.mimeType === "string" ? r.mimeType : "";
+      const kbRef = kbRefs[r.data];
+      if (kbRef) {
+        key = `kb_ref:${kbRef.docId}`;
+        complete = buildKbRefAttachment(kbRef.docId, fileName, key);
+      } else {
+        key = fileName;
+        complete = {
+          id: fileName,
+          type: "file",
+          name: fileName,
+          contentType: mimeType,
+          status: { type: "complete" },
+          content: [
+            {
+              type: "file",
+              data: r.data,
+              mimeType,
+              filename: fileName,
+            },
+          ],
+        };
+      }
+    } else if (type === "kb_ref" && typeof r.docId === "string") {
+      // ponytail: legacy branch — older threads may have emitted a
+      // standalone kb_ref part before the sidecar migration.
+      const docId = r.docId;
+      key = `kb_ref:${docId}`;
+      complete = buildKbRefAttachment(docId, docId, key);
+    }
+    if (complete && key && !seen.has(key)) {
+      seen.add(key);
+      out.push(complete);
+    }
+  }
+  return out;
+}
+
 export const UserMessageAttachments: FC = () => {
   const content = useAuiState((s) => s.message.content);
   // ponytail: thread-scoped kbRefs sidecar. Looked up by filePartData
@@ -398,7 +511,7 @@ export const UserMessageAttachments: FC = () => {
   });
 
   const attachments = useMemo<CompleteAttachment[]>(
-    () => buildUserMessageAttachments(content, { kbRefs }),
+    () => buildUserMessageAttachments(content, kbRefs),
     [content, kbRefs],
   );
 
