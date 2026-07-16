@@ -279,8 +279,22 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
     [attachment],
   );
   const isImage = attachment.type === "image";
-  const isKbRef = attachment.type === "kb_ref";
+  // ponytail: kbAgent stamps a `kb_ref` content part onto a file tile
+  // when the file got ingested into KB. We read it once and use it to
+  // (a) override the click target (deep-link into /settings/... rather
+  // than open the file preview dialog) and (b) rename the tile label
+  // from "File" to "KB document". No custom aUI tile type — the
+  // CompleteAttachment is still `type: "file"`, the marker just rides
+  // in content.
+  const kbRefDocId = useMemo(() => {
+    const part = attachment.content?.find(
+      (c) => (c as unknown as { type?: string }).type === "kb_ref",
+    ) as { docId?: string } | undefined;
+    return part?.docId ?? null;
+  }, [attachment]);
+  const isKbDoc = kbRefDocId !== null;
   const typeLabel = useMemo(() => {
+    if (isKbDoc) return "KB document";
     switch (attachment.type) {
       case "image":
         return "Image";
@@ -288,24 +302,10 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
         return "Document";
       case "file":
         return "File";
-      case "kb_ref":
-        return "KB document";
       default:
         return attachment.type;
     }
-  }, [attachment.type]);
-
-  // ponytail: kb_ref tiles deep-link into /settings/knowledge-base?doc=<id>.
-  // The settings view can read the query and open its detail dialog.
-  // We bypass AttachmentPreviewDialog entirely for kb_ref (no src) and
-  // wire click / keydown to router.push instead.
-  const kbRefDocId = useMemo(() => {
-    if (!isKbRef) return null;
-    const part = attachment.content?.find(
-      (c) => (c as unknown as { type?: string }).type === "kb_ref",
-    ) as { docId?: string } | undefined;
-    return part?.docId ?? null;
-  }, [attachment, isKbRef]);
+  }, [attachment.type, isKbDoc]);
 
   const activate = () => {
     if (kbRefDocId) router.push(`${KB_SETTINGS_PATH}?doc=${encodeURIComponent(kbRefDocId)}`);
@@ -320,7 +320,7 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
           isImage && "aui-attachment-root-message only:*:first:size-24",
         )}
       >
-        {isKbRef ? (
+        {isKbDoc ? (
           <TooltipTrigger asChild>
             <div
               className="aui-attachment-tile bg-muted size-14 cursor-pointer overflow-hidden rounded-[calc(var(--composer-radius)-var(--composer-padding))] border transition-opacity hover:opacity-75"
@@ -398,17 +398,6 @@ function asRecord(part: unknown): Record<string, unknown> {
   return part as Record<string, unknown>;
 }
 
-function buildKbRefAttachment(docId: string, name: string, key: string): CompleteAttachment {
-  return {
-    id: key,
-    type: "kb_ref",
-    name,
-    contentType: "kb_ref",
-    status: { type: "complete" },
-    content: [{ type: "kb_ref", docId } as unknown as CompleteAttachment["content"][number]],
-  };
-}
-
 // ponytail: read a `kb_ref` sibling off a content part's raw record.
 // The sibling may not have survived the SDK's `contentToParts` switch
 // (it rebuilds the object from scratch with a fixed shape per type) —
@@ -427,32 +416,33 @@ function readKbRefSibling(
 }
 
 // ponytail: pure projection of message.content → CompleteAttachment[].
-// For each file part with a `kb_ref` sibling (stamped by kbAgent when
-// the PDF got ingested), re-tag the tile as type="kb_ref" so the card
-// can deep-link into /settings/knowledge-base?doc=<id>. Image parts
-// don't carry the sibling — the SDK's image case also rebuilds the
-// object and drops unknown fields, so image tiles always render plain.
+// File tiles always come out as `type: "file"`; if the source part
+// carries a `kb_ref` sibling, the same tile gets a marker content
+// part `{ type: "kb_ref", docId }` appended. MessageAttachmentCard
+// reads the marker to decide whether to deep-link into /settings/
+// knowledge-base or open the file preview. Image parts don't carry
+// the sibling (SDK's image case drops unknown fields), so they
+// always render plain.
 function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachment[] {
   const seen = new Set<string>();
   const out: CompleteAttachment[] = [];
   for (const part of parts) {
     const r = asRecord(part);
     const type = r.type;
-    let key: string | undefined;
-    let complete: CompleteAttachment | undefined;
 
     if (type === "image" && typeof r.image === "string") {
       const url = r.image;
       const name = filenameFromImageUrl(url);
-      key = url;
-      complete = {
+      if (seen.has(url)) continue;
+      seen.add(url);
+      out.push({
         id: url,
         type: "image",
         name,
         contentType: "image",
         status: { type: "complete" },
         content: [{ type: "image", image: url, filename: name }],
-      };
+      });
     } else if (type === "file" && typeof r.data === "string") {
       // ponytail: SDK's contentToParts defaults filename to "file"
       // when the source part lacks `metadata.filename`, but the type
@@ -461,38 +451,40 @@ function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachm
       const fileName = (typeof r.filename === "string" && r.filename) || "file";
       const mimeType = typeof r.mimeType === "string" ? r.mimeType : "";
       const kbRef = readKbRefSibling(r);
-      if (kbRef) {
-        key = `kb_ref:${kbRef.docId}`;
-        complete = buildKbRefAttachment(kbRef.docId, fileName, key);
-      } else {
-        key = fileName;
-        complete = {
-          id: fileName,
-          type: "file",
-          name: fileName,
-          contentType: mimeType,
-          status: { type: "complete" },
-          content: [
-            {
-              type: "file",
-              data: r.data,
-              mimeType,
-              filename: fileName,
-            },
-          ],
-        };
-      }
-    } else if (type === "kb_ref" && typeof r.docId === "string") {
-      // ponytail: legacy branch — older threads may carry a standalone
-      // kb_ref part that pre-dates the sibling-field migration.
-      const docId = r.docId;
-      key = `kb_ref:${docId}`;
-      complete = buildKbRefAttachment(docId, docId, key);
-    }
-    if (complete && key && !seen.has(key)) {
+      // ponytail: dedupe on docId when the file is KB-tagged, otherwise
+      // on filename. A retried / duplicate upload with the same name
+      // but a different docId would otherwise show two tiles; the same
+      // file uploaded twice with no docId change stays as one tile.
+      const key = kbRef ? `kb_ref:${kbRef.docId}` : fileName;
+      if (seen.has(key)) continue;
       seen.add(key);
-      out.push(complete);
+      const fileContent = {
+        type: "file" as const,
+        data: r.data,
+        mimeType,
+        filename: fileName,
+      };
+      out.push({
+        id: key,
+        type: "file",
+        name: fileName,
+        contentType: mimeType,
+        status: { type: "complete" },
+        content: kbRef
+          ? [
+              fileContent,
+              {
+                type: "kb_ref",
+                docId: kbRef.docId,
+              } as unknown as CompleteAttachment["content"][number],
+            ]
+          : [fileContent],
+      });
     }
+    // legacy standalone `{ type: "kb_ref", docId }` parts (older
+    // threads) are dropped here — the parent message still has the
+    // file part that produced the original upload, and that file
+    // part will carry a kb_ref sibling on any subsequent re-ingest.
   }
   return out;
 }
