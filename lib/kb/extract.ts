@@ -12,29 +12,28 @@ export type KbRefMarker = {
   attachmentId?: string;
 };
 
-// ponytail: KbRefSidecar is a thread-scoped map of file-part URLs to
-// their ingested kb_document. The front-end reads it from
-// state.values.kb_refs and decorates each rendered file/image tile
-// with the docId.
-//
-// Why a sidecar instead of a sibling field on the file part:
-// @assistant-ui/react-langgraph's `contentToParts` only forwards a
-// closed set of part types (text, image, file, reasoning, tool-call,
-// computer_call) and the SDK's switch on `file` returns a fresh object
-// with only `{type, filename, data, mimeType}` — sibling fields like
-// `kb_ref` are dropped. A standalone `{ type: "kb_ref" }` part hits
-// the default branch and gets filtered to null. So we can't smuggle
-// kb_ref through message.content; we expose it as a parallel state
-// key the front-end reads in the same `load()` call as messages.
-export type KbRefSidecar = Record<string, KbRefMarker>;
-
+// ponytail: kb_ref rides as a sibling field on a file part, NOT as
+// its own content part. Reason: @assistant-ui/react-langgraph's
+// `contentToParts` only forwards a closed set of part types (text,
+// image, file, reasoning, tool-call, computer_call) and a standalone
+// `{ type: "kb_ref" }` hits the default branch and gets filtered to
+// null. The SDK's `file` switch ALSO rebuilds the object from scratch
+// with only {type, filename, data, mimeType} — sibling fields might
+// get dropped there too, but we try the sibling-field approach first
+// because it's the most direct path; if it doesn't survive, fall
+// back to patching the SDK or a custom message converter.
 export type FilePart = {
   type: "file";
   data: string;
   mime_type?: string;
   filename?: string;
+  kb_ref?: KbRefMarker;
 };
 
+// ponytail: legacy standalone kb_ref part shape. Kept for type-compat
+// with old threads that predate the sibling-field migration AND for
+// the resolve layer that needs to read kb_refs to feed the LLM.
+// collectKbRefs accepts both shapes.
 export type KbRefPart = {
   type: "kb_ref";
   docId: string;
@@ -53,29 +52,19 @@ export function isKbRefPart(part: unknown): part is KbRefPart {
   return isRecord(part) && part.type === "kb_ref" && typeof part.docId === "string";
 }
 
-// ponytail: file-part URL → kb_ref lookup. Both `data` (R2 URL for
-// uploads) and a contentHash fallback are tried. Returns null if no
-// mapping is recorded for the part — caller treats that as a plain file.
-export function lookupKbRef(
-  sidecar: KbRefSidecar | undefined,
-  fileData: string,
-): KbRefMarker | null {
-  if (!sidecar) return null;
-  return sidecar[fileData] ?? null;
-}
-
 export function isPdfAttachment(part: FilePart): boolean {
   return part.mime_type === "application/pdf";
 }
 
 // ponytail: router signal. True when ANY HumanMessage in the array
-// still carries a PDF file part. Once kbAgent finishes, every PDF
-// file part has been replaced with a kb_ref, so this returns false
-// until the next upload.
+// still carries a PDF file part (without a kb_ref sibling — a
+// kb_ref-stamped PDF is already processed). Returns false for
+// already-ingested PDFs so a second router pass doesn't re-dispatch
+// kbAgent.
 export function hasUnprocessedPdf(messages: BaseMessage[]): boolean {
   for (const m of messages) {
     if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) continue;
-    if (m.content.some((p) => isFilePart(p) && p.mime_type === "application/pdf")) {
+    if (m.content.some((p) => isFilePart(p) && p.mime_type === "application/pdf" && !p.kb_ref)) {
       return true;
     }
   }
@@ -83,7 +72,9 @@ export function hasUnprocessedPdf(messages: BaseMessage[]): boolean {
 }
 
 // ponytail: returns EVERY PDF file part from EVERY HumanMessage in
-// message order. kbAgent uses this to discover what needs OCR.
+// message order, EXCLUDING those already stamped with a kb_ref
+// sibling (kbAgent has already processed them — re-processing would
+// double the chunks). kbAgent uses this to discover what needs OCR.
 export function extractAllPdfParts(
   messages: BaseMessage[],
 ): Array<{ messageIndex: number; filePart: FilePart }> {
@@ -91,7 +82,7 @@ export function extractAllPdfParts(
   messages.forEach((m, i) => {
     if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) return;
     for (const part of m.content) {
-      if (isFilePart(part) && part.mime_type === "application/pdf") {
+      if (isFilePart(part) && part.mime_type === "application/pdf" && !part.kb_ref) {
         out.push({ messageIndex: i, filePart: part });
       }
     }
@@ -99,21 +90,25 @@ export function extractAllPdfParts(
   return out;
 }
 
-// ponytail: returns every kb_ref part across EVERY HumanMessage,
-// deduped by docId (first occurrence wins). state.messages is
-// append-only under the LangGraph addMessages reducer, so a kb_ref
-// appended by kbAgent in turn N stays in Human(N) for the rest of
-// the thread — even after the user has sent several more turns of
-// plain text. Used by resolveKbRefs to feed the LLM the full history.
+// ponytail: returns every kb_ref across EVERY HumanMessage, deduped
+// by docId (first occurrence wins). Accepts both the new
+// file-part-with-kb_ref-sibling shape AND the legacy standalone
+// kb_ref part. state.messages is append-only under the LangGraph
+// addMessages reducer, so a kb_ref attached by kbAgent in turn N
+// stays in Human(N) for the rest of the thread — even after the
+// user has sent several more turns of plain text. Used by
+// resolveKbRefs to feed the LLM the full history.
 export function collectKbRefs(messages: BaseMessage[]): KbRefPart[] {
   const seen = new Set<string>();
   const out: KbRefPart[] = [];
   for (const m of messages) {
     if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) continue;
     for (const part of m.content) {
-      if (isKbRefPart(part) && !seen.has(part.docId)) {
-        seen.add(part.docId);
-        out.push(part);
+      const marker =
+        isFilePart(part) && part.kb_ref ? part.kb_ref : isKbRefPart(part) ? part : null;
+      if (marker && !seen.has(marker.docId)) {
+        seen.add(marker.docId);
+        out.push({ type: "kb_ref", docId: marker.docId, attachmentId: marker.attachmentId });
       }
     }
   }

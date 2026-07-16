@@ -272,8 +272,11 @@ describe("backend/kb-agent", () => {
 
       const lastMsg = (out.messages as HumanMessage[])[0];
       const content = lastMsg.content as Array<Record<string, unknown>>;
-      expect(content.some((p) => p.type === "kb_ref")).toBe(true);
-      expect(content.some((p) => p.type === "file")).toBe(false);
+      // ponytail: kbAgent stamps `kb_ref` as a sibling field on the
+      // file part (not a standalone part). File part preserved, kb_ref
+      // carries the docId.
+      expect(content.some((p) => p.type === "file" && p.kb_ref)).toBe(true);
+      expect(content.some((p) => p.type === "file")).toBe(true);
     });
 
     it("falls back to [] entities when the chat invoke rejects", async () => {
@@ -340,7 +343,9 @@ describe("backend/kb-agent", () => {
       expect(mocks.insertDoc).not.toHaveBeenCalled();
       const lastMsg = (out.messages as HumanMessage[])[0];
       const content = lastMsg.content as Array<Record<string, unknown>>;
-      expect(content.some((p) => p.type === "kb_ref")).toBe(true);
+      // ponytail: dedup case reuses an existing docId — kbAgent
+      // stamps it as a sibling on the file part.
+      expect(content.some((p) => p.type === "file" && p.kb_ref)).toBe(true);
     });
 
     it("failed: existing row's errorMessage carried through processedFiles", async () => {
@@ -435,8 +440,8 @@ describe("backend/kb-agent", () => {
         expect.objectContaining({ status: "failed", errorMessage: "OCR gateway 502" }),
       );
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
-      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(1);
-      expect(content.filter((p) => p.type === "file")).toHaveLength(0);
+      expect(content.filter((p) => p.type === "file" && p.kb_ref)).toHaveLength(1);
+      expect(content.filter((p) => p.type === "file")).toHaveLength(1);
     });
   });
 
@@ -527,7 +532,8 @@ describe("backend/kb-agent", () => {
       expect(mocks.insertChunks).toHaveBeenCalledTimes(1);
       // Both kb_refs present in the rewritten HumanMessage.
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
-      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(2);
+      // ponytail: kb_ref rides on the file part as a sibling field.
+      expect(content.filter((p) => p.type === "file" && p.kb_ref)).toHaveLength(2);
       // The successful doc got status=success on its row. The failed doc
       // stays at status=parsing — OCR completed for both, beta's chunks
       // insert failed but we don't downgrade its row to failed (that
@@ -576,10 +582,10 @@ describe("backend/kb-agent", () => {
       expect(processed.map((p) => p.pipelineStatus)).toEqual(["new", "new"]);
       expect(mocks.insertDoc).toHaveBeenCalledTimes(2);
       expect(mocks.insertChunks).toHaveBeenCalledTimes(2);
-      // Both kb_refs appended in place (replacing both file parts)
+      // Both file parts preserved with kb_ref sibling (NOT replaced).
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
-      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(2);
-      expect(content.filter((p) => p.type === "file")).toHaveLength(0);
+      expect(content.filter((p) => p.type === "file" && p.kb_ref)).toHaveLength(2);
+      expect(content.filter((p) => p.type === "file")).toHaveLength(2);
       expect(content.filter((p) => p.type === "text")).toHaveLength(1);
     });
 
@@ -611,10 +617,11 @@ describe("backend/kb-agent", () => {
       const m2 = (out.messages as HumanMessage[])[2];
       const c1 = m1.content as Array<Record<string, unknown>>;
       const c2 = m2.content as Array<Record<string, unknown>>;
-      expect(c1.some((p) => p.type === "kb_ref")).toBe(true);
-      expect(c1.some((p) => p.type === "file")).toBe(false);
-      expect(c2.some((p) => p.type === "kb_ref")).toBe(true);
-      expect(c2.some((p) => p.type === "file")).toBe(false);
+      // ponytail: kb_ref rides on the file part as a sibling.
+      expect(c1.some((p) => p.type === "file" && p.kb_ref)).toBe(true);
+      expect(c1.some((p) => p.type === "file")).toBe(true);
+      expect(c2.some((p) => p.type === "file" && p.kb_ref)).toBe(true);
+      expect(c2.some((p) => p.type === "file")).toBe(true);
       // Per-messageIndex tagging
       expect(processed.map((p) => p.messageIndex)).toEqual([0, 2]);
     });
@@ -682,9 +689,9 @@ describe("backend/kb-agent", () => {
       // Only beta goes through OCR + chunk + insert
       expect(mocks.ocrStructuredInvoke).toHaveBeenCalledTimes(2); // 2 pages for beta
       expect(mocks.insertDoc).toHaveBeenCalledTimes(1);
-      // Both kb_refs present in the rewritten message
+      // Both file parts preserved with kb_ref sibling.
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
-      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(2);
+      expect(content.filter((p) => p.type === "file" && p.kb_ref)).toHaveLength(2);
     });
 
     it("isolates per-doc OCR failures — one fail, one success", async () => {
@@ -735,9 +742,9 @@ describe("backend/kb-agent", () => {
       // The success entry still has a kb_ref
       const success = processed.find((p) => p.pipelineStatus === "new") as Record<string, unknown>;
       expect(success.docId).toMatch(/^d-/);
-      // Both kb_refs present in the rewritten message
+      // Both file parts preserved with kb_ref sibling.
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
-      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(2);
+      expect(content.filter((p) => p.type === "file" && p.kb_ref)).toHaveLength(2);
     });
 
     it("strips non-PDF file parts while keeping PDF-derived kb_refs", async () => {
@@ -759,9 +766,9 @@ describe("backend/kb-agent", () => {
       );
       expect(out.status).toBe("success");
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
-      // kb_ref for the PDF, text preserved, image dropped
-      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(1);
-      expect(content.filter((p) => p.type === "file")).toHaveLength(0);
+      // ponytail: file part preserved with kb_ref sibling, text preserved, image dropped.
+      expect(content.filter((p) => p.type === "file" && p.kb_ref)).toHaveLength(1);
+      expect(content.filter((p) => p.type === "file")).toHaveLength(1);
       expect(content.filter((p) => p.type === "text")).toHaveLength(1);
     });
 
@@ -784,8 +791,11 @@ describe("backend/kb-agent", () => {
       );
       expect(out.status).toBe("success");
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
-      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(2);
-      expect(content.filter((p) => p.type === "file")).toHaveLength(0);
+      // ponytail: existing standalone kb_ref part kept, file part
+      // gets kb_ref sibling. So total kb_refs = 1 (legacy) + 1 (sibling).
+      expect(content.filter((p) => p.type === "kb_ref")).toHaveLength(1);
+      expect(content.filter((p) => p.type === "file" && p.kb_ref)).toHaveLength(1);
+      expect(content.filter((p) => p.type === "file")).toHaveLength(1);
       expect(content.filter((p) => p.type === "text")).toHaveLength(1);
     });
   });

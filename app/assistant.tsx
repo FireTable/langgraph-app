@@ -26,7 +26,6 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { threadListAdapter } from "@/lib/threads/adapter";
 import { R2AttachmentAdapter } from "@/lib/attachments/r2-adapter";
-import { setActiveKbRefsThread, setKbRefsForThread } from "@/lib/kb/kb-refs-store";
 import { cn } from "@/lib/utils";
 import { createLangGraphStream } from "@/lib/langgraph/create-stream";
 
@@ -235,7 +234,7 @@ export function Assistant() {
     // RemoteThreadListThreadListRuntimeCore._notifyThreadIdChange.
     // We push the URL via plain history.pushState (no Next router), so
     // thread nav doesn't RSC-refetch the page.
-    onThreadIdChange: makeWriteUrlForThread(client),
+    onThreadIdChange: writeUrlForThread,
     stream,
     eventHandlers,
     ...(attachments ? { adapters: { attachments } } : {}),
@@ -257,26 +256,12 @@ export function Assistant() {
     // runtime on reload — see mergeSubgraphMessages for the dedupe rule.
     load: async (externalId) => {
       const state = await client.threads.getState(externalId, undefined, { subgraphs: true });
-      const values = state.values as {
-        messages?: unknown;
-        ui?: unknown;
-        // ponytail: kb_refs sidecar populated by kbAgent. filePartData
-        // → { docId, attachmentId? }. UserMessageAttachments reads
-        // this via useKbRefsStore to decorate rendered file tiles
-        // with a KB-doc deep-link. Same sidecar as kbAgent's local
-        // state; the parent merges via standard LangGraph reducers.
-        kb_refs?: Record<string, { docId: string; attachmentId?: string }>;
-      };
+      const values = state.values as { messages?: unknown; ui?: unknown };
       const interrupts = state.tasks?.at(-1)?.interrupts;
       const messages = mergeSubgraphMessages(
         (values.messages ?? []) as Array<{ id?: string }>,
         state.tasks as ReadonlyArray<unknown>,
       ) as never;
-      // ponytail: stash the sidecar for this thread so attachment
-      // tiles can join FilePart.data → docId. Clear-then-set so a
-      // thread that deleted its last kb_ref re-renders as a plain
-      // file on the next load.
-      setKbRefsForThread(externalId, values.kb_refs ?? {});
 
       return {
         messages,
@@ -434,38 +419,9 @@ const ThreadUrlShadow: FC = () => {
 // we treat that as "user wants /chat for now"). Real uuid → push
 // /chat/<uuid>. No preconditions, no reads of aUI's state.
 //
-// ponytail: also re-fetch the kb_refs sidecar on every thread switch.
-// The SDK calls `load()` on thread switches too, but the runtime
-// doesn't ping `load()` again until the user interacts — we want the
-// sidecar warm BEFORE the user opens an old thread, so a separate
-// one-shot here keeps the cache fresh without coupling to the SDK.
-export const makeWriteUrlForThread =
-  (client: Client) =>
-  (remoteId: string | undefined): void => {
-    if (typeof window === "undefined") return;
-    setActiveKbRefsThread(remoteId ?? null);
-    if (remoteId) {
-      void refreshKbRefs(client, remoteId);
-    }
-    const target = remoteId ? `/chat/${remoteId}` : "/chat";
-    if (window.location.pathname === target) return;
-    window.history.pushState(remoteId ? { threadId: remoteId } : { threadId: null }, "", target);
-  };
-
-// ponytail: best-effort one-shot kb_refs hydrate per thread. Reuses
-// the same langgraph client the runtime uses for messages so we hit
-// the in-process thread state (PostgresSaver) without spinning up a
-// second auth path. Failure is non-fatal — UserMessageAttachments
-// falls back to "no kb_refs for this thread", which means rendered
-// file tiles behave as plain files.
-async function refreshKbRefs(client: Client, threadId: string): Promise<void> {
-  try {
-    const state = await client.threads.getState(threadId, undefined, { subgraphs: true });
-    const refs = (
-      state.values as { kb_refs?: Record<string, { docId: string; attachmentId?: string }> }
-    ).kb_refs;
-    setKbRefsForThread(threadId, refs ?? {});
-  } catch {
-    // best-effort
-  }
-}
+const writeUrlForThread = (remoteId: string | undefined): void => {
+  if (typeof window === "undefined") return;
+  const target = remoteId ? `/chat/${remoteId}` : "/chat";
+  if (window.location.pathname === target) return;
+  window.history.pushState(remoteId ? { threadId: remoteId } : { threadId: null }, "", target);
+};

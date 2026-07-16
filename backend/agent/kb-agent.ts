@@ -21,7 +21,7 @@ import {
   withKbTx,
 } from "@/lib/kb/queries";
 import { findAttachmentByR2Key } from "@/lib/attachments/queries";
-import { extractAllPdfParts, isFilePart, isKbRefPart, type FilePart } from "@/lib/kb/extract";
+import { extractAllPdfParts, isFilePart, type FilePart } from "@/lib/kb/extract";
 import { invalidateKbDoc } from "@/lib/kb/cache";
 import { EMBEDDING_DIM } from "@/lib/kb/schema";
 import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from "@/lib/r2/client";
@@ -91,21 +91,6 @@ const KbAgentState = new StateSchema({
   // From parent — populated by RouterNode at invoke time.
   messages: z.array(z.custom<BaseMessage>()),
   userId: z.string().nullable().default(null),
-  // ponytail: sidecar map populated by chunkEmbedStoreNode and read
-  // by the front-end to decorate rendered file tiles. Keys are
-  // FilePart.data (the same URL the HumanMessage carries); values
-  // carry the ingested kb_document id so a tile click can deep-link
-  // to /settings/knowledge-base?doc=<id>. Same shape as
-  // RouterAgentState.kb_refs — the parent state merges this in.
-  kb_refs: z
-    .record(
-      z.string(),
-      z.object({
-        docId: z.string(),
-        attachmentId: z.string().optional(),
-      }),
-    )
-    .default({}),
   // Internal.
   pagesByDocId: z.record(z.string(), z.array(z.custom<PageResult>())).default({}),
   chunksByDocId: z.record(z.string(), z.array(z.custom<ChunkSeed>())).default({}),
@@ -119,7 +104,6 @@ const KbAgentState = new StateSchema({
 type KbAgentStateShape = {
   messages: BaseMessage[];
   userId: string | null;
-  kb_refs: Record<string, { docId: string; attachmentId?: string }>;
   pagesByDocId: Record<string, PageResult[]>;
   chunksByDocId: Record<string, ChunkSeed[]>;
   processedFiles: ProcessedFile[];
@@ -581,22 +565,26 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   await Promise.allSettled(finalized);
 
   // ponytail: rewrite EVERY HumanMessage that had a PDF file part.
-  // Each PDF file part → kb_ref (if we have a docId) OR strip (if
-  // unknown/failed with no docId). Text parts and existing kb_ref
-  // parts preserved. Non-PDF file parts dropped (consistent with the
-  // prior appendKbRef behavior — they were never surfaced to the model
-  // anyway).
+  // For each PDF we matched to a kb_document, KEEP the original file
+  // part and stamp a `kb_ref` sibling onto it — `{docId, attachmentId?}`.
+  // The front-end reads that sibling to deep-link the rendered file
+  // tile into /settings/knowledge-base?doc=<id>.
   //
-  // We ALSO emit a sidecar `kb_refs` map onto RouterAgentState
-  // (filePartData → { docId, attachmentId? }) so the front-end can
-  // decorate rendered file tiles with a KB-doc deep-link. Why a
-  // sidecar and not a sibling field: @assistant-ui/react-langgraph's
-  // `contentToParts` filters a standalone `kb_ref` part to null
-  // (default branch returns null), AND the SDK's `file` switch
-  // constructs a fresh object with only {type, filename, data,
-  // mimeType} — sibling fields like `kb_ref` are dropped. The sidecar
-  // travels on the same `getState` call that loads messages, so no
-  // extra round-trip.
+  // Why not emit a standalone kb_ref part: @assistant-ui/react-langgraph's
+  // `contentToParts` filters unknown part types to null (default branch
+  // returns null), so a `{ type: "kb_ref" }` part never reaches the
+  // runtime. The SDK's `file` switch rebuilds the object from scratch
+  // with only {type, filename, data, mimeType} — sibling fields might
+  // also be stripped. We're trying the sibling-field approach first;
+  // if the SDK proves to drop it, fall back to a patched SDK or a
+  // custom message converter.
+  //
+  // Failure modes:
+  //  - matched PDF (new / dedup / parsing): file part + kb_ref sibling.
+  //  - non-PDF file part: drop (kbAgent never surfaces these to the
+  //    model anyway — same as the prior behavior).
+  //  - unknown / failed PDF with no docId: drop the file part (no
+  //    docId to attach).
   const fileToDoc = new Map<string, { docId: string; attachmentId: string | null }>();
   for (const pf of updatedProcessed) {
     if (pf.docId) {
@@ -609,22 +597,21 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
     let changed = false;
     const newContent: unknown[] = [];
     for (const part of m.content) {
-      if (isKbRefPart(part)) {
-        // keep existing kb_refs — they came from a prior kbAgent run
-        newContent.push(part);
-        continue;
-      }
       if (isFilePart(part)) {
-        changed = true;
         const matched = fileToDoc.get(part.data);
-        if (matched) {
-          newContent.push({
-            type: "kb_ref",
-            docId: matched.docId,
-            attachmentId: matched.attachmentId ?? undefined,
-          });
+        if (!matched) {
+          // non-PDF or unknown/failed PDF with no docId → drop
+          changed = true;
+          continue;
         }
-        // unmatched (non-PDF or unknown PDF) → drop
+        changed = true;
+        newContent.push({
+          ...part,
+          kb_ref: {
+            docId: matched.docId,
+            ...(matched.attachmentId ? { attachmentId: matched.attachmentId } : {}),
+          },
+        });
         continue;
       }
       newContent.push(part);
@@ -656,30 +643,10 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
     errorMessage = "no PDF could be processed";
   }
 
-  // ponytail: emit the kb_refs sidecar that the front-end reads to
-  // decorate rendered file tiles with a KB-doc deep-link. The Map
-  // shape mirrors RouterAgentState.kb_refs. We pass filePartData as
-  // the key — the same URL the HumanMessage's file part carries, so
-  // the front-end can join by `FilePart.data`. Merge with whatever
-  // already exists so the second kbAgent pass in the same thread
-  // doesn't overwrite the first's mappings.
-  const kbRefs: Record<string, { docId: string; attachmentId?: string }> = {
-    ...state.kb_refs,
-  };
-  for (const pf of updatedProcessed) {
-    if (pf.docId) {
-      kbRefs[pf.filePart.data] = {
-        docId: pf.docId,
-        ...(pf.attachmentId ? { attachmentId: pf.attachmentId } : {}),
-      };
-    }
-  }
-
   return {
     messages,
     processedFiles: updatedProcessed,
     chunksByDocId: updatedChunksByDocId,
-    kb_refs: kbRefs,
     status,
     errorMessage,
   };

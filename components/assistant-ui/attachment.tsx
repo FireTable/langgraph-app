@@ -12,15 +12,8 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
 import { useUploadStore } from "@/lib/attachments/upload-store";
-import { useKbRefsStore } from "@/lib/kb/kb-refs-store";
 
 const KB_SETTINGS_PATH = "/settings/knowledge-base";
-
-// ponytail: stable empty-refs handle so the kbRefs selector returns
-// the same reference across renders when no thread is active (or the
-// active thread has no KB refs yet). Avoids re-running the
-// buildUserMessageAttachments memo on every parent re-render.
-const EMPTY_KB_REFS: Record<string, never> = Object.freeze({});
 
 // ponytail: client-side object URL for a pending File. Drops on unmount.
 const useFileSrc = (file: File | undefined) => {
@@ -417,15 +410,11 @@ function buildKbRefAttachment(docId: string, name: string, key: string): Complet
 }
 
 // ponytail: pure projection of message.content → CompleteAttachment[].
-// Reads the kbRefs sidecar from useKbRefsStore so a tile whose URL
-// matches an ingested kb_document can be re-tagged as type="kb_ref"
-// for deep-link rendering. image / file / kb_ref branches mirror the
-// pre-refactor inline implementation; kbRefs lookup is the only new
-// wrinkle vs. the original.
-function buildUserMessageAttachments(
-  parts: readonly unknown[],
-  kbRefs: Record<string, { docId: string; attachmentId?: string }>,
-): CompleteAttachment[] {
+// For each file part, check if kbAgent stamped a `kb_ref` sibling —
+// if so, re-tag the tile as type="kb_ref" so the card can deep-link
+// into /settings/knowledge-base?doc=<id>. image / file / kb_ref
+// branches mirror the pre-refactor inline implementation.
+function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachment[] {
   const seen = new Set<string>();
   const out: CompleteAttachment[] = [];
   for (const part of parts) {
@@ -437,11 +426,18 @@ function buildUserMessageAttachments(
     if (type === "image" && typeof r.image === "string") {
       const url = r.image;
       const name = filenameFromImageUrl(url);
-      const kbRef = kbRefs[url];
+      // ponytail: kbAgent stamps a `kb_ref` sibling onto a file part
+      // (NOT a standalone part — the SDK's contentToParts filters
+      // unknown types to null). Image parts don't currently carry the
+      // sibling because R2 image uploads don't route through kbAgent,
+      // but the field shape is reserved for future ingestion paths.
+      const kbRef =
+        typeof r.kb_ref === "object" &&
+        r.kb_ref !== null &&
+        typeof (r.kb_ref as { docId?: unknown }).docId === "string"
+          ? (r.kb_ref as { docId: string; attachmentId?: string })
+          : null;
       if (kbRef) {
-        // ponytail: image upload was a PDF (or image that later got
-        // ingested into KB). Surface as a KB-doc tile so the user can
-        // click through to /settings/knowledge-base?doc=<id>.
         key = `kb_ref:${kbRef.docId}`;
         complete = buildKbRefAttachment(kbRef.docId, name, key);
       } else {
@@ -462,7 +458,16 @@ function buildUserMessageAttachments(
       // have a non-empty id / name.
       const fileName = (typeof r.filename === "string" && r.filename) || "file";
       const mimeType = typeof r.mimeType === "string" ? r.mimeType : "";
-      const kbRef = kbRefs[r.data];
+      // ponytail: kbAgent stamps `kb_ref` directly onto the file part
+      // as a sibling field. If it survives the SDK filter, we render
+      // the tile as a KB-doc deep-link; otherwise we fall through to
+      // the plain-file branch and the tile is just a download.
+      const kbRef =
+        typeof r.kb_ref === "object" &&
+        r.kb_ref !== null &&
+        typeof (r.kb_ref as { docId?: unknown }).docId === "string"
+          ? (r.kb_ref as { docId: string; attachmentId?: string })
+          : null;
       if (kbRef) {
         key = `kb_ref:${kbRef.docId}`;
         complete = buildKbRefAttachment(kbRef.docId, fileName, key);
@@ -485,8 +490,8 @@ function buildUserMessageAttachments(
         };
       }
     } else if (type === "kb_ref" && typeof r.docId === "string") {
-      // ponytail: legacy branch — older threads may have emitted a
-      // standalone kb_ref part before the sidecar migration.
+      // ponytail: legacy branch — older threads may carry a standalone
+      // kb_ref part that pre-dates the sibling-field migration.
       const docId = r.docId;
       key = `kb_ref:${docId}`;
       complete = buildKbRefAttachment(docId, docId, key);
@@ -501,18 +506,10 @@ function buildUserMessageAttachments(
 
 export const UserMessageAttachments: FC = () => {
   const content = useAuiState((s) => s.message.content);
-  // ponytail: thread-scoped kbRefs sidecar. Looked up by filePartData
-  // (R2 URL) so the helper can flag each tile that maps to an
-  // ingested kb_document. Re-renders only when the active thread's
-  // refs change — see lib/kb/kb-refs-store.ts.
-  const kbRefs = useKbRefsStore((s) => {
-    const id = s.activeThreadId;
-    return id ? (s.refsByThread[id] ?? EMPTY_KB_REFS) : EMPTY_KB_REFS;
-  });
 
   const attachments = useMemo<CompleteAttachment[]>(
-    () => buildUserMessageAttachments(content, kbRefs),
-    [content, kbRefs],
+    () => buildUserMessageAttachments(content),
+    [content],
   );
 
   if (attachments.length === 0) return null;
