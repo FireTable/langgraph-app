@@ -91,6 +91,21 @@ const KbAgentState = new StateSchema({
   // From parent — populated by RouterNode at invoke time.
   messages: z.array(z.custom<BaseMessage>()),
   userId: z.string().nullable().default(null),
+  // ponytail: sidecar map populated by chunkEmbedStoreNode and read
+  // by the front-end to decorate rendered file tiles. Keys are
+  // FilePart.data (the same URL the HumanMessage carries); values
+  // carry the ingested kb_document id so a tile click can deep-link
+  // to /settings/knowledge-base?doc=<id>. Same shape as
+  // RouterAgentState.kb_refs — the parent state merges this in.
+  kb_refs: z
+    .record(
+      z.string(),
+      z.object({
+        docId: z.string(),
+        attachmentId: z.string().optional(),
+      }),
+    )
+    .default({}),
   // Internal.
   pagesByDocId: z.record(z.string(), z.array(z.custom<PageResult>())).default({}),
   chunksByDocId: z.record(z.string(), z.array(z.custom<ChunkSeed>())).default({}),
@@ -104,6 +119,7 @@ const KbAgentState = new StateSchema({
 type KbAgentStateShape = {
   messages: BaseMessage[];
   userId: string | null;
+  kb_refs: Record<string, { docId: string; attachmentId?: string }>;
   pagesByDocId: Record<string, PageResult[]>;
   chunksByDocId: Record<string, ChunkSeed[]>;
   processedFiles: ProcessedFile[];
@@ -567,9 +583,20 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   // ponytail: rewrite EVERY HumanMessage that had a PDF file part.
   // Each PDF file part → kb_ref (if we have a docId) OR strip (if
   // unknown/failed with no docId). Text parts and existing kb_ref
-  // parts preserved. Non-PDF file parts dropped (consistent with
-  // the prior appendKbRef behavior — they were never surfaced to
-  // the model anyway).
+  // parts preserved. Non-PDF file parts dropped (consistent with the
+  // prior appendKbRef behavior — they were never surfaced to the model
+  // anyway).
+  //
+  // We ALSO emit a sidecar `kb_refs` map onto RouterAgentState
+  // (filePartData → { docId, attachmentId? }) so the front-end can
+  // decorate rendered file tiles with a KB-doc deep-link. Why a
+  // sidecar and not a sibling field: @assistant-ui/react-langgraph's
+  // `contentToParts` filters a standalone `kb_ref` part to null
+  // (default branch returns null), AND the SDK's `file` switch
+  // constructs a fresh object with only {type, filename, data,
+  // mimeType} — sibling fields like `kb_ref` are dropped. The sidecar
+  // travels on the same `getState` call that loads messages, so no
+  // extra round-trip.
   const fileToDoc = new Map<string, { docId: string; attachmentId: string | null }>();
   for (const pf of updatedProcessed) {
     if (pf.docId) {
@@ -629,10 +656,30 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
     errorMessage = "no PDF could be processed";
   }
 
+  // ponytail: emit the kb_refs sidecar that the front-end reads to
+  // decorate rendered file tiles with a KB-doc deep-link. The Map
+  // shape mirrors RouterAgentState.kb_refs. We pass filePartData as
+  // the key — the same URL the HumanMessage's file part carries, so
+  // the front-end can join by `FilePart.data`. Merge with whatever
+  // already exists so the second kbAgent pass in the same thread
+  // doesn't overwrite the first's mappings.
+  const kbRefs: Record<string, { docId: string; attachmentId?: string }> = {
+    ...state.kb_refs,
+  };
+  for (const pf of updatedProcessed) {
+    if (pf.docId) {
+      kbRefs[pf.filePart.data] = {
+        docId: pf.docId,
+        ...(pf.attachmentId ? { attachmentId: pf.attachmentId } : {}),
+      };
+    }
+  }
+
   return {
     messages,
     processedFiles: updatedProcessed,
     chunksByDocId: updatedChunksByDocId,
+    kb_refs: kbRefs,
     status,
     errorMessage,
   };

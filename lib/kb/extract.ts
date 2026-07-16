@@ -7,6 +7,27 @@ import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
 // share these helpers so a wire-format quirk only has to be reasoned
 // about in one place.
 
+export type KbRefMarker = {
+  docId: string;
+  attachmentId?: string;
+};
+
+// ponytail: KbRefSidecar is a thread-scoped map of file-part URLs to
+// their ingested kb_document. The front-end reads it from
+// state.values.kb_refs and decorates each rendered file/image tile
+// with the docId.
+//
+// Why a sidecar instead of a sibling field on the file part:
+// @assistant-ui/react-langgraph's `contentToParts` only forwards a
+// closed set of part types (text, image, file, reasoning, tool-call,
+// computer_call) and the SDK's switch on `file` returns a fresh object
+// with only `{type, filename, data, mimeType}` — sibling fields like
+// `kb_ref` are dropped. A standalone `{ type: "kb_ref" }` part hits
+// the default branch and gets filtered to null. So we can't smuggle
+// kb_ref through message.content; we expose it as a parallel state
+// key the front-end reads in the same `load()` call as messages.
+export type KbRefSidecar = Record<string, KbRefMarker>;
+
 export type FilePart = {
   type: "file";
   data: string;
@@ -30,6 +51,17 @@ export function isFilePart(part: unknown): part is FilePart {
 
 export function isKbRefPart(part: unknown): part is KbRefPart {
   return isRecord(part) && part.type === "kb_ref" && typeof part.docId === "string";
+}
+
+// ponytail: file-part URL → kb_ref lookup. Both `data` (R2 URL for
+// uploads) and a contentHash fallback are tried. Returns null if no
+// mapping is recorded for the part — caller treats that as a plain file.
+export function lookupKbRef(
+  sidecar: KbRefSidecar | undefined,
+  fileData: string,
+): KbRefMarker | null {
+  if (!sidecar) return null;
+  return sidecar[fileData] ?? null;
 }
 
 export function isPdfAttachment(part: FilePart): boolean {

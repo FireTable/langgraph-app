@@ -12,9 +12,16 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
 import { useUploadStore } from "@/lib/attachments/upload-store";
+import { useKbRefsStore } from "@/lib/kb/kb-refs-store";
 import { buildUserMessageAttachments } from "@/components/assistant-ui/build-user-message-attachments";
 
 const KB_SETTINGS_PATH = "/settings/knowledge-base";
+
+// ponytail: stable empty-refs handle so the kbRefs selector returns
+// the same reference across renders when no thread is active (or the
+// active thread has no KB refs yet). Avoids re-running the
+// buildUserMessageAttachments memo on every parent re-render.
+const EMPTY_KB_REFS: Record<string, never> = Object.freeze({});
 
 // ponytail: client-side object URL for a pending File. Drops on unmount.
 const useFileSrc = (file: File | undefined) => {
@@ -381,10 +388,18 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
 // switchover.
 export const UserMessageAttachments: FC = () => {
   const content = useAuiState((s) => s.message.content);
+  // ponytail: thread-scoped kbRefs sidecar. Looked up by filePartData
+  // (R2 URL) so the helper can flag each tile that maps to an
+  // ingested kb_document. Re-renders only when the active thread's
+  // refs change — see lib/kb/kb-refs-store.ts.
+  const kbRefs = useKbRefsStore((s) => {
+    const id = s.activeThreadId;
+    return id ? (s.refsByThread[id] ?? EMPTY_KB_REFS) : EMPTY_KB_REFS;
+  });
 
   const attachments = useMemo<CompleteAttachment[]>(
-    () => buildUserMessageAttachments(content),
-    [content],
+    () => buildUserMessageAttachments(content, { kbRefs }),
+    [content, kbRefs],
   );
 
   if (attachments.length === 0) return null;
