@@ -41,3 +41,15 @@ export const KB_REF_SUFFIX = "]";
 // ponytail: matches the leading `[kb:<docId>]` (optional trailing space).
 // docId is `d-<uuid>` so `[^\]]+` is safe — `]` never appears in a uuid.
 export const KB_REF_PREFIX_REGEX = /^\[kb:([^\]]+)\]\s?/;
+
+// ponytail: kbAgent pipeline concurrency caps. OCR (apimart vision
+// model) is the slowest single step — its 5-wide p-queue caps total
+// in-flight OCR requests across ALL docs in a single kbAgent
+// invocation. Entity extraction (chat model with structured output)
+// runs at the same width since the two endpoints share the same
+// upstream rate-limit tier. Both are intentionally identical so a
+// doc that finishes OCR can move into entity extract without
+// blocking on a separately-tuned queue. Bump together if the
+// upstream tier changes; lower if you start hitting 429s.
+export const KB_OCR_CONCURRENCY = 5;
+export const KB_ENTITY_CONCURRENCY = 5;

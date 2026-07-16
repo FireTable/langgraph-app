@@ -30,6 +30,7 @@ import {
 import { invalidateKbDoc } from "@/lib/kb/cache";
 import { EMBEDDING_DIM } from "@/lib/kb/schema";
 import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from "@/lib/r2/client";
+import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
 
 // ponytail: v3 KB ingest subgraph — per-doc state. Compiled once at
 // module load, wired into agent.ts as `kbAgent`. Sits between
@@ -123,9 +124,6 @@ type KbAgentStateShape = {
 function makeError(message: string): Partial<KbAgentStateShape> {
   return { status: "failed", errorMessage: message, processedFiles: [] };
 }
-
-const OCR_CONCURRENCY = 5;
-const ENTITY_CONCURRENCY = 5;
 
 async function screenshotNode(
   state: KbAgentStateShape,
@@ -302,7 +300,7 @@ async function ocrNode(state: KbAgentStateShape) {
   // concurrency at OCR_CONCURRENCY regardless of how many PDFs were
   // in flight. Per-doc pages still complete in order (Promise.all per
   // doc preserves it).
-  const queue = new PQueue({ concurrency: OCR_CONCURRENCY });
+  const queue = new PQueue({ concurrency: KB_OCR_CONCURRENCY });
 
   const newDocs = state.processedFiles.filter(
     (p) =>
@@ -418,7 +416,7 @@ async function chunkEmbedStoreNode(state: KbAgentStateShape) {
   const embedder = await getEmbeddingModel();
 
   const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
-  const entityQueue = new PQueue({ concurrency: ENTITY_CONCURRENCY });
+  const entityQueue = new PQueue({ concurrency: KB_ENTITY_CONCURRENCY });
 
   const updatedChunksByDocId: Record<string, ChunkSeed[]> = { ...state.chunksByDocId };
   const updatedProcessed = state.processedFiles.map((p) => ({ ...p }));
