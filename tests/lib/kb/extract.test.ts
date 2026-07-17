@@ -6,7 +6,6 @@ import {
   extractAllPdfParts,
   hasUnprocessedPdf,
   isFilePart,
-  isKbRefPart,
   isPdfAttachment,
 } from "@/lib/kb/extract";
 
@@ -26,7 +25,17 @@ describe("lib/kb/extract", () => {
       expect(isFilePart({ type: "text", data: "x" })).toBe(false);
     });
 
-    it("rejects missing data", () => {
+    it("accepts a file part carrying the url field (source_type=url wire shape)", () => {
+      expect(
+        isFilePart({
+          type: "file",
+          url: "https://r2/foo.pdf",
+          mime_type: "application/pdf",
+        }),
+      ).toBe(true);
+    });
+
+    it("rejects a bare file part without data or url", () => {
       expect(isFilePart({ type: "file" })).toBe(false);
     });
 
@@ -38,28 +47,6 @@ describe("lib/kb/extract", () => {
       expect(isFilePart(null)).toBe(false);
       expect(isFilePart(undefined)).toBe(false);
       expect(isFilePart("file")).toBe(false);
-    });
-  });
-
-  describe("isKbRefPart", () => {
-    it("accepts a wire-shape kb_ref part", () => {
-      expect(isKbRefPart({ type: "kb_ref", docId: "d-1" })).toBe(true);
-    });
-
-    it("accepts with optional attachmentId", () => {
-      expect(isKbRefPart({ type: "kb_ref", docId: "d-1", attachmentId: "a-1" })).toBe(true);
-    });
-
-    it("rejects missing docId", () => {
-      expect(isKbRefPart({ type: "kb_ref" })).toBe(false);
-    });
-
-    it("rejects non-string docId", () => {
-      expect(isKbRefPart({ type: "kb_ref", docId: 42 })).toBe(false);
-    });
-
-    it("rejects non-kb_ref type", () => {
-      expect(isKbRefPart({ type: "file", docId: "d-1" })).toBe(false);
     });
   });
 
@@ -196,31 +183,47 @@ describe("lib/kb/extract", () => {
   });
 
   describe("collectKbRefs", () => {
+    // kb_ref now rides as the `kb_ref` sibling on a file part (no
+    // standalone part shape). Tests below mirror the wire shape
+    // kbAgent stamps onto state.messages after processing a PDF.
+    const fileWithRef = (docId: string) => ({
+      type: "file" as const,
+      data: `https://r2/u1/${docId}.pdf`,
+      mime_type: "application/pdf",
+      kb_ref: { docId },
+    });
+
     it("returns all kb_ref parts across every HumanMessage", () => {
-      const refA = { type: "kb_ref" as const, docId: "d-1" };
-      const refB = { type: "kb_ref" as const, docId: "d-2" };
+      const refA = fileWithRef("d-1");
+      const refB = fileWithRef("d-2");
       const h1 = new HumanMessage({ content: [refA], id: "h-1" });
       const ai = new AIMessage("ok");
       const h2 = new HumanMessage({
         content: [{ type: "text", text: "follow-up" }, refB] as never,
         id: "h-2",
       });
-      expect(collectKbRefs([h1, ai, h2])).toEqual([refA, refB]);
+      expect(collectKbRefs([h1, ai, h2])).toEqual([
+        { type: "kb_ref", docId: "d-1" },
+        { type: "kb_ref", docId: "d-2" },
+      ]);
     });
 
     it("preserves message order (earlier HumanMessage's kb_ref comes first)", () => {
-      const refEarly = { type: "kb_ref" as const, docId: "d-early" };
-      const refLate = { type: "kb_ref" as const, docId: "d-late" };
+      const refEarly = fileWithRef("d-early");
+      const refLate = fileWithRef("d-late");
       const h1 = new HumanMessage({ content: [refEarly], id: "h-1" });
       const h2 = new HumanMessage({ content: [refLate], id: "h-2" });
-      expect(collectKbRefs([h1, h2])).toEqual([refEarly, refLate]);
+      expect(collectKbRefs([h1, h2])).toEqual([
+        { type: "kb_ref", docId: "d-early" },
+        { type: "kb_ref", docId: "d-late" },
+      ]);
     });
 
     it("dedupes by docId — same docId in two HumanMessages appears once", () => {
-      const ref = { type: "kb_ref" as const, docId: "d-shared" };
+      const ref = fileWithRef("d-shared");
       const h1 = new HumanMessage({ content: [ref], id: "h-1" });
       const h2 = new HumanMessage({ content: [ref], id: "h-2" });
-      expect(collectKbRefs([h1, h2])).toEqual([ref]);
+      expect(collectKbRefs([h1, h2])).toEqual([{ type: "kb_ref", docId: "d-shared" }]);
     });
 
     it("returns an empty array when no HumanMessage has a kb_ref", () => {
@@ -235,10 +238,10 @@ describe("lib/kb/extract", () => {
     });
 
     it("skips HumanMessages whose content is a string (no parts to inspect)", () => {
-      const ref = { type: "kb_ref" as const, docId: "d-1" };
+      const ref = fileWithRef("d-1");
       const stringH = new HumanMessage("hi");
       const arrayH = new HumanMessage({ content: [ref], id: "h-1" });
-      expect(collectKbRefs([stringH, arrayH])).toEqual([ref]);
+      expect(collectKbRefs([stringH, arrayH])).toEqual([{ type: "kb_ref", docId: "d-1" }]);
     });
   });
 });

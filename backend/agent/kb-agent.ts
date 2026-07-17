@@ -105,7 +105,8 @@ async function prepareKBDataNode(
   // single invocation.
   const processed = await Promise.all(
     pdfs.map(async ({ messageIndex, filePart }): Promise<ProcessedFile> => {
-      const r2Key = r2KeyFromPublicUrl(filePart.data, base);
+      const url = filePart.url || filePart.data;
+      const r2Key = r2KeyFromPublicUrl(url, base);
       try {
         const attachment = await findAttachmentByR2Key(userId, r2Key);
         if (!attachment) {
@@ -401,7 +402,8 @@ function rewriteMessagesNode(state: KbAgentStateShape): Partial<KbAgentStateShap
   const fileToDoc = new Map<string, { docId: string; attachmentId: string | null }>();
   for (const pf of state.processedFiles) {
     if (pf.docId) {
-      fileToDoc.set(pf.filePart.data, { docId: pf.docId, attachmentId: pf.attachmentId });
+      const url = pf.filePart.url || pf.filePart.data;
+      fileToDoc.set(url, { docId: pf.docId, attachmentId: pf.attachmentId });
     }
   }
 
@@ -416,7 +418,8 @@ function rewriteMessagesNode(state: KbAgentStateShape): Partial<KbAgentStateShap
           newContent.push(part);
           continue;
         }
-        const matched = fileToDoc.get(part.data);
+        const url = part.url || part.data;
+        const matched = fileToDoc.get(url);
         if (!matched) {
           // non-PDF or unknown/failed PDF with no docId → drop
           changed = true;

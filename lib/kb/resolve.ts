@@ -1,5 +1,5 @@
 import { type BaseMessage, HumanMessage } from "@langchain/core/messages";
-import { collectKbRefs, isFilePart, isKbRefPart } from "./extract";
+import { collectKbRefs, isFilePart } from "./extract";
 import { getKbDocForResolve } from "./cache";
 
 // ponytail: kb_ref → resolved text. Called from prepareMessagesForInvoke
@@ -38,9 +38,6 @@ function placeholderFailed(msg: string | null): string {
 function readKbRefFromPart(part: unknown): { docId: string; attachmentId?: string } | null {
   if (isFilePart(part) && part.kb_ref && typeof part.kb_ref.docId === "string") {
     return part.kb_ref;
-  }
-  if (isKbRefPart(part)) {
-    return { docId: part.docId, attachmentId: part.attachmentId };
   }
   return null;
 }
@@ -85,6 +82,7 @@ export async function resolveKbRefs(
   if (!userId) return messages;
 
   const refs = collectKbRefs(messages);
+
   if (refs.length === 0) return messages;
 
   // ponytail: dedupe by docId (collectKbRefs already did) then resolve

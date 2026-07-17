@@ -38,7 +38,13 @@ function humanWithKbRef(docId = DOC, extraParts: Array<Record<string, unknown>> 
     new HumanMessage({
       content: [
         { type: "text", text: "context" },
-        { type: "kb_ref", docId },
+        {
+          type: "file",
+          data: "https://r2/u1/doc.pdf",
+          mime_type: "application/pdf",
+          filename: "doc.pdf",
+          kb_ref: { docId },
+        },
         ...extraParts,
       ] as never,
       id: "m-1",
@@ -222,7 +228,15 @@ describe("lib/kb/resolve", () => {
         chunks: [{ content: "earlier doc text", ordinal: 0 } as never],
       });
       const earlier = new HumanMessage({
-        content: [{ type: "kb_ref", docId: DOC }] as never,
+        content: [
+          {
+            type: "file",
+            data: "https://r2/u1/doc.pdf",
+            mime_type: "application/pdf",
+            filename: "doc.pdf",
+            kb_ref: { docId: DOC },
+          },
+        ] as never,
         id: "h-earlier",
       });
       const ai = new HumanMessage({ content: "ai reply" } as never);
@@ -250,11 +264,27 @@ describe("lib/kb/resolve", () => {
           chunks: [{ content: "doc B text", ordinal: 0 } as never],
         });
       const h1 = new HumanMessage({
-        content: [{ type: "kb_ref", docId: "doc-1" }] as never,
+        content: [
+          {
+            type: "file",
+            data: "https://r2/u1/doc-1.pdf",
+            mime_type: "application/pdf",
+            filename: "doc-1.pdf",
+            kb_ref: { docId: "doc-1" },
+          },
+        ] as never,
         id: "h-1",
       });
       const h2 = new HumanMessage({
-        content: [{ type: "kb_ref", docId: "doc-2" }] as never,
+        content: [
+          {
+            type: "file",
+            data: "https://r2/u1/doc-2.pdf",
+            mime_type: "application/pdf",
+            filename: "doc-2.pdf",
+            kb_ref: { docId: "doc-2" },
+          },
+        ] as never,
         id: "h-2",
       });
       const out = await resolveKbRefs([h1, h2], USER);
@@ -273,11 +303,27 @@ describe("lib/kb/resolve", () => {
         chunks: [{ content: "shared", ordinal: 0 } as never],
       });
       const h1 = new HumanMessage({
-        content: [{ type: "kb_ref", docId: DOC }] as never,
+        content: [
+          {
+            type: "file",
+            data: "https://r2/u1/doc.pdf",
+            mime_type: "application/pdf",
+            filename: "doc.pdf",
+            kb_ref: { docId: DOC },
+          },
+        ] as never,
         id: "h-1",
       });
       const h2 = new HumanMessage({
-        content: [{ type: "kb_ref", docId: DOC }] as never,
+        content: [
+          {
+            type: "file",
+            data: "https://r2/u1/doc.pdf",
+            mime_type: "application/pdf",
+            filename: "doc.pdf",
+            kb_ref: { docId: DOC },
+          },
+        ] as never,
         id: "h-2",
       });
       const out = await resolveKbRefs([h1, h2], USER);
@@ -291,7 +337,13 @@ describe("lib/kb/resolve", () => {
       const earlier = new HumanMessage({
         content: [
           { type: "text", text: "context" },
-          { type: "kb_ref", docId: DOC },
+          {
+            type: "file",
+            data: "https://r2/u1/doc.pdf",
+            mime_type: "application/pdf",
+            filename: "doc.pdf",
+            kb_ref: { docId: DOC },
+          },
         ] as never,
         id: "h-earlier",
       });
@@ -314,8 +366,20 @@ describe("lib/kb/resolve", () => {
       const h = new HumanMessage({
         content: [
           { type: "text", text: "compare" },
-          { type: "kb_ref", docId: "doc-1" },
-          { type: "kb_ref", docId: "doc-2" },
+          {
+            type: "file",
+            data: "https://r2/u1/doc-1.pdf",
+            mime_type: "application/pdf",
+            filename: "doc-1.pdf",
+            kb_ref: { docId: "doc-1" },
+          },
+          {
+            type: "file",
+            data: "https://r2/u1/doc-2.pdf",
+            mime_type: "application/pdf",
+            filename: "doc-2.pdf",
+            kb_ref: { docId: "doc-2" },
+          },
         ] as never,
         id: "h-1",
       });
@@ -335,7 +399,15 @@ describe("lib/kb/resolve", () => {
       const sys = new SystemMessage("sys prompt");
       const ai = { role: "assistant", content: "ai reply" } as never;
       const h = new HumanMessage({
-        content: [{ type: "kb_ref", docId: DOC }] as never,
+        content: [
+          {
+            type: "file",
+            data: "https://r2/u1/doc.pdf",
+            mime_type: "application/pdf",
+            filename: "doc.pdf",
+            kb_ref: { docId: DOC },
+          },
+        ] as never,
         id: "h-1",
       });
       const out = await resolveKbRefs([sys, ai, h], USER);

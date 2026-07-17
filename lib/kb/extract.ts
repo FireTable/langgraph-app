@@ -26,6 +26,7 @@ export type KbRefMarker = {
 export type FilePart = {
   type: "file";
   data: string;
+  url?: string;
   mime_type?: string;
   filename?: string;
   metadata?: Record<string, unknown>;
@@ -48,11 +49,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isFilePart(part: unknown): part is FilePart {
-  return isRecord(part) && part.type === "file" && typeof part.data === "string";
-}
-
-export function isKbRefPart(part: unknown): part is KbRefPart {
-  return isRecord(part) && part.type === "kb_ref" && typeof part.docId === "string";
+  return (
+    isRecord(part) &&
+    part.type === "file" &&
+    (typeof part.data === "string" || typeof part.url === "string")
+  );
 }
 
 export function isPdfAttachment(part: FilePart): boolean {
@@ -144,15 +145,15 @@ export function collectKbRefs(messages: BaseMessage[]): KbRefPart[] {
     if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) continue;
     for (const part of m.content) {
       let marker: KbRefPart | null = null;
+
       if (isFilePart(part) && part.kb_ref) {
         marker = {
           type: "kb_ref",
           docId: part.kb_ref.docId,
           attachmentId: part.kb_ref.attachmentId,
         };
-      } else if (isKbRefPart(part)) {
-        marker = part;
       }
+
       if (marker && !seen.has(marker.docId)) {
         seen.add(marker.docId);
         out.push(marker);

@@ -346,7 +346,7 @@ export async function threadSummarizeNode(
                 text: JSON.stringify(item),
               },
             ],
-          }))
+          })),
         ] as never,
         {
           tags: ["nostream"],
