@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AIMessage, HumanMessage } from "@langchain/core/messages";
 
 const { mockGetAllUserSummaries, mockWriteSummary, mockInvoke } = vi.hoisted(() => ({
   mockGetAllUserSummaries: vi.fn(),
@@ -25,11 +26,7 @@ import {
 } from "@/backend/node/thread-summarize-node";
 
 const makeMessages = (n: number) =>
-  Array.from({ length: n }, (_, i) => ({
-    id: `m${i}`,
-    type: "human" as const,
-    content: `human-${i}`,
-  }));
+  Array.from({ length: n }, (_, i) => new HumanMessage({ content: `human-${i}`, id: `m${i}` }));
 
 const CONFIG_OK = { configurable: { userId: "u1", thread_id: "t1" } };
 
@@ -105,7 +102,7 @@ describe("threadSummarizeNode", () => {
 
   it("returns no state mutation when userId is missing", async () => {
     const out = await threadSummarizeNode(
-      { parseMessages: makeMessages(20) },
+      { messages: makeMessages(20) },
       { configurable: { thread_id: "t1" } },
     );
     expect(out.messages).toEqual([]);
@@ -115,7 +112,7 @@ describe("threadSummarizeNode", () => {
 
   it("returns no state mutation when thread_id is missing", async () => {
     const out = await threadSummarizeNode(
-      { parseMessages: makeMessages(20) },
+      { messages: makeMessages(20) },
       { configurable: { userId: "u1" } },
     );
     expect(out.messages).toEqual([]);
@@ -123,10 +120,7 @@ describe("threadSummarizeNode", () => {
   });
 
   it("returns no state mutation when userMessageCount < KEEP_RECENT", async () => {
-    const out = await threadSummarizeNode(
-      { parseMessages: makeMessages(KEEP_RECENT - 1) },
-      CONFIG_OK,
-    );
+    const out = await threadSummarizeNode({ messages: makeMessages(KEEP_RECENT - 1) }, CONFIG_OK);
     expect(out.messages).toEqual([]);
     expect(mockWriteSummary).not.toHaveBeenCalled();
     expect(mockGetAllUserSummaries).not.toHaveBeenCalled();
@@ -144,9 +138,9 @@ describe("threadSummarizeNode", () => {
     });
     mockWriteSummary.mockResolvedValueOnce({});
 
-    const parseMessages = makeMessages(KEEP_RECENT);
+    const messages = makeMessages(KEEP_RECENT);
 
-    await threadSummarizeNode({ parseMessages }, CONFIG_OK);
+    await threadSummarizeNode({ messages }, CONFIG_OK);
 
     expect(mockWriteSummary).toHaveBeenCalledTimes(1);
     const [, entry] = mockWriteSummary.mock.calls[0];
@@ -165,9 +159,9 @@ describe("threadSummarizeNode", () => {
     mockWriteSummary.mockResolvedValueOnce({});
 
     // 11 humans → first trigger point.
-    const parseMessages = makeMessages(11);
+    const messages = makeMessages(11);
 
-    const out = await threadSummarizeNode({ parseMessages }, CONFIG_OK);
+    const out = await threadSummarizeNode({ messages }, CONFIG_OK);
 
     expect(out.messages).toEqual([]); // requirement: messages channel is untouched
     expect(mockWriteSummary).toHaveBeenCalledTimes(1);
@@ -184,7 +178,7 @@ describe("threadSummarizeNode", () => {
   it("skips non-trigger humanCounts without calling LLM or writing", async () => {
     // humanCount=9 < KEEP_RECENT=10 → cheap guard returns before any
     // store read. Node is a no-op.
-    const out = await threadSummarizeNode({ parseMessages: makeMessages(9) }, CONFIG_OK);
+    const out = await threadSummarizeNode({ messages: makeMessages(9) }, CONFIG_OK);
     expect(out.messages).toEqual([]);
     expect(mockInvoke).not.toHaveBeenCalled();
     expect(mockGetAllUserSummaries).not.toHaveBeenCalled();
@@ -197,7 +191,7 @@ describe("threadSummarizeNode", () => {
     // passing the early humanCount <= K gate.
     mockGetAllUserSummaries.mockResolvedValue([{ key: "t1:1", value: makeSummary(1, 0, 9) }]);
 
-    const out = await threadSummarizeNode({ parseMessages: makeMessages(15) }, CONFIG_OK);
+    const out = await threadSummarizeNode({ messages: makeMessages(15) }, CONFIG_OK);
     expect(out.messages).toEqual([]);
     expect(mockInvoke).not.toHaveBeenCalled();
     expect(mockGetAllUserSummaries).toHaveBeenCalledTimes(1); // lastCompressedEndIdx only
@@ -215,10 +209,7 @@ describe("threadSummarizeNode", () => {
     });
     mockWriteSummary.mockResolvedValueOnce({});
 
-    const out = await threadSummarizeNode(
-      { parseMessages: makeMessages(KEEP_RECENT + 1) },
-      CONFIG_OK,
-    );
+    const out = await threadSummarizeNode({ messages: makeMessages(KEEP_RECENT + 1) }, CONFIG_OK);
 
     expect(out.messages).toEqual([]);
     expect(mockWriteSummary).toHaveBeenCalledTimes(1);
@@ -242,7 +233,7 @@ describe("threadSummarizeNode", () => {
     mockWriteSummary.mockResolvedValueOnce({});
 
     // 21 humans → second trigger covers humanIdx [10..19].
-    await threadSummarizeNode({ parseMessages: makeMessages(21) }, CONFIG_OK);
+    await threadSummarizeNode({ messages: makeMessages(21) }, CONFIG_OK);
 
     const [, entry] = mockWriteSummary.mock.calls[0];
     expect(entry.threadId).toBe("t1");
@@ -268,13 +259,13 @@ describe("threadSummarizeNode", () => {
     // This way the LLM can attribute each chunk to a specific ref.
     // Labels are GLOBAL humanIndex (1-indexed) so the LLM's refs map
     // 1:1 to the SummaryEntry.startMessageIndex..endMessageIndex range.
-    const parseMessages = Array.from({ length: 22 }, (_, i) => ({
-      id: `m${i}`,
-      type: (i % 2 === 0 ? "human" : "ai") as "human" | "ai",
-      content: `turn-${i}`,
-    }));
+    const messages = Array.from({ length: 22 }, (_, i) =>
+      i % 2 === 0
+        ? new HumanMessage({ content: `turn-${i}`, id: `m${i}` })
+        : new AIMessage({ content: `turn-${i}`, id: `m${i}` }),
+    );
 
-    await threadSummarizeNode({ parseMessages }, CONFIG_OK);
+    await threadSummarizeNode({ messages }, CONFIG_OK);
 
     expect(mockInvoke).toHaveBeenCalledTimes(1);
     // system + N user messages (one per human turn in the window).
@@ -336,13 +327,13 @@ describe("threadSummarizeNode", () => {
     });
     mockWriteSummary.mockResolvedValueOnce({});
 
-    const parseMessages = Array.from({ length: 22 }, (_, i) => ({
-      id: `m${i}`,
-      type: (i % 2 === 0 ? "human" : "ai") as "human" | "ai",
-      content: `turn-${i}`,
-    }));
+    const messages = Array.from({ length: 22 }, (_, i) =>
+      i % 2 === 0
+        ? new HumanMessage({ content: `turn-${i}`, id: `m${i}` })
+        : new AIMessage({ content: `turn-${i}`, id: `m${i}` }),
+    );
 
-    await threadSummarizeNode({ parseMessages }, CONFIG_OK);
+    await threadSummarizeNode({ messages }, CONFIG_OK);
 
     expect(mockInvoke).toHaveBeenCalledTimes(1);
     const msgs = mockInvoke.mock.calls[0][0] as Array<{
@@ -385,13 +376,13 @@ describe("threadSummarizeNode", () => {
     });
     mockWriteSummary.mockResolvedValueOnce({});
 
-    const parseMessages = Array.from({ length: 42 }, (_, i) => ({
-      id: `m${i}`,
-      type: (i % 2 === 0 ? "human" : "ai") as "human" | "ai",
-      content: `turn-${i}`,
-    }));
+    const messages = Array.from({ length: 42 }, (_, i) =>
+      i % 2 === 0
+        ? new HumanMessage({ content: `turn-${i}`, id: `m${i}` })
+        : new AIMessage({ content: `turn-${i}`, id: `m${i}` }),
+    );
 
-    await threadSummarizeNode({ parseMessages }, CONFIG_OK);
+    await threadSummarizeNode({ messages }, CONFIG_OK);
 
     expect(mockInvoke).toHaveBeenCalledTimes(1);
     // 10 user messages for the 10 humans in [10..19]. Labels #11..#20.
@@ -435,7 +426,7 @@ describe("threadSummarizeNode", () => {
     });
     mockWriteSummary.mockResolvedValueOnce({});
 
-    await threadSummarizeNode({ parseMessages: makeMessages(11) }, CONFIG_OK);
+    await threadSummarizeNode({ messages: makeMessages(11) }, CONFIG_OK);
 
     const opts = mockInvoke.mock.calls[0][1] as { tags?: string[] };
     expect(opts.tags).toContain("nostream");
@@ -446,7 +437,7 @@ describe("threadSummarizeNode", () => {
     mockInvoke.mockResolvedValueOnce({ entries: [] });
     mockWriteSummary.mockResolvedValueOnce({});
 
-    const out = await threadSummarizeNode({ parseMessages: makeMessages(11) }, CONFIG_OK);
+    const out = await threadSummarizeNode({ messages: makeMessages(11) }, CONFIG_OK);
     expect(out.messages).toEqual([]);
     expect(mockWriteSummary).not.toHaveBeenCalled();
   });
@@ -460,7 +451,7 @@ describe("threadSummarizeNode", () => {
     mockGetAllUserSummaries.mockResolvedValue([]);
     mockInvoke.mockRejectedValueOnce(new Error("boom"));
 
-    const out = await threadSummarizeNode({ parseMessages: makeMessages(11) }, CONFIG_OK);
+    const out = await threadSummarizeNode({ messages: makeMessages(11) }, CONFIG_OK);
 
     expect(out.messages).toEqual([]);
     expect(mockWriteSummary).not.toHaveBeenCalled();
@@ -478,7 +469,7 @@ describe("threadSummarizeNode", () => {
     mockInvoke.mockResolvedValueOnce({ entries: [{ question: "q", answer: "a", refs: ["#1"] }] });
     mockWriteSummary.mockResolvedValueOnce({});
 
-    const out = await threadSummarizeNode({ parseMessages: makeMessages(11) }, CONFIG_OK);
+    const out = await threadSummarizeNode({ messages: makeMessages(11) }, CONFIG_OK);
     expect(out.messages).toEqual([]);
     expect(out.messages).not.toContain(expect.objectContaining({ role: "system" }));
   });

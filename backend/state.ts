@@ -21,11 +21,6 @@ export const CommonAgentState = new StateSchema({
   messages: MessagesValue,
 });
 
-export const BackgroundAgentState = new StateSchema({
-  messages: MessagesValue,
-  parseMessages: MessagesValue,
-});
-
 // ---------------------------------------------------------------------------
 // KB ingest subgraph state
 // ---------------------------------------------------------------------------

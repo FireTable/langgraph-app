@@ -26,7 +26,7 @@ import { START, END, StateGraph } from "@langchain/langgraph";
 import type { BaseMessage } from "@langchain/core/messages";
 
 import { checkpointer } from "@/backend/checkpointer";
-import { BackgroundAgentState } from "@/backend/state";
+import { CommonAgentState } from "@/backend/state";
 import { store } from "@/backend/store";
 import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
 import { touchLastMessageAt } from "@/lib/threads/queries";
@@ -50,7 +50,7 @@ export async function touchLastMessageNode(
   return { messages: [] };
 }
 
-const builder = new StateGraph(BackgroundAgentState)
+const builder = new StateGraph(CommonAgentState)
   .addNode("touchLastMessage", touchLastMessageNode)
   .addNode("summarize", threadSummarizeNode)
   // ponytail: linear — both side-effects run every invoke. Cheap to

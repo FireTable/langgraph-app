@@ -7,6 +7,7 @@ import { summaryOutputSchema } from "@/lib/langgraph/summary-schema";
 import { getChatModel } from "@/backend/model";
 import { THREAD_SUMMARIZE_PROMPT } from "@/backend/prompt/system";
 import { HumanMessage, BaseMessage } from "@langchain/core/messages";
+import { prepareMessagesForInvoke } from "@/backend/memory/template";
 
 function isHumanMessage(m: BaseMessage | ExcerptMessage): boolean {
   return m instanceof HumanMessage || m.type === "human";
@@ -247,7 +248,7 @@ export function computeCumulativeWindow(
 // These would have been END'd by the conditional edge, but a tick
 // can race — re-deriving here is the safety belt.
 export async function threadSummarizeNode(
-  state: { parseMessages?: Array<ExcerptMessage> },
+  state: { messages?: BaseMessage[] },
   config: Config,
 ): Promise<{ messages: never[] }> {
   const userId = config.configurable?.userId;
@@ -255,7 +256,12 @@ export async function threadSummarizeNode(
   if (typeof userId !== "string" || userId.length === 0) return { messages: [] };
   if (typeof threadId !== "string" || threadId.length === 0) return { messages: [] };
 
-  const messages = (state.parseMessages ?? []) as Array<ExcerptMessage>;
+  const messages = (await prepareMessagesForInvoke(
+    state.messages ?? [],
+    [],
+    userId ?? undefined,
+  )) as Array<ExcerptMessage>;
+
   const humanIndices: number[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
