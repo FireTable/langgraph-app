@@ -26,7 +26,7 @@ import { START, END, StateGraph } from "@langchain/langgraph";
 import type { BaseMessage } from "@langchain/core/messages";
 
 import { checkpointer } from "@/backend/checkpointer";
-import { CommonAgentState } from "@/backend/state";
+import { BackgroundAgentState } from "@/backend/state";
 import { store } from "@/backend/store";
 import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
 import { touchLastMessageAt } from "@/lib/threads/queries";
@@ -44,13 +44,13 @@ export async function touchLastMessageNode(
   if (typeof threadId === "string" && threadId.length > 0) {
     await touchLastMessageAt(threadId);
   }
-  // Empty state update — the messages reducer on CommonAgentState would
+  // Empty state update — the messages reducer on BackgroundAgentState would
   // turn `[]` into a no-op (no replace, no add). Same side-effect-only
   // contract as the original afterAgentNode.
   return { messages: [] };
 }
 
-const builder = new StateGraph(CommonAgentState)
+const builder = new StateGraph(BackgroundAgentState)
   .addNode("touchLastMessage", touchLastMessageNode)
   .addNode("summarize", threadSummarizeNode)
   // ponytail: linear — both side-effects run every invoke. Cheap to

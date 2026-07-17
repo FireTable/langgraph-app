@@ -247,7 +247,7 @@ export function computeCumulativeWindow(
 // These would have been END'd by the conditional edge, but a tick
 // can race — re-deriving here is the safety belt.
 export async function threadSummarizeNode(
-  state: { messages?: Array<ExcerptMessage> },
+  state: { parseMessages?: Array<ExcerptMessage> },
   config: Config,
 ): Promise<{ messages: never[] }> {
   const userId = config.configurable?.userId;
@@ -255,7 +255,7 @@ export async function threadSummarizeNode(
   if (typeof userId !== "string" || userId.length === 0) return { messages: [] };
   if (typeof threadId !== "string" || threadId.length === 0) return { messages: [] };
 
-  const messages = (state.messages ?? []) as Array<ExcerptMessage>;
+  const messages = (state.parseMessages ?? []) as Array<ExcerptMessage>;
   const humanIndices: number[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];

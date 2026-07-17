@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HumanMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage } from "@langchain/core/messages";
 
 // SDK client mock — single dispatch path is via runs.create.
 type RunPayload = unknown;
@@ -79,7 +79,7 @@ describe("triggerBackgroundAgentNode", () => {
   it("forwards messages from the chat graph to the background input payload", async () => {
     const messages = [
       new HumanMessage({ content: "hello", id: "h-1" }),
-      { type: "ai", content: "hi" },
+      new AIMessage({ content: "hi", id: "a-1" }),
     ];
     await triggerBackgroundAgentNode({ messages }, CONFIG_OK);
     const [, , payload] = mockRunsCreate.mock.calls[0];
@@ -94,7 +94,7 @@ describe("triggerBackgroundAgentNode", () => {
     // filter can't tell bg-of-turn-N apart from bg-of-turn-N+1.
     const messages = [
       new HumanMessage({ content: "first turn", id: "h-1" }),
-      { type: "ai", content: "ack", id: "a-1" },
+      new AIMessage({ content: "ack", id: "a-1" }),
       new HumanMessage({ content: "second turn", id: "h-2" }),
     ];
     await triggerBackgroundAgentNode({ messages }, CONFIG_OK);

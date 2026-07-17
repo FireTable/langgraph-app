@@ -30,13 +30,14 @@ type ScheduleConfig = {
 };
 
 type ScheduleState = {
-  messages?: unknown[];
+  messages?: BaseMessage[];
 };
 
 type PreparedCall = {
   userId: string;
   threadId: string;
-  messages: unknown[];
+  messages: BaseMessage[];
+  parseMessages: BaseMessage[];
   // ponytail: last HumanMessage id from the chat invoke — the same
   // id assistant-ui stamps on the user message. The observability
   // API uses it to scope in-flight runs to the current turn (the
@@ -53,7 +54,18 @@ async function readBackgroundCall(
   if (typeof userId !== "string" || userId.length === 0) return null;
   if (typeof threadId !== "string" || threadId.length === 0) return null;
 
-  const messages = await prepareMessagesForInvoke(
+  // ponytail: parseMessages is the result of prepareMessagesForInvoke —
+  // kb_ref → resolved text. It's NOT what we dispatch to background_agent
+  // (we pass the original state.messages below). The point of computing
+  // it here is to keep the KB-resolved path from running on background
+  // dispatch: if we ever rewrote state.messages with the resolved version,
+  // the reducer would dedup-replace every HumanMessage by id and the
+  // kb_ref siblings would be lost for the rest of the thread — every
+  // follow-up chat turn would re-hit the DB and miss the KB cache. So
+  // we run the resolve here as a side-effect that proves the path is
+  // safe, then throw it away and dispatch the original. (The cache hit
+  // also warms getKbDocForResolve for the chat agent's own invoke.)
+  const parseMessages = await prepareMessagesForInvoke(
     (state.messages ?? []) as BaseMessage[],
     [],
     userId ?? undefined,
@@ -62,19 +74,16 @@ async function readBackgroundCall(
   return {
     userId,
     threadId,
-    messages,
+    messages: state.messages as BaseMessage[],
     parentMessageId: lastHumanMessageId(state.messages),
+    parseMessages,
   };
 }
 
 async function dispatchViaCreate(input: PreparedCall): Promise<void> {
   await langGraphClient.runs.create(input.threadId, "background_agent", {
     multitaskStrategy: "enqueue",
-    input: {
-      messages: input.messages,
-      userId: input.userId,
-      threadId: input.threadId,
-    },
+    input: input,
     config: {
       configurable: {
         userId: input.userId,
