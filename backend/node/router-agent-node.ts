@@ -5,7 +5,7 @@ import { z } from "zod";
 import { getChatModel } from "@/backend/model";
 import { ROUTER_AGENT_PROMPT } from "@/backend/prompt/system";
 import { hasUnprocessedPdf, stripFileParts } from "@/lib/kb/extract";
-import { trimMessagesForInvoke } from "@/backend/memory/template";
+import { prepareMessagesForInvoke } from "@/backend/memory/template";
 import { extractUserId } from "@/backend/memory/recall";
 
 // ponytail: v3 router. Two short-circuits and a fallback:
@@ -17,6 +17,11 @@ import { extractUserId } from "@/backend/memory/recall";
 
 const RouteDecisionSchema = z.object({
   next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent", "kbAgent"]),
+});
+
+// delete RouteDecisionSchema kbAgent
+const InvokeRouteDecisionSchema = z.object({
+  next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent"]),
 });
 
 export type RouterDecision = z.infer<typeof RouteDecisionSchema>;
@@ -37,7 +42,7 @@ export async function routerAgentNode(
 
   const system = new SystemMessage(ROUTER_AGENT_PROMPT);
   const userId = extractUserId(config);
-  const trimmed = await trimMessagesForInvoke(state.messages, [], userId ?? undefined);
+  const trimmed = await prepareMessagesForInvoke(state.messages, [], userId ?? undefined);
 
   const trimmedClean = trimmed.map(stripFileParts);
   const lastClean = lastUserMessage ? stripFileParts(lastUserMessage) : null;
@@ -52,7 +57,7 @@ export async function routerAgentNode(
   const decision = (await (
     await getChatModel()
   )
-    .withStructuredOutput(RouteDecisionSchema, {
+    .withStructuredOutput(InvokeRouteDecisionSchema, {
       name: "route_decision",
       method: "jsonSchema",
     })

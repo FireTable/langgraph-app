@@ -3,6 +3,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { triggerBackgroundAgentNode } from "@/backend/node/trigger-background-agent-node";
 import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
+import { prepareDataNode } from "@/backend/node/prepare-data-node";
 import { weatherAgent } from "@/backend/agent/weather-agent";
 import { chatAgent } from "@/backend/agent/chat-agent";
 import { cryptoAgent } from "@/backend/agent/crypto-agent";
@@ -69,6 +70,7 @@ async function routeAndMaybeRename(
 }
 
 export const builder = new StateGraph(RouterAgentState)
+  .addNode("prepareData", prepareDataNode)
   .addNode("routerAgent", routerAgentNode)
   .addNode("chatAgent", chatAgent)
   .addNode("weatherAgent", weatherAgent)
@@ -77,15 +79,19 @@ export const builder = new StateGraph(RouterAgentState)
   .addNode("kbAgent", kbAgent)
   .addNode("triggerBackgroundAgent", triggerBackgroundAgentNode)
   .addNode("renameThreadAgent", renameThreadAgentNode)
-  // Topology (issue #13 v2):
-  //   START ──▶ routerAgent ──┬──▶ (sub-agent | kbAgent) ──▶ triggerBackgroundAgent ──▶ END
-  //                           └──▶ renameThreadAgent   (terminal, no outgoing edge needed)
+  // Topology (issue #13 v3):
+  //   START ──▶ prepareData ──▶ routerAgent ──┬──▶ (sub-agent | kbAgent) ──▶ triggerBackgroundAgent ──▶ END
+  //                                        └──▶ renameThreadAgent   (terminal, no outgoing edge needed)
   //
-  // kbAgent loops back to routerAgent after stamping a `kb_ref`
-  // sibling onto the PDF file part, so a SECOND router pass picks
-  // the final sub-agent (chat / weather / etc.) — the file part is
-  // preserved (not replaced), but the kb_ref sibling marks it as
-  // already-ingested and the PDF-short-circuit no longer fires.
+  // kbAgent loops back to routerAgent (NOT through prepareData) after
+  // stamping a `kb_ref` sibling onto the PDF file part, so a SECOND
+  // router pass picks the final sub-agent (chat / weather / etc.) —
+  // the file part is preserved (not replaced), but the kb_ref sibling
+  // marks it as already-ingested and the PDF-short-circuit no longer
+  // fires. We deliberately skip prepareData on the second pass so
+  // the ToolMessage we injected at the start of the turn doesn't
+  // re-fire (it'd be a no-op anyway since directives only appear in
+  // the original HumanMessage, but re-running is wasted DB work).
   //
   // ask_location's picker card is owned by the weather subgraph
   // (see backend/agent/weather-agent.ts + components/tool-ui/ask-location).
@@ -108,7 +114,8 @@ export const builder = new StateGraph(RouterAgentState)
   // names, langgraph runs them in parallel. The rename fires only
   // when the messages are clean (no raw file part) AND the thread
   // title is still the default placeholder — see routeAndMaybeRename.
-  .addEdge(START, "routerAgent")
+  .addEdge(START, "prepareData")
+  .addEdge("prepareData", "routerAgent")
   .addConditionalEdges("routerAgent", routeAndMaybeRename, {
     chatAgent: "chatAgent",
     weatherAgent: "weatherAgent",

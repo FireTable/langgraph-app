@@ -111,7 +111,15 @@ export function formatThreadsForPrompt(threads: ThreadSummariesPayload): string 
 // v2 (issue #13): kb_ref resolution happens here too — the LLM only
 // ever sees resolved text. Async because resolveKbRefs awaits the
 // LRU-cached DB lookup.
-export async function trimMessagesForInvoke(
+//
+// v3 (issue #13): resolveKbMentions strips `:kb-doc[…]{name=…}` /
+// `:kb-folder[…]{name=…}` directives from HumanMessage text BEFORE
+// the rest of the pipeline runs. All downstream agents (chat / code /
+// router / crypto / weather / background) now see clean text without
+// any directive tokens. Caller still needs to fetch the
+// `<mentioned-documents>` chunks separately — this function only
+// returns the stripped messages, not the chunk payload.
+export async function prepareMessagesForInvoke(
   messages: BaseMessage[],
   summaries: ThreadSummariesPayload["summaries"],
   userId?: string,
@@ -126,11 +134,13 @@ export async function trimMessagesForInvoke(
   for (const s of summaries) {
     if (s.endMessageIndex > maxEnd) maxEnd = s.endMessageIndex;
   }
+
   // ponytail: no summary OR no human turns in the array → nothing to
   // trim. Returning noSystem (not messages) still drops a stray
   // SystemMessage if one slipped in — the strip pass is unconditional.
   if (maxEnd < 0 || humanIndices.length === 0) return noSystem;
   const trimTo = maxEnd + 1 < humanIndices.length ? humanIndices[maxEnd + 1] : noSystem.length;
+
   return noSystem.slice(trimTo);
 }
 

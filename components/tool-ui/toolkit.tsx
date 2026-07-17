@@ -15,6 +15,7 @@ import {
 import { WriteCodeCard, ExecuteCodeResult } from "@/components/tool-ui/code";
 import { SaveMemoryCard } from "@/components/tool-ui/memory";
 import { CreditCard } from "@/components/tool-ui/credit";
+import { KbGraphToolUI, KbListDocumentsToolUI, KbSearchToolUI } from "@/components/tool-ui/kb";
 
 // Frontend-side tool registrations. `execute` lives on the LangGraph
 // backend (backend/tool/) and is dispatched via useLangGraphRuntime —
@@ -147,10 +148,51 @@ const creditToolkit = defineToolkit({
   },
 });
 
+const kbToolkit = defineToolkit({
+  // ponytail: KB tools (issue #13 v3). The server returns a structured
+  // JSON ToolMessage: { content, documents[], empty }. UI reads
+  // `documents[]` for Sources-style cards; `content` is the LLM's
+  // string and is not re-displayed (it's already in the assistant's
+  // prose). order locked to backend RRF ranking.
+  search_kb: {
+    description: "Render a KB search result card with [1] [2] numbered chunks.",
+    parameters: z.object({ query: z.string(), topK: z.number().optional() }),
+    render: KbSearchToolUI,
+  },
+  // ponytail: synthetic tool from backend/agent/prepare-data-node.ts.
+  // When the user @-mentions a KB doc, prepareData injects an
+  // AIMessage+ToolMessage pair named `kb_context_retrieval` into
+  // state.messages (so the LLM sees the chunks without a real tool
+  // call). Payload shape matches search_kb's, so we reuse the same
+  // card — no separate render needed.
+  kb_context_retrieval: {
+    description: "Render a synthetic KB @-mention context card (reuses KbSearchToolUI).",
+    parameters: z.object({ query: z.string(), topK: z.number().optional() }),
+    render: KbSearchToolUI,
+  },
+  search_graph: {
+    description: "Render a graph-traversal card (shares the same shape as search_kb).",
+    parameters: z.object({ query: z.string(), topK: z.number().optional() }),
+    render: KbGraphToolUI,
+  },
+  list_documents: {
+    description: "Render a paginated list of the user's KB documents.",
+    parameters: z.object({
+      folderId: z.string().optional(),
+      status: z.enum(["success", "failed", "parsing", "pending"]).optional(),
+      titleQuery: z.string().optional(),
+      page: z.number().optional(),
+      pageSize: z.number().optional(),
+    }),
+    render: KbListDocumentsToolUI,
+  },
+});
+
 export default defineToolkit({
   ...weatherToolkit,
   ...cryptoToolkit,
   ...codeToolkit,
   ...memoryToolkit,
   ...creditToolkit,
+  ...kbToolkit,
 });

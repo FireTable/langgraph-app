@@ -313,10 +313,13 @@ Delete an empty folder. Postgres refuses via `ON DELETE RESTRICT` on `kb_documen
 
 List all of the caller's folders + their docs in one round-trip. `attachmentUrl` is the public R2 URL for the source file (used by the "View source" button on each row). No pagination — KB volume per user is O(tens of docs).
 
-|               |                                                                                                                                                                      |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 200 response  | `{ groups: Array<{ folder: { id, name }, documents: Array<{ id, title, status, errorMessage, contentType, attachmentId, attachmentUrl, createdAt, updatedAt }> }> }` |
-| Failure codes | 401 `UNAUTHORIZED`. 500 `INTERNAL`.                                                                                                                                  |
+When `?mention=1` is set, returns a flat list of `status='success'` docs only — powers the `@`-mention composer popover (issue #13 v3). No folder grouping, no pagination, slim payload.
+
+|               |                                                                                                                                                                                                                                           |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Query params  | `?mention=1` → flat `success`-only list for composer popover (omit for the default grouped response used by Settings)                                                                                                                     |
+| 200 response  | default: `{ groups: Array<{ folder: { id, name }, documents: Array<{ id, title, status, errorMessage, contentType, attachmentId, attachmentUrl, createdAt, updatedAt }> }> }` <br/>`?mention=1`: `{ docs: Array<{ id, title, status }> }` |
+| Failure codes | 401 `UNAUTHORIZED`. 500 `INTERNAL`.                                                                                                                                                                                                       |
 
 ### `GET /api/kb/documents/[id]`
 

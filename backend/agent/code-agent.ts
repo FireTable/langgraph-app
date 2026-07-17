@@ -9,7 +9,7 @@ import { CommonAgentState } from "@/backend/state";
 import {
   buildSystemMessageWithMemory,
   loadThreadSummariesForPrompt,
-  trimMessagesForInvoke,
+  prepareMessagesForInvoke,
 } from "@/backend/memory/template";
 import { extractUserId } from "@/backend/memory/recall";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
@@ -31,7 +31,7 @@ async function codeModelNode({ messages }: { messages: BaseMessage[] }, config?:
   // and drop the original turns from the input array. state.messages
   // is NEVER touched.
   const threads = await loadThreadSummariesForPrompt(config);
-  const history = await trimMessagesForInvoke(
+  const history = await prepareMessagesForInvoke(
     messages,
     threads?.summaries ?? [],
     extractUserId(config) ?? undefined,

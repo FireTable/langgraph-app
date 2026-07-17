@@ -207,6 +207,25 @@ Notes:
 - The `updated_at` is intentional — backfill scripts (e.g. after a model rate correction) can rewrite historical rows in place, and `updated_at` lets an audit identify which rows were touched. Rate changes after the fact are NOT retroactively applied automatically.
 - Successful rows write `credits > 0`; errored rows write `credits = 0` (token counts default to `0` on the error path). The cap SUM only counts `status = 'success'`, so users don't pay for upstream flakiness.
 
+## KB retrieval — index inventory (issue #13 v3)
+
+The hybrid search function (`lib/kb/search.ts`) runs RRF (k=60) over three legs and depends on the following indexes:
+
+| Index                              | Type         | Used by leg                               | Rationale                                                                                                            |
+| ---------------------------------- | ------------ | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `kb_chunk_embedding_idx`           | HNSW         | `vec` (pgvector cosine `<=>`)             | Online-friendly (no training required, unlike ivfflat). m=16, ef_construction=64 from pgvector README defaults.      |
+| `kb_chunk_tsv_idx`                 | GIN          | `kw` (`tsv @@ websearch_to_tsquery`)      | Postgres built-in BM25-style. `tsv` is a `GENERATED ALWAYS AS to_tsvector('english', content) STORED` column.        |
+| `kb_chunk_entities_idx`            | GIN          | `tag` (`entities && qents`)               | Stores the entities extracted at ingest time. Pure string-split at query time feeds `qents` — no LLM call per query. |
+| `kb_chunk_document_ordinal_idx`    | btree        | Per-doc chunk ordering                    | Composite `(document_id, ordinal)`; supports the `findKbChunksByDocumentId` resolver and per-doc scans.              |
+| `kb_document_user_contenthash_idx` | unique btree | PRIMARY dedup in `kbAgent.screenshotNode` | Composite `(user_id, content_hash)`; same PDF re-uploaded short-circuits.                                            |
+| `kb_document_user_created_idx`     | btree        | `list_documents` ordering                 | Composite `(user_id, created_at DESC)`; covers the Settings → KB tab list.                                           |
+
+All KB queries scope by `user_id` first; the composite indexes above let the planner index-only-scan the per-user slice.
+
+Missing fields (follow-up migrations):
+
+- `kb_chunk.page_numbers INTEGER[]` — currently absent. The Pages tab UI reads page numbers from `kb_document.pages` (the JSON column populated during ingest). `HybridSearchResult.pageNumbers` returns `[]` until a migration adds the column and the ingest pipeline writes per-chunk page boundaries.
+
 ## Code → table map
 
 | Table              | Reads                                                                                                                   | Writes                                                                                                                                                              |

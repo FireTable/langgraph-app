@@ -247,17 +247,20 @@ describe("threadSummarizeNode", () => {
     expect(entry.messageIds).toHaveLength(KEEP_RECENT);
   });
 
-  it("passes a transcript grouped by human turn (#N = 1-indexed JSONL) to the LLM (system + user)", async () => {
+  it("passes a per-turn transcript (one user message per human turn, two text parts each) to the LLM", async () => {
     mockGetAllUserSummaries.mockResolvedValue([]);
     mockInvoke.mockResolvedValueOnce({
       entries: [{ question: "q", answer: "a", refs: ["#1-#10"] }],
     });
     mockWriteSummary.mockResolvedValueOnce({});
 
-    // KEEP_RECENT=10 → first trigger fires at humanCount=11. Mixed
-    // human + ai in the trigger window → excerpt captures both, then
-    // renderTranscript groups them into JSONL turn lines. Labels are
-    // GLOBAL humanIndex (1-indexed in the JSONL) so the LLM's refs map
+    // KEEP_RECENT=10 → first trigger fires at humanCount=11. The
+    // per-turn refactor (commit 7072fac) emits one USER message per
+    // human turn with two text parts:
+    //   part[0] = `This turn ref is ${ref}` (label the LLM must copy)
+    //   part[1] = JSON.stringify({ ref, messages: [...] })
+    // This way the LLM can attribute each chunk to a specific ref.
+    // Labels are GLOBAL humanIndex (1-indexed) so the LLM's refs map
     // 1:1 to the SummaryEntry.startMessageIndex..endMessageIndex range.
     const messages = Array.from({ length: 22 }, (_, i) => ({
       id: `m${i}`,
@@ -268,37 +271,49 @@ describe("threadSummarizeNode", () => {
     await threadSummarizeNode({ messages }, CONFIG_OK);
 
     expect(mockInvoke).toHaveBeenCalledTimes(1);
-    const msgs = mockInvoke.mock.calls[0][0] as Array<{ role: string; content: string }>;
-    expect(msgs).toHaveLength(2);
+    // system + N user messages (one per human turn in the window).
+    const msgs = mockInvoke.mock.calls[0][0] as Array<{
+      role: string;
+      content: string | Array<{ type: string; text?: string }>;
+    }>;
     expect(msgs[0].role).toBe("system");
     expect(msgs[0].content).toContain("ROLE");
-    expect(msgs[1].role).toBe("user");
-    const transcript = msgs[1].content;
-    // JSONL: one line per human turn, 1-indexed (#1..#10 for 10 humans).
-    const lines = transcript.split("\n");
-    expect(lines).toHaveLength(10);
-    expect(lines[0]).toBe(
-      JSON.stringify({
-        id: "#1",
-        messages: [
-          { role: "user", content: "turn-0" },
-          { role: "assistant", content: "turn-1" },
-        ],
-      }),
-    );
-    expect(lines[1]).toBe(
-      JSON.stringify({
-        id: "#2",
-        messages: [
-          { role: "user", content: "turn-2" },
-          { role: "assistant", content: "turn-3" },
-        ],
-      }),
-    );
+    // KEEP_RECENT=10 → 10 human turns in the window → 10 user messages.
+    const userMsgs = msgs.filter((m) => m.role === "user");
+    expect(userMsgs).toHaveLength(10);
+
+    // Each user message has two text parts: the ref label + the JSON body.
+    for (let i = 0; i < userMsgs.length; i++) {
+      const parts = userMsgs[i].content as Array<{ type: string; text?: string }>;
+      expect(Array.isArray(parts)).toBe(true);
+      expect(parts).toHaveLength(2);
+      expect(parts[0].type).toBe("text");
+      expect(parts[0].text).toBe(`This turn ref is #${i + 1}`);
+      expect(parts[1].type).toBe("text");
+      const body = JSON.parse(parts[1].text!);
+      expect(body.ref).toBe(`#${i + 1}`);
+      // Each turn is human + AI pair.
+      expect(body.messages).toHaveLength(2);
+      expect(body.messages[0].role).toBe("user");
+      expect(body.messages[1].role).toBe("assistant");
+    }
+
+    // First turn: turn-0 (user) + turn-1 (assistant)
+    const firstParts = userMsgs[0].content as Array<{ type: string; text?: string }>;
+    const secondParts = userMsgs[1].content as Array<{ type: string; text?: string }>;
+    expect(firstParts[1].text).toContain("turn-0");
+    expect(firstParts[1].text).toContain("turn-1");
+    // Second turn: turn-2 + turn-3
+    expect(secondParts[1].text).toContain("turn-2");
+    expect(secondParts[1].text).toContain("turn-3");
+
     // KEEP_RECENT=10 cuts at the 10th human; positions 20/21 belong to
     // the 11th human + its AI reply and must not leak into this chunk.
-    expect(transcript).not.toContain("turn-20");
-    expect(transcript).not.toContain("turn-21");
+    const allTexts = userMsgs
+      .map((m) => (m.content as Array<{ text?: string }>).map((p) => p.text ?? "").join("\n"))
+      .join("\n");
+    expect(allTexts).not.toContain("turn-20");
+    expect(allTexts).not.toContain("turn-21");
   });
 
   it("captures the AI reply following the last human in the window (no orphan questions)", async () => {
@@ -324,30 +339,37 @@ describe("threadSummarizeNode", () => {
     await threadSummarizeNode({ messages }, CONFIG_OK);
 
     expect(mockInvoke).toHaveBeenCalledTimes(1);
-    const msgs = mockInvoke.mock.calls[0][0] as Array<{ role: string; content: string }>;
-    const transcript = msgs[1].content;
-    const lines = transcript.split("\n");
-    expect(lines).toHaveLength(10);
-    // The 10th (last) JSONL line MUST carry the AI reply that follows
-    // the 10th human — both turn-18 (Q10) and turn-19 (A10) in the
-    // same entry, otherwise the LLM sees a Q with no A.
-    expect(lines[9]).toBe(
-      JSON.stringify({
-        id: "#10",
-        messages: [
-          { role: "user", content: "turn-18" },
-          { role: "assistant", content: "turn-19" },
-        ],
-      }),
-    );
+    const msgs = mockInvoke.mock.calls[0][0] as Array<{
+      role: string;
+      content: string | Array<{ type: string; text?: string }>;
+    }>;
+    const userMsgs = msgs.filter((m) => m.role === "user");
+    expect(userMsgs).toHaveLength(10);
+
+    // The 10th (last) user message MUST carry BOTH turn-18 (Q10) and
+    // turn-19 (A10) — otherwise the LLM sees a Q with no A. Per-turn
+    // refactor reads them from the same ThreadLine.messages[].
+    const lastUserMsg = userMsgs[9];
+    const lastParts = lastUserMsg.content as Array<{ type: string; text?: string }>;
+    const lastBody = JSON.parse(lastParts[1].text!);
+    expect(lastBody.ref).toBe("#10");
+    expect(lastBody.messages).toHaveLength(2);
+    expect(lastBody.messages[0].role).toBe("user");
+    expect(lastBody.messages[0].content).toBe("turn-18");
+    expect(lastBody.messages[1].role).toBe("assistant");
+    expect(lastBody.messages[1].content).toBe("turn-19");
+
     // The 11th pair must still not leak.
-    expect(transcript).not.toContain("turn-20");
-    expect(transcript).not.toContain("turn-21");
+    const allTexts = userMsgs
+      .map((m) => (m.content as Array<{ text?: string }>).map((p) => p.text ?? "").join("\n"))
+      .join("\n");
+    expect(allTexts).not.toContain("turn-20");
+    expect(allTexts).not.toContain("turn-21");
   });
 
   it("uses the store anchor as the #N offset on later chunks (refs map to SummaryEntry range)", async () => {
     // After [0..9] is already compressed (lastEnd=9), the next trigger
-    // at humanCount=21 covers [10..19] and the JSONL labels MUST be
+    // at humanCount=21 covers [10..19] and the per-turn labels MUST be
     // #11..#20 (1-indexed + offset 10), NOT #1..#10. Otherwise the LLM's
     // refs would point at the wrong SummaryEntry range — the whole point
     // of the global-index fix.
@@ -366,32 +388,38 @@ describe("threadSummarizeNode", () => {
     await threadSummarizeNode({ messages }, CONFIG_OK);
 
     expect(mockInvoke).toHaveBeenCalledTimes(1);
-    const msgs = mockInvoke.mock.calls[0][0] as Array<{ role: string; content: string }>;
-    const transcript = msgs[1].content;
-    // JSONL: 10 lines, #11..#20 (startHumanIdx=10, 1-indexed).
-    const lines = transcript.split("\n");
-    expect(lines).toHaveLength(10);
-    expect(lines[0]).toBe(
-      JSON.stringify({
-        id: "#11",
-        messages: [
-          { role: "user", content: "turn-20" },
-          { role: "assistant", content: "turn-21" },
-        ],
-      }),
-    );
-    expect(lines[1]).toBe(
-      JSON.stringify({
-        id: "#12",
-        messages: [
-          { role: "user", content: "turn-22" },
-          { role: "assistant", content: "turn-23" },
-        ],
-      }),
-    );
+    // 10 user messages for the 10 humans in [10..19]. Labels #11..#20.
+    const msgs = mockInvoke.mock.calls[0][0] as Array<{
+      role: string;
+      content: string | Array<{ type: string; text?: string }>;
+    }>;
+    const userMsgs = msgs.filter((m) => m.role === "user");
+    expect(userMsgs).toHaveLength(10);
+
+    // Per-turn ref label = `This turn ref is #N`, the JSON body has `id: #N`.
+    const firstParts = userMsgs[0].content as Array<{ type: string; text?: string }>;
+    expect(firstParts[0].text).toBe("This turn ref is #11");
+    const firstBody = JSON.parse(firstParts[1].text!);
+    expect(firstBody.ref).toBe("#11");
+    expect(firstBody.messages).toHaveLength(2);
+    expect(firstBody.messages[0].role).toBe("user");
+    expect(firstBody.messages[0].content).toBe("turn-20");
+    expect(firstBody.messages[1].role).toBe("assistant");
+    expect(firstBody.messages[1].content).toBe("turn-21");
+
+    const secondParts = userMsgs[1].content as Array<{ type: string; text?: string }>;
+    expect(secondParts[0].text).toBe("This turn ref is #12");
+    const secondBody = JSON.parse(secondParts[1].text!);
+    expect(secondBody.ref).toBe("#12");
+    expect(secondBody.messages[0].content).toBe("turn-22");
+    expect(secondBody.messages[1].content).toBe("turn-23");
+
     // Old range [0..9] is gone — labels #1..#10 must not appear.
-    expect(transcript).not.toMatch(/"id":"#1"/);
-    expect(transcript).not.toMatch(/"id":"#10"/);
+    const allTexts = userMsgs
+      .map((m) => (m.content as Array<{ text?: string }>).map((p) => p.text ?? "").join("\n"))
+      .join("\n");
+    expect(allTexts).not.toMatch(/"ref":"#1"/);
+    expect(allTexts).not.toMatch(/"ref":"#10"/);
   });
 
   it("invokes the LLM with the nostream tag", async () => {

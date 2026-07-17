@@ -118,7 +118,9 @@ describe("lib/memory/validators", () => {
               endMessageIndex: 6,
               messageCount: 7,
               messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
-              summary: { entries: [{ question: "...", answer: "...", refs: [1, 2, 3, 4] }] },
+              summary: {
+                entries: [{ question: "...", answer: "...", refs: ["1", "2", "3", "4"] }],
+              },
               triggerReason: "turn_based",
               tokenCountBefore: 0,
               tokenCountAfter: 0,
@@ -147,7 +149,7 @@ describe("lib/memory/validators", () => {
               endMessageIndex: 0,
               messageCount: 1,
               messageIds: ["m0"],
-              summary: { entries: [{ question: "...", answer: "...", refs: [1] }] },
+              summary: { entries: [{ question: "...", answer: "...", refs: ["1"] }] },
               triggerReason: "turn_based",
               tokenCountBefore: 0,
               tokenCountAfter: 0,
@@ -183,7 +185,11 @@ describe("lib/memory/validators", () => {
                 endMessageIndex: 6,
                 messageCount: 7,
                 messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
-                summary: { entries: [{ question: "...", answer: "...", refs: [1, 2, 3, 4, 5, 6, 7] }] },
+                summary: {
+                  entries: [
+                    { question: "...", answer: "...", refs: ["1", "2", "3", "4", "5", "6", "7"] },
+                  ],
+                },
                 triggerReason: "turn_based",
                 tokenCountBefore: 0,
                 tokenCountAfter: 0,
@@ -206,7 +212,7 @@ describe("lib/memory/validators", () => {
         endMessageIndex: 6,
         messageCount: 7,
         messageIds: ["m0", "m1", "m2", "m3", "m4", "m5", "m6"],
-        summary: { entries: [{ question: "...", answer: "...", refs: [1, 2, 3, 4] }] },
+        summary: { entries: [{ question: "...", answer: "...", refs: ["1", "2", "3", "4"] }] },
         triggerReason: "turn_based",
         tokenCountBefore: 0,
         tokenCountAfter: 0,
@@ -223,7 +229,7 @@ describe("lib/memory/validators", () => {
         endMessageIndex: 6,
         messageCount: 5,
         messageIds: ["m0"],
-        summary: { entries: [{ question: "...", answer: "...", refs: [1, 2, 3, 4] }] },
+        summary: { entries: [{ question: "...", answer: "...", refs: ["1", "2", "3", "4"] }] },
         createdAt: "2026-07-02T00:00:00.000Z",
       });
       expect(r.success).toBe(false);
@@ -251,7 +257,7 @@ describe("lib/memory/validators", () => {
         endMessageIndex: 0,
         messageCount: 1,
         messageIds: [],
-        summary: { entries: [{ question: "...", answer: "...", refs: [1] }] },
+        summary: { entries: [{ question: "...", answer: "...", refs: ["1"] }] },
         createdAt: "2026-07-02T00:00:00.000Z",
       });
       expect(r.success).toBe(false);
@@ -265,7 +271,7 @@ describe("lib/memory/validators", () => {
         endMessageIndex: 2,
         messageCount: 3,
         messageIds: ["m0", "m1"], // one short
-        summary: { entries: [{ question: "...", answer: "...", refs: [1, 2, 3] }] },
+        summary: { entries: [{ question: "...", answer: "...", refs: ["1", "2", "3"] }] },
         createdAt: "2026-07-02T00:00:00.000Z",
       });
       expect(r.success).toBe(false);

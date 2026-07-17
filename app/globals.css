@@ -359,6 +359,58 @@
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
-    border: 0;
   }
+}
+
+/* Lexical editor styling overrides — remove default borders, outlines, and box shadows
+   to keep the input seamless and transparent inside the parent composer shell. */
+.aui-lexical-editor,
+.aui-lexical-editor:focus,
+.aui-lexical-editor:focus-visible,
+.aui-lexical-input,
+.aui-lexical-input:focus,
+.aui-lexical-input:focus-visible {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.aui-lexical-editor {
+  position: relative;
+}
+
+.aui-lexical-placeholder {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  padding: inherit;
+  pointer-events: none;
+  user-select: none;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.6;
+}
+
+.aui-lexical-editor span[contenteditable="false"],
+.aui-lexical-input span[contenteditable="false"] {
+  display: inline-flex !important;
+  vertical-align: middle;
+}
+
+.aui-lexical-input p,
+.aui-lexical-editor p,
+.aui-user-message-content {
+  margin: 0 !important;
+}
+
+.aui-lexical-input p > *,
+.aui-lexical-editor p > *,
+.aui-user-message-content > * {
+  vertical-align: middle;
+}
+
+.aui-user-message-content .aui-directive-chip:not(:first-child) {
+  margin-left: 0.25rem;
+}
+.aui-user-message-content .aui-directive-chip:not(:last-child) {
+  margin-right: 0.25rem;
 }

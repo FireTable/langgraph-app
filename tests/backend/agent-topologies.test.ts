@@ -17,6 +17,7 @@ describe("parent graph builder", () => {
       "codeAgent",
       "cryptoAgent",
       "kbAgent",
+      "prepareData",
       "renameThreadAgent",
       "routerAgent",
       "triggerBackgroundAgent",

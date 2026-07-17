@@ -35,9 +35,9 @@ vi.mock("@/backend/store", () => ({ store: mockStore }));
 const USER = "u1";
 const THREAD = "t1";
 
-const sampleEntries: Array<{ question: string; answer: string; refs: number[] }> = [
-  { question: "what's the weather in BJ?", answer: "sunny 25°C", refs: [1] },
-  { question: "and in SH?", answer: "rainy 18°C", refs: [2] },
+const sampleEntries: Array<{ question: string; answer: string; refs: string[] }> = [
+  { question: "what's the weather in BJ?", answer: "sunny 25°C", refs: ["1"] },
+  { question: "and in SH?", answer: "rainy 18°C", refs: ["2"] },
 ];
 
 afterEach(() => vi.clearAllMocks());

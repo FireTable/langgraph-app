@@ -2,7 +2,7 @@ import { type BaseMessage, HumanMessage } from "@langchain/core/messages";
 import { collectKbRefs, isFilePart, isKbRefPart } from "./extract";
 import { getKbDocForResolve } from "./cache";
 
-// ponytail: kb_ref → resolved text. Called from trimMessagesForInvoke
+// ponytail: kb_ref → resolved text. Called from prepareMessagesForInvoke
 // at LLM-invoke time (state.messages carries the kb_ref as-is).
 // Replaces kb_ref-bearing parts on EVERY HumanMessage with a text part
 // containing either the concatenated chunks or a status placeholder —

@@ -9,7 +9,7 @@ import { CommonAgentState } from "@/backend/state";
 import {
   buildSystemMessageWithMemory,
   loadThreadSummariesForPrompt,
-  trimMessagesForInvoke,
+  prepareMessagesForInvoke,
 } from "@/backend/memory/template";
 import { extractUserId } from "@/backend/memory/recall";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
@@ -39,7 +39,7 @@ async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?:
   // checkpointer read from it directly.
   const threads = await loadThreadSummariesForPrompt(config);
   const userId = extractUserId(config);
-  const history = await trimMessagesForInvoke(
+  const history = await prepareMessagesForInvoke(
     messages,
     threads?.summaries ?? [],
     userId ?? undefined,
