@@ -1,13 +1,13 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
-import { MarkdownTextSplitter, RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+import { MarkdownTextSplitter } from "@langchain/textsplitters";
 import { Document } from "@langchain/core/documents";
 import PQueue from "p-queue";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { getEmbeddingModel, getExtractModel, getOcrModel } from "@/backend/model";
-import { KB_OCR_PAGE_PROMPT } from "@/backend/prompt/system";
+import { KB_OCR_PAGE_PROMPT, KB_ENTITY_EXTRACTION_SYSTEM_PROMPT } from "@/backend/prompt/system";
 import { creditTrackingHandler } from "@/backend/callbacks";
 import { checkpointer, subgraphCheckpointerConfig } from "@/backend/checkpointer";
 import { store } from "@/backend/store";
@@ -40,34 +40,6 @@ import { invalidateKbDoc } from "@/lib/kb/cache";
 import { EMBEDDING_DIM } from "@/lib/kb/schema";
 import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from "@/lib/r2/client";
 import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
-
-function splitMarkdownByHeaders(markdown: string): Document[] {
-  const lines = markdown.split("\n");
-  const docs: Document[] = [];
-  const currentHeaders: Record<string, string> = {};
-  let currentContent: string[] = [];
-
-  for (const line of lines) {
-    const headerMatch = line.match(/^(#{1,6})\s+(.*)/);
-    if (headerMatch) {
-      if (currentContent.length > 0) {
-        const text = currentContent.join("\n").trim();
-        if (text) docs.push(new Document({ pageContent: text, metadata: { ...currentHeaders } }));
-        currentContent = [];
-      }
-      const level = headerMatch[1].length;
-      currentHeaders[`h${level}`] = headerMatch[2].trim();
-      for (let i = level + 1; i <= 6; i++) delete currentHeaders[`h${i}`];
-    } else {
-      currentContent.push(line);
-    }
-  }
-  if (currentContent.length > 0) {
-    const text = currentContent.join("\n").trim();
-    if (text) docs.push(new Document({ pageContent: text, metadata: { ...currentHeaders } }));
-  }
-  return docs;
-}
 
 // ponytail: v3 KB ingest subgraph — per-doc state. Compiled once at
 // module load, wired into agent.ts as `kbAgent`. Sits between
@@ -768,14 +740,13 @@ async function generateChunkEmbedNode(
             // tagged model is registered (see getExtractModel).
             const extractModel = await getExtractModel();
             const embedder = await getEmbeddingModel();
-            const headerDocs = splitMarkdownByHeaders(fullMarkdown);
-            const lengthSplitter = new RecursiveCharacterTextSplitter({
+            const lengthSplitter = new MarkdownTextSplitter({
               chunkSize: 1024,
               chunkOverlap: 200,
             });
             const entityQueue = new PQueue({ concurrency: KB_ENTITY_CONCURRENCY });
 
-            const splitDocs = await lengthSplitter.splitDocuments(headerDocs);
+            const splitDocs = await lengthSplitter.createDocuments([fullMarkdown]);
             const texts = splitDocs.map((d) => d.pageContent);
             const embeddings = await embedder.embedDocuments(texts);
 
@@ -861,27 +832,25 @@ async function generateChunkEmbedNode(
                 entityQueue.add(async (): Promise<void> => {
                   const chunkId = chunkIds[i]!;
                   const metadata = splitDocs[i].metadata;
-                  const contextPath = Object.values(metadata).join(" > ");
+                  const contextPath = Object.values(metadata)
+                    .filter((val) => typeof val === "string")
+                    .join(" > ");
                   const docTitle = doc.title ?? "Unknown Document";
 
-                  const extractionPrompt = `You are a top-tier GraphRAG extraction algorithm.
-Extract low-level knowledge graph elements (entities and relationships) and high-level macro themes.
+                  const systemMessage = new SystemMessage(KB_ENTITY_EXTRACTION_SYSTEM_PROMPT);
+                  const humanMessage = new HumanMessage(
+                    `Context Document Title: [${docTitle}]\n` +
+                      `Section Path: [${contextPath || "Root"}]\n` +
+                      `Chunk: [${i + 1} / ${texts.length}]\n\n` +
+                      `Text to extract:\n${text}`,
+                  );
 
-Context Document Title: [${docTitle}]
-Section Path: [${contextPath || "Root"}]
-
-Extraction Rules:
-1. Resolve any pronouns using the Document Title and Section Path.
-2. Relationships must connect two entities meaningfully.
-3. Themes should be macroscopic abstractions summarizing the chunk's intent.
-
-Text to extract:
-${text}`;
+                  console.warn(1111, humanMessage);
 
                   try {
                     const out = await extractModel
                       .withStructuredOutput(lightRagSchema, { method: "jsonSchema" })
-                      .invoke(extractionPrompt, { ...config, tags: ["nostream"] });
+                      .invoke([systemMessage, humanMessage], { ...config, tags: ["nostream"] });
                     // write-back: entities + status='success' in one go
                     // so the row never sits at success with a blank
                     // entities field.

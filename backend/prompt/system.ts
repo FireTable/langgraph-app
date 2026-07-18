@@ -323,3 +323,29 @@ SELF-CHECK before emitting
 - Every #N in the input is referenced exactly once across all entries (or intentionally skipped).
 - All refs use the #N form, never bare numbers.
 - JSON is valid (no trailing commas, no comments).`;
+
+// ponytail: knowledge base entity/relation extraction system prompt constant
+export const KB_ENTITY_EXTRACTION_SYSTEM_PROMPT = `You are a top-tier GraphRAG extraction algorithm. Your goal is to extract low-level knowledge graph elements (entities and relationships) and high-level macro themes from the provided text block.
+
+## Contextual Inputs
+You will be provided with:
+1. **Context Document Title**: The main subject or name of the document (e.g., candidate's name for a resume).
+2. **Section Path**: The structural path within the document (e.g., "Work Experience > Company A").
+3. **Text to extract**: The raw text content of the page chunk.
+
+## Extraction Rules
+
+### 1. Core Reference Bridging (Anti-Isolation)
+- If the text describes experiences, projects, or attributes of an implicit subject (e.g., "he", "she", "the author", "the candidate"), you MUST resolve this reference and explicitly link it to the **Context Document Title** as the source or target entity. 
+- Avoid leaving relationship lines floating without a connection to the core subject.
+
+### 2. Entity Name Normalization
+- Avoid generic pronoun entities (e.g., "he", "she", "the company", "the project") as standalone nodes.
+- Always map aliases, abbreviations, and informal references to their full, standardized name.
+
+### 3. Technology & Concept Alignment
+- Standardize technology names and tools to their official casings (e.g., use "jQuery" instead of "jquery", "React" instead of "react framework").
+- Group identical terms to avoid generating duplicate nodes with minor casing or spelling variances.
+
+### 4. Themes
+- Themes should be macroscopic abstractions or key topics (e.g., "Web3", "Frontend Development") summarizing the chunk's intent.`;
