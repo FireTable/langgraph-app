@@ -67,6 +67,14 @@ export function KnowledgeGraph({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [dimensions, setDimensions] = useState({ width: 600, height: 500 });
 
+  // ponytail: react-force-graph-2d instance ref so we can call
+  // zoomToFit() once after first layout, animating into the cluster
+  // instead of forcing the user to scroll-zoom in. We re-fit whenever
+  // graph data shape materially changes (entity / relationship count
+  // jumps by > 5) so a re-render lands on a useful framing.
+  const graphRef = useRef<any>(null);
+  const lastFittedKey = useRef<string>("");
+
   useEffect(() => {
     if (graphView !== "visual" || !containerRef.current) return;
     const resizeObserver = new ResizeObserver((entries) => {
@@ -161,6 +169,23 @@ export function KnowledgeGraph({
     };
   }, [chunks, skipFailedChunks]);
 
+  // ponytail: re-fit whenever the node/edge count materially changes
+  // so the graph lands on a useful framing for the user. Defers a
+  // tick so the simulation has its first coords before we ask for a
+  // fit. Idempotent across renders — lastFittedKey dedupes.
+  useEffect(() => {
+    if (graphView !== "visual") return;
+    const key = `${graphData.nodes.length}-${graphData.links.length}`;
+    if (key === lastFittedKey.current) return;
+    lastFittedKey.current = key;
+    const raf = requestAnimationFrame(() => graphRef.current?.zoomToFit(400, 60));
+    const id = setTimeout(() => graphRef.current?.zoomToFit(400, 60), 300);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(id);
+    };
+  }, [graphData.nodes.length, graphData.links.length, graphView]);
+
   if (chunks.length === 0) {
     return (
       <p className="text-muted-foreground text-xs italic text-center p-8 border border-dashed rounded-lg bg-muted/5 w-full">
@@ -234,6 +259,7 @@ export function KnowledgeGraph({
               </span>
             ) : (
               <ForceGraph2D
+                ref={graphRef}
                 graphData={graphData}
                 width={dimensions.width}
                 height={dimensions.height}
@@ -257,36 +283,45 @@ export function KnowledgeGraph({
                     <span style="display: block; color: #475569; font-weight: 400;">${node.description}</span>
                   </div>
                 `}
-                linkLabel={(link: any) => `
-                  <div style="
-                    padding: 8px 10px;
-                    background: white;
-                    color: #1e293b;
-                    border-radius: 8px;
-                    border: 1px solid #e2e8f0;
-                    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-                    font-family: system-ui, -apple-system, sans-serif;
-                    font-size: 11px;
-                    max-width: 240px;
-                    line-height: 1.4;
-                  ">
-                    <strong style="display: block; font-weight: 600; margin-bottom: 3px; color: #0f172a;">${link.source.name || link.source} ──(${link.relation})──&gt; ${link.target.name || link.target}</strong>
-                    <span style="display: block; color: #64748b; font-weight: 400;">${link.description}</span>
-                  </div>
-                `}
+                // ponytail: zoom-adaptive styling. globalScale is the
+                // current transform scale (1.0 ≈ native). At zoom-
+                // out (small globalScale) we want nodes small + lines
+                // thin so dense clusters stay readable; at zoom-in
+                // we thicken both so the user can trace specific
+                // edges and labels keep their on-screen footprint.
                 linkDirectionalArrowLength={6}
                 linkDirectionalArrowRelPos={1}
-                linkWidth={1.5}
-                linkColor={() => "rgba(148, 163, 184, 0.45)"}
+                linkWidth={(link: any) => {
+                  // ponytail: thin base (0.8px) — dense doc graphs
+                  // have hundreds of edges; thin strokes keep the
+                  // cluster readable. Hub edges bump up via log2
+                  // degree so the eye can pick out major spokes.
+                  const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
+                  return Math.min(1.8, 0.8 + Math.log2(1 + degree) * 0.3);
+                }}
+                linkColor={(link: any) => {
+                  const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
+                  // ponytail: hub-to-spoke edges get a heavier fill so
+                  // the user can trace the major connections; leaf
+                  // edges stay faint. Lower alpha at low zoom keeps
+                  // the visual field breathable.
+                  const alpha = Math.min(0.7, 0.28 + Math.log2(1 + degree) * 0.16);
+                  return `rgba(100, 116, 139, ${alpha.toFixed(3)})`;
+                }}
                 cooldownTicks={80}
                 nodeCanvasObject={(node: any, ctx, globalScale) => {
                   const label = node.name;
                   const degree = node.degree || 1;
-                  const r = Math.min(10, 4.5 + degree * 0.4);
+                  // ponytail: zoom-adaptive radius. Zoomed in, shrink
+                  // a touch so neighbouring labels get breathing room;
+                  // zoomed out, expand so the cluster reads as a
+                  // recognizable blob instead of a dust storm.
+                  const zoomBoost = Math.min(0.6, Math.max(-0.5, (globalScale - 1) * -0.55));
+                  const r = Math.min(12, Math.max(2.5, 4.5 + degree * 0.4 + zoomBoost));
 
                   let color = "#e2e8f0";
                   let strokeColor = "#64748b";
-                  const typeLower = node.type.toLowerCase();
+                  const typeLower = node.type?.toLowerCase();
                   if (typeLower === "person") {
                     color = "#eff6ff";
                     strokeColor = "#3b82f6";
@@ -306,20 +341,60 @@ export function KnowledgeGraph({
                   ctx.strokeStyle = strokeColor;
                   ctx.stroke();
 
-                  if (globalScale > 0.8) {
-                    const fontSize = Math.max(7.5, 9 / globalScale);
-                    ctx.font = `500 ${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
+                  // ponytail: tiered label density. Zoom-out (cluster
+                  // view) hides labels entirely — you'd want to see
+                  // the blob shape instead of names. Mid range shows
+                  // a small truncated name; full zoom shows the
+                  // entire name with a stroke for legibility against
+                  // coloured nodes.
+                  if (globalScale > 0.5) {
+                    const isFull = globalScale > 1.0;
+                    const fontSize = isFull
+                      ? Math.max(8, 11 / globalScale)
+                      : Math.max(6, 8 / globalScale);
+                    ctx.font = `${isFull ? 600 : 500} ${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
                     ctx.textAlign = "center";
                     ctx.textBaseline = "top";
-                    ctx.fillStyle = "#334155";
+                    ctx.fillStyle = "#1e293b";
 
                     let displayLabel = label;
-                    if (label.length > 12) {
-                      displayLabel = label.substring(0, 10) + "...";
+                    if (!isFull && label.length > 10) {
+                      displayLabel = label.substring(0, 8) + "...";
                     }
-                    ctx.fillText(displayLabel, node.x, node.y + r + 3);
+                    if (isFull && label.length > 18) {
+                      displayLabel = label.substring(0, 16) + "...";
+                    }
+
+                    if (isFull) {
+                      // ponytail: bold + dark fill only — no white card
+                      // backdrop. The token "weight 600" against
+                      // #1e293b reads cleanly on the canvas without
+                      // obscuring neighbouring nodes.
+                      ctx.fillStyle = "#0f172a";
+                    } else {
+                      ctx.fillStyle = "#1e293b";
+                    }
+
+                    ctx.fillText(displayLabel, node.x, node.y + r + 4);
                   }
                 }}
+                linkLabel={(link: any) => `
+                  <div style="
+                    padding: 8px 10px;
+                    background: white;
+                    color: #1e293b;
+                    border-radius: 8px;
+                    border: 1px solid #e2e8f0;
+                    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+                    font-family: system-ui, -apple-system, sans-serif;
+                    font-size: 11px;
+                    max-width: 240px;
+                    line-height: 1.4;
+                  ">
+                    <strong style="display: block; font-weight: 600; margin-bottom: 3px; color: #0f172a;">${link.source.name || link.source} ──(${link.relation})──&gt; ${link.target.name || link.target}</strong>
+                    <span style="display: block; color: #64748b; font-weight: 400;">${link.description}</span>
+                  </div>
+                `}
               />
             )}
           </div>
