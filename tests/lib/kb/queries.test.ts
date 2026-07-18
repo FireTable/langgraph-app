@@ -11,6 +11,7 @@ import {
   deleteKbDocumentForUser,
   ensureDefaultKbFolder,
   findKbChunksByDocumentId,
+  findKbChunksByFolderId,
   findKbDocumentByAttachmentId,
   findKbDocumentByContentHash,
   findKbDocumentById,
@@ -516,6 +517,112 @@ describe("lib/kb/queries", () => {
       const docId = await seedDocument(other.id, folderId);
       const updated = await updateKbDocumentStatus(TEST_USER.id, docId, { status: "success" });
       expect(updated).toBeNull();
+    });
+  });
+
+  describe("findKbChunksByFolderId", () => {
+    // ponytail: folder-level graph reads all chunks across every doc
+    // in the folder. The helper joins kb_chunk → kb_document on
+    // documentId and filters by (userId, folderId) — a folder owned
+    // by another user returns [] (no existence leak, same convention
+    // as findKbChunksContentByDocumentId).
+    it("returns chunks across all docs in the folder, joining every doc the folder owns", async () => {
+      const folderId = await seedFolder(TEST_USER.id, "Graph A");
+      const docAId = await seedDocument(TEST_USER.id, folderId, { title: "alpha.pdf" });
+      const docBId = await seedDocument(TEST_USER.id, folderId, { title: "beta.pdf" });
+
+      await withKbTx(async (tx) => {
+        await insertKbChunks(tx, [
+          {
+            id: "c-a0",
+            documentId: docAId,
+            ordinal: 0,
+            content: "alpha intro",
+            embedding: makeEmbedding(0),
+            entities: [{ name: "alphaEntity", type: "Concept", description: "a" }],
+          },
+          {
+            id: "c-b0",
+            documentId: docBId,
+            ordinal: 0,
+            content: "beta intro",
+            embedding: makeEmbedding(1),
+            entities: [{ name: "betaEntity", type: "Concept", description: "b" }],
+          },
+        ] as never);
+      });
+
+      const chunks = await findKbChunksByFolderId(TEST_USER.id, folderId);
+      expect(chunks).toHaveLength(2);
+      // join sends back both docs' chunks; row shapes preserved
+      expect(chunks.map((c) => c.content).sort()).toEqual(["alpha intro", "beta intro"]);
+      expect(chunks[0].entities[0].name).toMatch(/^(alpha|beta)Entity$/);
+      // themes / relationships come back as the column default (insertKbChunks
+      // doesn't persist them today; UI relies on this read shape regardless).
+      expect(Array.isArray(chunks[0].themes)).toBe(true);
+      expect(Array.isArray(chunks[0].relationships)).toBe(true);
+      expect(Array.isArray(chunks[1].themes)).toBe(true);
+      expect(Array.isArray(chunks[1].relationships)).toBe(true);
+    });
+
+    it("returns empty array for an unknown folder", async () => {
+      expect(await findKbChunksByFolderId(TEST_USER.id, "f-nope")).toEqual([]);
+    });
+
+    it("returns empty array when the folder is owned by another user", async () => {
+      const other = await makeIsolatedUser();
+      const otherFolderId = await seedFolder(other.id, "Other Folder");
+      const docId = await seedDocument(other.id, otherFolderId);
+      await withKbTx(async (tx) => {
+        await insertKbChunks(tx, [
+          {
+            id: `c-${randomUUID()}`,
+            documentId: docId,
+            ordinal: 0,
+            content: "private",
+            embedding: makeEmbedding(0),
+            entities: [],
+          },
+        ] as never);
+      });
+      // no existence leak
+      expect(await findKbChunksByFolderId(TEST_USER.id, otherFolderId)).toEqual([]);
+    });
+
+    it("returns only chunks from the target folder when the user owns many", async () => {
+      const folderAId = await seedFolder(TEST_USER.id, "Folder A");
+      const folderBId = await seedFolder(TEST_USER.id, "Folder B");
+      const docAId = await seedDocument(TEST_USER.id, folderAId, { title: "in-a.pdf" });
+      const docBId = await seedDocument(TEST_USER.id, folderBId, { title: "in-b.pdf" });
+
+      await withKbTx(async (tx) => {
+        await insertKbChunks(tx, [
+          {
+            id: "c-a",
+            documentId: docAId,
+            ordinal: 0,
+            content: "A content",
+            embedding: makeEmbedding(0),
+            entities: [{ name: "x", type: "Concept", description: "x" }],
+          },
+          {
+            id: "c-b",
+            documentId: docBId,
+            ordinal: 0,
+            content: "B content",
+            embedding: makeEmbedding(1),
+            entities: [{ name: "y", type: "Concept", description: "y" }],
+          },
+        ] as never);
+      });
+
+      const aOnly = await findKbChunksByFolderId(TEST_USER.id, folderAId);
+      expect(aOnly).toHaveLength(1);
+      expect(aOnly[0].content).toBe("A content");
+
+      const bOnly = await findKbChunksByFolderId(TEST_USER.id, folderBId);
+      expect(bOnly).toHaveLength(1);
+      expect(bOnly[0].content).toBe("B content");
     });
   });
 });

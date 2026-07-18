@@ -11,7 +11,7 @@ import {
 import { useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
-import { Brain, MenuIcon, PanelLeftIcon, PlusIcon, ShareIcon } from "lucide-react";
+import { BookOpen, Brain, MenuIcon, PanelLeftIcon, PlusIcon, ShareIcon } from "lucide-react";
 
 import { BrandMark } from "@/components/brand-mark";
 
@@ -46,6 +46,17 @@ const memoryLink = [
     label: "Memory",
     href: "/settings/memory",
     icon: <Brain className="text-muted-foreground" />,
+    visibility: "authenticated" as const,
+  },
+  // ponytail: Knowledge Base lives behind the Better Auth settings
+  // shim (kbSettingsPlugin registers the path "knowledge-base"). Add
+  // it next to Memory so the sidebar's UserButton has a KB shortcut —
+  // the Settings tab also surfaces it but most users reach KB from
+  // here.
+  {
+    label: "Knowledge Base",
+    href: "/settings/knowledge-base",
+    icon: <BookOpen className="text-muted-foreground" />,
     visibility: "authenticated" as const,
   },
 ];

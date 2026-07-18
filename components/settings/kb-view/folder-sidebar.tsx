@@ -21,7 +21,7 @@ import { FolderDeleteDialog, FolderNameDialog } from "./dialogs";
 export function HeaderBar({ label, action }: { label: string; action: React.ReactNode }) {
   return (
     <div className="flex h-9 items-center justify-between px-4 py-2 bg-muted/30">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
         {label}
       </span>
       {action}

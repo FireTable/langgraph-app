@@ -4,11 +4,32 @@ import { z } from "zod";
 import { withAuth } from "@/lib/auth/with-auth";
 import {
   deleteKbFolderForUser,
+  findKbChunksByFolderId,
   findKbFolderById,
   findKbFolderByName,
   listKbDocumentsByFolder,
   updateKbFolderNameForUser,
 } from "@/lib/kb/queries";
+
+// ponytail: Settings → KB → folder detail (combined graph). Returns the
+// kb_folder row + chunks content of all documents in the folder.
+export const GET = withAuth<{ id: string }>(async (_req, { user, params }) => {
+  const folder = await findKbFolderById(user.id, params.id);
+  if (!folder) {
+    return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
+  }
+
+  const chunks = await findKbChunksByFolderId(user.id, folder.id);
+
+  return NextResponse.json({
+    folder: {
+      id: folder.id,
+      name: folder.name,
+      createdAt: folder.createdAt.toISOString(),
+    },
+    chunks,
+  });
+});
 
 // ponytail: Settings → KB → folder rename. Same UNIQUE(user_id, name)
 // guard as POST /api/kb/folders — duplicate names surface as 409

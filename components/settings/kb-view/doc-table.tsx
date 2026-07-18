@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ExternalLink, Network, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { HeaderBar } from "./folder-sidebar";
 import { StatusBadge, formatTimestamp } from "./status-badge";
 import { DocDetailDialog } from "./doc-detail-dialog";
 import { DocDeleteDialog, DocReprocessDialog } from "./dialogs";
+import { FolderGraphDialog } from "./folder-graph-dialog";
 
 export function DocTable({
   group,
@@ -22,6 +23,8 @@ export function DocTable({
   onAddDoc: () => void;
   onRefresh: () => Promise<void> | void;
 }) {
+  const [folderGraphOpen, setFolderGraphOpen] = useState(false);
+
   if (!group) {
     return (
       <Card className="p-0 w-full min-w-0 overflow-hidden">
@@ -38,20 +41,37 @@ export function DocTable({
         <HeaderBar
           label={`${group.folder.name} · ${group.documents.length}`}
           action={
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-6"
-                  onClick={onAddDoc}
-                  aria-label="Add doc"
-                >
-                  <Plus className="size-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="left">Add doc</TooltipContent>
-            </Tooltip>
+            <div className="flex items-center gap-1.5">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6"
+                    onClick={() => setFolderGraphOpen(true)}
+                    aria-label="Folder Graph"
+                  >
+                    <Network className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left">Folder Graph</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6"
+                    onClick={onAddDoc}
+                    aria-label="Add doc"
+                  >
+                    <Plus className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left">Add doc</TooltipContent>
+              </Tooltip>
+            </div>
           }
         />
         <Separator />
@@ -64,6 +84,12 @@ export function DocTable({
           <DocTableRows docs={group.documents} focusDocId={focusDocId} onRefresh={onRefresh} />
         )}
       </CardContent>
+      <FolderGraphDialog
+        folderId={group.folder.id}
+        folderName={group.folder.name}
+        open={folderGraphOpen}
+        onOpenChange={setFolderGraphOpen}
+      />
     </Card>
   );
 }

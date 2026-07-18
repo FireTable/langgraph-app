@@ -453,6 +453,27 @@ export async function resetKbChunksForReprocess(tx: PgTx, docId: string): Promis
     .where(eq(kbChunk.documentId, docId));
 }
 
+export async function findKbChunksByFolderId(
+  userId: string,
+  folderId: string,
+): Promise<KbChunkPreview[]> {
+  return db
+    .select({
+      ordinal: kbChunk.ordinal,
+      content: kbChunk.content,
+      entities: kbChunk.entities,
+      relationships: kbChunk.relationships,
+      themes: kbChunk.themes,
+      status: kbChunk.status,
+      errorMessage: kbChunk.errorMessage,
+    })
+    .from(kbChunk)
+    .innerJoin(kbDocument, eq(kbChunk.documentId, kbDocument.id))
+    .where(and(eq(kbDocument.userId, userId), eq(kbDocument.folderId, folderId)))
+    .orderBy(asc(kbChunk.ordinal))
+    .then((rows) => rows);
+}
+
 export async function deleteKbDocumentForUser(
   userId: string,
   docId: string,
