@@ -414,3 +414,13 @@
 .aui-user-message-content .aui-directive-chip:not(:last-child) {
   margin-right: 0.25rem;
 }
+
+/* ponytail: override react-force-graph default tooltip wrapper styling
+   so that our custom HTML card renders natively without double
+   backgrounds, paddings, or black boxes wrapping it. */
+.graph-tooltip {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}

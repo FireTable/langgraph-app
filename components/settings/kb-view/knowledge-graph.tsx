@@ -66,6 +66,18 @@ export function KnowledgeGraph({
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [dimensions, setDimensions] = useState({ width: 600, height: 500 });
+  const [hoveredNode, setHoveredNode] = useState<any>(null);
+  const [hoveredLink, setHoveredLink] = useState<any>(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    setTooltipPos({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    });
+  };
 
   // ponytail: react-force-graph-2d instance ref so we can call
   // zoomToFit() once after first layout, animating into the cluster
@@ -142,30 +154,38 @@ export function KnowledgeGraph({
     // contributes to `Acme.degree` and `Beta.degree` symmetrically.
     const degrees = new Map<string, number>();
     for (const r of uniqueRelationships) {
-      degrees.set(r.source, (degrees.get(r.source) || 0) + 1);
-      degrees.set(r.target, (degrees.get(r.target) || 0) + 1);
+      const src = r.source.toLowerCase();
+      const tgt = r.target.toLowerCase();
+      degrees.set(src, (degrees.get(src) || 0) + 1);
+      degrees.set(tgt, (degrees.get(tgt) || 0) + 1);
     }
 
     const nodes = uniqueEntities.map((e) => ({
-      id: e.name,
+      id: e.name.toLowerCase(),
       name: e.name,
       type: e.type,
       description: e.description,
-      degree: degrees.get(e.name) || 0,
+      degree: degrees.get(e.name.toLowerCase()) || 0,
     }));
 
     const links = uniqueRelationships.map((r) => ({
-      source: r.source,
-      target: r.target,
+      source: r.source.toLowerCase(),
+      target: r.target.toLowerCase(),
       relation: r.relation,
       description: r.description,
     }));
+
+    // Filter out links pointing to non-existent nodes to prevent D3-force from crashing
+    const validNodeIds = new Set(nodes.map((n) => n.id));
+    const filteredLinks = links.filter(
+      (l) => validNodeIds.has(l.source) && validNodeIds.has(l.target),
+    );
 
     return {
       uniqueThemes,
       uniqueEntities,
       uniqueRelationships,
-      graphData: { nodes, links },
+      graphData: { nodes, links: filteredLinks },
     };
   }, [chunks, skipFailedChunks]);
 
@@ -251,6 +271,11 @@ export function KnowledgeGraph({
         {graphView === "visual" && (
           <div
             ref={containerRef}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={() => {
+              setHoveredNode(null);
+              setHoveredLink(null);
+            }}
             className="border rounded-xl bg-slate-50/50 overflow-hidden shadow-inner h-[500px] w-full flex items-center justify-center relative animate-fade-in"
           >
             {graphData.nodes.length === 0 ? (
@@ -258,144 +283,260 @@ export function KnowledgeGraph({
                 No entities to visualize yet.
               </span>
             ) : (
-              <ForceGraph2D
-                ref={graphRef}
-                graphData={graphData}
-                width={dimensions.width}
-                height={dimensions.height}
-                nodeRelSize={6}
-                nodeVal={(node: any) => node.degree || 1}
-                nodeLabel={(node: any) => `
-                  <div style="
-                    padding: 8px 10px;
-                    background: white;
-                    color: #1e293b;
-                    border-radius: 8px;
-                    border: 1px solid #e2e8f0;
-                    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-                    font-family: system-ui, -apple-system, sans-serif;
-                    font-size: 11px;
-                    max-width: 240px;
-                    line-height: 1.4;
-                  ">
-                    <strong style="display: block; font-weight: 600; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; margin-bottom: 4px;">${node.name}</strong>
-                    <span style="display: block; font-size: 9px; color: #64748b; font-weight: 500; margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.05em;">Type: ${node.type}</span>
-                    <span style="display: block; color: #475569; font-weight: 400;">${node.description}</span>
-                  </div>
-                `}
-                // ponytail: zoom-adaptive styling. globalScale is the
-                // current transform scale (1.0 ≈ native). At zoom-
-                // out (small globalScale) we want nodes small + lines
-                // thin so dense clusters stay readable; at zoom-in
-                // we thicken both so the user can trace specific
-                // edges and labels keep their on-screen footprint.
-                linkDirectionalArrowLength={6}
-                linkDirectionalArrowRelPos={1}
-                linkWidth={(link: any) => {
-                  // ponytail: thin base (0.8px) — dense doc graphs
-                  // have hundreds of edges; thin strokes keep the
-                  // cluster readable. Hub edges bump up via log2
-                  // degree so the eye can pick out major spokes.
-                  const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
-                  return Math.min(1.8, 0.8 + Math.log2(1 + degree) * 0.3);
-                }}
-                linkColor={(link: any) => {
-                  const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
-                  // ponytail: hub-to-spoke edges get a heavier fill so
-                  // the user can trace the major connections; leaf
-                  // edges stay faint. Lower alpha at low zoom keeps
-                  // the visual field breathable.
-                  const alpha = Math.min(0.7, 0.28 + Math.log2(1 + degree) * 0.16);
-                  return `rgba(100, 116, 139, ${alpha.toFixed(3)})`;
-                }}
-                cooldownTicks={80}
-                nodeCanvasObject={(node: any, ctx, globalScale) => {
-                  const label = node.name;
-                  const degree = node.degree || 1;
-                  // ponytail: zoom-adaptive radius. Zoomed in, shrink
-                  // a touch so neighbouring labels get breathing room;
-                  // zoomed out, expand so the cluster reads as a
-                  // recognizable blob instead of a dust storm.
-                  const zoomBoost = Math.min(0.6, Math.max(-0.5, (globalScale - 1) * -0.55));
-                  const r = Math.min(12, Math.max(2.5, 4.5 + degree * 0.4 + zoomBoost));
+              <>
+                <ForceGraph2D
+                  ref={graphRef}
+                  graphData={graphData}
+                  width={dimensions.width}
+                  height={dimensions.height}
+                  nodeRelSize={6}
+                  nodeVal={(node: any) => {
+                    const degree = node.degree || 1;
+                    const r = Math.min(12, Math.max(2.5, 4.5 + degree * 0.4));
+                    return Math.pow(r / 6, 2);
+                  }}
+                  nodeLabel={() => ""}
+                  linkLabel={() => ""}
+                  linkDirectionalArrowLength={6}
+                  linkDirectionalArrowRelPos={1}
+                  linkWidth={(link: any) => {
+                    const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
+                    return Math.min(1.8, 0.8 + Math.log2(1 + degree) * 0.3);
+                  }}
+                  linkColor={(link: any) => {
+                    const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
+                    const alpha = Math.min(0.7, 0.28 + Math.log2(1 + degree) * 0.16);
+                    return `rgba(100, 116, 139, ${alpha.toFixed(3)})`;
+                  }}
+                  cooldownTicks={80}
+                  nodeCanvasObject={(node: any, ctx, globalScale) => {
+                    if (
+                      typeof node.x !== "number" ||
+                      typeof node.y !== "number" ||
+                      !isFinite(node.x) ||
+                      !isFinite(node.y)
+                    ) {
+                      return;
+                    }
 
-                  let color = "#e2e8f0";
-                  let strokeColor = "#64748b";
-                  const typeLower = node.type?.toLowerCase();
-                  if (typeLower === "person") {
-                    color = "#eff6ff";
-                    strokeColor = "#3b82f6";
-                  } else if (typeLower === "organization") {
-                    color = "#fffbeb";
-                    strokeColor = "#f59e0b";
-                  } else if (typeLower === "concept") {
-                    color = "#ecfdf5";
-                    strokeColor = "#10b981";
+                    const label = node.name;
+                    const degree = node.degree || 1;
+                    const zoomBoost = Math.min(0.6, Math.max(-0.5, (globalScale - 1) * -0.55));
+                    const r = Math.min(12, Math.max(2.5, 4.5 + degree * 0.4 + zoomBoost));
+
+                    // Glowing 3D radial gradient coloring
+                    let colorStart = "#f8fafc";
+                    let colorEnd = "#cbd5e1";
+                    let strokeColor = "#475569";
+                    const typeLower = node.type?.toLowerCase();
+                    if (typeLower === "person") {
+                      colorStart = "#dbeafe";
+                      colorEnd = "#3b82f6";
+                      strokeColor = "#1d4ed8";
+                    } else if (typeLower === "organization") {
+                      colorStart = "#fef3c7";
+                      colorEnd = "#f59e0b";
+                      strokeColor = "#d97706";
+                    } else if (typeLower === "concept") {
+                      colorStart = "#d1fae5";
+                      colorEnd = "#10b981";
+                      strokeColor = "#059669";
+                    }
+
+                    const gradient = ctx.createRadialGradient(
+                      node.x - r * 0.15,
+                      node.y - r * 0.15,
+                      r * 0.1,
+                      node.x,
+                      node.y,
+                      r,
+                    );
+                    gradient.addColorStop(0, colorStart);
+                    gradient.addColorStop(0.85, colorEnd);
+                    gradient.addColorStop(1, strokeColor);
+
+                    ctx.beginPath();
+                    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+                    ctx.fillStyle = gradient;
+                    ctx.fill();
+                    ctx.lineWidth = 1.0;
+                    ctx.strokeStyle = strokeColor;
+                    ctx.stroke();
+
+                    // ponytail: tiered label density & canvas scale
+                    // Zoom-out (cluster view) only draws labels for key hub nodes to prevent overlapping.
+                    // As the user zooms in, we draw more minor leaf labels.
+                    const showLabel =
+                      globalScale > 1.2 || (globalScale > 0.6 && degree >= 3) || degree >= 6;
+                    if (showLabel) {
+                      // Font size is fixed in canvas coordinates so it shrinks/scales with zoom.
+                      const fontSize = Math.max(2.8, 3.8 - Math.min(1.0, degree * 0.08));
+                      const isHub = degree >= 4;
+                      ctx.font = `${isHub ? 600 : 500} ${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
+                      ctx.textAlign = "center";
+                      ctx.textBaseline = "top";
+
+                      // Truncation based on zoom and degree
+                      const maxLen = globalScale > 1.5 ? 18 : globalScale > 0.9 ? 12 : 8;
+                      let displayLabel = label;
+                      if (label.length > maxLen) {
+                        displayLabel = label.substring(0, maxLen - 2) + "...";
+                      }
+
+                      // Stroke text for white halo background (improves legibility over links)
+                      ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+                      ctx.lineWidth = 1.2;
+                      ctx.lineJoin = "round";
+                      ctx.strokeText(displayLabel, node.x, node.y + r + 3.5);
+
+                      // Fill text
+                      ctx.fillStyle = isHub ? "#0f172a" : "#475569";
+                      ctx.fillText(displayLabel, node.x, node.y + r + 3.5);
+                    }
+                  }}
+                  onNodeHover={(node) => {
+                    setHoveredNode(node || null);
+                    if (node) setHoveredLink(null);
+                  }}
+                  onLinkHover={(link) => {
+                    setHoveredLink(link || null);
+                    if (link) setHoveredNode(null);
+                  }}
+                />
+
+                {(() => {
+                  const isNode = !!hoveredNode;
+                  const w = isNode ? 240 : 260;
+                  const h = isNode ? 120 : 100; // estimated height offset
+
+                  const rawX =
+                    tooltipPos.x + w > dimensions.width ? tooltipPos.x - w - 6 : tooltipPos.x + 6;
+                  const rawY =
+                    tooltipPos.y + h > dimensions.height ? tooltipPos.y - h - 6 : tooltipPos.y + 6;
+                  const left = Math.max(8, rawX);
+                  const top = Math.max(8, rawY);
+
+                  if (hoveredNode) {
+                    const typeLower = hoveredNode.type?.toLowerCase() || "";
+                    let badgeColor =
+                      "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20";
+                    if (typeLower === "person") {
+                      badgeColor =
+                        "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25";
+                    } else if (typeLower === "organization" || typeLower === "company") {
+                      badgeColor =
+                        "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25";
+                    } else if (
+                      typeLower === "concept" ||
+                      typeLower === "tech stack" ||
+                      typeLower === "tool" ||
+                      typeLower === "technology"
+                    ) {
+                      badgeColor =
+                        "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/25";
+                    } else if (typeLower === "team" || typeLower === "group") {
+                      badgeColor =
+                        "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25";
+                    } else if (typeLower === "job role" || typeLower === "position") {
+                      badgeColor = "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/25";
+                    } else if (typeLower === "motto" || typeLower === "contact information") {
+                      badgeColor =
+                        "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25";
+                    }
+
+                    return (
+                      <div
+                        className="absolute z-50 pointer-events-none rounded-xl border border-border bg-background p-3.5 shadow-md w-[240px] text-xs leading-relaxed animate-in fade-in zoom-in-95 duration-100 select-none space-y-3 transition-all"
+                        style={{
+                          left: `${left}px`,
+                          top: `${top}px`,
+                        }}
+                      >
+                        <div>
+                          <div className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/60 mb-1.5 select-none">
+                            Entity Info
+                          </div>
+                          <div className="flex items-center justify-between gap-2.5 bg-slate-50/50 dark:bg-slate-900/30 border border-border/40 p-2 rounded-lg select-none">
+                            <span className="font-semibold text-foreground/90 truncate max-w-[120px]">
+                              {hoveredNode.name}
+                            </span>
+                            <Badge
+                              className={cn(
+                                "text-[9px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-md shadow-none border shrink-0",
+                                badgeColor,
+                              )}
+                            >
+                              {hoveredNode.type || "Other"}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {hoveredNode.description && (
+                          <div className="space-y-1 pt-2 border-t border-border/40">
+                            <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/60 block select-none">
+                              Description
+                            </span>
+                            <p className="text-muted-foreground/95 leading-relaxed text-[11px] select-none break-words">
+                              {hoveredNode.description}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
                   }
 
-                  ctx.beginPath();
-                  ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-                  ctx.fillStyle = color;
-                  ctx.fill();
-                  ctx.lineWidth = 1.5;
-                  ctx.strokeStyle = strokeColor;
-                  ctx.stroke();
+                  if (hoveredLink) {
+                    return (
+                      <div
+                        className="absolute z-50 pointer-events-none rounded-xl border border-border bg-background p-3.5 shadow-md w-[260px] text-xs leading-relaxed animate-in fade-in zoom-in-95 duration-100 select-none space-y-3 transition-all"
+                        style={{
+                          left: `${left}px`,
+                          top: `${top}px`,
+                        }}
+                      >
+                        <div>
+                          <div className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/60 mb-1.5 select-none">
+                            Relationship Path
+                          </div>
+                          <div className="flex items-center justify-between gap-1.5 bg-slate-50/50 dark:bg-slate-900/30 border border-border/40 p-2 rounded-lg select-none">
+                            <span className="font-semibold text-foreground/90 truncate max-w-[90px]">
+                              {hoveredLink.source.name || hoveredLink.source}
+                            </span>
+                            <span className="text-muted-foreground/40 font-normal">&rarr;</span>
+                            <span className="font-semibold text-foreground/90 truncate max-w-[90px]">
+                              {hoveredLink.target.name || hoveredLink.target}
+                            </span>
+                          </div>
+                        </div>
 
-                  // ponytail: tiered label density. Zoom-out (cluster
-                  // view) hides labels entirely — you'd want to see
-                  // the blob shape instead of names. Mid range shows
-                  // a small truncated name; full zoom shows the
-                  // entire name with a stroke for legibility against
-                  // coloured nodes.
-                  if (globalScale > 0.5) {
-                    const isFull = globalScale > 1.0;
-                    const fontSize = isFull
-                      ? Math.max(8, 11 / globalScale)
-                      : Math.max(6, 8 / globalScale);
-                    ctx.font = `${isFull ? 600 : 500} ${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
-                    ctx.textAlign = "center";
-                    ctx.textBaseline = "top";
-                    ctx.fillStyle = "#1e293b";
+                        <div className="space-y-1">
+                          <div className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/60 select-none">
+                            Relation Type
+                          </div>
+                          <div>
+                            <Badge className="text-[9px] font-semibold px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 border border-blue-500/20 shadow-none uppercase tracking-wide shrink-0 select-none">
+                              {hoveredLink.relation}
+                            </Badge>
+                          </div>
+                        </div>
 
-                    let displayLabel = label;
-                    if (!isFull && label.length > 10) {
-                      displayLabel = label.substring(0, 8) + "...";
-                    }
-                    if (isFull && label.length > 18) {
-                      displayLabel = label.substring(0, 16) + "...";
-                    }
-
-                    if (isFull) {
-                      // ponytail: bold + dark fill only — no white card
-                      // backdrop. The token "weight 600" against
-                      // #1e293b reads cleanly on the canvas without
-                      // obscuring neighbouring nodes.
-                      ctx.fillStyle = "#0f172a";
-                    } else {
-                      ctx.fillStyle = "#1e293b";
-                    }
-
-                    ctx.fillText(displayLabel, node.x, node.y + r + 4);
+                        {hoveredLink.description && (
+                          <div className="space-y-1 pt-2 border-t border-border/40">
+                            <span className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground/60 block select-none">
+                              Description
+                            </span>
+                            <p className="text-muted-foreground/95 leading-relaxed text-[11px] select-none break-words">
+                              {hoveredLink.description}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
                   }
-                }}
-                linkLabel={(link: any) => `
-                  <div style="
-                    padding: 8px 10px;
-                    background: white;
-                    color: #1e293b;
-                    border-radius: 8px;
-                    border: 1px solid #e2e8f0;
-                    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-                    font-family: system-ui, -apple-system, sans-serif;
-                    font-size: 11px;
-                    max-width: 240px;
-                    line-height: 1.4;
-                  ">
-                    <strong style="display: block; font-weight: 600; margin-bottom: 3px; color: #0f172a;">${link.source.name || link.source} ──(${link.relation})──&gt; ${link.target.name || link.target}</strong>
-                    <span style="display: block; color: #64748b; font-weight: 400;">${link.description}</span>
-                  </div>
-                `}
-              />
+
+                  return null;
+                })()}
+              </>
             )}
           </div>
         )}
