@@ -509,6 +509,20 @@ export async function updateKbFolderNameForUser(
   return row ?? null;
 }
 
+export async function updateKbChunkGraphData(
+  chunkId: string,
+  entities: Array<{ name: string; type: string; description: string }>,
+  relationships: Array<{ source: string; target: string; relation: string; description: string }>,
+): Promise<void> {
+  await db
+    .update(kbChunk)
+    .set({
+      entities,
+      relationships,
+    })
+    .where(eq(kbChunk.id, chunkId));
+}
+
 // ponytail: KB transaction helper. Wraps Drizzle's transaction so the
 // caller (chunkEmbedStoreNode) inserts doc + chunks atomically. Returning
 // the tx-bound objects lets the caller reuse the freshly-inserted doc.

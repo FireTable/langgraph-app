@@ -80,7 +80,11 @@ export function FolderGraphDialog({
               Knowledge Graph: {folderName}
             </DialogTitle>
           </div>
-          <DialogDescription className="min-w-0">
+          {/* ponytail: DialogDescription renders as a <p> by default
+              which can't contain a <div>. asChild swaps it to a
+              <div> so the badge + dot + folder name stack renders
+              semantically. */}
+          <DialogDescription asChild>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs select-none">
               <Badge
                 variant="outline"

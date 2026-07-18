@@ -7,7 +7,11 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { getEmbeddingModel, getExtractModel, getOcrModel } from "@/backend/model";
-import { KB_OCR_PAGE_PROMPT, KB_ENTITY_EXTRACTION_SYSTEM_PROMPT } from "@/backend/prompt/system";
+import {
+  KB_OCR_PAGE_PROMPT,
+  KB_ENTITY_EXTRACTION_SYSTEM_PROMPT,
+  KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT,
+} from "@/backend/prompt/system";
 import { creditTrackingHandler } from "@/backend/callbacks";
 import { checkpointer, subgraphCheckpointerConfig } from "@/backend/checkpointer";
 import { store } from "@/backend/store";
@@ -24,6 +28,7 @@ import {
   findKbDocumentByContentHash,
   findKbDocumentByAttachmentId,
   findKbDocumentById,
+  findKbChunksByDocumentId,
   insertKbChunks,
   insertKbDocument,
   markAllKbChunksParsingForDocInTx,
@@ -31,6 +36,7 @@ import {
   markKbChunkSuccess,
   updateKbChunkForFailure,
   updateKbChunkForSuccess,
+  updateKbChunkGraphData,
   updateKbDocumentStatus,
   withKbTx,
 } from "@/lib/kb/queries";
@@ -40,6 +46,9 @@ import { invalidateKbDoc } from "@/lib/kb/cache";
 import { EMBEDDING_DIM } from "@/lib/kb/schema";
 import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from "@/lib/r2/client";
 import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
+
+const KB_CHUNK_SIZE = 1024;
+const KB_CHUNK_OVERLAP = 200;
 
 // ponytail: v3 KB ingest subgraph — per-doc state. Compiled once at
 // module load, wired into agent.ts as `kbAgent`. Sits between
@@ -741,8 +750,8 @@ async function generateChunkEmbedNode(
             const extractModel = await getExtractModel();
             const embedder = await getEmbeddingModel();
             const lengthSplitter = new MarkdownTextSplitter({
-              chunkSize: 1024,
-              chunkOverlap: 200,
+              chunkSize: KB_CHUNK_SIZE,
+              chunkOverlap: KB_CHUNK_OVERLAP,
             });
             const entityQueue = new PQueue({ concurrency: KB_ENTITY_CONCURRENCY });
 
@@ -831,21 +840,14 @@ async function generateChunkEmbedNode(
               texts.map((text, i) =>
                 entityQueue.add(async (): Promise<void> => {
                   const chunkId = chunkIds[i]!;
-                  const metadata = splitDocs[i].metadata;
-                  const contextPath = Object.values(metadata)
-                    .filter((val) => typeof val === "string")
-                    .join(" > ");
                   const docTitle = doc.title ?? "Unknown Document";
 
                   const systemMessage = new SystemMessage(KB_ENTITY_EXTRACTION_SYSTEM_PROMPT);
                   const humanMessage = new HumanMessage(
                     `Context Document Title: [${docTitle}]\n` +
-                      `Section Path: [${contextPath || "Root"}]\n` +
                       `Chunk: [${i + 1} / ${texts.length}]\n\n` +
                       `Text to extract:\n${text}`,
                   );
-
-                  console.warn(1111, humanMessage);
 
                   try {
                     const out = await extractModel
@@ -863,10 +865,10 @@ async function generateChunkEmbedNode(
                     // write) — surface as kb_chunk.status='failed'
                     // + errorMessage. kb_document stays success
                     // (Step 3 contract).
-                    const msg = err instanceof Error ? err.message : String(err);
+                    const msg = err instanceof Error ? (err as any).message : String(err);
                     console.error(
                       `kbAgent generateChunkEmbedNode: chunk ${chunkId} failed (doc ${docId} ordinal ${i}): ${msg}`,
-                      err,
+                      err as any,
                     );
                     try {
                       await Promise.allSettled([
@@ -883,6 +885,118 @@ async function generateChunkEmbedNode(
                 }),
               ),
             );
+
+            // ponytail: Entity Alignment (Resolution) Post-Processor
+            try {
+              // 1. Fetch all successfully saved chunks for this document
+              const dbChunks = await findKbChunksByDocumentId(userId, docId);
+              const successChunks = dbChunks.filter((c) => c.status === "success");
+
+              // 2. Gather all unique entities
+              const allEntityNames = new Set<string>();
+              for (const c of successChunks) {
+                for (const e of c.entities ?? []) {
+                  if (e.name) {
+                    allEntityNames.add(e.name.trim());
+                  }
+                }
+              }
+
+              const entityList = Array.from(allEntityNames);
+
+              if (entityList.length > 0) {
+                // 3. Define structured output schema for the alignment map
+                const alignmentSchema = z.object({
+                  mappings: z
+                    .array(
+                      z.object({
+                        original: z
+                          .string()
+                          .describe("The original entity name variation found in the list"),
+                        canonical: z
+                          .string()
+                          .describe("The resolved canonical standard name to merge into"),
+                      }),
+                    )
+                    .describe("A list of name mappings to resolve aliases and variants"),
+                });
+
+                const systemMsg = new SystemMessage(KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT);
+                const humanMsg = new HumanMessage(
+                  `Document Title: ${doc.title || "Unknown Document"}\n` +
+                    `Extracted Entities List:\n${JSON.stringify(entityList, null, 2)}`,
+                );
+
+                // 4. Call LLM to find alignments
+                const alignmentResult = await extractModel
+                  .withStructuredOutput(alignmentSchema, { method: "jsonSchema" })
+                  .invoke([systemMsg, humanMsg], { ...config, tags: ["nostream"] });
+
+                // 5. Create mapping dictionary
+                const nameMap = new Map<string, string>();
+                if (alignmentResult?.mappings) {
+                  for (const m of alignmentResult.mappings) {
+                    const orig = m.original.trim();
+                    const canon = m.canonical.trim();
+                    if (orig && canon && orig !== canon) {
+                      nameMap.set(orig.toLowerCase(), canon);
+                    }
+                  }
+                }
+
+                // 6. Update database if any mappings found
+                if (nameMap.size > 0) {
+                  for (const c of successChunks) {
+                    let chunkUpdated = false;
+
+                    // Standardize entities list
+                    const updatedEntities = (c.entities ?? []).map((e) => {
+                      const match = nameMap.get(e.name.trim().toLowerCase());
+                      if (match) {
+                        chunkUpdated = true;
+                        return { ...e, name: match };
+                      }
+                      return e;
+                    });
+
+                    // Standardize relationships list
+                    const updatedRelationships = (c.relationships ?? []).map((r) => {
+                      let relUpdated = false;
+                      let source = r.source;
+                      let target = r.target;
+
+                      const matchSrc = nameMap.get(r.source.trim().toLowerCase());
+                      if (matchSrc) {
+                        source = matchSrc;
+                        relUpdated = true;
+                      }
+                      const matchTgt = nameMap.get(r.target.trim().toLowerCase());
+                      if (matchTgt) {
+                        target = matchTgt;
+                        relUpdated = true;
+                      }
+
+                      if (relUpdated) {
+                        chunkUpdated = true;
+                        return { ...r, source, target };
+                      }
+                      return r;
+                    });
+
+                    // Write-back to DB if this chunk had aligned elements
+                    if (chunkUpdated) {
+                      await updateKbChunkGraphData(c.id, updatedEntities, updatedRelationships);
+                    }
+                  }
+                }
+              }
+            } catch (alignErr) {
+              console.error(
+                `kbAgent generateChunkEmbedNode: entity alignment failed for doc ${docId}:`,
+                alignErr,
+              );
+            }
+
             invalidateKbDoc(userId, docId);
           } catch (err) {
             // ponytail: WHOLE-batch failure (embedding dim mismatch,

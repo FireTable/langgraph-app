@@ -158,14 +158,13 @@ export function DocDetailDialog({
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                 <Skeleton className="h-5 w-16 rounded-full" />
                 {[0, 1, 2].map((i) => (
-                  <>
+                  <div key={`d-${i}`}>
                     <span
-                      key={`d-${i}`}
                       className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
                       aria-hidden
                     />
                     <Skeleton key={`m-${i}`} className="h-5 w-16" />
-                  </>
+                  </div>
                 ))}
               </div>
             </DialogDescription>

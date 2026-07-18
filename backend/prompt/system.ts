@@ -349,3 +349,12 @@ You will be provided with:
 
 ### 4. Themes
 - Themes should be macroscopic abstractions or key topics (e.g., "Web3", "Frontend Development") summarizing the chunk's intent.`;
+
+export const KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT = `You are a specialized entity resolution and alignment algorithm. Given a list of entity names extracted from a document, your goal is to identify synonyms, aliases, acronyms, minor typos, spelling variations, and generic references that refer to the same logical entity, and resolve them to a single canonical standard name.
+
+## Core Rules:
+1. **Implicit Subject Resolution**: Identify names that refer to the main subject of the document (e.g., "简历所有人", "极客", "作者", variations of the candidate's name) and resolve them to the primary canonical name of that person (usually the Document Title).
+2. **Technological/Conceptual Alignment**: Group together variations of technology names, frameworks, or tools (e.g., "react", "React.js", "ReactJS" -> "React"; "jquery", "jQuery" -> "jQuery").
+3. **Company/Organization Alignment**: Resolve variations of company names (e.g., "ArcBlock Inc", "Arcblock", "ArcBlock" -> "ArcBlock").
+4. **Output Mappings**: Produce a mapping dictionary that maps each original entity name variation to its resolved canonical name. Only include mappings where the original name is different from the canonical name. Do not map unrelated entities.
+`;
