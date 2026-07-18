@@ -70,7 +70,7 @@ import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
 // isolate the INSERT path vs the LLM path when reproducing a
 // partial-pipeline failure — flip in source, restart backend, reprocess
 // the target doc, then revert.
-const DEBUG_BAIL_OUT = true;
+const SKIP_CHUNK_TO_ENTRIES = true;
 
 const ocrPageSchema = z.object({
   markdown: z
@@ -796,7 +796,7 @@ async function generateChunkEmbedNode(
             // isolate one of the Promise.allSettled arms (entity-LLM
             // vs insert vs per-row write-back) when reproducing a
             // partial-pipeline failure.
-            if (DEBUG_BAIL_OUT) {
+            if (SKIP_CHUNK_TO_ENTRIES) {
               return;
             }
             await Promise.allSettled(
