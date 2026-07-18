@@ -49,7 +49,10 @@ async function seedFixture() {
       ordinal: 0,
       content: "Acme was founded in 2020 in San Francisco.",
       embedding: makeEmbedding(1),
-      entities: ["Acme", "San Francisco"],
+      entities: [
+        { name: "Acme", type: "Organization", description: "Acme company" },
+        { name: "San Francisco", type: "Location", description: "SF city" },
+      ],
       // ponytail: explicit status='success' because kb_chunk.status
       // defaults to 'pending' and lib/kb/search.ts filters on
       // status='success'. The fixture seeds a known-good pool.
@@ -61,7 +64,10 @@ async function seedFixture() {
       ordinal: 1,
       content: "Acme acquired BetaCorp in early 2024.",
       embedding: makeEmbedding(3),
-      entities: ["Acme", "BetaCorp"],
+      entities: [
+        { name: "Acme", type: "Organization", description: "Acme company" },
+        { name: "BetaCorp", type: "Organization", description: "Acquired company" },
+      ],
       status: "success",
     },
   ] as never);

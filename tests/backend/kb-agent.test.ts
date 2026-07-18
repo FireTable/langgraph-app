@@ -91,6 +91,11 @@ vi.mock("@/lib/kb/queries", () => ({
   insertKbChunks: mocks.insertChunks,
   updateKbDocumentStatus: mocks.updateDocStatus,
   withKbTx: mocks.withTx,
+  markAllKbChunksParsingForDocInTx: vi.fn(),
+  markKbChunkSuccess: vi.fn(),
+  markKbChunkFailed: vi.fn(),
+  updateKbChunkForFailure: vi.fn(),
+  updateKbChunkForSuccess: vi.fn(),
 }));
 vi.mock("@/lib/kb/cache", () => ({
   invalidateKbDoc: mocks.invalidate,
@@ -205,11 +210,17 @@ beforeEach(() => {
     texts.map(() => makeEmbedding()),
   );
   mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "page text" });
-  // ponytail: entitySchema is z.object({ entities: z.array(z.string()) })
-  // because OpenAI strict jsonSchema mode rejects top-level arrays.
-  // The mock must match the new shape — otherwise `out.entities` is
-  // undefined and the chunk's entity list silently falls back to [].
-  mocks.chatInvoke.mockResolvedValue({ entities: ["entity1", "entity2"] });
+  // ponytail: chatInvoke must return lightRagSchema shape (entities, relationships, themes)
+  mocks.chatInvoke.mockResolvedValue({
+    entities: [
+      { name: "entity1", type: "Concept", description: "first" },
+      { name: "entity2", type: "Concept", description: "second" },
+    ],
+    relationships: [
+      { source: "entity1", target: "entity2", relation: "links", description: "link desc" },
+    ],
+    themes: ["Theme1", "Theme2"],
+  });
 });
 
 describe("backend/kb-agent", () => {

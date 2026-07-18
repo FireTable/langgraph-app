@@ -22,6 +22,7 @@ import {
   Blocks,
   ArrowRight,
   FileImage,
+  Network,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -96,7 +97,9 @@ type KbResponse = {
 type KbChunkPreviewLocal = {
   ordinal: number;
   content: string;
-  entities: string[];
+  entities: Array<{ name: string; type: string; description: string }>;
+  relationships: Array<{ source: string; target: string; relation: string; description: string }>;
+  themes: string[];
   // ponytail: per-chunk status surfaced from the doc-detail API. The
   // server schema has had this column since 0008_*.sql — legacy rows
   // backfilled to 'success' so every chunk has a concrete status.
@@ -806,8 +809,56 @@ function DocDetailDialog({
 }) {
   const [detail, setDetail] = useState<KbDocDetail | null>(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"full_markdown" | "pages" | "chunks">("full_markdown");
+  const [activeTab, setActiveTab] = useState<"full_markdown" | "pages" | "chunks" | "graph">(
+    "full_markdown",
+  );
   const [copied, setCopied] = useState(false);
+
+  const { uniqueThemes, uniqueEntities, uniqueRelationships } = useMemo(() => {
+    if (!detail || !detail.chunks) {
+      return { uniqueThemes: [], uniqueEntities: [], uniqueRelationships: [] };
+    }
+    const themesSet = new Set<string>();
+    const entityMap = new Map<string, { name: string; type: string; description: string }>();
+    const relMap = new Map<
+      string,
+      { source: string; target: string; relation: string; description: string }
+    >();
+
+    for (const c of detail.chunks) {
+      if (c.themes) {
+        for (const t of c.themes) {
+          themesSet.add(t);
+        }
+      }
+      if (c.entities) {
+        for (const e of c.entities) {
+          const key = e.name.toLowerCase();
+          const existing = entityMap.get(key);
+          if (!existing || e.description.length > existing.description.length) {
+            entityMap.set(key, e);
+          }
+        }
+      }
+      if (c.relationships) {
+        for (const r of c.relationships) {
+          const key = `${r.source.toLowerCase()}->${r.target.toLowerCase()}:${r.relation.toLowerCase()}`;
+          const existing = relMap.get(key);
+          if (!existing || r.description.length > existing.description.length) {
+            relMap.set(key, r);
+          }
+        }
+      }
+    }
+
+    return {
+      uniqueThemes: Array.from(themesSet).sort(),
+      uniqueEntities: Array.from(entityMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+      uniqueRelationships: Array.from(relMap.values()).sort((a, b) =>
+        a.source.localeCompare(b.source),
+      ),
+    };
+  }, [detail]);
 
   // ponytail: React StrictMode in dev mounts every effect twice
   // (mount → unmount → mount), so without an abort controller the
@@ -1009,6 +1060,18 @@ function DocDetailDialog({
               <Blocks className="size-3.5 mr-1.5 shrink-0" />
               <span>Chunks ({detail.chunks.length})</span>
             </button>
+            <button
+              onClick={() => setActiveTab("graph")}
+              className={cn(
+                "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7",
+                activeTab === "graph"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Network className="size-3.5 mr-1.5 shrink-0" />
+              <span>Graph</span>
+            </button>
           </div>
         )}
 
@@ -1166,7 +1229,7 @@ function DocDetailDialog({
                 No page screenshots available for this document (e.g. legacy or non-PDF format).
               </p>
             )
-          ) : (
+          ) : activeTab === "chunks" ? (
             // Tab 3: Embed Chunks
             <div className="space-y-3 w-full">
               {detail.chunks.length === 0 ? (
@@ -1200,19 +1263,7 @@ function DocDetailDialog({
                 )
               ) : (
                 <>
-                  {/* ponytail: chunk-level status rollup. Surfaces
-                      per-chunk failure isolation (Step 3: kb-agent
-                      stops downgrading kb_document when chunk-level
-                      work fails; instead each chunk tracks its own
-                      status). The user sees the actual quality of
-                      their retrieval corpus instead of a binary
-                      Ready/Failed verdict. The trailing spinner fires
-                      while ANY chunk is pending/parsing OR the doc row
-                      is still in pending/parsing with zero chunks
-                      materialized yet — same condition the 2s preview
-                      poll uses to keep polling (see DocDetailDialog
-                      above). Settling to all-success or N-failed
-                      drops the spinner. */}
+                  {/* ponytail: chunk-level status rollup. */}
                   {(() => {
                     const docInflight =
                       detail.doc.status === "pending" || detail.doc.status === "parsing";
@@ -1254,10 +1305,6 @@ function DocDetailDialog({
                           <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
                             Chunk #{c.ordinal + 1}
                           </span>
-                          {/* ponytail: status badge per chunk —
-                            matches kb_document.status styling so
-                            the UI feels consistent. Failed chunks
-                            don't downrank the parent doc. */}
                           <ChunkStatusBadge status={c.status} errorMessage={c.errorMessage} />
                         </div>
                         {c.entities.length > 0 && (
@@ -1267,9 +1314,12 @@ function DocDetailDialog({
                             </span>
                             <span
                               className="text-[10px] text-muted-foreground/80 truncate"
-                              title={c.entities.join(", ")}
+                              title={c.entities.map((e) => e.name).join(", ")}
                             >
-                              {c.entities.slice(0, 6).join(", ")}
+                              {c.entities
+                                .slice(0, 6)
+                                .map((e) => e.name)
+                                .join(", ")}
                             </span>
                           </div>
                         )}
@@ -1279,23 +1329,180 @@ function DocDetailDialog({
                         <p className="text-xs text-foreground/90 whitespace-pre-wrap break-all leading-relaxed">
                           {c.content}
                         </p>
-                        {c.status === "failed" &&
-                          c.errorMessage && (
-                            // ponytail: surface the per-chunk failure so
-                            // the user sees WHY without scrolling. Parent
-                            // kb_document is still success; this chunk
-                            // alone is excluded from RAG retrieval.
-                            <p
-                              className="text-[10px] text-destructive/90 mt-2 italic"
-                              title={c.errorMessage}
-                            >
-                              {c.errorMessage}
-                            </p>
-                          )}
+                        {c.status === "failed" && c.errorMessage && (
+                          <p
+                            className="text-[10px] text-destructive/90 mt-2 italic"
+                            title={c.errorMessage}
+                          >
+                            {c.errorMessage}
+                          </p>
+                        )}
+
+                        {/* Themes in chunk */}
+                        {c.themes && c.themes.length > 0 && (
+                          <div className="mt-2.5 flex flex-wrap gap-1 items-center border-t pt-2 bg-muted/5 px-2 py-1 rounded">
+                            <span className="text-[10px] text-muted-foreground mr-1">Themes:</span>
+                            {c.themes.map((t, idx) => (
+                              <span
+                                key={idx}
+                                className="text-[10px] text-primary/80 bg-primary/5 px-1.5 py-0.2 rounded font-medium"
+                              >
+                                #{t}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Relationships in chunk */}
+                        {c.relationships && c.relationships.length > 0 && (
+                          <div className="mt-2 flex flex-col gap-1 border-t pt-2 bg-muted/5 px-2 py-1.5 rounded">
+                            <span className="text-[10px] text-muted-foreground mb-1">
+                              Relationships:
+                            </span>
+                            <div className="space-y-1.5">
+                              {c.relationships.map((r, idx) => (
+                                <div
+                                  key={idx}
+                                  className="text-[10px] text-muted-foreground leading-relaxed"
+                                >
+                                  <span className="font-semibold text-foreground">{r.source}</span>
+                                  <span className="italic mx-1 text-primary">({r.relation})</span>
+                                  <span className="font-semibold text-foreground">{r.target}</span>
+                                  <span className="mx-1">•</span>
+                                  <span className="text-foreground/85">{r.description}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
                 </>
+              )}
+            </div>
+          ) : (
+            // Tab 4: LightRAG Knowledge Graph
+            <div className="space-y-6 w-full min-h-[300px]">
+              {detail.chunks.length === 0 ? (
+                <p className="text-muted-foreground text-xs italic text-center p-8 border border-dashed rounded-lg bg-muted/5 w-full">
+                  No graph data available. Reprocess the document to extract entities and
+                  relationships.
+                </p>
+              ) : (
+                <div className="space-y-6">
+                  {/* Part 1: Macro Themes */}
+                  {uniqueThemes.length > 0 && (
+                    <div className="space-y-2">
+                      <span className="text-xs font-semibold text-foreground uppercase tracking-wider block">
+                        Macroscopic Themes
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {uniqueThemes.map((theme, i) => (
+                          <Badge
+                            key={i}
+                            variant="secondary"
+                            className="bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary text-[11px] font-medium py-0.5 px-2 rounded-md"
+                          >
+                            #{theme}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Part 2: Entities & Dictionary */}
+                  {uniqueEntities.length > 0 && (
+                    <div className="space-y-2">
+                      <span className="text-xs font-semibold text-foreground uppercase tracking-wider block">
+                        Entity Dictionary ({uniqueEntities.length})
+                      </span>
+                      <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
+                        <div className="max-h-[30vh] overflow-y-auto divide-y">
+                          <div className="sticky top-0 z-10 grid grid-cols-[1.5fr_1.2fr_3fr] gap-4 px-4 py-2 border-b bg-muted/95 backdrop-blur-sm text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                            <div>Name</div>
+                            <div className="truncate">Type</div>
+                            <div>Description</div>
+                          </div>
+                          {uniqueEntities.map((e, idx) => {
+                            const badgeColor =
+                              e.type.toLowerCase() === "person"
+                                ? "bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border-blue-500/20"
+                                : e.type.toLowerCase() === "organization"
+                                  ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border-amber-500/20"
+                                  : e.type.toLowerCase() === "concept"
+                                    ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/20"
+                                    : "bg-muted text-muted-foreground border-border";
+                            return (
+                              <div
+                                key={idx}
+                                className="grid grid-cols-[1.5fr_1.2fr_3fr] gap-4 px-4 py-2 text-xs leading-relaxed items-start bg-card"
+                              >
+                                <span className="font-semibold text-foreground break-all">
+                                  {e.name}
+                                </span>
+                                <div className="min-w-0 flex items-center">
+                                  <Badge
+                                    className={cn(
+                                      "text-[10px] font-medium py-0 px-1.5 rounded border shadow-none truncate max-w-full block",
+                                      badgeColor,
+                                    )}
+                                    title={e.type}
+                                  >
+                                    {e.type}
+                                  </Badge>
+                                </div>
+                                <span className="text-muted-foreground break-all">
+                                  {e.description}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Part 3: Relationships & Links */}
+                  {uniqueRelationships.length > 0 && (
+                    <div className="space-y-2">
+                      <span className="text-xs font-semibold text-foreground uppercase tracking-wider block">
+                        Directed Relationships ({uniqueRelationships.length})
+                      </span>
+                      <div className="border rounded-xl bg-card overflow-hidden shadow-sm">
+                        <div className="max-h-[30vh] overflow-y-auto divide-y">
+                          <div className="sticky top-0 z-10 grid grid-cols-[1.5fr_1.2fr_3fr] gap-4 px-4 py-2 border-b bg-muted/95 backdrop-blur-sm text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                            <div>Connection</div>
+                            <div>Relationship</div>
+                            <div>Context / Description</div>
+                          </div>
+                          {uniqueRelationships.map((r, idx) => (
+                            <div
+                              key={idx}
+                              className="grid grid-cols-[1.5fr_1.2fr_3fr] gap-4 px-4 py-2.5 text-xs leading-relaxed items-start bg-card"
+                            >
+                              <div className="flex flex-col gap-1 min-w-0">
+                                <span className="font-semibold text-foreground break-all">
+                                  {r.source}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground flex items-center gap-1 min-w-0">
+                                  <ArrowRight className="size-3 text-muted-foreground/60 shrink-0" />
+                                  <span className="truncate">{r.target}</span>
+                                </span>
+                              </div>
+                              <span className="italic text-primary/80 font-medium break-all mt-0.5 min-w-0">
+                                {r.relation}
+                              </span>
+                              <span className="text-muted-foreground break-all">
+                                {r.description}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}

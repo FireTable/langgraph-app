@@ -301,8 +301,7 @@ export async function insertKbChunks(tx: PgTx, rows: NewKbChunk[]): Promise<void
   // some runs.
   for (const row of rows) {
     const embeddingLiteral = `[${row.embedding.join(",")}]`;
-    const entities = row.entities ?? [];
-    const entitiesLiteral = `{${entities.map((s) => `"${s.replace(/"/g, '\\"').replace(/\\/g, "\\\\")}"`).join(",")}}`;
+    const entitiesJson = JSON.stringify(row.entities ?? []);
     await tx.execute(sql`
       INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, entities)
       VALUES (
@@ -311,7 +310,7 @@ export async function insertKbChunks(tx: PgTx, rows: NewKbChunk[]): Promise<void
         ${row.ordinal},
         ${row.content},
         ${embeddingLiteral}::vector,
-        ${entitiesLiteral}::text[]
+        ${entitiesJson}::jsonb
       )
     `);
   }
@@ -338,7 +337,9 @@ export async function findKbChunksByDocumentId(userId: string, docId: string): P
 export type KbChunkPreview = {
   ordinal: number;
   content: string;
-  entities: string[];
+  entities: Array<{ name: string; type: string; description: string }>;
+  relationships: Array<{ source: string; target: string; relation: string; description: string }>;
+  themes: string[];
   status: "pending" | "parsing" | "success" | "failed";
   errorMessage: string | null;
 };
@@ -352,6 +353,8 @@ export async function findKbChunksContentByDocumentId(
       ordinal: kbChunk.ordinal,
       content: kbChunk.content,
       entities: kbChunk.entities,
+      relationships: kbChunk.relationships,
+      themes: kbChunk.themes,
       status: kbChunk.status,
       errorMessage: kbChunk.errorMessage,
     })
@@ -399,8 +402,23 @@ export async function markAllKbChunksParsingForDocInTx(tx: PgTx, docId: string):
 // these UPDATEs back-fill the entity list + finalise status. Two
 // separate columns + status so we don't have to choose between
 // "optimistic row ready before llm" and "at-least-once status flip".
-export async function updateKbChunkForSuccess(chunkId: string, entities: string[]): Promise<void> {
-  await db.update(kbChunk).set({ entities, errorMessage: null }).where(eq(kbChunk.id, chunkId));
+export async function updateKbChunkForSuccess(
+  chunkId: string,
+  out: {
+    entities: Array<{ name: string; type: string; description: string }>;
+    relationships: Array<{ source: string; target: string; relation: string; description: string }>;
+    themes: string[];
+  },
+): Promise<void> {
+  await db
+    .update(kbChunk)
+    .set({
+      entities: out.entities,
+      relationships: out.relationships,
+      themes: out.themes,
+      errorMessage: null,
+    })
+    .where(eq(kbChunk.id, chunkId));
 }
 
 export async function updateKbChunkForFailure(

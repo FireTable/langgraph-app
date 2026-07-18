@@ -338,7 +338,7 @@ describe("lib/kb/queries", () => {
             ordinal: 2,
             content: "third",
             embedding: makeEmbedding(2),
-            entities: ["c"],
+            entities: [{ name: "c", type: "Concept", description: "desc c" }],
           },
           {
             id: "c-0",
@@ -346,7 +346,7 @@ describe("lib/kb/queries", () => {
             ordinal: 0,
             content: "first",
             embedding: makeEmbedding(0),
-            entities: ["a"],
+            entities: [{ name: "a", type: "Concept", description: "desc a" }],
           },
           {
             id: "c-1",
@@ -354,7 +354,7 @@ describe("lib/kb/queries", () => {
             ordinal: 1,
             content: "second",
             embedding: makeEmbedding(1),
-            entities: ["b"],
+            entities: [{ name: "b", type: "Concept", description: "desc b" }],
           },
         ] as never);
       });

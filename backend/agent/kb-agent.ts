@@ -1,6 +1,7 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
-import { MarkdownTextSplitter } from "@langchain/textsplitters";
+import { MarkdownTextSplitter, RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+import { Document } from "@langchain/core/documents";
 import PQueue from "p-queue";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -39,6 +40,34 @@ import { invalidateKbDoc } from "@/lib/kb/cache";
 import { EMBEDDING_DIM } from "@/lib/kb/schema";
 import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from "@/lib/r2/client";
 import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
+
+function splitMarkdownByHeaders(markdown: string): Document[] {
+  const lines = markdown.split("\n");
+  const docs: Document[] = [];
+  const currentHeaders: Record<string, string> = {};
+  let currentContent: string[] = [];
+
+  for (const line of lines) {
+    const headerMatch = line.match(/^(#{1,6})\s+(.*)/);
+    if (headerMatch) {
+      if (currentContent.length > 0) {
+        const text = currentContent.join("\n").trim();
+        if (text) docs.push(new Document({ pageContent: text, metadata: { ...currentHeaders } }));
+        currentContent = [];
+      }
+      const level = headerMatch[1].length;
+      currentHeaders[`h${level}`] = headerMatch[2].trim();
+      for (let i = level + 1; i <= 6; i++) delete currentHeaders[`h${i}`];
+    } else {
+      currentContent.push(line);
+    }
+  }
+  if (currentContent.length > 0) {
+    const text = currentContent.join("\n").trim();
+    if (text) docs.push(new Document({ pageContent: text, metadata: { ...currentHeaders } }));
+  }
+  return docs;
+}
 
 // ponytail: v3 KB ingest subgraph — per-doc state. Compiled once at
 // module load, wired into agent.ts as `kbAgent`. Sits between
@@ -83,10 +112,31 @@ const ocrPageSchema = z.object({
     ),
 });
 
-const entitySchema = z.object({
+const lightRagSchema = z.object({
   entities: z
-    .array(z.string().describe("Named entities (eg: people, organizations, concepts, products)"))
-    .describe("Named entities list, one entry per word"),
+    .array(
+      z.object({
+        name: z.string().describe("Entity name (e.g., person, tech stack, system component)"),
+        type: z.string().describe("Category of the entity (e.g., Person, Tool, Concept)"),
+        description: z.string().describe("Brief description of this entity in the current context"),
+      }),
+    )
+    .describe("All distinct entities mentioned in the text"),
+  relationships: z
+    .array(
+      z.object({
+        source: z.string().describe("Source entity name"),
+        target: z.string().describe("Target entity name"),
+        relation: z.string().describe("The action or logical connection between them"),
+        description: z.string().describe("Detailed explanation of this relationship"),
+      }),
+    )
+    .describe("Directed relationships connecting the extracted entities"),
+  themes: z
+    .array(z.string())
+    .describe(
+      "3 to 5 high-level macroscopic keywords or core concepts summarizing this chunk's main point",
+    ),
 });
 
 function makeError(message: string): Partial<KbAgentStateShape> {
@@ -718,13 +768,14 @@ async function generateChunkEmbedNode(
             // tagged model is registered (see getExtractModel).
             const extractModel = await getExtractModel();
             const embedder = await getEmbeddingModel();
-            const splitter = new MarkdownTextSplitter({
+            const headerDocs = splitMarkdownByHeaders(fullMarkdown);
+            const lengthSplitter = new RecursiveCharacterTextSplitter({
               chunkSize: 1024,
               chunkOverlap: 200,
             });
             const entityQueue = new PQueue({ concurrency: KB_ENTITY_CONCURRENCY });
 
-            const splitDocs = await splitter.createDocuments([fullMarkdown]);
+            const splitDocs = await lengthSplitter.splitDocuments(headerDocs);
             const texts = splitDocs.map((d) => d.pageContent);
             const embeddings = await embedder.embedDocuments(texts);
 
@@ -809,19 +860,33 @@ async function generateChunkEmbedNode(
               texts.map((text, i) =>
                 entityQueue.add(async (): Promise<void> => {
                   const chunkId = chunkIds[i]!;
+                  const metadata = splitDocs[i].metadata;
+                  const contextPath = Object.values(metadata).join(" > ");
+                  const docTitle = doc.title ?? "Unknown Document";
+
+                  const extractionPrompt = `You are a top-tier GraphRAG extraction algorithm.
+Extract low-level knowledge graph elements (entities and relationships) and high-level macro themes.
+
+Context Document Title: [${docTitle}]
+Section Path: [${contextPath || "Root"}]
+
+Extraction Rules:
+1. Resolve any pronouns using the Document Title and Section Path.
+2. Relationships must connect two entities meaningfully.
+3. Themes should be macroscopic abstractions summarizing the chunk's intent.
+
+Text to extract:
+${text}`;
+
                   try {
                     const out = await extractModel
-                      .withStructuredOutput(entitySchema, { method: "jsonSchema" })
-                      .invoke(
-                        `Extract named entities (people, orgs, concepts, products) from this passage:\n\n${text}`,
-                        { ...config, tags: ["nostream"] },
-                      );
-                    const entities = out.entities.slice(0, 20);
+                      .withStructuredOutput(lightRagSchema, { method: "jsonSchema" })
+                      .invoke(extractionPrompt, { ...config, tags: ["nostream"] });
                     // write-back: entities + status='success' in one go
                     // so the row never sits at success with a blank
                     // entities field.
                     await Promise.allSettled([
-                      updateKbChunkForSuccess(chunkId, entities),
+                      updateKbChunkForSuccess(chunkId, out),
                       markKbChunkSuccess(chunkId),
                     ]);
                   } catch (err) {

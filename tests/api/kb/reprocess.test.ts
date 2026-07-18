@@ -169,8 +169,8 @@ describe("POST /api/kb/documents/[id]/reprocess", () => {
     await db.execute(
       sql`INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, entities)
           VALUES
-            ('c-old-1', 'd-1', 0, 'old chunk 1', ${embeddingLiteral}, ARRAY[]::text[]),
-            ('c-old-2', 'd-1', 1, 'old chunk 2', ${embeddingLiteral}, ARRAY[]::text[])`,
+            ('c-old-1', 'd-1', 0, 'old chunk 1', ${embeddingLiteral}, '[]'::jsonb),
+            ('c-old-2', 'd-1', 1, 'old chunk 2', ${embeddingLiteral}, '[]'::jsonb)`,
     );
 
     const res = await POST(newRequest(), ctxModel("d-1"));

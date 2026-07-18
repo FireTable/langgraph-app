@@ -152,11 +152,17 @@ export const kbChunk = pgTable(
     content: text("content").notNull(),
     embedding: vector("embedding").notNull(),
     tsv: tsvectorEnglish("tsv").notNull(),
-    entities: text("entities")
+    entities: jsonb("entities")
+      .$type<Array<{ name: string; type: string; description: string }>>()
+      .notNull()
+      .default([]),
+    relationships: jsonb("relationships")
+      .$type<Array<{ source: string; target: string; relation: string; description: string }>>()
+      .notNull()
+      .default([]),
+    themes: text("themes")
       .array()
       .notNull()
-      // ponytail: Drizzle emits `DEFAULT '{}'::text[]` from this — verified
-      // in the generated migration. Keeps INSERT simple.
       .default(sql`'{}'::text[]`),
     // ponytail: per-chunk status — independent of kb_document.status so
     // a failed entity extract can mark a single chunk failed without
@@ -178,6 +184,7 @@ export const kbChunk = pgTable(
     index("kb_chunk_tsv_idx").using("gin", t.tsv),
     // GIN over extracted entities — graphRAG seed queries.
     index("kb_chunk_entities_idx").using("gin", t.entities),
+    index("kb_chunk_themes_idx").using("gin", t.themes),
   ],
 );
 

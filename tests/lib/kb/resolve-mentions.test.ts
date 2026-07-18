@@ -39,7 +39,7 @@ async function seedSuccessDoc(docId: string) {
     ordinal: 0,
     content: "Acme was founded in 2020.",
     embedding: makeEmbedding(1),
-    entities: ["Acme"],
+    entities: [{ name: "Acme", type: "Organization", description: "desc" }],
   } as never);
 }
 

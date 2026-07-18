@@ -65,7 +65,7 @@ export function deriveQueryEntities(query: string): string[] {
 export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearchResult[]> {
   const env = getKbEnv();
   const topK = Math.min(Math.max(args.topK ?? env.hybridTopKDefault, 1), env.hybridTopKMax);
-  const qents = args.qents ?? deriveQueryEntities(args.query);
+  const qents = (args.qents ?? deriveQueryEntities(args.query)).map((q) => q.toLowerCase());
 
   // ponytail: pgvector's `vector(1024)` rejects a wrong-dim input with
   // 22P02 — fail fast at the boundary instead of letting the SQL fail.
@@ -108,11 +108,15 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
     ? sql`
     ,
     tag AS (
-      SELECT c.id, ROW_NUMBER() OVER (ORDER BY cardinality(c.entities)) AS rk
+      SELECT c.id, ROW_NUMBER() OVER (ORDER BY jsonb_array_length(c.entities)) AS rk
       FROM kb_chunk c
       WHERE c.document_id IN (SELECT id FROM valid_docs)
-        AND c.entities && ${textArrayLiteral(qents)}::text[]
         AND c.status = 'success'
+        AND EXISTS (
+          SELECT 1
+          FROM jsonb_to_recordset(c.entities) AS x(name text)
+          WHERE lower(x.name) = ANY(${textArrayLiteral(qents)}::text[])
+        )
       LIMIT 30
     )
   `

@@ -64,6 +64,13 @@
       "when": 1784354749582,
       "tag": "0008_aspiring_thing",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784371805661,
+      "tag": "0009_serious_black_queen",
+      "breakpoints": true
     }
   ]
 }

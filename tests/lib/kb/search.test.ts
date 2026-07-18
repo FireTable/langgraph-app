@@ -63,7 +63,10 @@ async function seedFixture() {
       ordinal: 0,
       content: "Acme was founded in 2020 in San Francisco.",
       embedding: makeEmbedding(1),
-      entities: ["Acme", "San Francisco"],
+      entities: [
+        { name: "Acme", type: "Organization", description: "Acme company" },
+        { name: "San Francisco", type: "Location", description: "SF city" },
+      ],
       // ponytail: kb_chunk.status = 'pending' is the column default.
       // lib/kb/search.ts filters on status = 'success' so the legacy
       // fixture seeds must explicitly opt into the searchable pool
@@ -77,7 +80,7 @@ async function seedFixture() {
       ordinal: 1,
       content: "Unrelated prose about gardening and soil composition.",
       embedding: makeEmbedding(2),
-      entities: ["gardening"],
+      entities: [{ name: "gardening", type: "Concept", description: "Gardening task" }],
       status: "success",
     },
     {
@@ -86,7 +89,10 @@ async function seedFixture() {
       ordinal: 0,
       content: "Acme acquired BetaCorp in early 2024.",
       embedding: makeEmbedding(3),
-      entities: ["Acme", "BetaCorp"],
+      entities: [
+        { name: "Acme", type: "Organization", description: "Acme company" },
+        { name: "BetaCorp", type: "Organization", description: "BetaCorp acquired" },
+      ],
       status: "success",
     },
     {
@@ -95,7 +101,7 @@ async function seedFixture() {
       ordinal: 1,
       content: "Stock market analysis paragraph with finance terms.",
       embedding: makeEmbedding(4),
-      entities: ["stock market"],
+      entities: [{ name: "stock market", type: "Concept", description: "finance" }],
       status: "success",
     },
   ] as never);
@@ -258,7 +264,7 @@ describe("lib/kb/search — hybridSearch", () => {
       ordinal: 0,
       content: "Acme private data for another user.",
       embedding: makeEmbedding(1),
-      entities: ["Acme"],
+      entities: [{ name: "Acme", type: "Organization", description: "Other user Acme" }],
     } as never);
 
     const out = await hybridSearch({
