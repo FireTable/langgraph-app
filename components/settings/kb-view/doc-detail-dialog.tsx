@@ -133,86 +133,113 @@ export function DocDetailDialog({
         }
       }}
     >
-      <DialogContent className="w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw]">
+      <DialogContent
+        className={
+          detail
+            ? "w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw]"
+            : "w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw] gap-2"
+        }
+      >
         <DialogHeader className="min-w-0 max-w-3xl flex-1">
-          <div className="flex items-start justify-between gap-3 min-w-0">
-            <DialogTitle className="truncate min-w-0 max-w-[80%]">
-              {detail?.doc.title ?? "Loading…"}
-            </DialogTitle>
-            {detail?.doc.attachmentUrl && (
-              <Button asChild size="sm" variant="outline" className="shrink-0 gap-1.5">
-                <a href={detail.doc.attachmentUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="size-3.5" />
-                  Open source
-                </a>
-              </Button>
-            )}
-          </div>
-          <DialogDescription asChild>
-            {detail ? (
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs select-none">
-                <StatusBadge status={detail.doc.status} errorMessage={detail.doc.errorMessage} />
-                <span className="size-1 rounded-full bg-muted-foreground/30 shrink-0" aria-hidden />
-
-                <Badge
-                  variant="outline"
-                  className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
-                >
-                  <span>{detail.doc.contentType}</span>
-                </Badge>
-
-                {detail.doc.pages && detail.doc.pages.length > 0 && (
-                  <>
-                    <span
-                      className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
-                      aria-hidden
-                    />
-                    <Badge
-                      variant="outline"
-                      className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
-                    >
-                      <span>{detail.doc.pages.length} pages</span>
-                    </Badge>
-                  </>
-                )}
-
-                {detail.chunks.length > 0 && (
-                  <>
-                    <span
-                      className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
-                      aria-hidden
-                    />
-                    <Badge
-                      variant="outline"
-                      className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
-                    >
-                      <span>{detail.chunks.length} chunks</span>
-                    </Badge>
-                  </>
-                )}
-
-                {isPolling && (
-                  <>
-                    <span
-                      className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
-                      aria-hidden
-                    />
-                    <div className="flex items-center gap-1 text-muted-foreground select-none leading-none h-4">
-                      <Loader2 className="size-3 animate-spin text-muted-foreground/60 shrink-0" />
-                      <span className="text-[10px] text-muted-foreground/60 font-medium">
-                        Indexing…
-                      </span>
-                    </div>
-                  </>
+          {detail ? (
+            <>
+              <div className="flex items-start justify-between gap-3 min-w-0">
+                <DialogTitle className="truncate min-w-0 max-w-[80%]">
+                  {detail.doc.title}
+                </DialogTitle>
+                {detail.doc.attachmentUrl && (
+                  <Button asChild size="sm" variant="outline" className="shrink-0 gap-1.5">
+                    <a href={detail.doc.attachmentUrl} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="size-3.5" />
+                      Open source
+                    </a>
+                  </Button>
                 )}
               </div>
-            ) : (
-              <div className="h-4" />
-            )}
-          </DialogDescription>
+              <DialogDescription asChild>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs select-none">
+                  <StatusBadge status={detail.doc.status} errorMessage={detail.doc.errorMessage} />
+                  <span
+                    className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
+                    aria-hidden
+                  />
+
+                  <Badge
+                    variant="outline"
+                    className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
+                  >
+                    <span>{detail.doc.contentType}</span>
+                  </Badge>
+
+                  {detail.doc.pages && detail.doc.pages.length > 0 && (
+                    <>
+                      <span
+                        className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
+                        aria-hidden
+                      />
+                      <Badge
+                        variant="outline"
+                        className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
+                      >
+                        <span>{detail.doc.pages.length} pages</span>
+                      </Badge>
+                    </>
+                  )}
+
+                  {detail.chunks.length > 0 && (
+                    <>
+                      <span
+                        className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
+                        aria-hidden
+                      />
+                      <Badge
+                        variant="outline"
+                        className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
+                      >
+                        <span>{detail.chunks.length} chunks</span>
+                      </Badge>
+                    </>
+                  )}
+
+                  {isPolling && (
+                    <>
+                      <span
+                        className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
+                        aria-hidden
+                      />
+                      <div className="flex items-center gap-1 text-muted-foreground select-none leading-none h-4">
+                        <Loader2 className="size-3 animate-spin text-muted-foreground/60 shrink-0" />
+                        <span className="text-[10px] text-muted-foreground/60 font-medium">
+                          Indexing…
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </DialogDescription>
+            </>
+          ) : (
+            <>
+              {/* ponytail: when detail is loading, mirror the
+                  DialogHeader shape exactly via skeletons —
+                  title bar + "Open source" placeholder button on
+                  the right, then a tighter meta strip (status pill +
+                  3 short bars) on the next line. No giant gap. */}
+              <div className="flex items-start justify-between gap-3 min-w-0">
+                <Skeleton className="h-5 w-64 max-w-[60%]" />
+                <Skeleton className="h-8 w-28 rounded-md shrink-0" />
+              </div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <Skeleton className="h-5 w-16 rounded-full" />
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-3 w-16" />
+                ))}
+              </div>
+            </>
+          )}
         </DialogHeader>
 
-        {detail && (
+        {detail ? (
           <div className="flex h-9 items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground w-full sm:w-fit overflow-x-auto shrink-0 select-none">
             <button
               onClick={() => setActiveTab("full_markdown")}
@@ -263,6 +290,15 @@ export function DocDetailDialog({
               <span className="hidden sm:inline">Graph</span>
             </button>
           </div>
+        ) : (
+          // ponytail: tab pills placeholder — same layout as the
+          // loaded version so the body underneath stays anchored to
+          // the tabs row instead of jumping up on first paint.
+          <div className="flex h-9 items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground w-fit shrink-0 select-none gap-1">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-7 w-20 rounded-md" />
+            ))}
+          </div>
         )}
 
         <div className="max-h-[75vh] space-y-4 overflow-y-auto pr-1 min-h-[300px] flex flex-col justify-start min-w-0">
@@ -274,10 +310,7 @@ export function DocDetailDialog({
                   meta-pill bars (status / type / pages / chunks)
                   separated by small dots. Body paragraph block
                   underneath emulates the markdown reader layout. */}
-              <div className="flex items-start justify-between gap-3">
-                <Skeleton className="h-5 w-64 max-w-[60%]" />
-                <Skeleton className="h-8 w-28 rounded-md shrink-0" />
-              </div>
+
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                 <Skeleton className="h-5 w-16 rounded-full" />
                 {Array.from({ length: 3 }).map((_, i) => (

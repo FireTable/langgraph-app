@@ -111,7 +111,7 @@ export function FolderGraphDialog({
                   — 4 tab pills at the top, then a node cloud framed
                   by the same h-[500px] surface. We don't try to fake
                   edges; the real graph covers that on mount. */}
-              <div className="flex items-center gap-1 border-b border-border text-xs w-full sm:w-fit pb-0 shrink-0 select-none ml-1">
+              <div className="flex items-center gap-1 border-b border-accent text-xs w-full sm:w-fit pb-0 shrink-0 select-none ml-1">
                 {[0, 1, 2, 3].map((i) => (
                   <Skeleton key={i} className="h-6 w-24 rounded-none" />
                 ))}
