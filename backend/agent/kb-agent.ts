@@ -70,7 +70,7 @@ import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
 // isolate the INSERT path vs the LLM path when reproducing a
 // partial-pipeline failure — flip in source, restart backend, reprocess
 // the target doc, then revert.
-const SKIP_CHUNK_TO_ENTRIES = true;
+const SKIP_CHUNK_TO_ENTRIES = false;
 
 const ocrPageSchema = z.object({
   markdown: z
@@ -418,6 +418,7 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
   }
 
   const ocrModel = await getOcrModel();
+
   const system = new SystemMessage(KB_OCR_PAGE_PROMPT);
   const structured = ocrModel.withStructuredOutput(ocrPageSchema, { method: "jsonSchema" });
 

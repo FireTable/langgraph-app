@@ -1206,21 +1206,43 @@ function DocDetailDialog({
                       work fails; instead each chunk tracks its own
                       status). The user sees the actual quality of
                       their retrieval corpus instead of a binary
-                      Ready/Failed verdict. */}
-                  <div className="flex items-center justify-between px-1 text-[11px]">
-                    <span className="text-muted-foreground">
-                      Indexed{" "}
-                      <span className="text-foreground font-semibold tabular-nums">
-                        {detail.chunks.filter((c) => c.status === "success").length}
-                      </span>{" "}
-                      / {detail.chunks.length}
-                    </span>
-                    {detail.chunks.some((c) => c.status === "failed") && (
-                      <span className="text-destructive font-semibold tabular-nums">
-                        {detail.chunks.filter((c) => c.status === "failed").length} failed
-                      </span>
-                    )}
-                  </div>
+                      Ready/Failed verdict. The trailing spinner fires
+                      while ANY chunk is pending/parsing OR the doc row
+                      is still in pending/parsing with zero chunks
+                      materialized yet — same condition the 2s preview
+                      poll uses to keep polling (see DocDetailDialog
+                      above). Settling to all-success or N-failed
+                      drops the spinner. */}
+                  {(() => {
+                    const docInflight =
+                      detail.doc.status === "pending" || detail.doc.status === "parsing";
+                    const chunksInflight = detail.chunks.some(
+                      (c) => c.status === "pending" || c.status === "parsing",
+                    );
+                    const showSpinner = docInflight || chunksInflight;
+                    return (
+                      <div className="flex items-center justify-between px-1 text-[11px]">
+                        <span className="text-muted-foreground inline-flex items-center gap-1.5">
+                          <span>Indexed</span>{" "}
+                          <span className="text-foreground font-semibold tabular-nums">
+                            {detail.chunks.filter((c) => c.status === "success").length}
+                          </span>{" "}
+                          <span>/ {detail.chunks.length}</span>
+                          {showSpinner && (
+                            <Loader2
+                              className="text-muted-foreground size-3 animate-spin ml-1"
+                              aria-label="chunks indexing in progress"
+                            />
+                          )}
+                        </span>
+                        {detail.chunks.some((c) => c.status === "failed") && (
+                          <span className="text-destructive font-semibold tabular-nums">
+                            {detail.chunks.filter((c) => c.status === "failed").length} failed
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {detail.chunks.map((c) => (
                     <div
                       key={c.ordinal}
