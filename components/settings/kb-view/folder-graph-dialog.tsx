@@ -106,9 +106,39 @@ export function FolderGraphDialog({
 
         <div className="max-h-[75vh] space-y-4 overflow-y-auto pr-1 min-h-[300px] flex flex-col justify-start min-w-0">
           {loading ? (
-            <div className="space-y-3 w-full flex-1">
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-24 w-full" />
+            <div className="space-y-4 w-full flex-1">
+              {/* ponytail: skeleton mirrors the KnowledgeGraph layout
+                  — 4 tab pills at the top, then a node cloud framed
+                  by the same h-[500px] surface. We don't try to fake
+                  edges; the real graph covers that on mount. */}
+              <div className="flex items-center gap-1 border-b border-border text-xs w-full sm:w-fit pb-0 shrink-0 select-none ml-1">
+                {[0, 1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-6 w-24 rounded-none" />
+                ))}
+              </div>
+              <div className="relative border rounded-xl bg-slate-50/50 overflow-hidden shadow-inner h-[500px] w-full flex items-center justify-center">
+                <div className="flex flex-wrap items-center justify-center gap-3 max-w-[60%] opacity-70">
+                  {[
+                    "size-3",
+                    "size-4",
+                    "size-5",
+                    "size-6",
+                    "size-4",
+                    "size-3",
+                    "size-5",
+                    "size-4",
+                    "size-3",
+                    "size-5",
+                    "size-6",
+                    "size-4",
+                    "size-3",
+                    "size-5",
+                    "size-4",
+                  ].map((c, i) => (
+                    <Skeleton key={i} className={`${c} rounded-full bg-muted-foreground/15`} />
+                  ))}
+                </div>
+              </div>
             </div>
           ) : !detail ? (
             <p className="text-muted-foreground text-sm">Failed to load.</p>

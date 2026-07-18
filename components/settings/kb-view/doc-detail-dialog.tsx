@@ -267,9 +267,32 @@ export function DocDetailDialog({
 
         <div className="max-h-[75vh] space-y-4 overflow-y-auto pr-1 min-h-[300px] flex flex-col justify-start min-w-0">
           {loading ? (
-            <div className="space-y-3 w-full flex-1">
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-24 w-full" />
+            <div className="space-y-4 w-full flex-1">
+              {/* ponytail: skeleton mirrors the actual doc-detail
+                  header shape exactly — title on the left, "Open
+                  source" button on the right, then a strip of
+                  meta-pill bars (status / type / pages / chunks)
+                  separated by small dots. Body paragraph block
+                  underneath emulates the markdown reader layout. */}
+              <div className="flex items-start justify-between gap-3">
+                <Skeleton className="h-5 w-64 max-w-[60%]" />
+                <Skeleton className="h-8 w-28 rounded-md shrink-0" />
+              </div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <Skeleton className="h-5 w-16 rounded-full" />
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-3 w-16" />
+                ))}
+              </div>
+              <div className="space-y-2 rounded-xl border bg-muted/10 p-4">
+                <Skeleton className="h-5 w-1/2" />
+                <Skeleton className="h-3 w-11/12" />
+                <Skeleton className="h-3 w-10/12" />
+                <Skeleton className="h-3 w-9/12" />
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-3 w-11/12" />
+                <Skeleton className="h-3 w-10/12" />
+              </div>
             </div>
           ) : !detail ? (
             <p className="text-muted-foreground text-sm">Failed to load.</p>
