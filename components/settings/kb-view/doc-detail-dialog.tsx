@@ -122,6 +122,111 @@ export function DocDetailDialog({
     );
   }, [detail]);
 
+  // ponytail: while the doc detail is loading, skip the entire
+  // ready-state render and emit a single dedicated skeleton dialog.
+  // Keeps the main render path shallow — one ternary per concept
+  // (detail / loading / error) instead of fighting the tabs row for
+  // space.
+  if (loading) {
+    return (
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          onOpenChange(o);
+          if (!o) {
+            setDetail(null);
+            setLoading(false);
+          }
+        }}
+      >
+        <DialogContent className="w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw] gap-2">
+          <DialogHeader className="min-w-0 max-w-3xl flex-1">
+            {/* ponytail: skeleton DialogHeader mirrors the loaded
+                shape — title on the left, the Radix-managed X
+                close button stays in the top-right corner
+                (no skeleton needed), then the status-pill + 3
+                meta-pill strip below. */}
+            <DialogTitle className="truncate min-w-0 max-w-[60%]">
+              <Skeleton className="h-8 w-64" />
+            </DialogTitle>
+            <DialogDescription asChild>
+              {/* ponytail: meta strip mirrors the loaded layout —
+                  status pill, dot separator, then 3 meta-text
+                  placeholders (contentType / pages / chunks). One
+                  separator per meta pair, matching the loaded
+                  DialogDescription structure exactly. */}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <Skeleton className="h-5 w-16 rounded-full" />
+                {[0, 1, 2].map((i) => (
+                  <>
+                    <span
+                      key={`d-${i}`}
+                      className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
+                      aria-hidden
+                    />
+                    <Skeleton key={`m-${i}`} className="h-5 w-16" />
+                  </>
+                ))}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* ponytail: 4 tab pill placeholders — same dimensions
+              (h-7 body, h-9 row) as the loaded Markdown/Pages/
+              Chunks/Graph row so the body stays anchored. The
+              first pill is the active tab (rendered with the
+              loaded state styling — bg-background/text-foreground/
+              shadow-sm) so the highlight isn't lost during loading;
+              the remaining three are bare skeleton bars
+              (rounded-md, semi-transparent) so they read as
+              inactive slots without competing for contrast. */}
+          <div className="flex h-9 items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground w-80 shrink-0 select-none gap-2">
+            {/* active tab (Markdown) — match loaded style exactly.
+                Fixed width (no flex-1) so on mobile the white pill
+                doesn't expand to fill the whole row. */}
+            <span className="inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 h-7 w-20 text-xs font-semibold bg-background text-foreground shadow-sm shrink-0">
+              <Skeleton className="h-3 w-full bg-muted-foreground/15" />
+            </span>
+          </div>
+
+          {/* ponytail: Markdown body card — mirrors the
+              rendered markdown block (outer card + Copy pill + a
+              heading + alternating paragraph lines + a subheading
+              + another paragraph block). Sized to feel like 1-2
+              screens of markdown content. */}
+          <div className="max-h-[75vh] space-y-4 overflow-y-auto pr-1 min-h-[300px] flex flex-col justify-start min-w-0">
+            <div className="rounded-xl border bg-muted/10 overflow-hidden shadow-sm">
+              <div className="flex items-center justify-between border-b px-4 py-2 bg-muted/40 shrink-0">
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-3 w-12" />
+              </div>
+              <div className="p-4 space-y-2.5">
+                <Skeleton className="h-5 w-1/3" />
+                <Skeleton className="h-3 w-11/12" />
+                <Skeleton className="h-3 w-10/12" />
+                <Skeleton className="h-3 w-9/12" />
+                <Skeleton className="h-4 w-1/4" />
+                <Skeleton className="h-3 w-11/12" />
+                <Skeleton className="h-3 w-10/12" />
+                <Skeleton className="h-3 w-8/12" />
+                <Skeleton className="h-4 w-1/4" />
+                <Skeleton className="h-3 w-11/12" />
+                <Skeleton className="h-3 w-10/12" />
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  // ponytail: detail may still be null briefly between close + reopen.
+  // The loading skeleton path already returned, so this is the only
+  // possibility — narrow with a local copy so the JSX below reads
+  // `d.doc.title` instead of `detail?.doc.title` 15× in a row.
+  const d = detail;
+  if (!d) return null;
+
   return (
     <Dialog
       open={open}
@@ -133,201 +238,132 @@ export function DocDetailDialog({
         }
       }}
     >
-      <DialogContent
-        className={
-          detail
-            ? "w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw]"
-            : "w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw] gap-2"
-        }
-      >
+      <DialogContent className="w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw] gap-2">
         <DialogHeader className="min-w-0 max-w-3xl flex-1">
-          {detail ? (
-            <>
-              <div className="flex items-start justify-between gap-3 min-w-0">
-                <DialogTitle className="truncate min-w-0 max-w-[80%]">
-                  {detail.doc.title}
-                </DialogTitle>
-                {detail.doc.attachmentUrl && (
-                  <Button asChild size="sm" variant="outline" className="shrink-0 gap-1.5">
-                    <a href={detail.doc.attachmentUrl} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="size-3.5" />
-                      Open source
-                    </a>
-                  </Button>
-                )}
-              </div>
-              <DialogDescription asChild>
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs select-none">
-                  <StatusBadge status={detail.doc.status} errorMessage={detail.doc.errorMessage} />
+          <div className="flex items-start justify-between gap-3 min-w-0">
+            <DialogTitle className="truncate min-w-0 max-w-[80%]">{d.doc.title}</DialogTitle>
+            {d.doc.attachmentUrl && (
+              <Button asChild size="sm" variant="outline" className="shrink-0 gap-1.5">
+                <a href={d.doc.attachmentUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="size-3.5" />
+                  Open source
+                </a>
+              </Button>
+            )}
+          </div>
+          <DialogDescription asChild>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs select-none">
+              <StatusBadge status={d.doc.status} errorMessage={d.doc.errorMessage} />
+              <span className="size-1 rounded-full bg-muted-foreground/30 shrink-0" aria-hidden />
+
+              <Badge
+                variant="outline"
+                className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
+              >
+                <span>{d.doc.contentType}</span>
+              </Badge>
+
+              {d.doc.pages && d.doc.pages.length > 0 && (
+                <>
                   <span
                     className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
                     aria-hidden
                   />
-
                   <Badge
                     variant="outline"
                     className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
                   >
-                    <span>{detail.doc.contentType}</span>
+                    <span>{d.doc.pages.length} pages</span>
                   </Badge>
+                </>
+              )}
 
-                  {detail.doc.pages && detail.doc.pages.length > 0 && (
-                    <>
-                      <span
-                        className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
-                        aria-hidden
-                      />
-                      <Badge
-                        variant="outline"
-                        className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
-                      >
-                        <span>{detail.doc.pages.length} pages</span>
-                      </Badge>
-                    </>
-                  )}
+              {d.chunks.length > 0 && (
+                <>
+                  <span
+                    className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
+                    aria-hidden
+                  />
+                  <Badge
+                    variant="outline"
+                    className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
+                  >
+                    <span>{d.chunks.length} chunks</span>
+                  </Badge>
+                </>
+              )}
 
-                  {detail.chunks.length > 0 && (
-                    <>
-                      <span
-                        className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
-                        aria-hidden
-                      />
-                      <Badge
-                        variant="outline"
-                        className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
-                      >
-                        <span>{detail.chunks.length} chunks</span>
-                      </Badge>
-                    </>
-                  )}
-
-                  {isPolling && (
-                    <>
-                      <span
-                        className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
-                        aria-hidden
-                      />
-                      <div className="flex items-center gap-1 text-muted-foreground select-none leading-none h-4">
-                        <Loader2 className="size-3 animate-spin text-muted-foreground/60 shrink-0" />
-                        <span className="text-[10px] text-muted-foreground/60 font-medium">
-                          Indexing…
-                        </span>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </DialogDescription>
-            </>
-          ) : (
-            <>
-              {/* ponytail: when detail is loading, mirror the
-                  DialogHeader shape exactly via skeletons —
-                  title bar + "Open source" placeholder button on
-                  the right, then a tighter meta strip (status pill +
-                  3 short bars) on the next line. No giant gap. */}
-              <div className="flex items-start justify-between gap-3 min-w-0">
-                <Skeleton className="h-5 w-64 max-w-[60%]" />
-                <Skeleton className="h-8 w-28 rounded-md shrink-0" />
-              </div>
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                <Skeleton className="h-5 w-16 rounded-full" />
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-3 w-16" />
-                ))}
-              </div>
-            </>
-          )}
+              {isPolling && (
+                <>
+                  <span
+                    className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
+                    aria-hidden
+                  />
+                  <div className="flex items-center gap-1 text-muted-foreground select-none leading-none h-4">
+                    <Loader2 className="size-3 animate-spin text-muted-foreground/60 shrink-0" />
+                    <span className="text-[10px] text-muted-foreground/60 font-medium">
+                      Indexing…
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          </DialogDescription>
         </DialogHeader>
 
-        {detail ? (
-          <div className="flex h-9 items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground w-full sm:w-fit overflow-x-auto shrink-0 select-none">
-            <button
-              onClick={() => setActiveTab("full_markdown")}
-              className={cn(
-                "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7 flex-1 sm:flex-initial",
-                activeTab === "full_markdown"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <FileText className="size-3.5 sm:mr-1.5 shrink-0" />
-              <span className="hidden sm:inline">Markdown</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("pages")}
-              className={cn(
-                "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7 flex-1 sm:flex-initial",
-                activeTab === "pages"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <ScanText className="size-3.5 sm:mr-1.5 shrink-0" />
-              <span className="hidden sm:inline">Pages ({detail.doc.pages?.length ?? 0})</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("chunks")}
-              className={cn(
-                "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7 flex-1 sm:flex-initial",
-                activeTab === "chunks"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Blocks className="size-3.5 sm:mr-1.5 shrink-0" />
-              <span className="hidden sm:inline">Chunks ({detail.chunks.length})</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("graph")}
-              className={cn(
-                "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7 flex-1 sm:flex-initial",
-                activeTab === "graph"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Network className="size-3.5 sm:mr-1.5 shrink-0" />
-              <span className="hidden sm:inline">Graph</span>
-            </button>
-          </div>
-        ) : (
-          // ponytail: tab pills placeholder — same layout as the
-          // loaded version so the body underneath stays anchored to
-          // the tabs row instead of jumping up on first paint.
-          <div className="flex h-9 items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground w-fit shrink-0 select-none gap-1">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-7 w-20 rounded-md" />
-            ))}
-          </div>
-        )}
+        <div className="flex h-9 items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground w-full sm:w-fit overflow-x-auto shrink-0 select-none">
+          <button
+            onClick={() => setActiveTab("full_markdown")}
+            className={cn(
+              "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7 flex-1 sm:flex-initial",
+              activeTab === "full_markdown"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <FileText className="size-3.5 sm:mr-1.5 shrink-0" />
+            <span className="hidden sm:inline">Markdown</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("pages")}
+            className={cn(
+              "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7 flex-1 sm:flex-initial",
+              activeTab === "pages"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <ScanText className="size-3.5 sm:mr-1.5 shrink-0" />
+            <span className="hidden sm:inline">Pages ({d.doc.pages?.length ?? 0})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("chunks")}
+            className={cn(
+              "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7 flex-1 sm:flex-initial",
+              activeTab === "chunks"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Blocks className="size-3.5 sm:mr-1.5 shrink-0" />
+            <span className="hidden sm:inline">Chunks ({d.chunks.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("graph")}
+            className={cn(
+              "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7 flex-1 sm:flex-initial",
+              activeTab === "graph"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Network className="size-3.5 sm:mr-1.5 shrink-0" />
+            <span className="hidden sm:inline">Graph</span>
+          </button>
+        </div>
 
         <div className="max-h-[75vh] space-y-4 overflow-y-auto pr-1 min-h-[300px] flex flex-col justify-start min-w-0">
-          {loading ? (
-            <div className="space-y-4 w-full flex-1">
-              {/* ponytail: skeleton mirrors the actual doc-detail
-                  header shape exactly — title on the left, "Open
-                  source" button on the right, then a strip of
-                  meta-pill bars (status / type / pages / chunks)
-                  separated by small dots. Body paragraph block
-                  underneath emulates the markdown reader layout. */}
-
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                <Skeleton className="h-5 w-16 rounded-full" />
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-3 w-16" />
-                ))}
-              </div>
-              <div className="space-y-2 rounded-xl border bg-muted/10 p-4">
-                <Skeleton className="h-5 w-1/2" />
-                <Skeleton className="h-3 w-11/12" />
-                <Skeleton className="h-3 w-10/12" />
-                <Skeleton className="h-3 w-9/12" />
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-3 w-11/12" />
-                <Skeleton className="h-3 w-10/12" />
-              </div>
-            </div>
-          ) : !detail ? (
+          {!detail ? (
             <p className="text-muted-foreground text-sm">Failed to load.</p>
           ) : activeTab === "full_markdown" ? (
             <div className="relative flex-1 flex flex-col border rounded-xl bg-muted/10 overflow-hidden min-h-[300px]">
@@ -362,9 +398,9 @@ export function DocDetailDialog({
             </div>
           ) : activeTab === "pages" ? (
             // Tab 2: Pages — left (image + ref) → right (markdown)
-            detail.doc.pages && detail.doc.pages.length > 0 ? (
+            d.doc.pages && d.doc.pages.length > 0 ? (
               <div className="space-y-4 w-full">
-                {detail.doc.pages.map((p) => {
+                {d.doc.pages.map((p) => {
                   const page = p as {
                     pageIndex: number;
                     imageUrl: string;
@@ -480,8 +516,8 @@ export function DocDetailDialog({
           ) : activeTab === "chunks" ? (
             // Tab 3: Embed Chunks
             <div className="space-y-3 w-full">
-              {detail.chunks.length === 0 ? (
-                detail.doc.status === "pending" || detail.doc.status === "parsing" ? (
+              {d.chunks.length === 0 ? (
+                d.doc.status === "pending" || d.doc.status === "parsing" ? (
                   <div className="space-y-3">
                     <div className="flex items-center gap-2 px-1 text-[11px] text-muted-foreground italic">
                       <Loader2 className="size-3 animate-spin" aria-hidden />
@@ -493,9 +529,9 @@ export function DocDetailDialog({
                   </div>
                 ) : (
                   <p className="text-muted-foreground text-xs italic text-center p-8 border border-dashed rounded-lg bg-muted/5 w-full">
-                    {detail.doc.status === "success"
+                    {d.doc.status === "success"
                       ? "Embedding chunks are still being calculated in the background. They will appear here in a few moments."
-                      : detail.doc.status === "failed"
+                      : d.doc.status === "failed"
                         ? "Ingestion failed — chunks not produced."
                         : "Ingestion in progress…"}
                   </p>
@@ -503,9 +539,8 @@ export function DocDetailDialog({
               ) : (
                 <>
                   {(() => {
-                    const docInflight =
-                      detail.doc.status === "pending" || detail.doc.status === "parsing";
-                    const chunksInflight = detail.chunks.some(
+                    const docInflight = d.doc.status === "pending" || d.doc.status === "parsing";
+                    const chunksInflight = d.chunks.some(
                       (c) => c.status === "pending" || c.status === "parsing",
                     );
                     const showSpinner = docInflight || chunksInflight;
@@ -514,9 +549,9 @@ export function DocDetailDialog({
                         <span className="text-muted-foreground inline-flex items-center gap-1.5">
                           <span>Indexed</span>{" "}
                           <span className="text-foreground font-semibold tabular-nums">
-                            {detail.chunks.filter((c) => c.status === "success").length}
+                            {d.chunks.filter((c) => c.status === "success").length}
                           </span>{" "}
-                          <span>/ {detail.chunks.length}</span>
+                          <span>/ {d.chunks.length}</span>
                           {showSpinner && (
                             <Loader2
                               className="text-muted-foreground size-3 animate-spin ml-1"
@@ -524,15 +559,15 @@ export function DocDetailDialog({
                             />
                           )}
                         </span>
-                        {detail.chunks.some((c) => c.status === "failed") && (
+                        {d.chunks.some((c) => c.status === "failed") && (
                           <span className="text-destructive font-semibold tabular-nums">
-                            {detail.chunks.filter((c) => c.status === "failed").length} failed
+                            {d.chunks.filter((c) => c.status === "failed").length} failed
                           </span>
                         )}
                       </div>
                     );
                   })()}
-                  {detail.chunks.map((c) => (
+                  {d.chunks.map((c) => (
                     <div
                       key={c.ordinal}
                       className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md"
@@ -672,7 +707,7 @@ export function DocDetailDialog({
             </div>
           ) : activeTab === "graph" ? (
             <KnowledgeGraph
-              chunks={detail.chunks}
+              chunks={d.chunks}
               emptyMessage="No graph data available. Reprocess the document to extract entities and relationships."
             />
           ) : null}
