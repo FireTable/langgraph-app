@@ -1,0 +1,203 @@
+"use client";
+
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Card, CardContent } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { KbResponse } from "./types";
+import { FolderSidebar } from "./folder-sidebar";
+import { DocTable } from "./doc-table";
+import { FolderNameDialog } from "./dialogs";
+import { handleAddDoc } from "./helpers";
+
+export function KbView({ className }: { className?: string }) {
+  return (
+    <Suspense fallback={<KbViewSkeleton className={className} />}>
+      <KbViewContent className={className} />
+    </Suspense>
+  );
+}
+
+function KbViewContent({ className }: { className?: string }) {
+  const searchParams = useSearchParams();
+  const focusDocId = searchParams.get("doc");
+  const [data, setData] = useState<KbResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/kb/documents");
+      if (!res.ok) {
+        setError(`failed to load (${res.status})`);
+        return;
+      }
+      const body = (await res.json()) as KbResponse;
+      setData(body);
+      setSelectedFolderId((prev) => {
+        if (prev && body.groups.some((g) => g.folder.id === prev)) return prev;
+        if (focusDocId) {
+          const owning = body.groups.find((g) => g.documents.some((d) => d.id === focusDocId));
+          if (owning) return owning.folder.id;
+        }
+        const firstWithDocs = body.groups.find((g) => g.documents.length > 0);
+        return firstWithDocs?.folder.id ?? body.groups[0]?.folder.id ?? null;
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [focusDocId]);
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!data) return;
+    const anyInflight = data.groups.some((g) =>
+      g.documents.some((d) => d.status === "pending" || d.status === "parsing"),
+    );
+    if (!anyInflight) return;
+    const t = setInterval(() => void load(), 2000);
+    return () => clearInterval(t);
+  }, [data, load]);
+
+  const selectedGroup = useMemo(
+    () => data?.groups.find((g) => g.folder.id === selectedFolderId) ?? null,
+    [data, selectedFolderId],
+  );
+
+  if (error) {
+    return (
+      <div className={cn("text-destructive p-6 text-sm", className)} role="alert">
+        {error}
+      </div>
+    );
+  }
+
+  if (!data) {
+    return <KbViewSkeleton className={className} />;
+  }
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <div className={cn("flex w-full flex-col gap-4", className)}>
+        <section>
+          <h2 className="text-sm font-semibold mb-1">Knowledge base</h2>
+          <p className="text-muted-foreground mb-3 text-xs leading-relaxed">
+            PDFs and other attachments you upload in chat land here as searchable documents. Drop a
+            file into the composer and the assistant will use it to ground its replies.
+          </p>
+        </section>
+
+        <div className="grid items-start gap-4 md:grid-cols-[260px_1fr] w-full min-w-0">
+          <FolderSidebar
+            groups={data.groups}
+            selectedId={selectedFolderId}
+            onSelect={setSelectedFolderId}
+            onNewFolder={() => setNewFolderOpen(true)}
+            onRefresh={load}
+          />
+          <DocTable
+            group={selectedGroup}
+            focusDocId={focusDocId}
+            onAddDoc={() => fileInputRef.current?.click()}
+            onRefresh={load}
+          />
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          accept="application/pdf"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file && selectedGroup) {
+              void handleAddDoc(file, selectedGroup.folder.id, load);
+            }
+            e.target.value = ""; // allow re-pick same file
+          }}
+        />
+
+        <FolderNameDialog
+          mode="create"
+          folder={null}
+          open={newFolderOpen}
+          onOpenChange={setNewFolderOpen}
+          onCreated={(folder) => {
+            setSelectedFolderId(folder.id);
+            void load();
+          }}
+        />
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function KbViewSkeleton({ className }: { className?: string }) {
+  return (
+    <div className={cn("flex w-full flex-col gap-4", className)}>
+      <div className="flex flex-col gap-3">
+        <Skeleton className="mb-1 h-4 w-32" />
+        <Skeleton className="mb-3 h-3 w-96 max-w-full" />
+      </div>
+      <div className="grid items-start gap-4 md:grid-cols-[260px_1fr]">
+        <Card className="h-fit p-0">
+          <CardContent className="p-0">
+            <div className="flex h-9 items-center justify-between px-4">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="size-6 rounded-md" />
+            </div>
+            <Separator />
+            <div className="space-y-0.5 p-2">
+              {[0, 1].map((i) => (
+                <Skeleton key={i} className="h-7 rounded-md" />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="p-0">
+          <CardContent className="p-0">
+            <div className="flex h-9 items-center justify-between px-4">
+              <Skeleton className="h-3 w-32" />
+              <Skeleton className="size-6 rounded-md" />
+            </div>
+            <Separator />
+            {[0, 1, 2].map((i) => (
+              <div key={i}>
+                {i > 0 && <Separator />}
+                <div className="space-y-2 px-4 py-3 md:hidden">
+                  <div className="flex items-start gap-2">
+                    <Skeleton className="h-4 flex-1" />
+                    <Skeleton className="size-7 rounded-md" />
+                    <Skeleton className="size-7 rounded-md" />
+                    <Skeleton className="size-7 rounded-md" />
+                  </div>
+                  <Skeleton className="h-3 w-3/4" />
+                </div>
+                <div className="hidden md:grid md:grid-cols-[minmax(0,1fr)_auto_120px_auto_84px] md:items-center md:gap-x-3 md:px-4 md:py-3">
+                  <Skeleton className="h-4" />
+                  <Skeleton className="h-3 w-8" />
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-5 w-16 rounded-full" />
+                  <div className="flex justify-end gap-0.5">
+                    <Skeleton className="size-7 rounded-md" />
+                    <Skeleton className="size-7 rounded-md" />
+                    <Skeleton className="size-7 rounded-md" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

@@ -103,6 +103,7 @@
     "react-day-picker": "^10.0.1",
     "react-dom": "^19.2.7",
     "react-email": "^6.6.6",
+    "react-force-graph-2d": "^1.29.1",
     "remark-gfm": "^4.0.1",
     "resend": "^6.17.1",
     "server-only": "^0.0.1",
