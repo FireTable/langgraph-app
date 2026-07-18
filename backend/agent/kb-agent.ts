@@ -1,6 +1,6 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
-import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+import { MarkdownTextSplitter } from "@langchain/textsplitters";
 import PQueue from "p-queue";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -70,7 +70,7 @@ import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
 // isolate the INSERT path vs the LLM path when reproducing a
 // partial-pipeline failure — flip in source, restart backend, reprocess
 // the target doc, then revert.
-const DEBUG_BAIL_OUT = false;
+const DEBUG_BAIL_OUT = true;
 
 const ocrPageSchema = z.object({
   markdown: z
@@ -712,8 +712,8 @@ async function generateChunkEmbedNode(
             }
             const chat = await getChatModel();
             const embedder = await getEmbeddingModel();
-            const splitter = new RecursiveCharacterTextSplitter({
-              chunkSize: 1000,
+            const splitter = new MarkdownTextSplitter({
+              chunkSize: 1024,
               chunkOverlap: 200,
             });
             const entityQueue = new PQueue({ concurrency: KB_ENTITY_CONCURRENCY });
