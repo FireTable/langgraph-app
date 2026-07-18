@@ -30,6 +30,13 @@ export type FireIngestionOpts = {
   // knobs (e.g. "kb-reprocess" vs "kb-settings") can diverge without a
   // schema change. Defaults to "kb-settings" for the upload route.
   source?: "kb-settings" | "kb-reprocess";
+  // ponytail: chunksOnly dispatch for
+  // `POST /api/kb/documents/[id]/reprocess?chunksOnly=true`. Skips
+  // the OCR stage — kbAgent reads `doc.pages[].markdown` directly
+  // and only the chunk + embed + entity stage runs. kb_documents.row
+  // stays at its terminal status (no reset). Ignored for fresh
+  // uploads (the route never sends it for kb-settings).
+  chunksOnly?: boolean;
 };
 
 export async function fireIngestionRun({
@@ -38,6 +45,7 @@ export async function fireIngestionRun({
   docId,
   title,
   source = "kb-settings",
+  chunksOnly = false,
 }: FireIngestionOpts): Promise<void> {
   const base = process.env.R2_PUBLIC_BASE_URL ?? "";
   const publicUrl = `${base}/${attachment.r2Key}`;
@@ -86,10 +94,17 @@ export async function fireIngestionRun({
     ],
   };
 
+  // ponytail: chunksOnly mode is plumbed through config.configurable
+  // because prepareKBDataNode reads `config.configurable.mode` first
+  // (before state.mode). The docId in this case IS the target row
+  // we want to re-chunk — pass it explicitly so prepareKBDataNode
+  // can find the doc by id instead of doing an attachment/file-part
+  // lookup chain.
   const config = {
     configurable: {
       userId,
       thread_id: threadId,
+      ...(chunksOnly ? ({ mode: "chunksOnly" as const, docId } as Record<string, unknown>) : {}),
     },
   };
 

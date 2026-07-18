@@ -70,6 +70,18 @@ export const KbAgentState = new StateSchema({
   // From parent — populated by RouterNode at invoke time.
   messages: z.array(z.custom<BaseMessage>()),
   userId: z.string().nullable().default(null),
+  // ponytail: "full" = original OCR + chunk + embed pipeline.
+  // "chunksOnly" = skip the OCR chain (prepareKBData reads an
+  // existing doc row whose pages[].markdown is reused) — only the
+  // chunk + embed + entity stage lands. Populated by
+  // `fireIngestionRun` from `config.configurable` when invoked by
+  // `POST /api/kb/documents/[id]/reprocess?chunksOnly=true`. The
+  // kb_documents row stays at its terminal status (no reset).
+  mode: z.enum(["full", "chunksOnly"]).default("full"),
+  // ponytail: for chunksOnly dispatch, this is the target docId
+  // (the row whose pages[].markdown will be re-chunked). Ignored in
+  // full mode (prepareKBData figures the docId out per file part).
+  docId: z.string().nullable().default(null),
   // Internal.
   pagesByDocId: z.record(z.string(), z.array(z.custom<PageResult>())).default({}),
   processedFiles: z.array(z.custom<ProcessedFile>()).default([]),
@@ -80,6 +92,8 @@ export const KbAgentState = new StateSchema({
 export type KbAgentStateShape = {
   messages: BaseMessage[];
   userId: string | null;
+  mode: "full" | "chunksOnly";
+  docId: string | null;
   pagesByDocId: Record<string, PageResult[]>;
   processedFiles: ProcessedFile[];
   status: "pending" | "parsing" | "success" | "failed";

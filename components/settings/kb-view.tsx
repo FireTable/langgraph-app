@@ -1363,10 +1363,19 @@ function DocDeleteDialog({
 }
 
 // ponytail: reprocess dialog. Server returns 202 + flips the doc row's
-// status back to "pending"; the existing 2s polling effect picks it up
-// and the badge in the row transitions Ready → Parsing → Ready on its
-// own. We surface 409 PROCESSING without a retry — the row is already
-// in flight.
+// status back to "pending" (full mode) or leaves it terminal (chunksOnly
+// mode); the existing 2s polling effect picks up whichever transition
+// fires and the row badge updates on its own.
+//
+// Two modes:
+//   - full        → POST /reprocess               → re-OCR + re-chunk + re-embed
+//   - chunksOnly  → POST /reprocess?chunksOnly=true → reuse pages[] markdown,
+//                                                     only re-chunk + re-entity
+//
+// 409 PROCESSING surfaces when the row is mid-flight (any mode).
+// 409 NOT_READY surfaces when chunksOnly is requested but the doc
+// has no usable pages[].markdown — we route the user to fall back
+// to "Full re-run" which seeds the pages.
 function DocReprocessDialog({
   doc,
   open,
@@ -1378,28 +1387,51 @@ function DocReprocessDialog({
   onOpenChange: (open: boolean) => void;
   onReprocessed: () => void;
 }) {
+  const [chunksOnly, setChunksOnly] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ponytail: reset mode back to "full" whenever the dialog reopens —
+  // we'd otherwise land on the previous run's mode which felt sticky.
+  useEffect(() => {
+    if (open) {
+      setChunksOnly(false);
+      setError(null);
+    }
+  }, [open]);
 
   const submit = useCallback(async () => {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/kb/documents/${doc.id}/reprocess`, { method: "POST" });
+      const qs = chunksOnly ? "?chunksOnly=true" : "";
+      const res = await fetch(`/api/kb/documents/${doc.id}/reprocess${qs}`, { method: "POST" });
       if (res.status === 202) {
-        toast.info("Reprocess queued", {
+        toast.info(chunksOnly ? "Rechunks queued" : "Reprocess queued", {
           descriptionClassName: TOAST_DESCRIPTION_CLASS,
-          // ponytail: server clears old chunks + resets the doc row,
-          // so the user briefly sees Parsing before the OCR + chunk
-          // pass completes. The 2s polling flips the row to Ready
-          // when the pipeline lands.
-          description: `「${doc.title}」is re-running OCR + chunking. Old chunks were cleared.`,
+          description: chunksOnly
+            ? `「${doc.title}」- skipping OCR, re-chunking from the existing pages. doc row stays Ready.`
+            : `「${doc.title}」is re-running OCR + chunking. Old chunks were cleared.`,
         });
         onReprocessed();
         return;
       }
       if (res.status === 409) {
-        setError("Already processing — try again when the row settles.");
+        const body = (await res.json().catch(() => ({}))) as { code?: string; reason?: string };
+        if (body.code === "NOT_READY") {
+          setError(
+            "Only rebuild chunks isn't available — pages haven't been extracted yet. Pick 'Full re-run' first.",
+          );
+          return;
+        }
+        // PROCESSING / NOT_READY (full-reprocess row missing) / ATTACHMENT_MISSING
+        const msg =
+          body.code === "ATTACHMENT_MISSING"
+            ? "Source attachment is missing — re-upload the file instead."
+            : body.code === "PROCESSING"
+              ? "Already processing — try again when the row settles."
+              : `Server rejected: ${body.code ?? res.status}`;
+        setError(msg);
         return;
       }
       if (res.status === 404) {
@@ -1412,7 +1444,7 @@ function DocReprocessDialog({
     } finally {
       setSubmitting(false);
     }
-  }, [doc.id, onReprocessed]);
+  }, [doc.id, doc.title, chunksOnly, onReprocessed]);
 
   return (
     <Dialog
@@ -1426,11 +1458,62 @@ function DocReprocessDialog({
         <DialogHeader>
           <DialogTitle>Reprocess document?</DialogTitle>
           <DialogDescription>
-            <span className="font-medium">{doc.title}</span> will be re-rendered, re-OCRed, and
-            re-chunked from scratch. Existing chunks are wiped. This uses OCR + embedding API
-            tokens.
+            <span className="font-medium">{doc.title}</span> - existing chunks are wiped before
+            re-running. Choose whether to re-run OCR or only rebuild chunks from the cached pages.
           </DialogDescription>
         </DialogHeader>
+
+        {/* ponytail: native radio group + label styling. The two cards
+            are mutually exclusive and represent distinct API routes;
+            the description line under each spells out the cost so the
+            user can tell OCR is the expensive step. */}
+        <fieldset disabled={submitting} className="space-y-2" aria-label="Reprocess mode">
+          <label
+            className={cn(
+              "flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
+              !chunksOnly ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40",
+            )}
+          >
+            <input
+              type="radio"
+              name="reprocess-mode"
+              value="full"
+              checked={!chunksOnly}
+              onChange={() => setChunksOnly(false)}
+              className="mt-0.5 size-3.5 shrink-0 accent-foreground"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium leading-tight">Full re-run</div>
+              <div className="text-muted-foreground text-[11px] leading-snug mt-0.5">
+                Re-render the PDF, re-run OCR, then re-chunk and re-embed. Uses OCR + embed API
+                tokens.
+              </div>
+            </div>
+          </label>
+          <label
+            className={cn(
+              "flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
+              chunksOnly ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40",
+            )}
+          >
+            <input
+              type="radio"
+              name="reprocess-mode"
+              value="chunksOnly"
+              checked={chunksOnly}
+              onChange={() => setChunksOnly(true)}
+              className="mt-0.5 size-3.5 shrink-0 accent-foreground"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium leading-tight">Only rebuild chunks</div>
+              <div className="text-muted-foreground text-[11px] leading-snug mt-0.5">
+                Skip OCR — reuse the cached <code>pages[].markdown</code>. Only chunks + entities
+                rebuild. Faster, fewer tokens. Doc row stays Ready the whole time.
+              </div>
+            </div>
+          </label>
+        </fieldset>
+
         {error && <p className="text-destructive text-xs">{error}</p>}
         <DialogFooter>
           <Button
@@ -1442,7 +1525,13 @@ function DocReprocessDialog({
             Cancel
           </Button>
           <Button className="w-full sm:w-auto" onClick={() => void submit()} disabled={submitting}>
-            {submitting ? <Loader2 className="size-3.5 animate-spin" /> : "Reprocess"}
+            {submitting ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : chunksOnly ? (
+              "Rebuild chunks"
+            ) : (
+              "Reprocess"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

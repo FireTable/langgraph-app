@@ -354,13 +354,18 @@ Add a doc to a folder. Frontend uploads the file via the existing `/api/attachme
 
 ### `POST /api/kb/documents/[id]/reprocess`
 
-Re-runs the kbAgent pipeline (screenshot → OCR → chunk + embed → store) for an existing `kb_document`. The Settings UI exposes this via the per-row "Reprocess" button (lucide `RefreshCw`). Existing chunks are wiped inside the same tx that flips the doc row back to `status="pending"`, so the row + chunks move to a consistent state before the run is dispatched.
+Re-runs the kbAgent pipeline for an existing `kb_document`. The Settings UI exposes this via the per-row "Reprocess" button (lucide `RefreshCw`), with a mode picker for `Full re-run` vs `Only rebuild chunks`.
 
-|               |                                                                                                                                                                                                        |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Request body  | (none)                                                                                                                                                                                                 |
-| 202 response  | `{ docId: string }`                                                                                                                                                                                    |
-| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND` (no doc, or doc owned by a different user — no existence leak). 409 `PROCESSING` (doc is already `pending` / `parsing`). 409 `ATTACHMENT_MISSING`. 500 `INTERNAL`. |
+**Default mode** — full re-run. Wipes chunks + flips the doc row back to `status="pending"` inside one tx, then dispatches kbAgent which re-runs PDF render → OCR → chunk + embed. The row + chunks move to a consistent state before the run is dispatched.
+
+**`?chunksOnly=true` mode** — skip OCR. Only the `kb_chunk` rows are wiped inside one tx; the doc row stays at its terminal status (`success` / `failed`) because no OCR is needed. kbAgent reuses the cached `pages[].markdown` and only re-runs chunk + embed + entity extraction. Faster + fewer tokens. The 409 `NOT_READY` failure surfaces when the doc has no usable pages (rare — a doc whose first run never reached OCR). The user-facing fallback is to run a full re-run once to seed the pages, then chunk-only thereafter.
+
+|               |                                                                                                                                                                                                                                                                                                                      |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Query params  | `chunksOnly?: "true"` (default false)                                                                                                                                                                                                                                                                                |
+| Request body  | (none)                                                                                                                                                                                                                                                                                                               |
+| 202 response  | `{ docId: string, chunksOnly?: true }`                                                                                                                                                                                                                                                                               |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND` (no doc, or doc owned by a different user — no existence leak). 409 `PROCESSING` (doc is already `pending` / `parsing`). 409 `ATTACHMENT_MISSING` (full mode only). 409 `NOT_READY` (chunksOnly only — doc has no pages[].markdown; run a full reprocess first). 500 `INTERNAL`. |
 
 ## Admin
 
