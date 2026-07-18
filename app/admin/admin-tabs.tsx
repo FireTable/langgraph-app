@@ -33,7 +33,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { toast } from "sonner";
 
 type PublicProviderApiKey = { name: string };
-type ModelKind = "chat" | "ocr" | "embed";
+type ModelKind = "chat" | "ocr" | "embed" | "extract";
 type PublicModel = {
   name: string;
   enabled: boolean;
@@ -652,7 +652,7 @@ function ModelDialog(
         <div className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Kind</span>
           <div className="flex flex-wrap gap-3">
-            {(["chat", "ocr", "embed"] as const).map((k) => (
+            {(["chat", "ocr", "embed", "extract"] as const).map((k) => (
               <label key={k} className="flex items-center gap-2 text-sm">
                 <Checkbox
                   checked={kind.includes(k)}
@@ -669,7 +669,7 @@ function ModelDialog(
           </div>
           <p className="text-muted-foreground text-xs">
             At least one kind is required — chat for general inference, ocr for PDF vision, embed
-            for KB chunk vectors.
+            for KB chunk vectors, extract for structured-output triples from chunks.
           </p>
         </div>
       </div>

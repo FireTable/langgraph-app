@@ -5,7 +5,7 @@ import PQueue from "p-queue";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { RunnableConfig } from "@langchain/core/runnables";
-import { getChatModel, getEmbeddingModel, getOcrModel } from "@/backend/model";
+import { getEmbeddingModel, getExtractModel, getOcrModel } from "@/backend/model";
 import { KB_OCR_PAGE_PROMPT } from "@/backend/prompt/system";
 import { creditTrackingHandler } from "@/backend/callbacks";
 import { checkpointer, subgraphCheckpointerConfig } from "@/backend/checkpointer";
@@ -417,9 +417,9 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
     };
   }
 
-  const ocr = await getOcrModel();
+  const ocrModel = await getOcrModel();
   const system = new SystemMessage(KB_OCR_PAGE_PROMPT);
-  const structured = ocr.withStructuredOutput(ocrPageSchema, { method: "jsonSchema" });
+  const structured = ocrModel.withStructuredOutput(ocrPageSchema, { method: "jsonSchema" });
 
   // ponytail: one p-queue across ALL docs — caps total apimart
   // concurrency at OCR_CONCURRENCY regardless of how many PDFs were
@@ -710,7 +710,12 @@ async function generateChunkEmbedNode(
             if (!fullMarkdown) {
               throw new Error(`Document ${docId} has no markdown content extracted yet`);
             }
-            const chat = await getChatModel();
+            // ponytail: entity-extract LLM routes through the extract
+            // pool so admin can flag a cheaper model (e.g. gpt-4o-mini)
+            // for this work without forcing the same model on the extractModel
+            // default. Falls back to the extractModel pool when no extract-
+            // tagged model is registered (see getExtractModel).
+            const extractModel = await getExtractModel();
             const embedder = await getEmbeddingModel();
             const splitter = new MarkdownTextSplitter({
               chunkSize: 1024,
@@ -804,7 +809,7 @@ async function generateChunkEmbedNode(
                 entityQueue.add(async (): Promise<void> => {
                   const chunkId = chunkIds[i]!;
                   try {
-                    const out = await chat
+                    const out = await extractModel
                       .withStructuredOutput(entitySchema, { method: "jsonSchema" })
                       .invoke(
                         `Extract named entities (people, orgs, concepts, products) from this passage:\n\n${text}`,

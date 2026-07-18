@@ -12,9 +12,11 @@ export const providerApiKeySchema = z.object({
 
 // ponytail: model kinds — chat = general purpose, ocr = vision-capable
 // chat model used to extract text from rendered PDF pages, embed =
-// embedding model for KB chunks. A single upstream model can serve
-// multiple kinds (gpt-4o-mini is both chat + ocr).
-export const modelKindSchema = z.enum(["chat", "ocr", "embed"]);
+// embedding model for KB chunks, extract = chat model earmarked for
+// structured-output extraction (entity/relationship/theme triples
+// from KB chunks). A single upstream model can serve multiple kinds
+// (gpt-4o-mini is both chat + ocr + extract).
+export const modelKindSchema = z.enum(["chat", "ocr", "embed", "extract"]);
 
 export const modelConfigSchema = z.object({
   name: z.string().min(1).max(128),

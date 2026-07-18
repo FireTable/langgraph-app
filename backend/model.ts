@@ -4,6 +4,7 @@ import type { Embeddings } from "@langchain/core/embeddings";
 import {
   getChatModelFromDB,
   getEmbeddingModelFromDB,
+  getExtractModelFromDB,
   getOcrModelFromDB,
   invalidateModelCache,
   type GetChatModelOpts,
@@ -94,6 +95,18 @@ export async function getEmbeddingModel(opts: GetChatModelOpts = {}): Promise<Em
   } catch {
     return buildEnvEmbeddingModel();
   }
+}
+
+/**
+ * ponytail: structured-output extraction (KB chunk → entity / relationship /
+ * theme triples) routes to `kind="extract"` models. Today's chat-LLM
+ * call sites for this work resolve here. `getExtractModelFromDB` falls
+ * back to the chat pool when no extract-tagged model is registered,
+ * so the wrapper doesn't need its own env fallback — by the time the
+ * inner fallback fires, we've already degraded to chat.
+ */
+export async function getExtractModel(opts: GetChatModelOpts = {}): Promise<ChatOpenAI> {
+  return (await getExtractModelFromDB(opts)) as ChatOpenAI;
 }
 
 export { invalidateModelCache };

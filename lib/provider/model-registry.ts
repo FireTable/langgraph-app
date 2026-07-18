@@ -63,8 +63,8 @@ export type GetChatModelOpts = GetModelOpts;
 /**
  * ponytail: kind-aware cache key prefix. The first segment namespaces the
  * round-robin pool by kind so chat traffic and ocr traffic don't advance
- * each other's counters. Three prefixes exist today (chat/ocr/embed);
- * adding a fourth only touches this file and one wrapper.
+ * each other's counters. Four prefixes exist today (chat/ocr/embed/extract);
+ * adding a fifth only touches this file and one wrapper.
  */
 function kindPrefix(kind: ModelKind): string {
   return `kind=${kind}`;
@@ -102,6 +102,28 @@ export async function getChatModelFromDB(opts: GetModelOpts = {}): Promise<BaseC
  */
 export async function getOcrModelFromDB(opts: GetModelOpts = {}): Promise<BaseChatModel> {
   return getModelFromDB({ ...opts, kind: "ocr" }) as Promise<BaseChatModel>;
+}
+
+/**
+ * ponytail: extract = chat-capable model used for structured-output
+ * extraction (entity / relationship / theme triples from KB chunks,
+ * per the LightRAG-style path in kbAgent.generateChunkEmbedNode).
+ * Filter on `kind.includes("extract")` so a model that admin hasn't
+ * flagged for extract work is never picked here. If no tuple has
+ * `extract` in its `kind` list, the function falls back to the chat
+ * pool — the wiring is non-breaking because every chat model is a
+ * valid structured-output caller. Backed by a separate round-robin
+ * counter so extract traffic doesn't advance chat counters.
+ */
+export async function getExtractModelFromDB(opts: GetModelOpts = {}): Promise<BaseChatModel> {
+  try {
+    return getModelFromDB({ ...opts, kind: "extract" }) as Promise<BaseChatModel>;
+  } catch (err) {
+    // ponytail: no extract-tagged model registered yet → fall back to
+    // chat pool. Same retry loop exists in the chat getter, so this
+    // is the right pattern for "treat the pool as a soft contract".
+    return getModelFromDB({ ...opts, kind: "chat" }) as Promise<BaseChatModel>;
+  }
 }
 
 /**

@@ -71,6 +71,7 @@ vi.mock("@/backend/model", () => ({
   getChatModel: mocks.chatFactory,
   getEmbeddingModel: mocks.embedderFactory,
   getOcrModel: mocks.ocrFactory,
+  getExtractModel: mocks.chatFactory,
 }));
 vi.mock("@/lib/kb/screenshot", () => ({ screenshotPdf: mocks.screenshot }));
 vi.mock("@/lib/kb/text", () => ({ extractPdfText: mocks.extractText }));
