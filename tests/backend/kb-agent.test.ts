@@ -404,7 +404,14 @@ describe("backend/kb-agent", () => {
       expect(processed[0].pipelineStatus).toBe("dedup");
     });
 
-    it("parsing: dedup hit mirrors the existing row's parsing status", async () => {
+    it("parsing: dedup target reuses the existing row's id with pipelineStatus='new' so the OCR/chunk pipeline actually writes the row forward", async () => {
+      // ponytail: a 'parsing' row means a prior kbAgent run never
+      // landed its status writes. Re-running the pipeline with the
+      // SAME docId is the only way to flip it to a terminal state —
+      // the old dedup short-circuit would have left the row stuck
+      // forever. The 'success'/'failed' branch still dedups, but
+      // pending/parsing is treated as recoverable so the user sees
+      // the pipeline actually finish.
       mocks.findByHash.mockResolvedValueOnce({
         id: "d-existing",
         userId: USER,
@@ -423,8 +430,12 @@ describe("backend/kb-agent", () => {
         { configurable: { userId: USER } },
       );
       const processed = out.processedFiles as Array<Record<string, unknown>>;
-      expect(processed[0].pipelineStatus).toBe("dedup");
-      // Overall run is still success — dedup completed.
+      // Reuses the existing row id, marked as a fresh 'new' run so
+      // splitFileToPageNode + pageToMarkdownNode write back to it.
+      expect(processed[0].docId).toBe("d-existing");
+      expect(processed[0].pipelineStatus).toBe("new");
+      // Overall run still success — the chunk pipeline doesn't
+      // downgrade the doc to failed.
       expect(out.status).toBe("success");
     });
   });

@@ -90,15 +90,26 @@ export async function insertKbDocument(row: NewKbDocument): Promise<KbDocument> 
 }
 
 // ponytail: reprocess flips the doc row back to "pending" + clears the
-// previous error message so the Settings UI row badge updates on the
-// next 2s poll. Chunks are cleared separately via deleteKbChunksByDocumentId.
+// previous error message AND the cached pages array. The detail
+// dialog reads `pages` straight off the row to render per-page
+// OCR'd markdown + R2 image URLs; without clearing it on reprocess,
+// the dialog shows stale text/images between the start of the new
+// pipeline and the moment splitFileToPageNode writes fresh `pages`
+// (often a few seconds — visible flash of prior OCR result).
+// Chunks are cleared separately via deleteKbChunksByDocumentId in the
+// same withKbTx so a partial reprocess doesn't split the two clears.
 export async function resetKbDocumentForReprocess(
   userId: string,
   docId: string,
 ): Promise<KbDocument | null> {
   const [out] = await db
     .update(kbDocument)
-    .set({ status: "pending", errorMessage: null, updatedAt: new Date() })
+    .set({
+      status: "pending",
+      errorMessage: null,
+      pages: null,
+      updatedAt: new Date(),
+    })
     .where(and(eq(kbDocument.id, docId), eq(kbDocument.userId, userId)))
     .returning();
   return out ?? null;
@@ -322,11 +333,14 @@ export async function findKbChunksByDocumentId(userId: string, docId: string): P
 
 // Slim variant for the Settings → KB doc-detail payload: skip the 1536-dim
 // embedding array (6 KB per chunk) and the generated `tsv` column. The
-// preview UI just needs the text + extracted entities.
+// preview UI just needs the text + extracted entities + per-chunk status
+// (so a failed entity extract is visibly distinct from a successful one).
 export type KbChunkPreview = {
   ordinal: number;
   content: string;
   entities: string[];
+  status: "pending" | "parsing" | "success" | "failed";
+  errorMessage: string | null;
 };
 
 export async function findKbChunksContentByDocumentId(
@@ -338,12 +352,87 @@ export async function findKbChunksContentByDocumentId(
       ordinal: kbChunk.ordinal,
       content: kbChunk.content,
       entities: kbChunk.entities,
+      status: kbChunk.status,
+      errorMessage: kbChunk.errorMessage,
     })
     .from(kbChunk)
     .innerJoin(kbDocument, eq(kbChunk.documentId, kbDocument.id))
     .where(and(eq(kbDocument.userId, userId), eq(kbChunk.documentId, docId)))
     .orderBy(asc(kbChunk.ordinal))
     .then((rows) => rows);
+}
+
+// ponytail: per-chunk state writes — companion to kb_document.status.
+// chunkEmbedStoreNode writes these in the same pipeline that
+// finalizes kb_document.status="success", so a transient chunk
+// failure never blocks the parent doc from landing at success
+// (matches the goal: chunks are derived data, the doc's status
+// reflects only the OCR + pages phase).
+export async function markKbChunkSuccess(chunkId: string): Promise<void> {
+  await db
+    .update(kbChunk)
+    .set({ status: "success", errorMessage: null })
+    .where(eq(kbChunk.id, chunkId));
+}
+
+export async function markKbChunkFailed(chunkId: string, errorMessage: string): Promise<void> {
+  await db.update(kbChunk).set({ status: "failed", errorMessage }).where(eq(kbChunk.id, chunkId));
+}
+
+// ponytail: bulk status flip for a doc's chunks. Drives the visible
+// 3-stage chunk lifecycle (pending → parsing → success/failed) —
+// called right BEFORE the entity-LLM dispatch so the UI snapshot
+// captures the "parsing" frame even though the work is short.
+// Caller supplies the tx so this UPDATE participates in the
+// same atomicity envelope as the INSERT (just before this helper),
+// giving polling observers a clean INSERT-then-parsing transition
+// (no intermediate "pending" frame visible from the network).
+export async function markAllKbChunksParsingForDocInTx(tx: PgTx, docId: string): Promise<void> {
+  await tx
+    .update(kbChunk)
+    .set({ status: "parsing" })
+    .where(and(eq(kbChunk.documentId, docId), eq(kbChunk.status, "pending")));
+}
+
+// ponytail: end-of-pipeline per-row updates. The chunks table already
+// has content + embedding (written by insertKbChunks at the start);
+// these UPDATEs back-fill the entity list + finalise status. Two
+// separate columns + status so we don't have to choose between
+// "optimistic row ready before llm" and "at-least-once status flip".
+export async function updateKbChunkForSuccess(chunkId: string, entities: string[]): Promise<void> {
+  await db.update(kbChunk).set({ entities, errorMessage: null }).where(eq(kbChunk.id, chunkId));
+}
+
+export async function updateKbChunkForFailure(
+  chunkId: string,
+  errorMessage: string,
+): Promise<void> {
+  // Don't clobber entities — if a previous successful entity
+  // extract landed somewhere (e.g. a partial run), keep it visible.
+  await db.update(kbChunk).set({ errorMessage }).where(eq(kbChunk.id, chunkId));
+}
+
+// Counts of failed chunks for a doc — surfaces in the doc-detail
+// dialog so the user sees "23/47 indexed, 2 failed" without
+// having to scroll every chunk row.
+export async function getKbChunkFailureCount(docId: string): Promise<number> {
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(kbChunk)
+    .where(and(eq(kbChunk.documentId, docId), eq(kbChunk.status, "failed")));
+  return count;
+}
+
+// ponytail: rebuildChunksOnly — flips every chunk for the doc back
+// to 'pending' without touching kb_document. Used by the
+// Settings→Reprocess "Only rebuild chunks (keep OCR result)" toggle
+// so chunk-level failures (entity extract / dim mismatch) can be
+// retried without spending another OCR pass.
+export async function resetKbChunksForReprocess(tx: PgTx, docId: string): Promise<void> {
+  await tx
+    .update(kbChunk)
+    .set({ status: "pending", errorMessage: null })
+    .where(eq(kbChunk.documentId, docId));
 }
 
 export async function deleteKbDocumentForUser(

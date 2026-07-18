@@ -56,6 +56,14 @@ export type ProcessedFile = {
   // "unknown" = attachment row missing, no docId at all.
   pipelineStatus: "new" | "dedup" | "failed" | "unknown";
   errorMessage: string | null;
+  // ponytail: when pipelineStatus === "dedup", this is the row's
+  // CURRENT status read from the kb_documents table at dispatch time.
+  // kbAgent's terminal node (`rewriteMessagesNode`) writes this back
+  // to the row so a previous kbAgent run that landed `success` is
+  // visible to the user even when the dispatch path went through a
+  // re-upload dedup short-circuit. Optional for the `new` / `failed`
+  // / `unknown` branches that produce their own row status.
+  existingStatus?: "pending" | "parsing" | "success" | "failed";
 };
 
 export const KbAgentState = new StateSchema({

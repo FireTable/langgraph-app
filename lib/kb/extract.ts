@@ -101,8 +101,9 @@ export function stripKbRefFromFilename(filename: string | undefined): string {
 // second router pass won't re-dispatch kbAgent.
 export function hasUnprocessedPdf(messages: BaseMessage[]): boolean {
   for (const m of messages) {
-    if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) continue;
-    if (m.content.some((p) => isFilePart(p) && p.mime_type === "application/pdf" && !p.kb_ref)) {
+    const content = humanContent(m);
+    if (!isHumanLike(m) || !Array.isArray(content)) continue;
+    if (content.some((p) => isFilePart(p) && p.mime_type === "application/pdf" && !p.kb_ref)) {
       return true;
     }
   }
@@ -117,14 +118,31 @@ export function extractAllPdfParts(
 ): Array<{ messageIndex: number; filePart: FilePart }> {
   const out: Array<{ messageIndex: number; filePart: FilePart }> = [];
   messages.forEach((m, i) => {
-    if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) return;
-    for (const part of m.content) {
+    const content = humanContent(m);
+    if (!isHumanLike(m) || !Array.isArray(content)) return;
+    for (const part of content) {
       if (isFilePart(part) && part.mime_type === "application/pdf" && !part.kb_ref) {
         out.push({ messageIndex: i, filePart: part });
       }
     }
   });
   return out;
+}
+
+// ponytail: a HumanMessage OR a plain `{type:"human", content:[...]}` dict.
+// SDK rehydration of input.messages via MessagesValue yields either a
+// HumanMessage instance (chat path / in-process local invoke) OR a
+// plain object with just `type` + `content` keys (standalone
+// `runs.create` path through the langgraph-api worker). Without this
+// OR filter the standalone dispatch sees zero PDFs and the kb_document
+// row stays `pending`. Mirrors the same idiom in
+// backend/node/thread-summarize-node.ts:isHumanMessage.
+function isHumanLike(m: BaseMessage): boolean {
+  return m instanceof HumanMessage || (m as { type?: unknown }).type === "human";
+}
+function humanContent(m: BaseMessage): unknown[] | undefined {
+  const c = (m as { content?: unknown }).content;
+  return Array.isArray(c) ? c : undefined;
 }
 
 // ponytail: every kb_ref across every HumanMessage, deduped by docId

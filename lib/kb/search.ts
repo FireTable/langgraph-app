@@ -98,6 +98,7 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
       FROM kb_chunk c
       WHERE c.document_id IN (SELECT id FROM valid_docs)
         AND c.embedding IS NOT NULL
+        AND c.status = 'success'
       LIMIT 50
     )
   `
@@ -111,6 +112,7 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
       FROM kb_chunk c
       WHERE c.document_id IN (SELECT id FROM valid_docs)
         AND c.entities && ${textArrayLiteral(qents)}::text[]
+        AND c.status = 'success'
       LIMIT 30
     )
   `
@@ -148,6 +150,7 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
         FROM kb_chunk c, q
         WHERE c.document_id IN (SELECT id FROM valid_docs)
           AND c.tsv @@ q.tsq
+          AND c.status = 'success'
         LIMIT 50
       )
       ${vecClause}

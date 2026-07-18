@@ -42,7 +42,15 @@ export async function fireIngestionRun({
   const base = process.env.R2_PUBLIC_BASE_URL ?? "";
   const publicUrl = `${base}/${attachment.r2Key}`;
 
-  const threadId = `t-${randomUUID()}`;
+  // ponytail: dev-server LangGraph API 1.4.1 validates every
+  // thread_id via `z.string().uuid()`. The bare `randomUUID()` is the
+  // minimum legal shape; the older `t-` prefix it carried triggered a
+  // 400 (Invalid uuid) and the run silently dropped — the kb_document
+  // row then sat at `pending` forever because no node ever updated it.
+  // The id is only used to register this synthetic ingest thread with
+  // the dev checkpointer; the docId in metadata.docId is the human-
+  // meaningful handle.
+  const threadId = randomUUID();
   // ponytail: register the thread id with the dev server's in-process
   // checkpointer (see lib/langgraph/client.ts). No-op in prod.
   await langGraphClient.threads.create({ threadId, ifExists: "do_nothing" });

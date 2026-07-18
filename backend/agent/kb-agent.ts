@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { getChatModel, getEmbeddingModel, getOcrModel } from "@/backend/model";
 import { KB_OCR_PAGE_PROMPT } from "@/backend/prompt/system";
-import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
+import { creditTrackingHandler } from "@/backend/callbacks";
 import { checkpointer, subgraphCheckpointerConfig } from "@/backend/checkpointer";
 import { store } from "@/backend/store";
 import {
@@ -25,6 +25,11 @@ import {
   findKbDocumentById,
   insertKbChunks,
   insertKbDocument,
+  markAllKbChunksParsingForDocInTx,
+  markKbChunkFailed,
+  markKbChunkSuccess,
+  updateKbChunkForFailure,
+  updateKbChunkForSuccess,
   updateKbDocumentStatus,
   withKbTx,
 } from "@/lib/kb/queries";
@@ -59,8 +64,6 @@ import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
 // sibling or has been stripped. extractAllPdfParts / hasUnprocessedPdf
 // filter on `!p.kb_ref` so the second router pass won't re-dispatch
 // kbAgent.
-
-type ChunkSeed = { ordinal: number; content: string; entities: string[]; embedding: number[] };
 
 const ocrPageSchema = z.object({
   markdown: z
@@ -127,6 +130,31 @@ async function prepareKBDataNode(
         let existing = await findKbDocumentByContentHash(userId, contentHash);
         if (!existing) existing = await findKbDocumentByAttachmentId(userId, attachment.id);
         if (existing) {
+          // ponytail: dedup short-circuit only when the row already
+          // ran the pipeline to completion (`success`/`failed`) — a
+          // stale `pending` row means a prior kbAgent run never
+          // landed its status writes (the t- prefix bug, dropped
+          // dispatch, etc.), and a second dispatch should re-process
+          // the file pointing at the SAME row id so the row actually
+          // flips to `success`. Falling through to the fresh-create
+          // branch would insert a NEW docId and leave the stale row
+          // stuck forever — instead, reuse existing.id with a `new`
+          // pipelineStatus so splitFileToPageNode writes back to it.
+          if (existing.status === "success" || existing.status === "failed") {
+            return {
+              messageIndex,
+              filePart,
+              docId: existing.id,
+              attachmentId: attachment.id,
+              r2Key: attachment.r2Key,
+              title: attachment.name,
+              contentHash,
+              pipelineStatus: "dedup",
+              errorMessage: existing.errorMessage,
+              existingStatus: existing.status,
+            };
+          }
+          // pending/parsing rows: reuse the row, re-process the file
           return {
             messageIndex,
             filePart,
@@ -135,8 +163,9 @@ async function prepareKBDataNode(
             r2Key: attachment.r2Key,
             title: attachment.name,
             contentHash,
-            pipelineStatus: "dedup",
-            errorMessage: existing.errorMessage,
+            pipelineStatus: "new",
+            errorMessage: null,
+            existingStatus: existing.status,
           };
         }
 
@@ -192,6 +221,25 @@ async function prepareKBDataNode(
           errorMessage: null,
         });
       } catch (err) {
+        // 23505 unique_violation: a row with this id already exists
+        // (the dedup-pending branch reuses the existing docId so the
+        // OCR pipeline writes its status back to that row). Flip the
+        // row from `pending` to `parsing` to surface progress.
+        const code = (err as { code?: string }).code;
+        if (code === "23505") {
+          try {
+            await updateKbDocumentStatus(userId, pf.docId!, {
+              status: "parsing",
+              errorMessage: null,
+            });
+          } catch (statusErr) {
+            console.error(
+              `kbAgent prepareKBDataNode: recovery UPDATE failed for ${pf.docId}`,
+              statusErr,
+            );
+          }
+          return;
+        }
         console.error(`kbAgent prepareKBDataNode: insertKbDocument failed for ${pf.docId}`, err);
       }
     }),
@@ -398,7 +446,7 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
 // Node 5: rewriteMessagesNode — stamp kb_ref on file parts + compute status
 // ---------------------------------------------------------------------------
 
-function rewriteMessagesNode(state: KbAgentStateShape): Partial<KbAgentStateShape> {
+async function rewriteMessagesNode(state: KbAgentStateShape): Promise<Partial<KbAgentStateShape>> {
   const fileToDoc = new Map<string, { docId: string; attachmentId: string | null }>();
   for (const pf of state.processedFiles) {
     if (pf.docId) {
@@ -408,7 +456,16 @@ function rewriteMessagesNode(state: KbAgentStateShape): Partial<KbAgentStateShap
   }
 
   const messages = state.messages.map((m): BaseMessage => {
-    if (!(m instanceof HumanMessage) || !Array.isArray(m.content)) return m;
+    // ponytail: match BOTH HumanMessage instance AND plain
+    // `{type:"human", content:[...]}` rehydration form (see
+    // lib/kb/extract.ts isHumanLike comment — the standalone
+    // runs.create path produces the plain-object form after the
+    // MessagesValue reducer round-trips). Without the type fallback
+    // the rewrite skips the message and the kb_ref sibling never
+    // lands on the file part.
+    const mType = (m as { type?: unknown }).type;
+    const isHuman = m instanceof HumanMessage || mType === "human";
+    if (!isHuman || !Array.isArray(m.content)) return m;
     let changed = false;
     const newContent: unknown[] = [];
     for (const part of m.content) {
@@ -474,6 +531,41 @@ function rewriteMessagesNode(state: KbAgentStateShape): Partial<KbAgentStateShap
     errorMessage = "no PDF could be processed";
   }
 
+  // ponytail: dedup row status sync. When kbAgent dedupes onto an
+  // existing kb_document row whose prior run stalled (status=pending),
+  // the row never gets a write — splitFileToPage / pageToMarkdown
+  // filter updates to `pipelineStatus === "new"`. Read each dedup'd
+  // docId's CURRENT row state and write it back. Best-effort: a
+  // mid-write DB hiccup doesn't fail the run; the chat dedup
+  // contract just needs the row to eventually converge.
+  if (state.userId) {
+    const dedupRows = state.processedFiles.filter(
+      (p) => p.pipelineStatus === "dedup" && p.docId !== null,
+    );
+    await Promise.allSettled(
+      dedupRows.map(async (pf) => {
+        const row = await findKbDocumentById(state.userId!, pf.docId!);
+        if (!row) return;
+        // Forward the current row state so the user sees the settled
+        // status (success / failed) — that's what they uploaded for.
+        // Skip write if it's already at terminal state (avoid
+        // rewriting a success to success). Only sync forward when
+        // the row is currently pending/parsing.
+        // ponytail: forward whatever the dedup target's actual current
+        // state is, including intermediate (`parsing`/`pending`).
+        // Re-running kbAgent on the dedup target SHOULD surface a
+        // real progress signal even if the prior run stalled. The
+        // row is read-fresh here so a row that was previously
+        // `pending` but is now `success` gets flipped to `success`.
+        await updateKbDocumentStatus(state.userId!, pf.docId!, {
+          status: row.status,
+          errorMessage: row.errorMessage,
+          pages: row.pages ?? null,
+        });
+      }),
+    );
+  }
+
   return { messages, status, errorMessage };
 }
 
@@ -537,10 +629,61 @@ async function generateChunkEmbedNode(
               );
             }
 
-            const seeds: ChunkSeed[] = await Promise.all(
+            // ponytail: allocate ids up front (one per chunk) so we can
+            // mark each chunk success/failed independently after the
+            // batch insert. Without per-chunk ids we'd have to write
+            // `UPDATE kb_chunk SET status=... WHERE document_id=... AND
+            // ordinal=?`, but with multi-run reprocesses the ordinal
+            // space can briefly overlap; chunk id is the canonical
+            // handle. ids are stable across this run — even if the
+            // tx fails midway, the partial set is identifiable.
+            const chunkIds = texts.map(() => `c-${randomUUID()}`);
+
+            // ponytail: 3-stage chunk lifecycle, observable per
+            // chunk so the UI polling can read real progress.
+            //
+            //   1. INSERT all rows at status='pending'  ← chunk
+            //      appeared in DB, embedding LLM ran, OCR has
+            //      finished, but entities haven't been extracted yet
+            //   2. UPDATE all rows to 'parsing'           ← entity LLM
+            //      dispatch started; the 'parsing' frame is short
+            //      (KB_ENTITY_CONCURRENCY decides total work-time) but
+            //      the UI now has a real signal to surface
+            //   3. UPDATE per-row to success/failed     ← individual
+            //      outcomes land; failures DO NOT downgrade
+            //      kb_document (Step 3 contract)
+            //
+            // Step 1+2 live in one withKbTx so the row INSERT and the
+            // status flip are atomic from the UI's perspective —
+            // polling either sees nothing or 'parsing', never the
+            // 'pending' frame after a successful INSERT (which would
+            // feel like the pipeline stalled).
+            await withKbTx(async (tx) => {
+              await insertKbChunks(
+                tx,
+                texts.map((text, i) => ({
+                  id: chunkIds[i]!,
+                  documentId: docId,
+                  ordinal: i,
+                  content: text,
+                  embedding: embeddings[i] ?? [],
+                  entities: [],
+                  // status defaults to 'pending' on insert.
+                })) as never,
+              );
+              await markAllKbChunksParsingForDocInTx(tx, docId);
+            });
+
+            // ponytail: Promise.allSettled so a single chunk's entity
+            // LLM failure doesn't poison siblings. The catch inside
+            // each task is what records the per-chunk errorMessage —
+            // we don't surface it as a graph-level state flip.
+            type SeedResult =
+              | { kind: "ok"; ordinal: number; entities: string[]; embedding: number[] }
+              | { kind: "err"; ordinal: number; errorMessage: string; embedding: number[] };
+            const results: SeedResult[] = await Promise.all(
               texts.map((text, i) =>
-                entityQueue.add(async (): Promise<ChunkSeed> => {
-                  let entities: string[] = [];
+                entityQueue.add(async (): Promise<SeedResult> => {
                   try {
                     const out = await chat
                       .withStructuredOutput(entitySchema, { method: "jsonSchema" })
@@ -548,39 +691,78 @@ async function generateChunkEmbedNode(
                         `Extract named entities (people, orgs, concepts, products) from this passage:\n\n${text}`,
                         { ...config, tags: ["nostream"] },
                       );
-                    entities = out.entities.slice(0, 20);
-                  } catch {
-                    // best-effort
-                    console.error(`kbAgent generateChunkEmbedNode: failed for doc ${docId}`);
+                    return {
+                      kind: "ok",
+                      ordinal: i,
+                      entities: out.entities.slice(0, 20),
+                      embedding: embeddings[i] ?? [],
+                    };
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    console.error(
+                      `kbAgent generateChunkEmbedNode: entity-extract failed for doc ${docId} ordinal ${i}: ${msg}`,
+                      err,
+                    );
+                    return {
+                      kind: "err",
+                      ordinal: i,
+                      errorMessage: msg,
+                      embedding: embeddings[i] ?? [],
+                    };
                   }
-                  return {
-                    ordinal: i,
-                    content: text,
-                    entities,
-                    embedding: embeddings[i] ?? [],
-                  };
                 }),
               ),
             );
 
-            await withKbTx(async (tx) => {
-              await insertKbChunks(
-                tx,
-                seeds.map((s) => ({
-                  id: `c-${randomUUID()}`,
-                  documentId: docId,
-                  ordinal: s.ordinal,
-                  content: s.content,
-                  embedding: s.embedding,
-                  entities: s.entities,
-                })) as never,
-              );
-            });
+            // ponytail: now back-fill the embeddings + entities for
+            // each row. We do this AFTER the LLM ran so we don't
+            // ship a blank-content UPDATE through the bulk mark path.
+            // The per-row UPDATE is over a tiny set so it's cheap.
+            await Promise.allSettled(
+              results.flatMap((r) => {
+                const id = chunkIds[r.ordinal]!;
+                return r.kind === "ok"
+                  ? [
+                      // successful: entities got extracted, mark
+                      // status='success' so Search.ts picks this
+                      // chunk up at RAG query time.
+                      updateKbChunkForSuccess(id, r.entities),
+                      markKbChunkSuccess(id),
+                    ]
+                  : [
+                      // failed: surface the LLM error on the row
+                      // for the UI tooltip.
+                      updateKbChunkForFailure(id, r.errorMessage),
+                      markKbChunkFailed(id, r.errorMessage),
+                    ];
+              }),
+            );
+            // ponytail: per-chunk status flip. The chunk row already
+            // exists at 'pending' (the column default during insert);
+            // we now mark each one as success or failed based on the
+            // entity-extract outcome. Whole-batch failures (network
+            // / LLM outage for the embedding call itself) throw above
+            // and the kb_document row stays at success with NO chunks
+            // visible — the doc-detail dialog surfaces that as a chunk
+            // count of 0 and the user can reprocess just the chunks
+            // (rebuildChunksOnly, see reprocess route).
+            await Promise.allSettled(
+              results.map((r, i) =>
+                r.kind === "ok"
+                  ? markKbChunkSuccess(chunkIds[i]!)
+                  : markKbChunkFailed(chunkIds[i]!, r.errorMessage),
+              ),
+            );
             invalidateKbDoc(userId, docId);
           } catch (err) {
-            // ponytail: postgres.js throws FailedQueryError whose `.message`
-            // is the full SQL + params dump. Surface the PG SQLSTATE / detail
-            // for debugging; keep user-facing errorMessage small.
+            // ponytail: WHOLE-batch failure (embedding dim mismatch,
+            // DB write rejection). kb_document.status stays at
+            // 'success' (it was flipped by imageToMarkdownNode) —
+            // chunks are a downstream derived store, and a chunk
+            // pipeline crash shouldn't downgrade the doc itself.
+            // The Settings UI surfaces "0/47 chunks indexed" via
+            // the chunk count roll-up, and the user can rebuild
+            // chunks via Reprocess > "Only rebuild chunks".
             const pgErr = err as Error & {
               code?: string;
               detail?: string;
@@ -590,23 +772,9 @@ async function generateChunkEmbedNode(
               ? `${pgErr.code}: ${pgErr.detail ?? pgErr.message}${pgErr.hint ? ` (${pgErr.hint})` : ""}`
               : pgErr.message;
             console.error(
-              `kbAgent generateChunkEmbedNode: failed for doc ${docId}: ${reason}`,
+              `kbAgent generateChunkEmbedNode: batch failure for doc ${docId}: ${reason}`,
               pgErr,
             );
-            // ponytail: imageToMarkdownNode already flipped status="success".
-            // If chunk/embed fails, roll back to "failed" so Settings UI shows
-            // the failure and the user can reprocess.
-            try {
-              await updateKbDocumentStatus(userId, docId, {
-                status: "failed",
-                errorMessage: reason,
-              });
-            } catch (statusErr) {
-              console.error(
-                `kbAgent generateChunkEmbedNode: status=failed flip failed for ${docId}`,
-                statusErr,
-              );
-            }
           }
         })();
       }
@@ -672,6 +840,10 @@ const standaloneCompiled = builder.compile({
 
 type WithConfigPregel = (config: Record<string, unknown>) => typeof standaloneCompiled;
 export const graph = (standaloneCompiled.withConfig as unknown as WithConfigPregel)({
-  callbacks: [capturingHandler, creditTrackingHandler],
+  callbacks: [
+    // capturing is related thread list, now is unavailable
+    // capturingHandler,
+    creditTrackingHandler,
+  ],
 });
 void END;

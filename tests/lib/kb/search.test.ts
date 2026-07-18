@@ -64,6 +64,12 @@ async function seedFixture() {
       content: "Acme was founded in 2020 in San Francisco.",
       embedding: makeEmbedding(1),
       entities: ["Acme", "San Francisco"],
+      // ponytail: kb_chunk.status = 'pending' is the column default.
+      // lib/kb/search.ts filters on status = 'success' so the legacy
+      // fixture seeds must explicitly opt into the searchable pool
+      // — otherwise every search test fails because the search legs
+      // reject every row.
+      status: "success",
     },
     {
       id: `c-${randomUUID()}`,
@@ -72,6 +78,7 @@ async function seedFixture() {
       content: "Unrelated prose about gardening and soil composition.",
       embedding: makeEmbedding(2),
       entities: ["gardening"],
+      status: "success",
     },
     {
       id: `c-${randomUUID()}`,
@@ -80,6 +87,7 @@ async function seedFixture() {
       content: "Acme acquired BetaCorp in early 2024.",
       embedding: makeEmbedding(3),
       entities: ["Acme", "BetaCorp"],
+      status: "success",
     },
     {
       id: `c-${randomUUID()}`,
@@ -88,6 +96,7 @@ async function seedFixture() {
       content: "Stock market analysis paragraph with finance terms.",
       embedding: makeEmbedding(4),
       entities: ["stock market"],
+      status: "success",
     },
   ] as never);
 }

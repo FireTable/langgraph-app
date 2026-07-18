@@ -22,6 +22,24 @@ import { attachments } from "@/lib/attachments/schema";
 // (status 'succes' would never match a 'success' row).
 export const kbDocStatusEnum = pgEnum("kb_doc_status", ["pending", "parsing", "success", "failed"]);
 
+// ponytail: same shape as kbDocStatusEnum — chunks inherit the
+// doc-pipeline status taxonomy so callers can compare / branch on
+// it without a translation layer. `pending` is the default for
+// fresh chunks emitted by chunkEmbedStoreNode before the
+// embedding + entity-extract pass lands; `failed` is the
+// per-chunk terminal state when entity extraction blows up
+// without affecting the parent kb_document row (its status
+// stays at `success` even if a few chunks failed — user
+// sees Ready in the table, the failed chunks just don't
+// contribute to RAG retrieval; the doc detail dialog surfaces
+// them via `chunks_failed_count`).
+export const kbChunkStatusEnum = pgEnum("kb_chunk_status", [
+  "pending",
+  "parsing",
+  "success",
+  "failed",
+]);
+
 // ponytail: Drizzle's built-in types don't cover pgvector's `vector(1536)`
 // yet. customType pins the SQL string + the JS shape (number[]) so the
 // ponytail: pgvector dimension 1024. The embedder is BAAI/bge-m3
@@ -140,6 +158,15 @@ export const kbChunk = pgTable(
       // ponytail: Drizzle emits `DEFAULT '{}'::text[]` from this — verified
       // in the generated migration. Keeps INSERT simple.
       .default(sql`'{}'::text[]`),
+    // ponytail: per-chunk status — independent of kb_document.status so
+    // a failed entity extract can mark a single chunk failed without
+    // downgrading the whole document. Default 'pending' so freshly
+    // inserted chunks are visible to the UI before the embedding
+    // pass completes. The legacy migration sets DEFAULT 'success'
+    // (NOT 'pending') so existing rows stay searchable — see
+    // 0008_*.sql for the rationale.
+    status: kbChunkStatusEnum("status").notNull().default("pending"),
+    errorMessage: text("error_message"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

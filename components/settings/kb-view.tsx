@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import {
   AlertCircle,
   CheckCircle2,
@@ -47,6 +48,21 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+// ponytail: single source of truth for sonner toast description text
+// colour. Sonner's default `text-muted-foreground` renders too faded
+// against the white toast card — descenders are nearly invisible.
+// `text-foreground` (full opacity) reads crisply on both light +
+// dark themes. Override here for every toast at once.
+// ponytail: sonner's CSS hard-codes the description colour to
+// `#3f3f3f` via `[data-styled=true] [data-description] { color:
+// #3f3f3f }` — that attribute selector outranks a single-class
+// selector, so a normal `text-foreground` class is a no-op and
+// the description ends up rendered in faded grey even on a light
+// theme. The `!` prefix upgrades the Tailwind utility to
+// `!important`, which wins. Toggle this constant to retheme all
+// KB toasts at once.
+const TOAST_DESCRIPTION_CLASS = "!text-foreground";
+
 // ponytail: Settings → Knowledge Base tab. Two-column layout:
 //   - LEFT: folder list + `+` to create (modal) + `...` per row to delete
 //   - RIGHT: doc table for the selected folder, with rich per-row info
@@ -77,10 +93,55 @@ type KbResponse = {
   groups: Array<{ folder: KbFolder; documents: KbDocument[] }>;
 };
 
+type KbChunkPreviewLocal = {
+  ordinal: number;
+  content: string;
+  entities: string[];
+  // ponytail: per-chunk status surfaced from the doc-detail API. The
+  // server schema has had this column since 0008_*.sql — legacy rows
+  // backfilled to 'success' so every chunk has a concrete status.
+  status: "pending" | "parsing" | "success" | "failed";
+  errorMessage: string | null;
+};
+
 type KbDocDetail = {
   doc: KbDocument & { folderId: string; contentHash: string };
-  chunks: Array<{ ordinal: number; content: string; entities: string[] }>;
+  chunks: KbChunkPreviewLocal[];
 };
+
+// ponytail: compact pill for the per-chunk status. Mirrors the shape
+// of the doc-row StatusBadge so the user reads the same vocabulary
+// at both zoom levels. The "downrank the chunk" signal stays here —
+// the parent doc row is still success even when some chunks fail.
+function ChunkStatusBadge({
+  status,
+  errorMessage,
+}: {
+  status: KbChunkPreviewLocal["status"];
+  errorMessage: string | null;
+}) {
+  const variant: "success" | "destructive" | "muted" =
+    status === "success" ? "success" : status === "failed" ? "destructive" : "muted";
+  const label =
+    status === "parsing" ? "Indexing" : status.charAt(0).toUpperCase() + status.slice(1);
+  const content = (
+    <Badge
+      variant={variant}
+      className="inline-flex items-center gap-1 py-0.5 font-medium leading-none"
+    >
+      <span className="leading-none">{label}</span>
+    </Badge>
+  );
+  if (status === "failed" && errorMessage) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{content}</TooltipTrigger>
+        <TooltipContent side="top">{errorMessage}</TooltipContent>
+      </Tooltip>
+    );
+  }
+  return content;
+}
 
 function StatusIcon({ status }: { status: KbStatus }) {
   switch (status) {
@@ -685,7 +746,14 @@ function DocRow({
         >
           {formatTimestamp(doc.updatedAt)}
         </time>
-        <div className="flex items-center">
+        {/* ponytail: pin a fixed width so the badge doesn't reflow
+            when the icon / label flips (Check+Ready vs Loader+Parsing)
+            — all four statuses land in the same column position
+            across rows. badge width is sized for the largest label
+            ("Parsing" + spinner); anything narrower is right-padded
+            so the right edge stays glued to the actions column's
+            gap. */}
+        <div className="flex items-center justify-center w-22">
           <StatusBadge status={doc.status} errorMessage={doc.errorMessage} />
         </div>
         <div className="flex items-center justify-end gap-0.5">{actions}</div>
@@ -768,6 +836,48 @@ function DocDetailDialog({
       });
     return () => controller.abort();
   }, [open, docId]);
+
+  // ponytail: poll while the doc isn't settled so the preview
+  // reflects live kbAgent progress (pages + chunks appear as the
+  // pipeline lands, status badge flips Parsing → Ready on its
+  // own). Same 2s cadence as the main Settings table so the
+  // preview never lags the row badge. Bails the moment the doc
+  // hits a terminal status (`success` / `failed`) — keeping the
+  // interval running on a settled row is just wasted bandwidth.
+  useEffect(() => {
+    if (!open) return;
+    if (!detail) return;
+    // ponytail: poll while EITHER the doc pipeline is in-flight OR
+    // chunks are mid-index. After step 9 kbAgent now exposes a real
+    // 3-stage chunk lifecycle (pending → parsing → success/failed)
+    // — the 'parsing' frame is observable between the chunk INSERT
+    // and the per-row UPDATE-back-with-entities, so the UI gets a
+    // single rendering pass that shows "chunks are being indexed".
+    // doc.status = success AND chunks.length > 0 AND all chunks
+    // success/failed → fully settled, polling may stop.
+    const docInflight = detail.doc.status === "pending" || detail.doc.status === "parsing";
+    const chunksInflight = detail.chunks.some(
+      (c) => c.status === "pending" || c.status === "parsing",
+    );
+    if (!docInflight && !chunksInflight && detail.chunks.length > 0) return;
+    const controller = new AbortController();
+    const t = setInterval(() => {
+      void fetch(`/api/kb/documents/${docId}`, { signal: controller.signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body: KbDocDetail | null) => {
+          if (!controller.signal.aborted && body) setDetail(body);
+        })
+        .catch((err) => {
+          if (err?.name !== "AbortError") {
+            console.error("DocDetailDialog poll failed", err);
+          }
+        });
+    }, 2000);
+    return () => {
+      controller.abort();
+      clearInterval(t);
+    };
+  }, [open, docId, detail]);
 
   const handleCopy = useCallback((text: string) => {
     void navigator.clipboard.writeText(text);
@@ -969,7 +1079,7 @@ function DocDetailDialog({
                       {/* Body: [Image + Ref] → [Markdown] */}
                       <div className="grid grid-cols-[1fr_auto_2fr] items-stretch gap-0 p-4">
                         {/* Left 1/3: Image stacked above "+" and Reference Text */}
-                        <div className="flex flex-col justify-between gap-2">
+                        <div className="flex h-full min-h-0 flex-col justify-between gap-2">
                           {/* Page Image */}
                           <div className="flex flex-col gap-1">
                             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1">
@@ -980,13 +1090,13 @@ function DocDetailDialog({
                               href={page.imageUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="block group overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow hover:shadow-md cursor-zoom-in"
+                              className="flex h-full min-h-[180px] max-h-[180px] items-center justify-center group overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow hover:shadow-md cursor-zoom-in"
                               title="Click to view full size"
                             >
                               <img
                                 src={page.imageUrl}
                                 alt={`Page ${page.pageIndex + 1}`}
-                                className="w-full object-contain max-h-[200px] transition-transform duration-300 group-hover:scale-[1.02]"
+                                className="max-h-full max-w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
                                 loading="lazy"
                               />
                             </a>
@@ -1006,7 +1116,7 @@ function DocDetailDialog({
                               Reference Text
                             </span>
                             {hasRef ? (
-                              <div className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-foreground/80 bg-blue-500/5 border border-blue-500/20 p-2.5 rounded-lg min-h-[80px] max-h-[180px] overflow-y-auto">
+                              <div className="whitespace-pre-wrap break-all font-mono min-h-[180px] max-h-[180px] text-[11px] leading-relaxed text-foreground/80 bg-blue-500/5 border border-blue-500/20 p-2.5 rounded-lg min-h-[80px] max-h-[180px] overflow-y-auto">
                                 {page.referenceText}
                               </div>
                             ) : (
@@ -1060,46 +1170,110 @@ function DocDetailDialog({
             // Tab 3: Embed Chunks
             <div className="space-y-3 w-full">
               {detail.chunks.length === 0 ? (
-                <p className="text-muted-foreground text-xs italic text-center p-8 border border-dashed rounded-lg bg-muted/5 w-full">
-                  {detail.doc.status === "success"
-                    ? "Embedding chunks are still being calculated in the background. They will appear here in a few moments."
-                    : detail.doc.status === "failed"
-                      ? "Ingestion failed — chunks not produced."
-                      : "Ingestion in progress…"}
-                </p>
-              ) : (
-                detail.chunks.map((c) => (
-                  <div
-                    key={c.ordinal}
-                    className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md"
-                  >
-                    {/* Card Header */}
-                    <div className="flex items-center justify-between border-b px-4 py-2.5 bg-muted/40">
-                      <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
-                        Chunk #{c.ordinal + 1}
-                      </span>
-                      {c.entities.length > 0 && (
-                        <div className="flex items-center gap-1 max-w-[60%] truncate">
-                          <span className="text-[10px] text-muted-foreground shrink-0">
-                            Entities:
-                          </span>
-                          <span
-                            className="text-[10px] text-muted-foreground/80 truncate"
-                            title={c.entities.join(", ")}
-                          >
-                            {c.entities.slice(0, 6).join(", ")}
-                          </span>
-                        </div>
-                      )}
+                detail.doc.status === "pending" || detail.doc.status === "parsing" ? (
+                  // ponytail: when doc is in-flight AND zero chunks
+                  // have landed yet, fall back to a Skeleton stack so
+                  // the user sees the pipeline is making progress
+                  // (instead of the static "in progress…" copy that
+                  // hides any sense of motion). Two cards is enough
+                  // signal — we don't know the eventual chunk count
+                  // yet so a progress bar would lie. The 2s preview
+                  // poll above refreshes with the real chunks once
+                  // insertKbChunks lands.
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 px-1 text-[11px] text-muted-foreground italic">
+                      <Loader2 className="size-3 animate-spin" aria-hidden />
+                      Generating chunks… OCR finished, indexing in progress.
                     </div>
-                    {/* Card Body */}
-                    <div className="p-4">
-                      <p className="text-xs text-foreground/90 whitespace-pre-wrap break-all leading-relaxed">
-                        {c.content}
-                      </p>
-                    </div>
+                    <Skeleton className="h-24 w-full" />
+                    <Skeleton className="h-24 w-full" />
+                    <Skeleton className="h-24 w-full" />
                   </div>
-                ))
+                ) : (
+                  <p className="text-muted-foreground text-xs italic text-center p-8 border border-dashed rounded-lg bg-muted/5 w-full">
+                    {detail.doc.status === "success"
+                      ? "Embedding chunks are still being calculated in the background. They will appear here in a few moments."
+                      : detail.doc.status === "failed"
+                        ? "Ingestion failed — chunks not produced."
+                        : "Ingestion in progress…"}
+                  </p>
+                )
+              ) : (
+                <>
+                  {/* ponytail: chunk-level status rollup. Surfaces
+                      per-chunk failure isolation (Step 3: kb-agent
+                      stops downgrading kb_document when chunk-level
+                      work fails; instead each chunk tracks its own
+                      status). The user sees the actual quality of
+                      their retrieval corpus instead of a binary
+                      Ready/Failed verdict. */}
+                  <div className="flex items-center justify-between px-1 text-[11px]">
+                    <span className="text-muted-foreground">
+                      Indexed{" "}
+                      <span className="text-foreground font-semibold tabular-nums">
+                        {detail.chunks.filter((c) => c.status === "success").length}
+                      </span>{" "}
+                      / {detail.chunks.length}
+                    </span>
+                    {detail.chunks.some((c) => c.status === "failed") && (
+                      <span className="text-destructive font-semibold tabular-nums">
+                        {detail.chunks.filter((c) => c.status === "failed").length} failed
+                      </span>
+                    )}
+                  </div>
+                  {detail.chunks.map((c) => (
+                    <div
+                      key={c.ordinal}
+                      className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md"
+                    >
+                      {/* Card Header */}
+                      <div className="flex items-center justify-between border-b px-4 py-2.5 bg-muted/40">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
+                            Chunk #{c.ordinal + 1}
+                          </span>
+                          {/* ponytail: status badge per chunk —
+                            matches kb_document.status styling so
+                            the UI feels consistent. Failed chunks
+                            don't downrank the parent doc. */}
+                          <ChunkStatusBadge status={c.status} errorMessage={c.errorMessage} />
+                        </div>
+                        {c.entities.length > 0 && (
+                          <div className="flex items-center gap-1 max-w-[60%] truncate">
+                            <span className="text-[10px] text-muted-foreground shrink-0">
+                              Entities:
+                            </span>
+                            <span
+                              className="text-[10px] text-muted-foreground/80 truncate"
+                              title={c.entities.join(", ")}
+                            >
+                              {c.entities.slice(0, 6).join(", ")}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      {/* Card Body */}
+                      <div className="p-4">
+                        <p className="text-xs text-foreground/90 whitespace-pre-wrap break-all leading-relaxed">
+                          {c.content}
+                        </p>
+                        {c.status === "failed" &&
+                          c.errorMessage && (
+                            // ponytail: surface the per-chunk failure so
+                            // the user sees WHY without scrolling. Parent
+                            // kb_document is still success; this chunk
+                            // alone is excluded from RAG retrieval.
+                            <p
+                              className="text-[10px] text-destructive/90 mt-2 italic"
+                              title={c.errorMessage}
+                            >
+                              {c.errorMessage}
+                            </p>
+                          )}
+                      </div>
+                    </div>
+                  ))}
+                </>
               )}
             </div>
           )}
@@ -1129,6 +1303,10 @@ function DocDeleteDialog({
     try {
       const res = await fetch(`/api/kb/documents/${doc.id}`, { method: "DELETE" });
       if (res.status === 204) {
+        toast.success("Document deleted", {
+          descriptionClassName: TOAST_DESCRIPTION_CLASS,
+          description: `「${doc.title}」was removed from this folder.`,
+        });
         onDeleted();
         return;
       }
@@ -1209,6 +1387,14 @@ function DocReprocessDialog({
     try {
       const res = await fetch(`/api/kb/documents/${doc.id}/reprocess`, { method: "POST" });
       if (res.status === 202) {
+        toast.info("Reprocess queued", {
+          descriptionClassName: TOAST_DESCRIPTION_CLASS,
+          // ponytail: server clears old chunks + resets the doc row,
+          // so the user briefly sees Parsing before the OCR + chunk
+          // pass completes. The 2s polling flips the row to Ready
+          // when the pipeline lands.
+          description: `「${doc.title}」is re-running OCR + chunking. Old chunks were cleared.`,
+        });
         onReprocessed();
         return;
       }
@@ -1288,10 +1474,18 @@ function FolderDeleteDialog({
     try {
       const res = await fetch(`/api/kb/folders/${folder.id}`, { method: "DELETE" });
       if (res.status === 204) {
+        toast.success("Folder deleted", {
+          descriptionClassName: TOAST_DESCRIPTION_CLASS,
+          description: `「${folder.name}」was removed. Documents inside were kept.`,
+        });
         onDeleted();
         return;
       }
       if (res.status === 404) {
+        toast.success("Folder deleted", {
+          descriptionClassName: TOAST_DESCRIPTION_CLASS,
+          description: `「${folder.name}」was already removed.`,
+        });
         onDeleted(); // already gone — treat as success
         return;
       }
@@ -1555,6 +1749,35 @@ async function handleAddDoc(file: File, folderId: string, onRefresh: () => Promi
     });
     if (!uploadRes.ok && uploadRes.status !== 202) {
       throw new Error(`kb upload failed: ${uploadRes.status}`);
+    }
+    // ponytail: surface the dedup case + the fresh upload case.
+    // Server returns:
+    //   202 + `{ doc }`           — fresh row, kbAgent dispatched
+    //   200 + `{ deduped, doc }` — existing row reused, no re-fire
+    // Show a toast in both branches — without toasts the upload
+    // looks like it silently dropped (count visible in the table
+    // doesn't change for the dedup case; the fresh case shows a
+    // Parsing badge but the user has no positive signal that the
+    // upload landed).
+    if (uploadRes.status === 200) {
+      const body = (await uploadRes.json()) as { deduped?: boolean; doc?: { title?: string } };
+      if (body.deduped) {
+        toast.info("Already in knowledge base", {
+          // ponytail: sonner defaults the description to
+          // `text-muted-foreground`, which renders too light against
+          // the white toast card on a light theme — descenders are
+          // nearly invisible. Override with the same neutral text
+          // colour the body copy uses.
+          descriptionClassName: TOAST_DESCRIPTION_CLASS,
+          description: `「${body.doc?.title ?? file.name}」was previously uploaded — skipped duplicate.`,
+        });
+      }
+    } else if (uploadRes.status === 202) {
+      const body = (await uploadRes.json()) as { doc?: { title?: string } };
+      toast.success("Upload queued", {
+        descriptionClassName: TOAST_DESCRIPTION_CLASS,
+        description: `「${body.doc?.title ?? file.name}」is being ingested. Status will flip Pending → Parsing → Ready.`,
+      });
     }
     void onRefresh();
   } catch (err) {
