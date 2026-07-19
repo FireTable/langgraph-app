@@ -783,6 +783,130 @@ async function rewriteMessagesNode(state: KbAgentStateShape): Promise<Partial<Kb
 }
 
 // ---------------------------------------------------------------------------
+// ponytail: resolveEntityAliasesForDoc — extracted from
+// generateChunkEmbedNode's IIFE so the alignment pass is unit-testable
+// in isolation. NOT a LangGraph node (would need polling for chunks
+// to land — out of scope). Errors are swallowed (best-effort, same
+// as the original inline try/catch).
+// ---------------------------------------------------------------------------
+export async function resolveEntityAliasesForDoc(args: {
+  userId: string;
+  docId: string;
+  documentTitle: string;
+  config?: RunnableConfig;
+}): Promise<void> {
+  const { userId, docId, documentTitle, config } = args;
+  try {
+    // 1. Fetch all successfully saved chunks for this document
+    const dbChunks = await findKbChunksByDocumentId(userId, docId);
+    const successChunks = dbChunks.filter((c) => c.status === "success");
+
+    // 2. Gather all unique entities
+    const allEntityNames = new Set<string>();
+    for (const c of successChunks) {
+      for (const e of c.entities ?? []) {
+        if (e.name) {
+          allEntityNames.add(e.name.trim());
+        }
+      }
+    }
+
+    const entityList = Array.from(allEntityNames);
+    // ponytail: skip when no entities OR only a single unique name —
+    // LLM alignment can't fold a singleton. Saves the roundtrip.
+    if (entityList.length <= 1) return;
+
+    // 3. Define structured output schema for the alignment map
+    const alignmentSchema = z.object({
+      mappings: z
+        .array(
+          z.object({
+            original: z.string().describe("The original entity name variation found in the list"),
+            canonical: z.string().describe("The resolved canonical standard name to merge into"),
+          }),
+        )
+        .describe("A list of name mappings to resolve aliases and variants"),
+    });
+
+    const extractModel = await getExtractModel();
+    const systemMsg = new SystemMessage(KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT);
+    const humanMsg = new HumanMessage(
+      `Document Title: ${documentTitle || "Unknown Document"}\n` +
+        `Extracted Entities List:\n${JSON.stringify(entityList, null, 2)}`,
+    );
+
+    // 4. Call LLM to find alignments
+    const alignmentResult = (await extractModel
+      .withStructuredOutput(alignmentSchema, { method: "jsonSchema" })
+      .invoke([systemMsg, humanMsg], { ...config, tags: ["nostream"] })) as z.infer<
+      typeof alignmentSchema
+    >;
+
+    // 5. Create mapping dictionary
+    const nameMap = new Map<string, string>();
+    if (alignmentResult?.mappings) {
+      for (const m of alignmentResult.mappings) {
+        const orig = m.original.trim();
+        const canon = m.canonical.trim();
+        if (orig && canon && orig !== canon) {
+          nameMap.set(orig.toLowerCase(), canon);
+        }
+      }
+    }
+
+    // 6. Update database if any mappings found
+    if (nameMap.size === 0) return;
+    for (const c of successChunks) {
+      let chunkUpdated = false;
+
+      // Standardize entities list
+      const updatedEntities = (c.entities ?? []).map((e) => {
+        const match = nameMap.get(e.name.trim().toLowerCase());
+        if (match) {
+          chunkUpdated = true;
+          return { ...e, name: match };
+        }
+        return e;
+      });
+
+      // Standardize relationships list
+      const updatedRelationships = (c.relationships ?? []).map((r) => {
+        let relUpdated = false;
+        let source = r.source;
+        let target = r.target;
+
+        const matchSrc = nameMap.get(r.source.trim().toLowerCase());
+        if (matchSrc) {
+          source = matchSrc;
+          relUpdated = true;
+        }
+        const matchTgt = nameMap.get(r.target.trim().toLowerCase());
+        if (matchTgt) {
+          target = matchTgt;
+          relUpdated = true;
+        }
+
+        if (relUpdated) {
+          chunkUpdated = true;
+          return { ...r, source, target };
+        }
+        return r;
+      });
+
+      // Write-back to DB if this chunk had aligned elements
+      if (chunkUpdated) {
+        await updateKbChunkGraphData(c.id, updatedEntities, updatedRelationships);
+      }
+    }
+  } catch (alignErr) {
+    console.error(
+      `kbAgent resolveEntityAliasesForDoc: alignment failed for doc ${docId}:`,
+      alignErr,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Node 6: generateChunkEmbedNode — chunk + embed + entity + insert
 // ponytail: registered as a LangGraph node but the heavy work runs inside
 // a fire-and-forget IIFE so the node returns in milliseconds and never
@@ -992,118 +1116,18 @@ async function generateChunkEmbedNode(
               ),
             );
 
-            // ponytail: Entity Alignment (Resolution) Post-Processor
-            try {
-              // 1. Fetch all successfully saved chunks for this document
-              const dbChunks = await findKbChunksByDocumentId(userId, docId);
-              const successChunks = dbChunks.filter((c) => c.status === "success");
-
-              // 2. Gather all unique entities
-              const allEntityNames = new Set<string>();
-              for (const c of successChunks) {
-                for (const e of c.entities ?? []) {
-                  if (e.name) {
-                    allEntityNames.add(e.name.trim());
-                  }
-                }
-              }
-
-              const entityList = Array.from(allEntityNames);
-
-              if (entityList.length > 0) {
-                // 3. Define structured output schema for the alignment map
-                const alignmentSchema = z.object({
-                  mappings: z
-                    .array(
-                      z.object({
-                        original: z
-                          .string()
-                          .describe("The original entity name variation found in the list"),
-                        canonical: z
-                          .string()
-                          .describe("The resolved canonical standard name to merge into"),
-                      }),
-                    )
-                    .describe("A list of name mappings to resolve aliases and variants"),
-                });
-
-                const systemMsg = new SystemMessage(KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT);
-                const humanMsg = new HumanMessage(
-                  `Document Title: ${doc.title || "Unknown Document"}\n` +
-                    `Extracted Entities List:\n${JSON.stringify(entityList, null, 2)}`,
-                );
-
-                // 4. Call LLM to find alignments
-                const alignmentResult = (await extractModel
-                  .withStructuredOutput(alignmentSchema, { method: "jsonSchema" })
-                  .invoke([systemMsg, humanMsg], { ...config, tags: ["nostream"] })) as z.infer<
-                  typeof alignmentSchema
-                >;
-
-                // 5. Create mapping dictionary
-                const nameMap = new Map<string, string>();
-                if (alignmentResult?.mappings) {
-                  for (const m of alignmentResult.mappings) {
-                    const orig = m.original.trim();
-                    const canon = m.canonical.trim();
-                    if (orig && canon && orig !== canon) {
-                      nameMap.set(orig.toLowerCase(), canon);
-                    }
-                  }
-                }
-
-                // 6. Update database if any mappings found
-                if (nameMap.size > 0) {
-                  for (const c of successChunks) {
-                    let chunkUpdated = false;
-
-                    // Standardize entities list
-                    const updatedEntities = (c.entities ?? []).map((e) => {
-                      const match = nameMap.get(e.name.trim().toLowerCase());
-                      if (match) {
-                        chunkUpdated = true;
-                        return { ...e, name: match };
-                      }
-                      return e;
-                    });
-
-                    // Standardize relationships list
-                    const updatedRelationships = (c.relationships ?? []).map((r) => {
-                      let relUpdated = false;
-                      let source = r.source;
-                      let target = r.target;
-
-                      const matchSrc = nameMap.get(r.source.trim().toLowerCase());
-                      if (matchSrc) {
-                        source = matchSrc;
-                        relUpdated = true;
-                      }
-                      const matchTgt = nameMap.get(r.target.trim().toLowerCase());
-                      if (matchTgt) {
-                        target = matchTgt;
-                        relUpdated = true;
-                      }
-
-                      if (relUpdated) {
-                        chunkUpdated = true;
-                        return { ...r, source, target };
-                      }
-                      return r;
-                    });
-
-                    // Write-back to DB if this chunk had aligned elements
-                    if (chunkUpdated) {
-                      await updateKbChunkGraphData(c.id, updatedEntities, updatedRelationships);
-                    }
-                  }
-                }
-              }
-            } catch (alignErr) {
-              console.error(
-                `kbAgent generateChunkEmbedNode: entity alignment failed for doc ${docId}:`,
-                alignErr,
-              );
-            }
+            // ponytail: Entity Alignment (Resolution) Post-Processor —
+            // extracted to a helper so it can be unit-tested in
+            // isolation (tests/backend/agent/resolve-entity-aliases.test.ts)
+            // without spinning up the whole graph + fire-and-forget
+            // background pipeline. Topology unchanged — still runs
+            // inside this IIFE, not as a separate LangGraph node.
+            await resolveEntityAliasesForDoc({
+              userId,
+              docId,
+              documentTitle: doc.title ?? "",
+              config,
+            });
 
             invalidateKbDoc(userId, docId);
           } catch (err) {

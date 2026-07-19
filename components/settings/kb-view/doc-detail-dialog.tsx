@@ -140,7 +140,7 @@ export function DocDetailDialog({
           }
         }}
       >
-        <DialogContent className="w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw] gap-2">
+        <DialogContent className="w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw] gap-4">
           <DialogHeader className="min-w-0 max-w-3xl flex-1">
             {/* ponytail: skeleton DialogHeader mirrors the loaded
                 shape — title on the left, the Radix-managed X
@@ -269,7 +269,7 @@ export function DocDetailDialog({
         }
       }}
     >
-      <DialogContent className="w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw] gap-2">
+      <DialogContent className="w-[95vw] max-w-[95vw] md:w-[75vw] md:max-w-[75vw] gap-4">
         <DialogHeader className="min-w-0 max-w-3xl flex-1">
           <div className="flex items-start justify-between gap-3 min-w-0">
             <DialogTitle className="truncate min-w-0 max-w-[80%]">{d.doc.title}</DialogTitle>
