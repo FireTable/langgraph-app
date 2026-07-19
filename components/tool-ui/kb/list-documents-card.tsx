@@ -67,19 +67,15 @@ function FolderSection({ folder }: { folder: ListDocumentsFolder }) {
         </ul>
         {hidden > 0 && (
           <Collapsible open={docsExpanded} onOpenChange={setDocsExpanded}>
-            <CollapsibleTrigger className="text-primary hover:text-primary/80 mx-auto inline-flex items-center gap-1 px-3 py-1 text-xs font-medium transition-colors">
-              <ChevronRightIcon
-                className={cn(
-                  "size-3 shrink-0 transition-transform duration-200 ease-out",
-                  docsExpanded ? "rotate-90" : "rotate-0",
-                )}
-                aria-hidden
-              />
-              <span>
-                {docsExpanded
-                  ? "Show less"
-                  : `Show more (+${hidden} ${hidden === 1 ? "doc" : "docs"})`}
-              </span>
+            {/* ponytail: text-only Show more/less, matches the
+                search_kb chunk-list button style. Animation lives on
+                the CollapsibleContent below so the height still
+                animates (no abrupt jump), but the trigger itself is
+                plain text per CLAUDE.md rule #8. */}
+            <CollapsibleTrigger className="text-primary hover:text-primary/80 self-center text-xs font-medium transition-colors py-1 px-3 mt-1">
+              {docsExpanded
+                ? "Show less"
+                : `Show more (+${hidden} ${hidden === 1 ? "doc" : "docs"})`}
             </CollapsibleTrigger>
             <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
               <ul className="mt-1.5 flex flex-col gap-1.5">
