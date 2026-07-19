@@ -112,13 +112,12 @@ export function formatThreadsForPrompt(threads: ThreadSummariesPayload): string 
 // ever sees resolved text. Async because resolveKbRefs awaits the
 // LRU-cached DB lookup.
 //
-// v3 (issue #13): resolveKbMentions strips `:kb-doc[…]{name=…}` /
-// `:kb-folder[…]{name=…}` directives from HumanMessage text BEFORE
-// the rest of the pipeline runs. All downstream agents (chat / code /
-// router / crypto / weather / background) now see clean text without
-// any directive tokens. Caller still needs to fetch the
-// `<mentioned-documents>` chunks separately — this function only
-// returns the stripped messages, not the chunk payload.
+// v3 (issue #13): resolveKbMentions leaves the `:kb-doc[…]{id=…}` /
+// `:kb-folder[…]{id=…}` directive tokens in the HumanMessage text
+// (the LLM reads them and calls `search_kb` itself with the right
+// filter). The resolver only injects a synthetic search_kb
+// ToolMessage for the rare 0-chunk-fallback case — see
+// `lib/kb/resolve-mentions.ts`.
 export async function prepareMessagesForInvoke(
   messages: BaseMessage[],
   summaries: ThreadSummariesPayload["summaries"],
