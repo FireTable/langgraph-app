@@ -15,7 +15,7 @@ import {
 import { WriteCodeCard, ExecuteCodeResult } from "@/components/tool-ui/code";
 import { SaveMemoryCard } from "@/components/tool-ui/memory";
 import { CreditCard } from "@/components/tool-ui/credit";
-import { KbGraphToolUI, KbListDocumentsToolUI, KbSearchToolUI } from "@/components/tool-ui/kb";
+import { KbListDocumentsToolUI, KbSearchToolUI } from "@/components/tool-ui/kb";
 
 // Frontend-side tool registrations. `execute` lives on the LangGraph
 // backend (backend/tool/) and is dispatched via useLangGraphRuntime —
@@ -169,11 +169,6 @@ const kbToolkit = defineToolkit({
     description: "Render a synthetic KB @-mention context card (reuses KbSearchToolUI).",
     parameters: z.object({ query: z.string(), topK: z.number().optional() }),
     render: KbSearchToolUI,
-  },
-  search_graph: {
-    description: "Render a graph-traversal card (shares the same shape as search_kb).",
-    parameters: z.object({ query: z.string(), topK: z.number().optional() }),
-    render: KbGraphToolUI,
   },
   list_documents: {
     description: "Render a paginated list of the user's KB documents.",

@@ -229,8 +229,8 @@ resolver injects a lightweight reference block:
 ```xml
 <mentioned-documents>
 The user mentioned knowledge-base documents/folders in this turn. The
-following sources are available for search. You MUST call search_kb or
-search_graph with documentId or folderId filters to search their
+following sources are available for search. You MUST call search_kb
+with documentId or folderId filters to search their
 contents. DO NOT answer from pre-trained knowledge if retrieval from
 these sources is possible.
 

@@ -11,7 +11,7 @@ import { getOrderStatusTool } from "@/backend/tool/crypto/get-order-status";
 import { getNftHoldingsTool } from "@/backend/tool/crypto/get-nft-holdings";
 import { saveMemoryTool } from "@/backend/tool/memory/save-memory-tool";
 import { executeCodeTool, writeCodeTool } from "@/backend/tool/code";
-import { listDocumentsTool, searchGraphTool, searchKbTool } from "@/backend/tool/kb";
+import { listDocumentsTool, searchKbTool } from "@/backend/tool/kb";
 
 // ponytail: keep the tool list in one place so the graph binds it from a
 // single source. Adding a tool = drop a file + add one line here.
@@ -30,7 +30,7 @@ import { listDocumentsTool, searchGraphTool, searchKbTool } from "@/backend/tool
 // the free tier (lower rate limit, no key needed).
 //
 // KB tools (issue #13 v3):
-//   - search_kb / search_graph — gated on pgvector extension (rule #10).
+//   - search_kb — gated on pgvector extension (rule #10).
 //   - list_documents — pure SQL, always available.
 
 export const WEATHER_TOOLS = [askLocationTool, geocodeLocationTool, getWeatherTool, saveMemoryTool];
@@ -52,11 +52,11 @@ export const CRYPTO_TOOLS = [
 // fallback runs at click-time.
 export const CODE_TOOLS = [writeCodeTool, ...(executeCodeTool ? [executeCodeTool] : [])];
 
-// ponytail: KB tools — search_kb / search_graph throw at runtime when
-// pgvector is missing (the tool is still registered so the LLM sees a
-// consistent tool surface; missing-extension produces a clean error
-// message instead of a 500). list_documents is unconditional.
-export const KB_TOOLS = [searchKbTool, searchGraphTool, listDocumentsTool];
+// ponytail: KB tools — search_kb throws at runtime when pgvector is
+// missing (the tool is still registered so the LLM sees a consistent
+// tool surface; missing-extension produces a clean error message instead
+// of a 500). list_documents is unconditional.
+export const KB_TOOLS = [searchKbTool, listDocumentsTool];
 
 export const CHAT_TOOLS = [
   fetchUrl,
@@ -79,6 +79,5 @@ export {
   getOrderStatusTool,
   getNftHoldingsTool,
   searchKbTool,
-  searchGraphTool,
   listDocumentsTool,
 };

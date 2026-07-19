@@ -7,7 +7,6 @@ export { isPgVectorAvailable, _resetPgVectorCache } from "./pgvector";
 export { setKbToolUserId, thisUserId } from "./user-id";
 export { formatSearchResult } from "./format";
 export { searchKbTool } from "./search-kb";
-export { searchGraphTool } from "./search-graph";
 export {
   LIST_DOCUMENTS_STATUSES,
   listDocumentsTool,

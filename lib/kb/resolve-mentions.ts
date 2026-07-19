@@ -510,7 +510,7 @@ export async function resolveKbMentions(
 
   if (metaBlocks.length > 0) {
     sectionParts.push(
-      "The following sources are available for search. You MUST call the `search_kb` or `search_graph` tool with `documentId` or `folderId` filters to search their contents. DO NOT answer from pre-trained knowledge if retrieval from these sources is possible.",
+      "The following sources are available for search. You MUST call the `search_kb` tool with `documentId` or `folderId` filters to search their contents. DO NOT answer from pre-trained knowledge if retrieval from these sources is possible.",
       "",
       ...metaBlocks,
       "",

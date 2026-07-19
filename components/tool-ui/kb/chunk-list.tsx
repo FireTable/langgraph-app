@@ -6,7 +6,7 @@ import { FileTextIcon } from "lucide-react";
 import { chunkPreview, legBadges } from "./parser";
 import type { KbDocument } from "./types";
 
-// ponytail: shared chunk list — search_kb and search_graph both render
+// ponytail: shared chunk list — search_kb renders
 // the same { [n] · title · leg badges · preview } rows. Order is locked
 // to the backend's RRF ranking (.claude/13-kb-v3.md "顺序锁定").
 // Now collapsible (default 3) to prevent large context lists from
