@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { KbResponse, KbDocument } from "./types";
 import { HeaderBar } from "./folder-sidebar";
-import { StatusBadge, formatTimestamp } from "./status-badge";
+import { DocStatusBadge, ChunksStatusBadge, formatTimestamp } from "./status-badge";
 import { DocDetailDialog } from "./doc-detail-dialog";
 import { DocDeleteDialog, DocReprocessDialog } from "./dialogs";
 import { FolderGraphDialog } from "./folder-graph-dialog";
@@ -201,14 +201,23 @@ export function DocRow({
     </>
   );
   const meta = (
-    <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-      <span className="truncate">{type}</span>
-      <span aria-hidden>·</span>
-      <time dateTime={doc.updatedAt} className="tabular-nums">
-        {formatTimestamp(doc.updatedAt)}
-      </time>
-      <span aria-hidden>·</span>
-      <StatusBadge status={doc.status} errorMessage={doc.errorMessage} />
+    <div className="text-muted-foreground space-y-1 text-xs">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="truncate">{type}</span>
+        <span aria-hidden>·</span>
+        <time dateTime={doc.updatedAt} className="tabular-nums">
+          {formatTimestamp(doc.updatedAt)}
+        </time>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+        <DocStatusBadge status={doc.status} errorMessage={doc.errorMessage} />
+        <ChunksStatusBadge
+          totalChunks={doc.totalChunks}
+          successChunks={doc.successChunks}
+          failedChunks={doc.failedChunks}
+          docStatus={doc.status}
+        />
+      </div>
     </div>
   );
   return (
@@ -243,8 +252,19 @@ export function DocRow({
         >
           {formatTimestamp(doc.updatedAt)}
         </time>
-        <div className="flex items-center justify-center w-22">
-          <StatusBadge status={doc.status} errorMessage={doc.errorMessage} />
+        <div className="flex flex-col items-center gap-1 justify-center min-w-0">
+          <DocStatusBadge
+            status={doc.status}
+            errorMessage={doc.errorMessage}
+            className="w-[120px] justify-center"
+          />
+          <ChunksStatusBadge
+            totalChunks={doc.totalChunks}
+            successChunks={doc.successChunks}
+            failedChunks={doc.failedChunks}
+            docStatus={doc.status}
+            className="w-[120px] justify-center"
+          />
         </div>
         <div className="flex items-center justify-end gap-0.5">{actions}</div>
       </div>

@@ -8,9 +8,20 @@ export type KbDocument = {
   contentType: string;
   attachmentId: string | null;
   attachmentUrl: string | null;
-  pages?: Array<{ pageIndex: number; imageUrl: string; markdown: string; referenceText?: string }>;
+  pages?: Array<{
+    pageIndex: number;
+    imageUrl: string;
+    markdown: string;
+    referenceText?: string;
+    errorMessage?: string;
+  }>;
   createdAt: string;
   updatedAt: string;
+  totalChunks?: number;
+  successChunks?: number;
+  failedChunks?: number;
+  totalPages?: number;
+  failedPages?: number;
 };
 
 export type KbFolder = { id: string; name: string };

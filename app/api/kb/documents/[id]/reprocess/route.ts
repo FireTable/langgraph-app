@@ -7,6 +7,7 @@ import {
   deleteKbChunksByDocumentId,
   findKbDocumentById,
   resetKbDocumentForReprocess,
+  updateKbDocumentStatus,
   withKbTx,
 } from "@/lib/kb/queries";
 
@@ -41,9 +42,16 @@ type Params = { id: string };
 
 export const POST = withAuth<Params>(async (req, { user, params }) => {
   // ponytail: withAuth hands us a plain `Request`; parse the query
-  // string with stdlib URL instead of NextRequest.nextUrl. Same
-  // shape either way — chunksOnly is a single boolean.
+  // string with stdlib URL instead of NextRequest.nextUrl.
+  const modeParam = new URL(req.url).searchParams.get("mode");
   const chunksOnly = new URL(req.url).searchParams.get("chunksOnly") === "true";
+
+  let mode: "full" | "chunksOnly" | "retryFailed" = "full";
+  if (modeParam === "chunksOnly" || chunksOnly) {
+    mode = "chunksOnly";
+  } else if (modeParam === "retryFailed") {
+    mode = "retryFailed";
+  }
 
   const doc = await findKbDocumentById(user.id, params.id);
   if (!doc) {
@@ -53,36 +61,43 @@ export const POST = withAuth<Params>(async (req, { user, params }) => {
     return NextResponse.json({ code: "PROCESSING" }, { status: 409 });
   }
 
-  // ponytail: chunksOnly needs `pages[].markdown` populated so the
-  // graph can skip OCR and go straight to chunking. Without pages
-  // the user is asking for "only refresh chunks" on a doc whose OCR
-  // never landed — fall back to full reprocess is the recovery path,
-  // so we surface 409 with a useful code instead of silently no-op.
-  if (chunksOnly) {
+  // ponytail: chunksOnly and retryFailed both bypass re-rendering pages,
+  // requiring doc.pages to be populated first.
+  if (mode === "chunksOnly" || mode === "retryFailed") {
     const pages = (doc.pages ?? []) as Array<{ markdown?: string }>;
-    const hasUsableMarkdown = pages.some((p) => (p.markdown ?? "").trim().length > 0);
-    if (!hasUsableMarkdown) {
+    if (pages.length === 0) {
       return NextResponse.json(
-        { code: "NOT_READY", reason: "doc has no pages[].markdown; run full reprocess first" },
+        { code: "NOT_READY", reason: "doc has no pages; run full reprocess first" },
         { status: 409 },
       );
     }
 
-    // ponytail: chunksOnly keeps kb_documents.status untouched — we
-    // only wipe chunks inside one tx and dispatch the run.
+    if (mode === "chunksOnly") {
+      const hasUsableMarkdown = pages.some((p) => (p.markdown ?? "").trim().length > 0);
+      if (!hasUsableMarkdown) {
+        return NextResponse.json(
+          { code: "NOT_READY", reason: "doc has no pages[].markdown; run full reprocess first" },
+          { status: 409 },
+        );
+      }
+    }
+
+    // ponytail: wipe chunks inside one tx
     await withKbTx(async (tx) => {
       await deleteKbChunksByDocumentId(tx, doc.id);
     });
 
-    // Dispatch — kbAgent prepareKBDataNode reads config.configurable
-    // and short-circuits through the chunksOnly branch.
+    if (mode === "retryFailed") {
+      // update document status to parsing so live UI gets polling feedback!
+      await updateKbDocumentStatus(user.id, doc.id, {
+        status: "parsing",
+        errorMessage: null,
+      });
+    }
+
     try {
       await fireIngestionRun({
         userId: user.id,
-        // ponytail: chunksOnly doesn't need attachment bytes (no
-        // re-render). Pass a minimal stub so the call-site shape
-        // stays unified with the full branch — kbAgent ignores
-        // attachment fields when mode === "chunksOnly".
         attachment: {
           r2Key: "chunks-only-no-op",
           contentType: doc.contentType,
@@ -91,19 +106,19 @@ export const POST = withAuth<Params>(async (req, { user, params }) => {
         docId: doc.id,
         title: doc.title,
         source: "kb-reprocess",
-        chunksOnly: true,
+        mode,
       });
     } catch (err) {
       console.error(
-        "POST /api/kb/documents/[id]/reprocess?chunksOnly=true: fireIngestionRun failed",
+        `POST /api/kb/documents/[id]/reprocess?mode=${mode}: fireIngestionRun failed`,
         err,
       );
-      // ponytail: unlike the full branch, the doc row never flipped
-      // back to pending, so a dispatch failure leaves it at success
-      // (truthful state) with stale chunks. The user can re-trigger.
     }
 
-    return NextResponse.json({ docId: doc.id, chunksOnly: true }, { status: 202 });
+    return NextResponse.json(
+      { docId: doc.id, chunksOnly: mode === "chunksOnly", mode },
+      { status: 202 },
+    );
   }
 
   // ponytail: full reprocess — clear stale chunks + flip the doc

@@ -109,6 +109,7 @@ const lightRagSchema = z.object({
         source: z.string().describe("Source entity name"),
         target: z.string().describe("Target entity name"),
         relation: z.string().describe("The action or logical connection between them"),
+        type: z.string().describe("Alias for the relation (used by some models)"),
         description: z.string().describe("Detailed explanation of this relationship"),
       }),
     )
@@ -130,13 +131,21 @@ function makeError(message: string): Partial<KbAgentStateShape> {
 
 async function prepareKBDataNode(
   state: KbAgentStateShape,
-  config?: { configurable?: { userId?: string; mode?: "full" | "chunksOnly"; docId?: string } },
+  config?: {
+    configurable?: {
+      userId?: string;
+      mode?: "full" | "chunksOnly" | "retryFailed";
+      docId?: string;
+      forceRerun?: boolean;
+    };
+  },
 ): Promise<Partial<KbAgentStateShape>> {
-  // ponytail: chunksOnly dispatch from POST /reprocess?chunksOnly=true.
+  // ponytail: chunksOnly / retryFailed dispatch from POST /reprocess.
   // We bypass the entire attachment/file-part lookup chain and reuse
   // the existing kb_document row's pages[].markdown directly:
   //   - splitFileToPageNode: r2Key=null → filter drops it → no-op
-  //   - pageToMarkdownNode: guarded (see below) → no-op
+  //   - pageToMarkdownNode: retryFailed runs OCR only on failed pages;
+  //     chunksOnly skips OCR entirely.
   //   - rewriteMessagesNode: guarded → no messages rewrite
   //   - generateChunkEmbedNode: pipelineStatus="new" → runs
   // dispatchable mode precedence: config.configurable (per-run
@@ -147,31 +156,31 @@ async function prepareKBDataNode(
   const userId = config?.configurable?.userId ?? state.userId;
   if (!userId) return makeError("user not provided");
 
-  if (mode === "chunksOnly") {
-    // ponytail: chunksOnly requires an explicit docId either from
+  if (mode === "chunksOnly" || mode === "retryFailed") {
+    // ponytail: chunksOnly / retryFailed requires an explicit docId either from
     // config.configurable.docId (per-run) or state.docId. fallback
     // to the explicit dispatch path. fail closed if neither set.
     const targetDocId = config?.configurable?.docId ?? state.docId;
     if (!targetDocId) {
-      return makeError("chunksOnly requires docId");
+      return makeError(`${mode} requires docId`);
     }
     const doc = await findKbDocumentById(userId, targetDocId);
     if (!doc) return makeError(`doc ${targetDocId} not found`);
-    if (doc.status !== "success" && doc.status !== "failed") {
+    if (doc.status !== "success" && doc.status !== "failed" && doc.status !== "parsing") {
       return makeError(
-        `chunksOnly requires settled doc, got status='${doc.status}'. Run full reprocess first.`,
+        `${mode} requires settled doc or parsing doc, got status='${doc.status}'. Run full reprocess first.`,
       );
     }
     const pages = (doc.pages ?? []) as PageResult[];
     // ponytail: stub FilePart is required by ProcessedFile.shape but
     // rewriteMessagesNode skips the stamp pass under mode=
-    // "chunksOnly" so the values are never read. url/data empty →
+    // "chunksOnly" / "retryFailed" so the values are never read. url/data empty →
     // resolveKbRefs won't try to look up a public R2 path that
     // doesn't exist for this synthetic dispatch.
     const stubFilePart = { type: "file" as const, url: "", data: "", metadata: {} as never };
     return {
       userId,
-      mode: "chunksOnly",
+      mode,
       docId: doc.id,
       pagesByDocId: { [doc.id]: pages },
       processedFiles: [
@@ -194,8 +203,8 @@ async function prepareKBDataNode(
           existingStatus: doc.status,
         },
       ],
-      // preserve doc's terminal status — we never downgrade kb_document.
-      status: doc.status,
+      // preserve doc's terminal status (or force parsing for live UI if retryFailed)
+      status: mode === "retryFailed" ? "parsing" : doc.status,
       errorMessage: null,
     };
   }
@@ -243,7 +252,8 @@ async function prepareKBDataNode(
           // branch would insert a NEW docId and leave the stale row
           // stuck forever — instead, reuse existing.id with a `new`
           // pipelineStatus so splitFileToPageNode writes back to it.
-          if (existing.status === "success" || existing.status === "failed") {
+          const forceRerun = config?.configurable?.forceRerun ?? false;
+          if (!forceRerun && (existing.status === "success" || existing.status === "failed")) {
             return {
               messageIndex,
               filePart,
@@ -412,6 +422,9 @@ async function splitFileToPageNode(state: KbAgentStateShape): Promise<Partial<Kb
           errorMessage: (err as Error).message,
         };
       }
+
+      console.error("kbAgent splitFileToPageNode", err);
+
       if (state.userId && pf.docId) {
         try {
           await updateKbDocumentStatus(state.userId, pf.docId, {
@@ -471,8 +484,28 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
     newDocs.map((pf) =>
       queue.add(async () => {
         const pages = state.pagesByDocId[pf.docId!];
+        const controller = new AbortController();
+        let hasFailed = false;
+
         const ocrResults = await Promise.all(
-          pages.map((p) => {
+          pages.map(async (p) => {
+            if (
+              state.mode === "retryFailed" &&
+              (p.markdown ?? "").trim().length > 0 &&
+              !p.errorMessage
+            ) {
+              return p;
+            }
+
+            if (hasFailed || controller.signal.aborted) {
+              return {
+                ...p,
+                markdown: "",
+                errorMessage:
+                  "Bypassed: OCR aborted due to another page failure in the same document",
+              };
+            }
+
             const contentParts: Array<{ type: string; [key: string]: unknown }> = [
               { type: "image_url", image_url: { url: p.imageUrl } },
             ];
@@ -482,9 +515,37 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
                 text: `Reference text extracted directly from the PDF (may contain layout noise — trust the image for structure):\n\n${p.referenceText}`,
               });
             }
-            return structured
-              .invoke([system, new HumanMessage({ content: contentParts })], { tags: ["nostream"] })
-              .then((out) => ({ ...p, markdown: out.markdown.trim() }));
+            try {
+              if (hasFailed || controller.signal.aborted) {
+                return {
+                  ...p,
+                  markdown: "",
+                  errorMessage:
+                    "Bypassed: OCR aborted due to another page failure in the same document",
+                };
+              }
+              const out = (await structured.invoke(
+                [system, new HumanMessage({ content: contentParts })],
+                { tags: ["nostream"], signal: controller.signal },
+              )) as z.infer<typeof ocrPageSchema>;
+              return { ...p, markdown: out.markdown.trim(), errorMessage: undefined };
+            } catch (err) {
+              hasFailed = true;
+              controller.abort();
+              console.error(
+                `kbAgent pageToMarkdownNode: OCR failed for doc ${pf.docId} page ${p.pageIndex}:`,
+                err,
+              );
+              const isAborted =
+                err instanceof Error &&
+                (err.name === "AbortError" || err.message?.toLowerCase().includes("abort"));
+              const msg = isAborted
+                ? "Bypassed: OCR aborted due to another page failure in the same document"
+                : err instanceof Error
+                  ? err.message
+                  : String(err);
+              return { ...p, markdown: "", errorMessage: msg };
+            }
           }),
         );
         return { docId: pf.docId!, pages: ocrResults, messageIndex: pf.messageIndex };
@@ -515,17 +576,24 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
     const pf = updatedProcessed[i];
     if (pf.pipelineStatus !== "new" || !pf.docId) continue;
     const pages = updatedPagesByDocId[pf.docId] ?? [];
-    const md = pages
-      .map((p) => p.markdown)
-      .filter((m) => m.length > 0)
-      .join("\n\n");
-    if (md) {
+    const hasAnyFailedPage = pages.some((p) => !!p.errorMessage || !(p.markdown ?? "").trim());
+    if (pages.length > 0 && !hasAnyFailedPage) {
       successfulDocIds.push(pf.docId);
     } else {
+      const pageErrors = pages
+        .map((p) => p.errorMessage)
+        .filter((e): e is string => !!e && e.length > 0);
+      const uniqueErrors = Array.from(new Set(pageErrors));
+      const combinedError =
+        uniqueErrors.length === 1
+          ? uniqueErrors[0]
+          : uniqueErrors.length > 1
+            ? `OCR failed on some pages: ${uniqueErrors.join("; ")}`
+            : "some pages have empty markdown after OCR";
       updatedProcessed[i] = {
         ...pf,
         pipelineStatus: "failed",
-        errorMessage: "empty markdown after OCR",
+        errorMessage: combinedError,
       };
       failedNewDocs.push(updatedProcessed[i]);
     }
@@ -547,6 +615,7 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
         await updateKbDocumentStatus(userId, p.docId!, {
           status: "failed",
           errorMessage: p.errorMessage,
+          pages: updatedPagesByDocId[p.docId!] ?? null,
         });
       }),
       ...successfulDocIds.map(async (docId) => {
@@ -575,7 +644,7 @@ async function rewriteMessagesNode(state: KbAgentStateShape): Promise<Partial<Kb
   // we constructed in prepareKBDataNode means fileToDoc below stays
   // empty; this guard avoids the unnecessary iteration + isHumanLike
   // rebuild cost.
-  if (state.mode === "chunksOnly") {
+  if (state.mode === "chunksOnly" || state.mode === "retryFailed") {
     return {
       messages: state.messages,
       status: state.status,
@@ -717,12 +786,17 @@ async function generateChunkEmbedNode(
   state: KbAgentStateShape,
   config?: RunnableConfig,
 ): Promise<Partial<KbAgentStateShape>> {
+  console.log(
+    `[kbAgent] Entering generateChunkEmbedNode, files=`,
+    state.processedFiles.map((p) => ({ docId: p.docId, status: p.pipelineStatus })),
+  );
   if (state.userId) {
     for (const pf of state.processedFiles) {
       if (pf.pipelineStatus === "new" && pf.docId) {
         const docId = pf.docId;
         const userId = state.userId;
 
+        console.log(`[kbAgent] Starting background chunking task for docId=${docId}`);
         // ponytail: fire-and-forget so the graph node completes instantly.
         void (async () => {
           try {
@@ -739,6 +813,9 @@ async function generateChunkEmbedNode(
               .map((p) => p.markdown)
               .filter((m) => m && m.length > 0)
               .join("\n\n");
+            console.log(
+              `[kbAgent] Background task: loaded docId=${docId}, pages count=${pages.length}, fullMarkdown length=${fullMarkdown.length}`,
+            );
             if (!fullMarkdown) {
               throw new Error(`Document ${docId} has no markdown content extracted yet`);
             }
@@ -749,6 +826,7 @@ async function generateChunkEmbedNode(
             // tagged model is registered (see getExtractModel).
             const extractModel = await getExtractModel();
             const embedder = await getEmbeddingModel();
+
             const lengthSplitter = new MarkdownTextSplitter({
               chunkSize: KB_CHUNK_SIZE,
               chunkOverlap: KB_CHUNK_OVERLAP,
@@ -814,6 +892,9 @@ async function generateChunkEmbedNode(
               );
               await markAllKbChunksParsingForDocInTx(tx, docId);
             });
+            console.log(
+              `[kbAgent] Background task: successfully inserted ${texts.length} chunks for docId=${docId}`,
+            );
 
             // ponytail: per-row, streaming write-back. Each task writes
             // ITS OWN row the moment its entity LLM resolves — no
@@ -850,14 +931,31 @@ async function generateChunkEmbedNode(
                   );
 
                   try {
-                    const out = await extractModel
+                    const out = (await extractModel
                       .withStructuredOutput(lightRagSchema, { method: "jsonSchema" })
-                      .invoke([systemMessage, humanMessage], { ...config, tags: ["nostream"] });
+                      .invoke([systemMessage, humanMessage], {
+                        ...config,
+                        tags: ["nostream"],
+                      })) as z.infer<typeof lightRagSchema>;
+                    const normalizedOut = {
+                      entities: (out.entities ?? []).map((e) => ({
+                        name: e.name,
+                        type: e.type,
+                        description: e.description ?? "",
+                      })),
+                      relationships: (out.relationships ?? []).map((r) => ({
+                        source: r.source,
+                        target: r.target,
+                        relation: r.relation || r.type || "",
+                        description: r.description ?? "",
+                      })),
+                      themes: out.themes ?? [],
+                    };
                     // write-back: entities + status='success' in one go
                     // so the row never sits at success with a blank
                     // entities field.
                     await Promise.allSettled([
-                      updateKbChunkForSuccess(chunkId, out),
+                      updateKbChunkForSuccess(chunkId, normalizedOut),
                       markKbChunkSuccess(chunkId),
                     ]);
                   } catch (err) {
@@ -928,9 +1026,11 @@ async function generateChunkEmbedNode(
                 );
 
                 // 4. Call LLM to find alignments
-                const alignmentResult = await extractModel
+                const alignmentResult = (await extractModel
                   .withStructuredOutput(alignmentSchema, { method: "jsonSchema" })
-                  .invoke([systemMsg, humanMsg], { ...config, tags: ["nostream"] });
+                  .invoke([systemMsg, humanMsg], { ...config, tags: ["nostream"] })) as z.infer<
+                  typeof alignmentSchema
+                >;
 
                 // 5. Create mapping dictionary
                 const nameMap = new Map<string, string>();
@@ -1031,13 +1131,18 @@ async function generateChunkEmbedNode(
 // Graph builder + dual compilation
 // ---------------------------------------------------------------------------
 
-function routeAfterRewrite(state: KbAgentStateShape): (string | typeof END)[] {
-  const destinations: (string | typeof END)[] = [END];
+function routeAfterRewrite(state: KbAgentStateShape): string | typeof END {
   const hasNew = state.processedFiles.some((p) => p.pipelineStatus === "new");
+  console.log(
+    `[kbAgent] routeAfterRewrite: hasNew=${hasNew}, files=`,
+    state.processedFiles.map((p) => ({ docId: p.docId, status: p.pipelineStatus })),
+  );
   if (hasNew) {
-    destinations.push("generateChunkEmbed");
+    console.log(`[kbAgent] Routing to generateChunkEmbed`);
+    return "generateChunkEmbed";
   }
-  return destinations;
+  console.log(`[kbAgent] Routing to END`);
+  return END;
 }
 
 const builder = new StateGraph(KbAgentState)

@@ -87,7 +87,7 @@ describe("routerAgentNode", () => {
     // withStructuredOutput is called once at module load + once per
     // routerAgentNode invocation. The router invocation must pass the
     // route_decision schema and the jsonSchema method — a regression
-    // to functionCalling breaks compatibility with strict json-mode
+    // to functionCalling breaks compatibility with strict jsonSchema
     // providers.
     const schemaArg = mockWithStructuredArgs.mock.calls.at(-1)?.[0] as {
       safeParse: (v: unknown) => { success: boolean };

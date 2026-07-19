@@ -208,7 +208,14 @@ export async function listKbDocumentsByFolder(
 // ponytail: doc + its attachment's publicUrl in one round-trip. The
 // Settings UI uses this to render a "View source" link per doc without
 // an N+1 attachments query.
-export type KbDocumentWithAttachment = KbDocument & { attachmentUrl: string | null };
+export type KbDocumentWithAttachment = KbDocument & {
+  attachmentUrl: string | null;
+  totalChunks?: number;
+  successChunks?: number;
+  failedChunks?: number;
+  totalPages?: number;
+  failedPages?: number;
+};
 
 export async function listKbDocumentsByFolderWithAttachment(
   userId: string,
@@ -227,19 +234,51 @@ export async function listKbDocumentsByFolderWithAttachment(
   // to backfill `Content-Disposition: inline` for chat uploads + a
   // one-shot script to update historical objects.
   const base = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, "") ?? "";
+
+  const chunksSubquery = db
+    .select({
+      documentId: kbChunk.documentId,
+      totalChunks: sql<number>`count(${kbChunk.id})::int`.as("total_chunks"),
+      successChunks: sql<number>`count(case when ${kbChunk.status} = 'success' then 1 end)::int`.as(
+        "success_chunks",
+      ),
+      failedChunks: sql<number>`count(case when ${kbChunk.status} = 'failed' then 1 end)::int`.as(
+        "failed_chunks",
+      ),
+    })
+    .from(kbChunk)
+    .groupBy(kbChunk.documentId)
+    .as("chunk_counts");
+
   const rows = await db
     .select({
       doc: kbDocument,
       r2Key: attachments.r2Key,
+      totalChunks: sql<number>`coalesce(${chunksSubquery.totalChunks}, 0)::int`,
+      successChunks: sql<number>`coalesce(${chunksSubquery.successChunks}, 0)::int`,
+      failedChunks: sql<number>`coalesce(${chunksSubquery.failedChunks}, 0)::int`,
+      totalPages: sql<number>`coalesce(jsonb_array_length(${kbDocument.pages}), 0)::int`,
+      failedPages: sql<number>`(
+        select count(*)::int
+        from jsonb_array_elements(coalesce(${kbDocument.pages}, '[]'::jsonb)) as p
+        where p->>'errorMessage' is not null or trim(coalesce(p->>'markdown', '')) = ''
+      )`,
     })
     .from(kbDocument)
     .leftJoin(attachments, eq(kbDocument.attachmentId, attachments.id))
+    .leftJoin(chunksSubquery, eq(kbDocument.id, chunksSubquery.documentId))
     .where(and(eq(kbDocument.userId, userId), eq(kbDocument.folderId, folderId)))
     .orderBy(desc(kbDocument.createdAt))
     .limit(limit);
+
   return rows.map((r) => ({
     ...r.doc,
     attachmentUrl: r.r2Key && base ? `${base}/${r.r2Key}` : null,
+    totalChunks: r.totalChunks,
+    successChunks: r.successChunks,
+    failedChunks: r.failedChunks,
+    totalPages: r.totalPages,
+    failedPages: r.failedPages,
   }));
 }
 

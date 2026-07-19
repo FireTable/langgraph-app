@@ -23,6 +23,11 @@ type GroupedDoc = {
   attachmentUrl: string | null;
   createdAt: string;
   updatedAt: string;
+  totalChunks?: number;
+  successChunks?: number;
+  failedChunks?: number;
+  totalPages?: number;
+  failedPages?: number;
 };
 
 export const GET = withAuth(async (req: Request, { user }) => {
@@ -73,6 +78,11 @@ export const GET = withAuth(async (req: Request, { user }) => {
             attachmentUrl: d.attachmentUrl,
             createdAt: d.createdAt.toISOString(),
             updatedAt: d.updatedAt.toISOString(),
+            totalChunks: d.totalChunks,
+            successChunks: d.successChunks,
+            failedChunks: d.failedChunks,
+            totalPages: d.totalPages,
+            failedPages: d.failedPages,
           }),
         ),
       })),

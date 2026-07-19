@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -107,13 +107,32 @@ export function DocReprocessDialog({
   onOpenChange: (open: boolean) => void;
   onReprocessed: () => void;
 }) {
-  const [chunksOnly, setChunksOnly] = useState(false);
+  const [mode, setMode] = useState<"full" | "chunksOnly" | "retryFailed">("full");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const hasPages = !!(
+    (doc.pages && doc.pages.length > 0) ||
+    (doc.totalPages !== undefined && doc.totalPages > 0)
+  );
+
+  const totalPages = doc.pages ? doc.pages.length : (doc.totalPages ?? 0);
+  const failedPagesCount = doc.pages
+    ? doc.pages.filter((p) => !!p.errorMessage || !(p.markdown ?? "").trim()).length
+    : (doc.failedPages ?? 0);
+
+  const hasUsableMarkdown = doc.pages
+    ? doc.pages.some((p) => (p.markdown ?? "").trim().length > 0)
+    : totalPages > failedPagesCount;
+
+  const hasFailedPages = failedPagesCount > 0;
+
+  const isChunksOnlyDisabled = !hasPages || !hasUsableMarkdown;
+  const isRetryFailedDisabled = !hasPages || !hasFailedPages;
+
   useEffect(() => {
     if (open) {
-      setChunksOnly(false);
+      setMode("full");
       setError(null);
     }
   }, [open]);
@@ -122,14 +141,23 @@ export function DocReprocessDialog({
     setSubmitting(true);
     setError(null);
     try {
-      const qs = chunksOnly ? "?chunksOnly=true" : "";
-      const res = await fetch(`/api/kb/documents/${doc.id}/reprocess${qs}`, { method: "POST" });
+      const res = await fetch(`/api/kb/documents/${doc.id}/reprocess?mode=${mode}`, {
+        method: "POST",
+      });
       if (res.status === 202) {
-        toast.info(chunksOnly ? "Rechunks queued" : "Reprocess queued", {
+        let toastTitle = "Reprocess queued";
+        let toastDesc = `「${doc.title}」is re-running OCR + chunking. Old chunks were cleared.`;
+        if (mode === "chunksOnly") {
+          toastTitle = "Rechunks queued";
+          toastDesc = `「${doc.title}」- skipping OCR, rebuilding chunks from the cached pages. doc row stays Ready.`;
+        } else if (mode === "retryFailed") {
+          toastTitle = "Retry queued";
+          toastDesc = `「${doc.title}」- retrying failed pages, then rebuilding chunks.`;
+        }
+
+        toast.info(toastTitle, {
           descriptionClassName: TOAST_DESCRIPTION_CLASS,
-          description: chunksOnly
-            ? `「${doc.title}」- skipping OCR, re-chunking from the existing pages. doc row stays Ready.`
-            : `「${doc.title}」is re-running OCR + chunking. Old chunks were cleared.`,
+          description: toastDesc,
         });
         onReprocessed();
         return;
@@ -138,7 +166,7 @@ export function DocReprocessDialog({
         const body = (await res.json().catch(() => ({}))) as { code?: string; reason?: string };
         if (body.code === "NOT_READY") {
           setError(
-            "Only rebuild chunks isn't available — pages haven't been extracted yet. Pick 'Full re-run' first.",
+            "This option is not available — pages haven't been extracted yet. Pick 'Full re-run' first.",
           );
           return;
         }
@@ -161,7 +189,7 @@ export function DocReprocessDialog({
     } finally {
       setSubmitting(false);
     }
-  }, [doc.id, doc.title, chunksOnly, onReprocessed]);
+  }, [doc.id, doc.title, mode, onReprocessed]);
 
   return (
     <Dialog
@@ -176,24 +204,25 @@ export function DocReprocessDialog({
           <DialogTitle>Reprocess document?</DialogTitle>
           <DialogDescription>
             <span className="font-medium">{doc.title}</span> - existing chunks are wiped before
-            re-running. Choose whether to re-run OCR or only rebuild chunks from the cached pages.
+            re-running. Choose a reprocess mode.
           </DialogDescription>
         </DialogHeader>
 
         <fieldset disabled={submitting} className="space-y-2" aria-label="Reprocess mode">
+          {/* Option 1: Full re-run */}
           <label
             className={cn(
               "flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
-              !chunksOnly ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40",
+              mode === "full" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40",
             )}
           >
             <input
               type="radio"
               name="reprocess-mode"
               value="full"
-              checked={!chunksOnly}
-              onChange={() => setChunksOnly(false)}
-              className="mt-0.5 size-3.5 shrink-0 accent-foreground"
+              checked={mode === "full"}
+              onChange={() => setMode("full")}
+              className="mt-0.5 size-3.5 shrink-0 accent-foreground cursor-pointer"
             />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium leading-tight">Full re-run</div>
@@ -203,25 +232,75 @@ export function DocReprocessDialog({
               </div>
             </div>
           </label>
+
+          {/* Option 2: Rebuild chunks from cache */}
           <label
             className={cn(
-              "flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
-              chunksOnly ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40",
+              "flex items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
+              isChunksOnlyDisabled ? "opacity-50 cursor-not-allowed bg-muted/10" : "cursor-pointer",
+              !isChunksOnlyDisabled && mode === "chunksOnly"
+                ? "border-primary bg-primary/5"
+                : "border-border hover:bg-muted/40",
             )}
           >
             <input
               type="radio"
               name="reprocess-mode"
               value="chunksOnly"
-              checked={chunksOnly}
-              onChange={() => setChunksOnly(true)}
-              className="mt-0.5 size-3.5 shrink-0 accent-foreground"
+              checked={mode === "chunksOnly"}
+              disabled={isChunksOnlyDisabled}
+              onChange={() => setMode("chunksOnly")}
+              className="mt-0.5 size-3.5 shrink-0 accent-foreground disabled:cursor-not-allowed"
             />
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium leading-tight">Only rebuild chunks</div>
+              <div className="text-sm font-medium leading-tight flex items-center justify-between">
+                <span>Rebuild chunks from cache</span>
+                {isChunksOnlyDisabled && (
+                  <span className="text-[9px] font-medium text-muted-foreground border px-1 rounded bg-muted/30">
+                    No pages cache
+                  </span>
+                )}
+              </div>
               <div className="text-muted-foreground text-[11px] leading-snug mt-0.5">
-                Skip OCR — reuse the cached <code>pages[].markdown</code>. Only chunks + entities
-                rebuild. Faster, fewer tokens. Doc row stays Ready the whole time.
+                Skip OCR — reuse the cached pages markdown to rebuild chunks + entities. Faster,
+                fewer tokens.
+              </div>
+            </div>
+          </label>
+
+          {/* Option 3: Retry failed pages & rebuild */}
+          <label
+            className={cn(
+              "flex items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
+              isRetryFailedDisabled
+                ? "opacity-50 cursor-not-allowed bg-muted/10"
+                : "cursor-pointer",
+              !isRetryFailedDisabled && mode === "retryFailed"
+                ? "border-primary bg-primary/5"
+                : "border-border hover:bg-muted/40",
+            )}
+          >
+            <input
+              type="radio"
+              name="reprocess-mode"
+              value="retryFailed"
+              checked={mode === "retryFailed"}
+              disabled={isRetryFailedDisabled}
+              onChange={() => setMode("retryFailed")}
+              className="mt-0.5 size-3.5 shrink-0 accent-foreground disabled:cursor-not-allowed"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium leading-tight flex items-center justify-between">
+                <span>Retry failed pages & rebuild</span>
+                {isRetryFailedDisabled && (
+                  <span className="text-[9px] font-medium text-muted-foreground border px-1 rounded bg-muted/30">
+                    No failed pages
+                  </span>
+                )}
+              </div>
+              <div className="text-muted-foreground text-[11px] leading-snug mt-0.5">
+                Only retry OCR for failed pages, keep successful pages, then rebuild chunks. Ideal
+                for partial OCR errors.
               </div>
             </div>
           </label>
@@ -240,8 +319,10 @@ export function DocReprocessDialog({
           <Button className="w-full sm:w-auto" onClick={() => void submit()} disabled={submitting}>
             {submitting ? (
               <Loader2 className="size-3.5 animate-spin" />
-            ) : chunksOnly ? (
+            ) : mode === "chunksOnly" ? (
               "Rebuild chunks"
+            ) : mode === "retryFailed" ? (
+              "Retry failed"
             ) : (
               "Reprocess"
             )}

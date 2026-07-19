@@ -40,7 +40,7 @@ export const kbChunkStatusEnum = pgEnum("kb_chunk_status", [
   "failed",
 ]);
 
-// ponytail: Drizzle's built-in types don't cover pgvector's `vector(1536)`
+// ponytail: Drizzle's built-in types don't cover pgvector's `vector(EMBEDDING_DIM)`
 // yet. customType pins the SQL string + the JS shape (number[]) so the
 // ponytail: pgvector dimension 1024. The embedder is BAAI/bge-m3
 // (served by apimart under the OPENAI_EMBEDDING_MODEL alias); bge-m3

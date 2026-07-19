@@ -348,7 +348,34 @@ You will be provided with:
 - Group identical terms to avoid generating duplicate nodes with minor casing or spelling variances.
 
 ### 4. Themes
-- Themes should be macroscopic abstractions or key topics (e.g., "Web3", "Frontend Development") summarizing the chunk's intent.`;
+- Themes should be macroscopic abstractions or key topics (e.g., "Web3", "Frontend Development") summarizing the chunk's intent.
+
+## Output Format
+You MUST output a valid JSON object matching the following structure. Do NOT rename any fields, and ensure description and relation properties are included for all elements:
+
+\`\`\`json
+{
+  "entities": [
+    {
+      "name": "Name of the entity (e.g., React)",
+      "type": "Category of the entity (e.g., Technology)",
+      "description": "Short description of the entity in the current context"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "Source entity name",
+      "target": "Target entity name",
+      "relation": "The action or logical connection (e.g., USED_IN)",
+      "description": "Short description of how they are related"
+    }
+  ],
+  "themes": [
+    "High-level theme topic"
+  ]
+}
+\`\`\`
+`;
 
 export const KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT = `You are a specialized entity resolution and alignment algorithm. Given a list of entity names extracted from a document, your goal is to identify synonyms, aliases, acronyms, minor typos, spelling variations, and generic references that refer to the same logical entity, and resolve them to a single canonical standard name.
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertCircle,
   ArrowDown,
   ArrowRight,
   Blocks,
@@ -26,7 +27,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { TOAST_DESCRIPTION_CLASS } from "./helpers";
 import { KnowledgeGraph } from "./knowledge-graph";
-import { ChunkStatusBadge, StatusBadge } from "./status-badge";
+import { ChunkStatusBadge, DocStatusBadge, ChunksStatusBadge } from "./status-badge";
 import { KbDocDetail } from "./types";
 
 export function DocDetailDialog({
@@ -226,6 +227,10 @@ export function DocDetailDialog({
   const d = detail;
   if (!d) return null;
 
+  const totalChunks = d.chunks.length;
+  const successChunks = d.chunks.filter((c) => c.status === "success").length;
+  const failedChunks = d.chunks.filter((c) => c.status === "failed").length;
+
   return (
     <Dialog
       open={open}
@@ -252,7 +257,13 @@ export function DocDetailDialog({
           </div>
           <DialogDescription asChild>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs select-none">
-              <StatusBadge status={d.doc.status} errorMessage={d.doc.errorMessage} />
+              <DocStatusBadge status={d.doc.status} errorMessage={d.doc.errorMessage} />
+              <ChunksStatusBadge
+                totalChunks={totalChunks}
+                successChunks={successChunks}
+                failedChunks={failedChunks}
+                docStatus={d.doc.status}
+              />
               <span className="size-1 rounded-full bg-muted-foreground/30 shrink-0" aria-hidden />
 
               <Badge
@@ -262,20 +273,37 @@ export function DocDetailDialog({
                 <span>{d.doc.contentType}</span>
               </Badge>
 
-              {d.doc.pages && d.doc.pages.length > 0 && (
-                <>
-                  <span
-                    className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
-                    aria-hidden
-                  />
-                  <Badge
-                    variant="outline"
-                    className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
-                  >
-                    <span>{d.doc.pages.length} pages</span>
-                  </Badge>
-                </>
-              )}
+              {d.doc.pages &&
+                d.doc.pages.length > 0 &&
+                (() => {
+                  const totalPages = d.doc.pages.length;
+                  const isReprocessing = d.doc.status === "pending" || d.doc.status === "parsing";
+                  const failedPagesCount = isReprocessing
+                    ? 0
+                    : d.doc.pages.filter((p) => !!p.errorMessage || !(p.markdown ?? "").trim())
+                        .length;
+                  return (
+                    <>
+                      <span
+                        className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
+                        aria-hidden
+                      />
+                      <Badge
+                        variant="outline"
+                        className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
+                      >
+                        <span>
+                          {totalPages} pages
+                          {failedPagesCount > 0 && (
+                            <span className="text-destructive font-medium ml-1">
+                              ({failedPagesCount} failed)
+                            </span>
+                          )}
+                        </span>
+                      </Badge>
+                    </>
+                  );
+                })()}
 
               {d.chunks.length > 0 && (
                 <>
@@ -289,21 +317,6 @@ export function DocDetailDialog({
                   >
                     <span>{d.chunks.length} chunks</span>
                   </Badge>
-                </>
-              )}
-
-              {isPolling && (
-                <>
-                  <span
-                    className="size-1 rounded-full bg-muted-foreground/30 shrink-0"
-                    aria-hidden
-                  />
-                  <div className="flex items-center gap-1 text-muted-foreground select-none leading-none h-4">
-                    <Loader2 className="size-3 animate-spin text-muted-foreground/60 shrink-0" />
-                    <span className="text-[10px] text-muted-foreground/60 font-medium">
-                      Indexing…
-                    </span>
-                  </div>
                 </>
               )}
             </div>
@@ -405,6 +418,7 @@ export function DocDetailDialog({
                     imageUrl: string;
                     markdown: string;
                     referenceText?: string;
+                    errorMessage?: string;
                   };
                   const hasRef = !!page.referenceText?.trim();
                   return (
@@ -413,10 +427,34 @@ export function DocDetailDialog({
                       className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md"
                     >
                       {/* Card Header */}
-                      <div className="flex items-center border-b px-4 py-2.5 bg-muted/40">
+                      <div className="flex items-center justify-between border-b px-4 py-2 bg-muted/40">
                         <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
                           Page #{page.pageIndex + 1}
                         </span>
+                        {page.errorMessage &&
+                        d.doc.status !== "parsing" &&
+                        d.doc.status !== "pending" ? (
+                          <Badge
+                            variant="destructive"
+                            className="text-[9px] py-0 px-1.5 font-medium leading-none"
+                          >
+                            Failed
+                          </Badge>
+                        ) : (page.markdown ?? "").trim().length > 0 ? (
+                          <Badge
+                            variant="success"
+                            className="text-[9px] py-0 px-1.5 font-medium leading-none"
+                          >
+                            Succeeded
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="muted"
+                            className="text-[9px] py-0 px-1.5 font-medium leading-none"
+                          >
+                            Pending
+                          </Badge>
+                        )}
                       </div>
 
                       {/* Body: [Image + Ref] → [Markdown] */}
@@ -492,12 +530,25 @@ export function DocDetailDialog({
                             >
                               {page.markdown}
                             </div>
+                          ) : page.errorMessage ? (
+                            <div
+                              className="flex flex-col items-center justify-center bg-destructive/5 text-destructive border border-destructive/20 rounded-lg p-4 text-[11px] italic gap-1.5 flex-1"
+                              style={{ minHeight: "200px" }}
+                            >
+                              <AlertCircle className="size-5 text-destructive/80 animate-pulse" />
+                              <span className="font-semibold not-italic text-xs text-destructive">
+                                Page OCR Failed
+                              </span>
+                              <span className="text-center text-[10px] opacity-90 break-all select-all font-mono bg-destructive/10 px-2 py-1 rounded border border-destructive/10 max-w-full">
+                                {page.errorMessage}
+                              </span>
+                            </div>
                           ) : (
                             <div
                               className="flex flex-col items-center justify-center bg-muted/10 rounded-lg border border-dashed text-muted-foreground/40 text-[11px] italic gap-1 flex-1"
                               style={{ minHeight: "200px" }}
                             >
-                              <FileText className="size-4 opacity-30" />
+                              <FileText className="size-4 opacity-30 animate-pulse" />
                               <span>Pending…</span>
                             </div>
                           )}
