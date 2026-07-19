@@ -205,86 +205,52 @@ otherwise. ToolMessage chips in the chat distinguish the two modes
 
 ## 5. Mention Resolution
 
-When the user submits a message, `resolveKbMentions` walks every
-`HumanMessage` looking for directive tokens shaped like
-`:kb-doc[Label]{id=<UUID>}` or `:kb-folder[Label]{id=<UUID>}` and
-emits a single `<mentioned-documents>` SystemMessage block plus a
-synthetic ToolMessage carrying the resolved content.
+The composer renders `:kb-doc[label]{id=<UUID>}` directive tokens via
+assistant-ui's `unstable_useMentionAdapter` +
+`unstable_defaultDirectiveFormatter`. The directive is preserved
+through the SDK wire and lands in the `HumanMessage.content` as a
+plain string. The LLM reads the directive directly and calls
+`search_kb(documentId=…)` itself.
+
+`resolveKbMentions` is a pre-LLM pass that does **only one thing**:
+the 0-chunk fallback. When the user mentions a doc whose status is
+`success` but the chunk index is empty (chunking pass didn't land
+any rows), the resolver pre-loads `kb_document.pages[*].markdown`
+and injects a synthetic `search_kb` `AIMessage+ToolMessage` pair
+right after the last `HumanMessage` — `tool_call_id: "kb-fallback"`,
+`name: "search_kb"`, `legsHit: ["full"]`, content = joined page
+markdown. The chat card renders this via the existing search_kb
+toolkit entry.
+
+Everything else is dropped:
+
+- `:kb-doc` with chunks → no injection. The LLM sees the directive
+  in the message text and calls `search_kb(documentId=…)` itself.
+- `:kb-folder` → no injection. The LLM sees the directive in the
+  message text and calls `search_kb(folderId=…)` itself.
+- `@doc` with `parsing` / `failed` status → dropped silently. The
+  user sees the status in Settings → KB; the chat resolver stays
+  out of the way.
+- Unknown / cross-user ids → silently dropped (no existence leak).
 
 The directive syntax is mirrored end-to-end:
 
 - The composer serializes a chip via
   `components/assistant-ui/kb-mention-formatter.ts` →
   `:kb-document[<label>]{id=<docId>}`.
-- `lib/kb/resolve-mentions.ts` parses with a global regex, extracts the
-  canonical id (or falls back to the label if the brace group is
-  absent), then validates user-ownership + status + chunk count in a
-  single batch.
-
-### Branch 1 — Meta mode (default)
-
-If the doc is `status='success'` AND has at least one chunk, the
-resolver injects a lightweight reference block:
-
-```xml
-<mentioned-documents>
-The user mentioned knowledge-base documents/folders in this turn. The
-following sources are available for search. You MUST call search_kb
-with documentId or folderId filters to search their
-contents. DO NOT answer from pre-trained knowledge if retrieval from
-these sources is possible.
-
-- Document: "report.pdf" (ID: "d-55b8…")
-- Folder: "Research" (ID: "f-e8aa…") containing:
-    - Document: "doc-1.pdf" (ID: "d-de7c…")
-    - Document: "doc-2.pdf" (ID: "d-ce6c…")
-</mentioned-documents>
-```
-
-The synthetic ToolMessage chips the AI sees are
-`chunkId: meta-<docId>` / `legsHit: ["mention"]` placeholders — the real
-chunks come from the AI's own `search_kb` call.
-
-### Branch 2 — Full-Markdown fallback
-
-If the doc is `status='success'` but has zero chunks (e.g. a brand-new
-doc that has been OCR'd but not yet chunked, or chunking failed and the
-user retries), the resolver reads `kb_document.pages[*].markdown` and
-appends the joined text to the SystemMessage as a `[Fallback: Full
-Content]` block. The ToolMessage chip carries `legsHit: ["full"]` and
-the actual page text. This is the safety net the spec
-(`.claude/14-kb-improvements.md` Stage 2) calls for — a model that
-has zero chunks to retrieve from shouldn't be left deaf just because
-chunking hiccuped.
-
-### Branch 3 — Soft warning
-
-If the doc is `status='parsing'` or `status='failed'`, the resolver
-emits a one-liner soft-warning instead of a content block — the AI is
-instructed to surface this to the user. Unknown / cross-user ids are
-silently dropped (no existence leak).
-
-### Multi-mention budgeting
-
-`KB_MENTION_TOKEN_BUDGET` (default 8192 chars) caps the total mention
-context. Per-mention top-K is rebudgeted as:
-
-$$\text{perMentionK} = \text{ceil}\!\left(\frac{\text{BUDGET}}{\text{CHUNK\_MAX\_CHARS} / 4 \times \text{mentionCount}}\right)$$
-
-clamped to `[1, min(KB_MENTION_TOPK_DEFAULT, KB_MENTION_TOPK_MAX)]`. A
-user mentioning five docs gets a tighter per-doc slice than one
-mentioning a single doc.
-
-### Composer → wire round-trip
+- `lib/kb/resolve-mentions.ts` parses with a global regex, extracts
+  the canonical id (or falls back to the label if the brace group
+  is absent), then validates user-ownership + status + chunk count
+  in a single batch.
 
 The chip survives the assistant-ui SDK wire because the SDK's
 `contentToParts` rebuilds `text` parts from scratch but preserves the
-directive substring verbatim — that's the whole reason the directive is
-serialized as a typed `:type[label]{key=val}` token instead of a custom
-`{type: "kb_ref"}` part (which the SDK filters to `null`).
-`kb_ref` itself rides as a **sibling field on `type: "file"` parts** —
-see the in-repo memory entry on `kb_ref rides as file sibling` for the
-full rationale.
+directive substring verbatim — that's the whole reason the directive
+is serialized as a typed `:type[label]{key=val}` token instead of a
+custom `{type: "kb_ref"}` part (which the SDK filters to `null`).
+`kb_ref` itself rides as a **sibling field on `type: "file"` parts**
+— see the in-repo memory entry on `kb_ref rides as file sibling` for
+the full rationale.
 
 ---
 
@@ -333,8 +299,8 @@ a fifth mode means updating the enum in `state.ts` AND
   - **RRF mode** — otherwise, three-decimal floats
     (`Score: 0.033`).
 - **Mode labels** — `Full Document` / `Pages` badges distinguish
-  branch-2 (full-markdown fallback) chunks from branch-1 (vector / BM25)
-  hits. The chip is `c-synthetic-*` under the hood.
+  the 0-chunk fallback chunks (`legsHit: ["full"]`) from regular
+  vector / BM25 hits. The chip is `c-synthetic-*` under the hood.
 - **Collapsible list** — Shows the first 3 chunks by default; an
   "Expand (+N chunks)" text button reveals the rest. Bottom fade
   masks the truncation edge.

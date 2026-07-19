@@ -6,13 +6,14 @@ import { HumanMessage, ToolMessage } from "@langchain/core/messages";
 
 import { db } from "@/db/client";
 import { kbChunk, kbDocument, kbFolder } from "@/lib/kb/schema";
-import { resolveKbMentions } from "@/lib/kb/resolve-mentions";
+import { resolveKbMentions, KB_FALLBACK_TOOL_CALL_ID } from "@/lib/kb/resolve-mentions";
 import { _resetKbEnvCache } from "@/lib/kb/env";
 import { TEST_USER, ensureTestUser, makeUser } from "@/tests/helpers/auth";
 
-// ponytail: resolver tests run against the real DB. Seed a doc + chunk
-// pair, then verify the resolver parses directives, fetches chunks, and
-// emits a ToolMessage into the messages stream.
+// ponytail: resolver tests run against the real DB. The resolver
+// ONLY emits a ToolMessage for the 0-chunk @doc fallback — every
+// other case (chunks > 0, folder, parsing/failed, unknown) is
+// dropped silently and the LLM handles it via search_kb.
 
 const FOLDER_ID = `f-${randomUUID()}`;
 const DOC_A_ID = `d-${randomUUID()}`;
@@ -23,7 +24,7 @@ function makeEmbedding(seed: number): number[] {
   return out;
 }
 
-async function seedSuccessDoc(docId: string) {
+async function seedSuccessDocWithChunks(docId: string) {
   await db.insert(kbDocument).values({
     id: docId,
     userId: TEST_USER.id,
@@ -43,11 +44,29 @@ async function seedSuccessDoc(docId: string) {
   } as never);
 }
 
-// ponytail: helper — find the ToolMessage in a messages array (if any).
+async function seedSuccessDocNoChunks(docId: string) {
+  // 0-chunk case — chunking pass hasn't landed any rows yet. The doc
+  // has OCR'd pages so the resolver can fall back to full markdown.
+  await db.insert(kbDocument).values({
+    id: docId,
+    userId: TEST_USER.id,
+    folderId: FOLDER_ID,
+    title: `nochunks-${docId.slice(0, 6)}.pdf`,
+    contentType: "application/pdf",
+    contentHash: `hash-${docId}`,
+    status: "success",
+    pages: [
+      { pageNumber: 1, markdown: "Page one content" },
+      { pageNumber: 2, markdown: "Page two content" },
+    ],
+  } as never);
+}
+
+// ponytail: locate the fallback ToolMessage (if any) by tool_call_id.
 function findKbToolMessage(messages: ReturnType<typeof Array.prototype.slice>) {
   return messages.find(
     (m: { constructor: { name: string }; tool_call_id?: string }) =>
-      m.constructor.name === "ToolMessage" && m.tool_call_id === "kb-context",
+      m.constructor.name === "ToolMessage" && m.tool_call_id === KB_FALLBACK_TOOL_CALL_ID,
   ) as ToolMessage | undefined;
 }
 
@@ -79,39 +98,47 @@ describe("lib/kb/resolve-mentions", () => {
     const messages = [new HumanMessage({ content: `see :kb-document[${DOC_A_ID}]`, id: "m-1" })];
     const out = await resolveKbMentions(messages, undefined);
     expect(findKbToolMessage(out)).toBeUndefined();
-    // Original directive text is NOT stripped (per current design).
     expect((out[0] as HumanMessage).content).toMatch(/:kb-document\[/);
   });
 
-  it("inserts a ToolMessage after the last HumanMessage when a mention resolves", async () => {
-    await seedSuccessDoc(DOC_A_ID);
+  it("does NOT inject a ToolMessage for a @doc with chunks (LLM handles it via search_kb)", async () => {
+    await seedSuccessDocWithChunks(DOC_A_ID);
     const messages = [
       new HumanMessage({ content: `please summarize :kb-document[${DOC_A_ID}]`, id: "m-1" }),
     ];
     const out = await resolveKbMentions(messages, TEST_USER.id);
+    // ponytail: the resolver used to inject a fake "meta" ToolMessage
+    // for the @doc-with-chunks case. That was dishonest (the query
+    // was fake, the chunks were placeholders) and forced the LLM to
+    // call search_kb a second time. Now the directive is preserved
+    // in the HumanMessage text and the LLM calls search_kb itself.
+    expect(findKbToolMessage(out)).toBeUndefined();
+    expect(out).toHaveLength(1);
+    expect((out[0] as HumanMessage).content).toMatch(/:kb-document\[/);
+  });
 
+  it("injects a fallback ToolMessage for a @doc with 0 chunks (full page markdown)", async () => {
+    await seedSuccessDocNoChunks(DOC_A_ID);
+    const messages = [
+      new HumanMessage({ content: `please summarize :kb-document[${DOC_A_ID}]`, id: "m-1" }),
+    ];
+    const out = await resolveKbMentions(messages, TEST_USER.id);
     // Length grew by exactly 2 (AIMessage + ToolMessage pair — LLM
-    // providers validate the synthetic tool_call_id pairing, so the
-    // AIMessage wrapper is required alongside the ToolMessage).
+    // providers validate the synthetic tool_call_id pairing).
     expect(out).toHaveLength(3);
-    // Original HumanMessage preserved at its position.
     expect(out[0]).toBe(messages[0]);
-    // ToolMessage inserted right after the HumanMessage.
     const tm = findKbToolMessage(out);
     expect(tm).toBeInstanceOf(ToolMessage);
     expect(tm!.name).toBe("search_kb");
-    // ponytail: payload is the same shape search_kb returns, so the
-    // existing KbSearchToolUI card can render it. `content` carries
-    // the LLM-facing markdown; `documents` is the structured chunks.
     const payload = JSON.parse(String(tm!.content));
     expect(payload.empty).toBe(false);
-    expect(payload.content).toMatch(/<mentioned-documents>/);
-    expect(payload.content).toMatch(/doc-/);
-    expect(Array.isArray(payload.documents)).toBe(true);
-    expect(payload.documents.length).toBeGreaterThan(0);
+    expect(payload.documents).toHaveLength(1);
+    expect(payload.documents[0].legsHit).toEqual(["full"]);
+    expect(payload.documents[0].content).toMatch(/Page one content/);
+    expect(payload.documents[0].content).toMatch(/Page two content/);
   });
 
-  it("inserts a ToolMessage with a soft-warning when the doc is in 'parsing' status (no resolved chunks)", async () => {
+  it("does NOT inject a ToolMessage for a @doc in 'parsing' status (LLM handles it)", async () => {
     await db.insert(kbDocument).values({
       id: DOC_A_ID,
       userId: TEST_USER.id,
@@ -125,15 +152,11 @@ describe("lib/kb/resolve-mentions", () => {
       new HumanMessage({ content: `@mention :kb-document[${DOC_A_ID}]`, id: "m-1" }),
     ];
     const out = await resolveKbMentions(messages, TEST_USER.id);
-    // ponytail: soft-warning IS still surfaced via ToolMessage so the
-    // LLM can tell the user the doc is being ingested. Empty documents
-    // array, but the warning text is in the content.
-    const tm = findKbToolMessage(out);
-    expect(tm).toBeDefined();
-    const payload = JSON.parse(String(tm!.content));
-    expect(payload.empty).toBe(false);
-    expect(payload.documents).toEqual([]);
-    expect(payload.content).toMatch(/still ingesting/);
+    // ponytail: the resolver used to emit a soft-warning ToolMessage
+    // for parsing/failed docs. The user now sees the status in the
+    // Settings -> KB UI; the chat resolver stays out of the way so
+    // the LLM just acknowledges the mention and moves on.
+    expect(findKbToolMessage(out)).toBeUndefined();
   });
 
   it("drops cross-user mentions silently (no ToolMessage)", async () => {
@@ -160,7 +183,6 @@ describe("lib/kb/resolve-mentions", () => {
     const out = await resolveKbMentions(messages, TEST_USER.id);
     expect(findKbToolMessage(out)).toBeUndefined();
 
-    // cleanup
     await db.delete(kbDocument).where(eq(kbDocument.id, DOC_A_ID));
     await db.delete(kbFolder).where(eq(kbFolder.userId, other.id));
   });
@@ -172,19 +194,17 @@ describe("lib/kb/resolve-mentions", () => {
   });
 
   it("preserves the original directive text in the HumanMessage (does not strip)", async () => {
-    await seedSuccessDoc(DOC_A_ID);
+    await seedSuccessDocNoChunks(DOC_A_ID);
     const messages = [
       new HumanMessage({ content: `please summarize :kb-document[${DOC_A_ID}]`, id: "m-1" }),
     ];
     const out = await resolveKbMentions(messages, TEST_USER.id);
-    // Directive token preserved on the original HumanMessage.
     expect((out[0] as HumanMessage).content).toMatch(/:kb-document\[/);
-    // ToolMessage inserted (we did resolve the doc).
     expect(findKbToolMessage(out)).toBeDefined();
   });
 
   it("handles multi-part HumanMessage content arrays", async () => {
-    await seedSuccessDoc(DOC_A_ID);
+    await seedSuccessDocNoChunks(DOC_A_ID);
     const messages = [
       new HumanMessage({
         content: [{ type: "text", text: ":kb-document[" + DOC_A_ID + "]" }] as never,
@@ -196,8 +216,8 @@ describe("lib/kb/resolve-mentions", () => {
   });
 
   it("resolves a mention using the short :kb-doc format by title", async () => {
-    await seedSuccessDoc(DOC_A_ID);
-    const title = `doc-${DOC_A_ID.slice(0, 6)}.pdf`;
+    await seedSuccessDocNoChunks(DOC_A_ID);
+    const title = `nochunks-${DOC_A_ID.slice(0, 6)}.pdf`;
     const messages = [
       new HumanMessage({ content: `please summarize :kb-doc[${title}]`, id: "m-1" }),
     ];
@@ -208,13 +228,8 @@ describe("lib/kb/resolve-mentions", () => {
     expect(payload.documents[0].docTitle).toBe(title);
   });
 
-  it("does not insert a second kb-context pair if one already exists in messages", async () => {
-    // ponytail: state.messages persists across turns (LangGraph
-    // messages reducer appends). When the same thread runs prepareData
-    // again — e.g. next turn, the previous kb-context pair is still
-    // in scope. Re-inserting with the same tool_call_id would be a
-    // duplicate the LLM provider rejects, so we skip.
-    await seedSuccessDoc(DOC_A_ID);
+  it("does not insert a second kb-fallback pair if one already exists in messages", async () => {
+    await seedSuccessDocNoChunks(DOC_A_ID);
     const first = await resolveKbMentions(
       [new HumanMessage({ content: `:kb-document[${DOC_A_ID}]`, id: "m-1" })],
       TEST_USER.id,
@@ -227,11 +242,10 @@ describe("lib/kb/resolve-mentions", () => {
       TEST_USER.id,
     );
     const tms = second.filter(
-      (m): m is ToolMessage => m instanceof ToolMessage && m.tool_call_id === "kb-context",
+      (m): m is ToolMessage =>
+        m instanceof ToolMessage && m.tool_call_id === KB_FALLBACK_TOOL_CALL_ID,
     );
-    // Exactly ONE ToolMessage with kb-context across both calls.
     expect(tms).toHaveLength(1);
-    // Second HumanMessage is preserved at the tail.
     expect(second[second.length - 1]).toBeInstanceOf(HumanMessage);
     expect((second[second.length - 1] as HumanMessage).id).toBe("m-2");
   });
