@@ -315,7 +315,6 @@ export function DocRow({
           onOpenChange={setDeleteOpen}
           onDeleted={() => {
             setDeleteOpen(false);
-            void onRefresh();
           }}
         />
       )}
