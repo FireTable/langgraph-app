@@ -99,7 +99,7 @@ describe("lib/kb/resolve-mentions", () => {
     // ToolMessage inserted right after the HumanMessage.
     const tm = findKbToolMessage(out);
     expect(tm).toBeInstanceOf(ToolMessage);
-    expect(tm!.name).toBe("kb_context_retrieval");
+    expect(tm!.name).toBe("search_kb");
     // ponytail: payload is the same shape search_kb returns, so the
     // existing KbSearchToolUI card can render it. `content` carries
     // the LLM-facing markdown; `documents` is the structured chunks.

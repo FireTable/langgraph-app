@@ -89,7 +89,7 @@ describe("lib/kb/resolve-mentions folder support", () => {
     // ToolMessage covers both docs, both labeled with the folder name.
     const tm = findKbToolMessage(out);
     expect(tm).toBeInstanceOf(ToolMessage);
-    expect(tm!.name).toBe("kb_context_retrieval");
+    expect(tm!.name).toBe("search_kb");
     const content = String(tm!.content);
     expect(content).toMatch(/<mentioned-documents>/);
     expect(content).toMatch(/doc-1\.pdf/);

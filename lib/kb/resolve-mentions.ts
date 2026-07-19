@@ -563,7 +563,12 @@ export async function resolveKbMentions(
     tool_calls: [
       {
         id: toolCallId,
-        name: "kb_context_retrieval",
+        // ponytail: same name as the real search_kb tool. The
+        // resolver synthesises the ToolMessage ahead of the LLM
+        // (so the model sees the @-mention chunks without a real
+        // tool call), but the toolkit maps both to KbSearchToolUI
+        // — no separate render entry needed.
+        name: "search_kb",
         args: toolArgs,
       },
     ],
@@ -571,7 +576,7 @@ export async function resolveKbMentions(
   const toolResult = new ToolMessage({
     content: toolResultPayload,
     tool_call_id: toolCallId,
-    name: "kb_context_retrieval",
+    name: "search_kb",
   });
   const lastHumanIdx = messages.findLastIndex((m) => m instanceof HumanMessage);
   const result = [...messages];

@@ -159,17 +159,11 @@ const kbToolkit = defineToolkit({
     parameters: z.object({ query: z.string(), topK: z.number().optional() }),
     render: KbSearchToolUI,
   },
-  // ponytail: synthetic tool from backend/agent/prepare-data-node.ts.
-  // When the user @-mentions a KB doc, prepareData injects an
-  // AIMessage+ToolMessage pair named `kb_context_retrieval` into
-  // state.messages (so the LLM sees the chunks without a real tool
-  // call). Payload shape matches search_kb's, so we reuse the same
-  // card — no separate render needed.
-  kb_context_retrieval: {
-    description: "Render a synthetic KB @-mention context card (reuses KbSearchToolUI).",
-    parameters: z.object({ query: z.string(), topK: z.number().optional() }),
-    render: KbSearchToolUI,
-  },
+  // ponytail: search_kb doubles as the @-mention synthetic tool —
+  // the mention resolver injects a pre-fetched ToolMessage with the
+  // same shape (so the LLM sees the @-doc chunks without a real
+  // tool call), and the toolkit renders both via KbSearchToolUI.
+  // No separate render entry needed.
   list_documents: {
     description: "Render a paginated list of the user's KB documents.",
     parameters: z.object({
