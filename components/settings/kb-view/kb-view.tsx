@@ -60,8 +60,21 @@ function KbViewContent({ className }: { className?: string }) {
 
   useEffect(() => {
     if (!data) return;
+    // ponytail: keep polling while EITHER the doc-row status is in
+    // flight OR any chunk is still pending/parsing inside an
+    // otherwise-success doc. OCR finalises (status flips to "success")
+    // well before chunks finish their embedding + entity-extract pass,
+    // so the original "doc.status === pending|parsing" check froze
+    // the badge on "Indexing" until the user opened the detail dialog
+    // (which has its own /api/kb/documents/[id] polling) and missed
+    // the table-level refresh entirely.
     const anyInflight = data.groups.some((g) =>
-      g.documents.some((d) => d.status === "pending" || d.status === "parsing"),
+      g.documents.some(
+        (d) =>
+          d.status === "pending" ||
+          d.status === "parsing" ||
+          (d.totalChunks ?? 0) > (d.successChunks ?? 0) + (d.failedChunks ?? 0),
+      ),
     );
     if (!anyInflight) return;
     const t = setInterval(() => void load(), 2000);

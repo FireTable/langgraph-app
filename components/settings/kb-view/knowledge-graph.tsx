@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { ArrowRight, Eye, Hash, Link2, Tags } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -70,14 +70,125 @@ export function KnowledgeGraph({
   const [hoveredLink, setHoveredLink] = useState<any>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     setTooltipPos({
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
     });
-  };
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    setHoveredNode(null);
+    setHoveredLink(null);
+  }, []);
+
+  // ponytail: stable callbacks for ForceGraph2D so the lib doesn't see
+  // a new function identity every poll and re-stage its render loop.
+  // nodeVal / nodeLabel / linkLabel are stateless — empty fns are fine.
+  const nodeVal = useCallback((node: any) => {
+    const degree = node.degree || 1;
+    const r = Math.min(12, Math.max(2.5, 4.5 + degree * 0.4));
+    return Math.pow(r / 6, 2);
+  }, []);
+  const emptyLabel = useCallback(() => "", []);
+  const linkWidth = useCallback((link: any) => {
+    const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
+    return Math.min(1.8, 0.8 + Math.log2(1 + degree) * 0.3);
+  }, []);
+  const linkColor = useCallback((link: any) => {
+    const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
+    const alpha = Math.min(0.7, 0.28 + Math.log2(1 + degree) * 0.16);
+    return `rgba(100, 116, 139, ${alpha.toFixed(3)})`;
+  }, []);
+  const onNodeHover = useCallback((node: any) => {
+    setHoveredNode(node || null);
+    if (node) setHoveredLink(null);
+  }, []);
+  const onLinkHover = useCallback((link: any) => {
+    setHoveredLink(link || null);
+    if (link) setHoveredNode(null);
+  }, []);
+  const nodeCanvasObject = useCallback(
+    (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+      if (
+        typeof node.x !== "number" ||
+        typeof node.y !== "number" ||
+        !isFinite(node.x) ||
+        !isFinite(node.y)
+      ) {
+        return;
+      }
+
+      const label = node.name;
+      const degree = node.degree || 1;
+      const zoomBoost = Math.min(0.6, Math.max(-0.5, (globalScale - 1) * -0.55));
+      const r = Math.min(12, Math.max(2.5, 4.5 + degree * 0.4 + zoomBoost));
+
+      let colorStart = "#f8fafc";
+      let colorEnd = "#cbd5e1";
+      let strokeColor = "#475569";
+      const typeLower = node.type?.toLowerCase();
+      if (typeLower === "person") {
+        colorStart = "#dbeafe";
+        colorEnd = "#3b82f6";
+        strokeColor = "#1d4ed8";
+      } else if (typeLower === "organization") {
+        colorStart = "#fef3c7";
+        colorEnd = "#f59e0b";
+        strokeColor = "#d97706";
+      } else if (typeLower === "concept") {
+        colorStart = "#d1fae5";
+        colorEnd = "#10b981";
+        strokeColor = "#059669";
+      }
+
+      const gradient = ctx.createRadialGradient(
+        node.x - r * 0.15,
+        node.y - r * 0.15,
+        r * 0.1,
+        node.x,
+        node.y,
+        r,
+      );
+      gradient.addColorStop(0, colorStart);
+      gradient.addColorStop(0.85, colorEnd);
+      gradient.addColorStop(1, strokeColor);
+
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+      ctx.lineWidth = 1.0;
+      ctx.strokeStyle = strokeColor;
+      ctx.stroke();
+
+      const showLabel = globalScale > 1.2 || (globalScale > 0.6 && degree >= 3) || degree >= 6;
+      if (showLabel) {
+        const fontSize = Math.max(2.8, 3.8 - Math.min(1.0, degree * 0.08));
+        const isHub = degree >= 4;
+        ctx.font = `${isHub ? 600 : 500} ${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+
+        const maxLen = globalScale > 1.5 ? 18 : globalScale > 0.9 ? 12 : 8;
+        let displayLabel = label;
+        if (label.length > maxLen) {
+          displayLabel = label.substring(0, maxLen - 2) + "...";
+        }
+
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.lineWidth = 1.2;
+        ctx.lineJoin = "round";
+        ctx.strokeText(displayLabel, node.x, node.y + r + 3.5);
+
+        ctx.fillStyle = isHub ? "#0f172a" : "#475569";
+        ctx.fillText(displayLabel, node.x, node.y + r + 3.5);
+      }
+    },
+    [],
+  );
 
   // ponytail: react-force-graph-2d instance ref so we can call
   // zoomToFit() once after first layout, animating into the cluster
@@ -98,6 +209,36 @@ export function KnowledgeGraph({
     resizeObserver.observe(containerRef.current);
     return () => resizeObserver.disconnect();
   }, [graphView]);
+
+  // ponytail: doc-detail-dialog polls /api/kb/documents/[id] every 2s.
+  // Each poll lands a fresh `chunks` array reference, which would force a
+  // re-dedup + new graphData object, which would re-trigger
+  // react-force-graph-2d's D3 simulation from scratch (visual flicker +
+  // layout thrash). We pin the dedup OUTPUT to a fingerprint: if the
+  // rolled-up (entity name + description) and (rel triple + description)
+  // bag is identical across polls, we keep the previous graphData
+  // reference. The fingerprint is a sorted, name-folded string concat —
+  // cheap (≤ a few KB for thousands of entities) and stable across polls
+  // when content hasn't changed (e.g. one chunk flips parsing → success).
+  const dedupFingerprint = useMemo(() => {
+    const parts: string[] = [];
+    for (const c of chunks ?? []) {
+      if (skipFailedChunks && c.status !== "success") continue;
+      for (const e of c.entities ?? []) {
+        parts.push(`E|${e.name.toLowerCase()}|${e.type}|${e.description}`);
+      }
+      for (const r of c.relationships ?? []) {
+        parts.push(
+          `R|${r.source.toLowerCase()}|${r.target.toLowerCase()}|${r.relation.toLowerCase()}|${r.description}`,
+        );
+      }
+      for (const t of c.themes ?? []) {
+        parts.push(`T|${t}`);
+      }
+    }
+    parts.sort();
+    return parts.join("\n");
+  }, [chunks, skipFailedChunks]);
 
   const { uniqueThemes, uniqueEntities, uniqueRelationships, graphData } = useMemo(() => {
     if (!chunks || chunks.length === 0) {
@@ -187,7 +328,9 @@ export function KnowledgeGraph({
       uniqueRelationships,
       graphData: { nodes, links: filteredLinks },
     };
-  }, [chunks, skipFailedChunks]);
+    // ponytail: depend on the fingerprint (stable across same-content polls),
+    // not the raw `chunks` array (which flips reference every 2s poll).
+  }, [dedupFingerprint, chunks?.length, skipFailedChunks]);
 
   // ponytail: re-fit whenever the node/edge count materially changes
   // so the graph lands on a useful framing for the user. Defers a
@@ -272,10 +415,7 @@ export function KnowledgeGraph({
           <div
             ref={containerRef}
             onMouseMove={handleMouseMove}
-            onMouseLeave={() => {
-              setHoveredNode(null);
-              setHoveredLink(null);
-            }}
+            onMouseLeave={handleMouseLeave}
             className="border rounded-xl bg-slate-50/50 overflow-hidden shadow-inner h-[500px] w-full flex items-center justify-center relative animate-fade-in"
           >
             {graphData.nodes.length === 0 ? (
@@ -290,118 +430,17 @@ export function KnowledgeGraph({
                   width={dimensions.width}
                   height={dimensions.height}
                   nodeRelSize={6}
-                  nodeVal={(node: any) => {
-                    const degree = node.degree || 1;
-                    const r = Math.min(12, Math.max(2.5, 4.5 + degree * 0.4));
-                    return Math.pow(r / 6, 2);
-                  }}
-                  nodeLabel={() => ""}
-                  linkLabel={() => ""}
+                  nodeVal={nodeVal}
+                  nodeLabel={emptyLabel}
+                  linkLabel={emptyLabel}
                   linkDirectionalArrowLength={6}
                   linkDirectionalArrowRelPos={1}
-                  linkWidth={(link: any) => {
-                    const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
-                    return Math.min(1.8, 0.8 + Math.log2(1 + degree) * 0.3);
-                  }}
-                  linkColor={(link: any) => {
-                    const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
-                    const alpha = Math.min(0.7, 0.28 + Math.log2(1 + degree) * 0.16);
-                    return `rgba(100, 116, 139, ${alpha.toFixed(3)})`;
-                  }}
+                  linkWidth={linkWidth}
+                  linkColor={linkColor}
                   cooldownTicks={80}
-                  nodeCanvasObject={(node: any, ctx, globalScale) => {
-                    if (
-                      typeof node.x !== "number" ||
-                      typeof node.y !== "number" ||
-                      !isFinite(node.x) ||
-                      !isFinite(node.y)
-                    ) {
-                      return;
-                    }
-
-                    const label = node.name;
-                    const degree = node.degree || 1;
-                    const zoomBoost = Math.min(0.6, Math.max(-0.5, (globalScale - 1) * -0.55));
-                    const r = Math.min(12, Math.max(2.5, 4.5 + degree * 0.4 + zoomBoost));
-
-                    // Glowing 3D radial gradient coloring
-                    let colorStart = "#f8fafc";
-                    let colorEnd = "#cbd5e1";
-                    let strokeColor = "#475569";
-                    const typeLower = node.type?.toLowerCase();
-                    if (typeLower === "person") {
-                      colorStart = "#dbeafe";
-                      colorEnd = "#3b82f6";
-                      strokeColor = "#1d4ed8";
-                    } else if (typeLower === "organization") {
-                      colorStart = "#fef3c7";
-                      colorEnd = "#f59e0b";
-                      strokeColor = "#d97706";
-                    } else if (typeLower === "concept") {
-                      colorStart = "#d1fae5";
-                      colorEnd = "#10b981";
-                      strokeColor = "#059669";
-                    }
-
-                    const gradient = ctx.createRadialGradient(
-                      node.x - r * 0.15,
-                      node.y - r * 0.15,
-                      r * 0.1,
-                      node.x,
-                      node.y,
-                      r,
-                    );
-                    gradient.addColorStop(0, colorStart);
-                    gradient.addColorStop(0.85, colorEnd);
-                    gradient.addColorStop(1, strokeColor);
-
-                    ctx.beginPath();
-                    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-                    ctx.fillStyle = gradient;
-                    ctx.fill();
-                    ctx.lineWidth = 1.0;
-                    ctx.strokeStyle = strokeColor;
-                    ctx.stroke();
-
-                    // ponytail: tiered label density & canvas scale
-                    // Zoom-out (cluster view) only draws labels for key hub nodes to prevent overlapping.
-                    // As the user zooms in, we draw more minor leaf labels.
-                    const showLabel =
-                      globalScale > 1.2 || (globalScale > 0.6 && degree >= 3) || degree >= 6;
-                    if (showLabel) {
-                      // Font size is fixed in canvas coordinates so it shrinks/scales with zoom.
-                      const fontSize = Math.max(2.8, 3.8 - Math.min(1.0, degree * 0.08));
-                      const isHub = degree >= 4;
-                      ctx.font = `${isHub ? 600 : 500} ${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
-                      ctx.textAlign = "center";
-                      ctx.textBaseline = "top";
-
-                      // Truncation based on zoom and degree
-                      const maxLen = globalScale > 1.5 ? 18 : globalScale > 0.9 ? 12 : 8;
-                      let displayLabel = label;
-                      if (label.length > maxLen) {
-                        displayLabel = label.substring(0, maxLen - 2) + "...";
-                      }
-
-                      // Stroke text for white halo background (improves legibility over links)
-                      ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-                      ctx.lineWidth = 1.2;
-                      ctx.lineJoin = "round";
-                      ctx.strokeText(displayLabel, node.x, node.y + r + 3.5);
-
-                      // Fill text
-                      ctx.fillStyle = isHub ? "#0f172a" : "#475569";
-                      ctx.fillText(displayLabel, node.x, node.y + r + 3.5);
-                    }
-                  }}
-                  onNodeHover={(node) => {
-                    setHoveredNode(node || null);
-                    if (node) setHoveredLink(null);
-                  }}
-                  onLinkHover={(link) => {
-                    setHoveredLink(link || null);
-                    if (link) setHoveredNode(null);
-                  }}
+                  nodeCanvasObject={nodeCanvasObject}
+                  onNodeHover={onNodeHover}
+                  onLinkHover={onLinkHover}
                 />
 
                 {(() => {
