@@ -194,4 +194,121 @@ describe("POST /api/kb/documents/[id]/reprocess", () => {
     expect(payload.metadata.docId).toBe("d-1");
     void _threadId;
   });
+
+  // ponytail: retryFailedChunks mode — only retry chunks where
+  // status='failed'. Successful chunks are kept verbatim. The route
+  // UPDATEs failed chunks in place (status='parsing', clear
+  // error_message + entities) so the IIFE inside generateChunkEmbedNode
+  // can find them by status='parsing' and re-run entity-extract. No
+  // DELETE — chunk.id, ordinal, embedding, and content all stay put
+  // (embedding API is deterministic; the old vector is still valid).
+  it("retryFailedChunks: marks failed chunks 'parsing' in place, keeps all 4 chunks, leaves doc.status='success'", async () => {
+    await seedFolder(USER_A.id);
+    await seedAttachment(USER_A.id);
+    await seedDoc({ userId: USER_A.id, status: "success" });
+
+    await db.execute(
+      sql`INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, entities, relationships, themes, status, error_message)
+          VALUES
+            ('c-ok-1', 'd-1', 0, 'good chunk 1', ${embeddingLiteral}, '[]'::jsonb, '[]'::jsonb, '{}'::text[], 'success', NULL),
+            ('c-ok-2', 'd-1', 1, 'good chunk 2', ${embeddingLiteral}, '[]'::jsonb, '[]'::jsonb, '{}'::text[], 'success', NULL),
+            ('c-bad-1', 'd-1', 2, 'bad chunk 1', ${embeddingLiteral},
+              '[{"name":"Alice","type":"Person","description":"old"}]'::jsonb,
+              '[{"source":"Alice","target":"Bob","relation":"knows","description":"old"}]'::jsonb,
+              ARRAY['#old-theme-1','#old-theme-2'],
+              'failed', 'embed timeout'),
+            ('c-bad-2', 'd-1', 3, 'bad chunk 2', ${embeddingLiteral},
+              '[{"name":"Carol","type":"Person","description":"old"}]'::jsonb,
+              '[{"source":"Carol","target":"Dave","relation":"likes","description":"old"}]'::jsonb,
+              ARRAY['#old-theme-3'],
+              'failed', 'llm 502')`,
+    );
+
+    const req = new Request(
+      "http://localhost/api/kb/documents/d-1/reprocess?mode=retryFailedChunks",
+      {
+        method: "POST",
+      },
+    );
+    const res = await POST(req, ctxModel("d-1"));
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ docId: "d-1", mode: "retryFailedChunks" });
+
+    // ponytail: doc.status STAYS 'success' the whole time —
+    // flipping it to 'parsing' would make the live UI badge flicker
+    // and pollute the user's mental model ("did my doc break again?").
+    // The chunk-level "Indexed N/M" rollup is the progress signal;
+    // doc.status reflects the OCR + chunk pipeline at a macro level,
+    // and that hasn't changed.
+    const row = await db.query.kbDocument.findFirst({
+      where: aAnd(eq(kbDocument.id, "d-1"), eq(kbDocument.userId, USER_A.id)),
+    });
+    expect(row?.status).toBe("success");
+
+    // ponytail: every chunk row survives — failed ones are marked
+    // 'parsing' with entities/error_message cleared so the IIFE
+    // can re-run entity-extract and UPDATE the row back to
+    // success/failed. id/ordinal/embedding/content are all
+    // preserved verbatim.
+    const remaining = await db.query.kbChunk.findMany({
+      where: eq(kbChunk.documentId, "d-1"),
+      orderBy: (c, { asc }) => [asc(c.ordinal)],
+    });
+    expect(remaining).toHaveLength(4);
+
+    const byId = new Map(remaining.map((c) => [c.id, c]));
+    // survivor chunks: completely untouched
+    expect(byId.get("c-ok-1")?.status).toBe("success");
+    expect(byId.get("c-ok-2")?.status).toBe("success");
+    // failed chunks: in-place reset, ready for entity-extract.
+    // ponytail: ALL three LLM-derived fields get cleared on the
+    // mark (entities, relationships, themes) — the next
+    // entity-extract call rewrites all of them, so leaving any of
+    // them stale would surface misleading graph nodes / themes in
+    // the doc-detail panel until the LLM lands.
+    const bad1 = byId.get("c-bad-1");
+    expect(bad1?.status).toBe("parsing");
+    expect(bad1?.errorMessage).toBeNull();
+    expect(bad1?.entities).toEqual([]);
+    expect(bad1?.relationships).toEqual([]);
+    expect(bad1?.themes).toEqual([]);
+    const bad2 = byId.get("c-bad-2");
+    expect(bad2?.status).toBe("parsing");
+    expect(bad2?.errorMessage).toBeNull();
+    expect(bad2?.entities).toEqual([]);
+    expect(bad2?.relationships).toEqual([]);
+    expect(bad2?.themes).toEqual([]);
+
+    expect(mockRunsCreate).toHaveBeenCalledTimes(1);
+    const [_threadId, assistantId, payload] = mockRunsCreate.mock.calls[0];
+    expect(assistantId).toBe("kbAgent");
+    expect(payload.metadata.source).toBe("kb-reprocess");
+    expect(payload.metadata.docId).toBe("d-1");
+    void _threadId;
+  });
+
+  it("retryFailedChunks: returns 409 NOT_READY when doc.status is not 'success'", async () => {
+    // ponytail: chunks must already be embedded once (doc reached
+    // a terminal status) before retryFailedChunks makes sense. If
+    // OCR hasn't finished or doc failed at OCR stage, the user
+    // should pick 'Full re-run' or 'Retry failed pages' instead.
+    await seedFolder(USER_A.id);
+    await seedAttachment(USER_A.id);
+    await seedDoc({ userId: USER_A.id, status: "failed", errorMessage: "OCR error" });
+
+    const req = new Request(
+      "http://localhost/api/kb/documents/d-1/reprocess?mode=retryFailedChunks",
+      {
+        method: "POST",
+      },
+    );
+    const res = await POST(req, ctxModel("d-1"));
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { code?: string };
+    expect(body.code).toBe("NOT_READY");
+
+    // ponytail: failed dispatch would be the WORST UX — flip
+    // nothing and silently ignore.
+    expect(mockRunsCreate).not.toHaveBeenCalled();
+  });
 });

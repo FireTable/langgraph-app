@@ -86,7 +86,7 @@ export const KbAgentState = new StateSchema({
   // `fireIngestionRun` from `config.configurable` when invoked by
   // `POST /api/kb/documents/[id]/reprocess?chunksOnly=true`. The
   // kb_documents row stays at its terminal status (no reset).
-  mode: z.enum(["full", "chunksOnly", "retryFailed"]).default("full"),
+  mode: z.enum(["full", "chunksOnly", "retryFailed", "retryFailedChunks"]).default("full"),
   // ponytail: for chunksOnly dispatch, this is the target docId
   // (the row whose pages[].markdown will be re-chunked). Ignored in
   // full mode (prepareKBData figures the docId out per file part).
@@ -101,7 +101,7 @@ export const KbAgentState = new StateSchema({
 export type KbAgentStateShape = {
   messages: BaseMessage[];
   userId: string | null;
-  mode: "full" | "chunksOnly" | "retryFailed";
+  mode: "full" | "chunksOnly" | "retryFailed" | "retryFailedChunks";
   docId: string | null;
   pagesByDocId: Record<string, PageResult[]>;
   processedFiles: ProcessedFile[];

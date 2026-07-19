@@ -6,6 +6,7 @@ import { getAttachmentForUser } from "@/lib/attachments/queries";
 import {
   deleteKbChunksByDocumentId,
   findKbDocumentById,
+  markFailedKbChunksRetryingByDocumentId,
   resetKbDocumentForReprocess,
   updateKbDocumentStatus,
   withKbTx,
@@ -46,11 +47,19 @@ export const POST = withAuth<Params>(async (req, { user, params }) => {
   const modeParam = new URL(req.url).searchParams.get("mode");
   const chunksOnly = new URL(req.url).searchParams.get("chunksOnly") === "true";
 
-  let mode: "full" | "chunksOnly" | "retryFailed" = "full";
+  let mode: "full" | "chunksOnly" | "retryFailed" | "retryFailedChunks" = "full";
   if (modeParam === "chunksOnly" || chunksOnly) {
     mode = "chunksOnly";
   } else if (modeParam === "retryFailed") {
     mode = "retryFailed";
+  } else if (modeParam === "retryFailedChunks") {
+    // ponytail: 4th reprocess mode — only re-run chunks whose status
+    // is 'failed'. Successful chunks keep their id/embedding/
+    // entities verbatim; doc.status stays 'success' so the live UI
+    // doesn't flicker to "Indexing" while chunks heal in the
+    // background. Surfaces the partial-chunk-failure case without
+    // paying OCR cost again.
+    mode = "retryFailedChunks";
   }
 
   const doc = await findKbDocumentById(user.id, params.id);
@@ -119,6 +128,65 @@ export const POST = withAuth<Params>(async (req, { user, params }) => {
       { docId: doc.id, chunksOnly: mode === "chunksOnly", mode },
       { status: 202 },
     );
+  }
+
+  // ponytail: retryFailedChunks — UPDATE failed chunks in place
+  // (status='parsing', clear error_message + entities, keep id/
+  // ordinal/embedding/content). doc.status STAYS 'success' the
+  // whole time — flipping it to 'parsing' would flicker the UI
+  // badge and confuse the user ("did my doc break again?"). The
+  // chunk-level "Indexed N/M" rollup is the progress signal;
+  // doc.status reflects the macro OCR + chunk pipeline state,
+  // which hasn't actually changed.
+  //
+  // Why UPDATE instead of DELETE+INSERT: the DELETE+INSERT design
+  // had a race where pageToMarkdownNode skips under chunksOnly /
+  // retryFailed, so doc.pages is empty, fullMarkdown is empty, the
+  // IIFE inside generateChunkEmbedNode throws — and the DELETE has
+  // already run, leaving the doc with N-K chunks and no recovery
+  // path. In-place UPDATE makes the row indestructible.
+  if (mode === "retryFailedChunks") {
+    if (doc.status !== "success") {
+      return NextResponse.json(
+        {
+          code: "NOT_READY",
+          reason: "doc has no successfully indexed chunks yet; run full reprocess first",
+        },
+        { status: 409 },
+      );
+    }
+
+    await withKbTx(async (tx) => {
+      // ponytail: reset failed chunks to status='parsing' so the
+      // IIFE can find them and UPDATE them back to success/failed
+      // per-row. The row's id, ordinal, embedding, and content are
+      // preserved verbatim — embedding API is deterministic so the
+      // old vector is still valid for KB search even if the
+      // entity-extract LLM fails on this run.
+      await markFailedKbChunksRetryingByDocumentId(tx, doc.id);
+    });
+
+    try {
+      await fireIngestionRun({
+        userId: user.id,
+        attachment: {
+          r2Key: "chunks-only-no-op",
+          contentType: doc.contentType,
+          name: doc.title,
+        },
+        docId: doc.id,
+        title: doc.title,
+        source: "kb-reprocess",
+        mode,
+      });
+    } catch (err) {
+      console.error(
+        `POST /api/kb/documents/[id]/reprocess?mode=retryFailedChunks: fireIngestionRun failed`,
+        err,
+      );
+    }
+
+    return NextResponse.json({ docId: doc.id, mode }, { status: 202 });
   }
 
   // ponytail: full reprocess — clear stale chunks + flip the doc

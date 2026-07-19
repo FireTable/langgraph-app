@@ -37,7 +37,7 @@ export type FireIngestionOpts = {
   // stays at its terminal status (no reset). Ignored for fresh
   // uploads (the route never sends it for kb-settings).
   chunksOnly?: boolean;
-  mode?: "full" | "chunksOnly" | "retryFailed";
+  mode?: "full" | "chunksOnly" | "retryFailed" | "retryFailedChunks";
 };
 
 export async function fireIngestionRun({

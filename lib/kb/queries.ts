@@ -155,6 +155,41 @@ export async function deleteKbChunksByDocumentId(tx: PgTx, docId: string): Promi
   await tx.delete(kbChunk).where(eq(kbChunk.documentId, docId));
 }
 
+// ponytail: retryFailedChunks reprocess — UPDATE failed chunk rows
+// in place rather than DELETE+INSERT. The DELETE+INSERT design had
+// a race: if the IIFE inside generateChunkEmbedNode fails to reach
+// the INSERT step (pageToMarkdownNode skips under chunksOnly, so
+// doc.pages is empty, fullMarkdown is empty, IIFE throws), the
+// DELETE has already run and the gap ordinals are gone forever —
+// the user sees a doc with N-2 chunks that can never recover.
+//
+// In-place UPDATE preserves the row's id, ordinal, embedding, and
+// content. Embedding API is deterministic so the old vector is
+// still valid for KB search. The IIFE then finds these rows by
+// status='parsing' and runs entity-extract, UPDATEing them back
+// to success/failed.
+//
+// ponytail: clear ALL three LLM-derived fields (entities,
+// relationships, themes) up front — entity-extract rewrites all
+// of them. Leaving any of them stale would mean the UI shows the
+// old graph nodes / themes until the new LLM call lands, which
+// is misleading on a doc-detail panel.
+export async function markFailedKbChunksRetryingByDocumentId(
+  tx: PgTx,
+  docId: string,
+): Promise<void> {
+  await tx
+    .update(kbChunk)
+    .set({
+      status: "parsing",
+      errorMessage: null,
+      entities: [],
+      relationships: [],
+      themes: [],
+    })
+    .where(and(eq(kbChunk.documentId, docId), eq(kbChunk.status, "failed")));
+}
+
 export async function findKbDocumentById(
   userId: string,
   docId: string,

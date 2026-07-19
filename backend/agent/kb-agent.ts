@@ -134,20 +134,24 @@ async function prepareKBDataNode(
   config?: {
     configurable?: {
       userId?: string;
-      mode?: "full" | "chunksOnly" | "retryFailed";
+      mode?: "full" | "chunksOnly" | "retryFailed" | "retryFailedChunks";
       docId?: string;
       forceRerun?: boolean;
     };
   },
 ): Promise<Partial<KbAgentStateShape>> {
-  // ponytail: chunksOnly / retryFailed dispatch from POST /reprocess.
-  // We bypass the entire attachment/file-part lookup chain and reuse
-  // the existing kb_document row's pages[].markdown directly:
+  // ponytail: chunksOnly / retryFailed / retryFailedChunks dispatch
+  // from POST /reprocess. We bypass the entire attachment/file-part
+  // lookup chain and reuse the existing kb_document row's pages[].markdown:
   //   - splitFileToPageNode: r2Key=null → filter drops it → no-op
   //   - pageToMarkdownNode: retryFailed runs OCR only on failed pages;
-  //     chunksOnly skips OCR entirely.
+  //     chunksOnly / retryFailedChunks skip OCR entirely (chunksOnly
+  //     early-returns in pageToMarkdownNode; retryFailedChunks never
+  //     reaches it because generateChunkEmbedNode intercepts on
+  //     state.mode='retryFailedChunks').
   //   - rewriteMessagesNode: guarded → no messages rewrite
-  //   - generateChunkEmbedNode: pipelineStatus="new" → runs
+  //   - generateChunkEmbedNode: pipelineStatus="new" → runs. Each
+  //     mode then branches internally on state.mode.
   // dispatchable mode precedence: config.configurable (per-run
   // override set by fireIngestionRun) wins over state.mode (default
   // "full" in the schema).
@@ -156,7 +160,7 @@ async function prepareKBDataNode(
   const userId = config?.configurable?.userId ?? state.userId;
   if (!userId) return makeError("user not provided");
 
-  if (mode === "chunksOnly" || mode === "retryFailed") {
+  if (mode === "chunksOnly" || mode === "retryFailed" || mode === "retryFailedChunks") {
     // ponytail: chunksOnly / retryFailed requires an explicit docId either from
     // config.configurable.docId (per-run) or state.docId. fallback
     // to the explicit dispatch path. fail closed if neither set.
@@ -586,6 +590,20 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
   for (let i = 0; i < updatedProcessed.length; i++) {
     const pf = updatedProcessed[i];
     if (pf.pipelineStatus !== "new" || !pf.docId) continue;
+    // ponytail: retryFailedChunks skips the page-level OCR check —
+    // pages[] is empty for chunksOnly-style dispatches (route
+    // already verified the doc reached a terminal status), and
+    // even when pages are populated this loop is checking the
+    // wrong axis (OCR), not the chunk axis the retry is fixing.
+    // Without this guard, the loop flips the stub entry to
+    // pipelineStatus='failed' on pages.length===0, which then
+    // makes routeAfterRewrite return END before generateChunkEmbed
+    // runs. Routing the retry through the same check would also
+    // downgrade chunks that legitimately have all-pages-markdown.
+    if (state.mode === "retryFailedChunks") {
+      successfulDocIds.push(pf.docId);
+      continue;
+    }
     const pages = updatedPagesByDocId[pf.docId] ?? [];
     const hasAnyFailedPage = pages.some((p) => !!p.errorMessage || !(p.markdown ?? "").trim());
     if (pages.length > 0 && !hasAnyFailedPage) {
@@ -786,6 +804,30 @@ async function rewriteMessagesNode(state: KbAgentStateShape): Promise<Partial<Kb
 }
 
 // ---------------------------------------------------------------------------
+// ponytail: normalizeLightRagOut — pure mapping from the LLM's
+// structured output to the shape persisted on kb_chunk. Shared by
+// generateChunkEmbedNode's main path AND its retryFailedChunks
+// branch so the two can never drift (e.g. one day the schema adds
+// a new field and the other path forgets to map it).
+// ---------------------------------------------------------------------------
+function normalizeLightRagOut(out: z.infer<typeof lightRagSchema>) {
+  return {
+    entities: (out.entities ?? []).map((e) => ({
+      name: e.name,
+      type: e.type,
+      description: e.description ?? "",
+    })),
+    relationships: (out.relationships ?? []).map((r) => ({
+      source: r.source,
+      target: r.target,
+      relation: r.relation || r.type || "",
+      description: r.description ?? "",
+    })),
+    themes: out.themes ?? [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // ponytail: resolveEntityAliasesForDoc — extracted from
 // generateChunkEmbedNode's IIFE so the alignment pass is unit-testable
 // in isolation. NOT a LangGraph node (would need polling for chunks
@@ -935,101 +977,139 @@ async function generateChunkEmbedNode(
         // ponytail: fire-and-forget so the graph node completes instantly.
         void (async () => {
           try {
+            // ponytail: retryFailedChunks is an input-source branch,
+            // not a parallel pipeline. The route handler has marked
+            // failed chunks as status='parsing' (preserving id/
+            // ordinal/embedding/content). We skip OCR/markdown/
+            // splitter/embedder, read those rows directly, and feed
+            // them into the same entity-extract loop + write-back
+            // the main path uses. This way the two paths share
+            // normalization / error handling / queue / concurrency
+            // — there is no "second IIFE" to drift out of sync.
+            //
+            // Type-wise: chunkInputs[] is the shared shape produced
+            // by either path. From the entity-extract loop's POV,
+            // it doesn't care whether the rows were just split or
+            // read from the DB.
+            type ChunkInput = { id: string; ordinal: number; content: string };
+
+            const isRetryFailedChunks = state.mode === "retryFailedChunks";
+
             const doc = await findKbDocumentById(userId, docId);
             if (!doc) {
               throw new Error(`Document ${docId} not found`);
             }
-            const pages = (doc.pages ?? []) as Array<{
-              pageIndex: number;
-              imageUrl: string;
-              markdown: string;
-            }>;
-            const fullMarkdown = pages
-              .map((p) => p.markdown)
-              .filter((m) => m && m.length > 0)
-              .join("\n\n");
-            console.log(
-              `[kbAgent] Background task: loaded docId=${docId}, pages count=${pages.length}, fullMarkdown length=${fullMarkdown.length}`,
-            );
-            if (!fullMarkdown) {
-              throw new Error(`Document ${docId} has no markdown content extracted yet`);
-            }
+            const docTitle = doc.title ?? "Unknown Document";
+
             // ponytail: entity-extract LLM routes through the extract
             // pool so admin can flag a cheaper model (e.g. gpt-4o-mini)
-            // for this work without forcing the same model on the extractModel
-            // default. Falls back to the extractModel pool when no extract-
-            // tagged model is registered (see getExtractModel).
+            // for this work without forcing the same model on the
+            // extractModel default. Falls back to the extractModel
+            // pool when no extract-tagged model is registered (see
+            // getExtractModel).
             const extractModel = await getExtractModel();
-            const embedder = await getEmbeddingModel();
-
-            const lengthSplitter = new MarkdownTextSplitter({
-              chunkSize: KB_CHUNK_SIZE,
-              chunkOverlap: KB_CHUNK_OVERLAP,
-            });
             const entityQueue = new PQueue({ concurrency: KB_ENTITY_CONCURRENCY });
 
-            const splitDocs = await lengthSplitter.createDocuments([fullMarkdown]);
-            const texts = splitDocs.map((d) => d.pageContent);
-            const embeddings = await embedder.embedDocuments(texts);
+            // ponytail: input source.
+            //   - retryFailedChunks: SELECT WHERE status='parsing'
+            //     (route already marked them). id/ordinal/content
+            //     come from the existing row; embedding is preserved
+            //     verbatim on the row.
+            //   - other modes: MarkdownTextSplitter over
+            //     pages[].markdown, then fresh chunkIds + embeddings.
+            // The two paths converge here into a single
+            // `chunkInputs` array — everything downstream
+            // (entity-extract, normalize, write-back) is identical.
+            let chunkInputs: ChunkInput[];
+            let totalChunksForPrompt: number;
 
-            // ponytail: schema expects vector(1024) (kb_chunk.embedding +
-            // HNSW index). If the embedder returns anything else, pgvector
-            // rejects every insert with 22P02 — caught too late to be useful.
-            // Fail fast with a single clear sentence instead.
-            const actualDim = embeddings[0]?.length ?? 0;
-            if (actualDim !== EMBEDDING_DIM) {
-              throw new Error(
-                `embedding dimension mismatch: schema expects ${EMBEDDING_DIM}, embedder returned ${actualDim}. Update lib/kb/schema.ts EMBEDDING_DIM + run the matching ALTER COLUMN migration.`,
+            if (isRetryFailedChunks) {
+              const existing = await findKbChunksByDocumentId(userId, docId);
+              const retryTargets = existing.filter((c) => c.status === "parsing");
+              totalChunksForPrompt = existing.length;
+              console.log(
+                `[kbAgent] retryFailedChunks: docId=${docId}, ${retryTargets.length} to re-extract (out of ${totalChunksForPrompt})`,
+              );
+              chunkInputs = retryTargets.map((c) => ({
+                id: c.id,
+                ordinal: c.ordinal,
+                content: c.content,
+              }));
+              if (chunkInputs.length === 0) {
+                invalidateKbDoc(userId, docId);
+                return;
+              }
+            } else {
+              const pages = (doc.pages ?? []) as Array<{
+                pageIndex: number;
+                imageUrl: string;
+                markdown: string;
+              }>;
+              const fullMarkdown = pages
+                .map((p) => p.markdown)
+                .filter((m) => m && m.length > 0)
+                .join("\n\n");
+              console.log(
+                `[kbAgent] Background task: loaded docId=${docId}, pages count=${pages.length}, fullMarkdown length=${fullMarkdown.length}`,
+              );
+              if (!fullMarkdown) {
+                throw new Error(`Document ${docId} has no markdown content extracted yet`);
+              }
+
+              const embedder = await getEmbeddingModel();
+              const lengthSplitter = new MarkdownTextSplitter({
+                chunkSize: KB_CHUNK_SIZE,
+                chunkOverlap: KB_CHUNK_OVERLAP,
+              });
+
+              const splitDocs = await lengthSplitter.createDocuments([fullMarkdown]);
+              const texts = splitDocs.map((d) => d.pageContent);
+              const embeddings = await embedder.embedDocuments(texts);
+
+              // ponytail: schema expects vector(1024) (kb_chunk.embedding +
+              // HNSW index). If the embedder returns anything else, pgvector
+              // rejects every insert with 22P02 — caught too late to be useful.
+              // Fail fast with a single clear sentence instead.
+              const actualDim = embeddings[0]?.length ?? 0;
+              if (actualDim !== EMBEDDING_DIM) {
+                throw new Error(
+                  `embedding dimension mismatch: schema expects ${EMBEDDING_DIM}, embedder returned ${actualDim}. Update lib/kb/schema.ts EMBEDDING_DIM + run the matching ALTER COLUMN migration.`,
+                );
+              }
+
+              const chunkIds = texts.map(() => `c-${randomUUID()}`);
+
+              totalChunksForPrompt = texts.length;
+              chunkInputs = texts.map((text, i) => ({
+                id: chunkIds[i]!,
+                ordinal: i,
+                content: text,
+              }));
+
+              // ponytail: 3-stage chunk lifecycle for fresh chunks —
+              // INSERT all rows at status='pending', then
+              // markAllParsingForDocInTx in the same tx so polling
+              // either sees 'parsing' or nothing, never a stuck
+              // 'pending' frame.
+              await withKbTx(async (tx) => {
+                await insertKbChunks(
+                  tx,
+                  texts.map((text, i) => ({
+                    id: chunkIds[i]!,
+                    documentId: docId,
+                    ordinal: i,
+                    content: text,
+                    embedding: embeddings[i] ?? [],
+                    entities: [],
+                    // status defaults to 'pending' on insert.
+                  })) as never,
+                );
+                await markAllKbChunksParsingForDocInTx(tx, docId);
+              });
+              console.log(
+                `[kbAgent] Background task: successfully inserted ${texts.length} chunks for docId=${docId}`,
               );
             }
-
-            // ponytail: allocate ids up front (one per chunk) so we can
-            // mark each chunk success/failed independently after the
-            // batch insert. Without per-chunk ids we'd have to write
-            // `UPDATE kb_chunk SET status=... WHERE document_id=... AND
-            // ordinal=?`, but with multi-run reprocesses the ordinal
-            // space can briefly overlap; chunk id is the canonical
-            // handle. ids are stable across this run — even if the
-            // tx fails midway, the partial set is identifiable.
-            const chunkIds = texts.map(() => `c-${randomUUID()}`);
-
-            // ponytail: 3-stage chunk lifecycle, observable per
-            // chunk so the UI polling can read real progress.
-            //
-            //   1. INSERT all rows at status='pending'  ← chunk
-            //      appeared in DB, embedding LLM ran, OCR has
-            //      finished, but entities haven't been extracted yet
-            //   2. UPDATE all rows to 'parsing'           ← entity LLM
-            //      dispatch started; the 'parsing' frame is short
-            //      (KB_ENTITY_CONCURRENCY decides total work-time) but
-            //      the UI now has a real signal to surface
-            //   3. UPDATE per-row to success/failed     ← individual
-            //      outcomes land; failures DO NOT downgrade
-            //      kb_document (Step 3 contract)
-            //
-            // Step 1+2 live in one withKbTx so the row INSERT and the
-            // status flip are atomic from the UI's perspective —
-            // polling either sees nothing or 'parsing', never the
-            // 'pending' frame after a successful INSERT (which would
-            // feel like the pipeline stalled).
-            await withKbTx(async (tx) => {
-              await insertKbChunks(
-                tx,
-                texts.map((text, i) => ({
-                  id: chunkIds[i]!,
-                  documentId: docId,
-                  ordinal: i,
-                  content: text,
-                  embedding: embeddings[i] ?? [],
-                  entities: [],
-                  // status defaults to 'pending' on insert.
-                })) as never,
-              );
-              await markAllKbChunksParsingForDocInTx(tx, docId);
-            });
-            console.log(
-              `[kbAgent] Background task: successfully inserted ${texts.length} chunks for docId=${docId}`,
-            );
 
             // ponytail: per-row, streaming write-back. Each task writes
             // ITS OWN row the moment its entity LLM resolves — no
@@ -1053,15 +1133,16 @@ async function generateChunkEmbedNode(
               return;
             }
             await Promise.allSettled(
-              texts.map((text, i) =>
+              chunkInputs.map((chunk) =>
                 entityQueue.add(async (): Promise<void> => {
-                  const chunkId = chunkIds[i]!;
-                  const docTitle = doc.title ?? "Unknown Document";
+                  const chunkId = chunk.id;
+                  const ordinal = chunk.ordinal;
+                  const text = chunk.content;
 
                   const systemMessage = new SystemMessage(KB_ENTITY_EXTRACTION_SYSTEM_PROMPT);
                   const humanMessage = new HumanMessage(
                     `Context Document Title: [${docTitle}]\n` +
-                      `Chunk: [${i + 1} / ${texts.length}]\n\n` +
+                      `Chunk: [${ordinal + 1} / ${totalChunksForPrompt}]\n\n` +
                       `Text to extract:\n${text}`,
                   );
 
@@ -1072,25 +1153,11 @@ async function generateChunkEmbedNode(
                         ...config,
                         tags: ["nostream"],
                       })) as z.infer<typeof lightRagSchema>;
-                    const normalizedOut = {
-                      entities: (out.entities ?? []).map((e) => ({
-                        name: e.name,
-                        type: e.type,
-                        description: e.description ?? "",
-                      })),
-                      relationships: (out.relationships ?? []).map((r) => ({
-                        source: r.source,
-                        target: r.target,
-                        relation: r.relation || r.type || "",
-                        description: r.description ?? "",
-                      })),
-                      themes: out.themes ?? [],
-                    };
                     // write-back: entities + status='success' in one go
                     // so the row never sits at success with a blank
                     // entities field.
                     await Promise.allSettled([
-                      updateKbChunkForSuccess(chunkId, normalizedOut),
+                      updateKbChunkForSuccess(chunkId, normalizeLightRagOut(out)),
                       markKbChunkSuccess(chunkId),
                     ]);
                   } catch (err) {
@@ -1100,7 +1167,7 @@ async function generateChunkEmbedNode(
                     // (Step 3 contract).
                     const msg = err instanceof Error ? (err as any).message : String(err);
                     console.error(
-                      `kbAgent generateChunkEmbedNode: chunk ${chunkId} failed (doc ${docId} ordinal ${i}): ${msg}`,
+                      `kbAgent generateChunkEmbedNode: chunk ${chunkId} failed (doc ${docId} ordinal ${ordinal}): ${msg}`,
                       err as any,
                     );
                     try {
@@ -1119,20 +1186,29 @@ async function generateChunkEmbedNode(
               ),
             );
 
-            // ponytail: Entity Alignment (Resolution) Post-Processor —
-            // extracted to a helper so it can be unit-tested in
-            // isolation (tests/backend/agent/resolve-entity-aliases.test.ts)
-            // without spinning up the whole graph + fire-and-forget
-            // background pipeline. Topology unchanged — still runs
-            // inside this IIFE, not as a separate LangGraph node.
-            await resolveEntityAliasesForDoc({
-              userId,
-              docId,
-              documentTitle: doc.title ?? "",
-              config,
-            });
-
+            // ponytail: invalidate the doc cache so the next
+            // poll-from-DB read picks up the fresh chunk counts.
+            // For retryFailedChunks this is also where the run
+            // ends — no entity alignment pass (no new entities
+            // were introduced; existing aligned entities are
+            // untouched because the chunk content didn't change).
             invalidateKbDoc(userId, docId);
+
+            // ponytail: alignment pass only runs for modes that
+            // introduce new entities from scratch. retryFailedChunks
+            // re-extracts entities for already-existing chunks —
+            // alignment over those would be a no-op (entities
+            // already share names) AND would pointlessly spend LLM
+            // tokens. full / chunksOnly / retryFailed all produce
+            // fresh chunks where alignment is genuinely useful.
+            if (!isRetryFailedChunks) {
+              await resolveEntityAliasesForDoc({
+                userId,
+                docId,
+                documentTitle: docTitle,
+                config,
+              });
+            }
           } catch (err) {
             // ponytail: WHOLE-batch failure (embedding dim mismatch,
             // DB write rejection). kb_document.status stays at

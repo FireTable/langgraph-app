@@ -107,7 +107,9 @@ export function DocReprocessDialog({
   onOpenChange: (open: boolean) => void;
   onReprocessed: () => void;
 }) {
-  const [mode, setMode] = useState<"full" | "chunksOnly" | "retryFailed">("full");
+  const [mode, setMode] = useState<"full" | "chunksOnly" | "retryFailed" | "retryFailedChunks">(
+    "full",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -129,6 +131,14 @@ export function DocReprocessDialog({
 
   const isChunksOnlyDisabled = !hasPages || !hasUsableMarkdown;
   const isRetryFailedDisabled = !hasPages || !hasFailedPages;
+
+  // ponytail: retryFailedChunks only makes sense once the doc
+  // reached a terminal indexing state. failedChunks comes from the
+  // doc-list endpoint aggregation, so we gate on it being
+  // populated. Disabled when 0 failed chunks — picking it would be
+  // a wasted API call.
+  const hasFailedChunks = (doc.failedChunks ?? 0) > 0;
+  const isRetryFailedChunksDisabled = doc.status !== "success" || !hasFailedChunks;
 
   useEffect(() => {
     if (open) {
@@ -153,6 +163,9 @@ export function DocReprocessDialog({
         } else if (mode === "retryFailed") {
           toastTitle = "Retry queued";
           toastDesc = `「${doc.title}」- retrying failed pages, then rebuilding chunks.`;
+        } else if (mode === "retryFailedChunks") {
+          toastTitle = "Chunk retry queued";
+          toastDesc = `「${doc.title}」- re-running entity extraction on the failed chunks only. Successful chunks and the doc status stay untouched.`;
         }
 
         toast.info(toastTitle, {
@@ -304,6 +317,43 @@ export function DocReprocessDialog({
               </div>
             </div>
           </label>
+
+          {/* Option 4: Retry failed chunks (keep successful ones) */}
+          <label
+            className={cn(
+              "flex items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
+              isRetryFailedChunksDisabled
+                ? "opacity-50 cursor-not-allowed bg-muted/10"
+                : "cursor-pointer",
+              !isRetryFailedChunksDisabled && mode === "retryFailedChunks"
+                ? "border-primary bg-primary/5"
+                : "border-border hover:bg-muted/40",
+            )}
+          >
+            <input
+              type="radio"
+              name="reprocess-mode"
+              value="retryFailedChunks"
+              checked={mode === "retryFailedChunks"}
+              disabled={isRetryFailedChunksDisabled}
+              onChange={() => setMode("retryFailedChunks")}
+              className="mt-0.5 size-3.5 shrink-0 accent-foreground disabled:cursor-not-allowed"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium leading-tight flex items-center justify-between">
+                <span>Retry failed chunks</span>
+                {isRetryFailedChunksDisabled && (
+                  <span className="text-[9px] font-medium text-muted-foreground border px-1 rounded bg-muted/30">
+                    {doc.status !== "success" ? "Doc not indexed yet" : "No failed chunks"}
+                  </span>
+                )}
+              </div>
+              <div className="text-muted-foreground text-[11px] leading-snug mt-0.5">
+                Keep successful chunks, only re-embed + re-extract entities for the failed ones.
+                Faster than a full re-run — no OCR, no wasted tokens.
+              </div>
+            </div>
+          </label>
         </fieldset>
 
         {error && <p className="text-destructive text-xs">{error}</p>}
@@ -323,6 +373,8 @@ export function DocReprocessDialog({
               "Rebuild chunks"
             ) : mode === "retryFailed" ? (
               "Retry failed"
+            ) : mode === "retryFailedChunks" ? (
+              "Retry chunks"
             ) : (
               "Reprocess"
             )}

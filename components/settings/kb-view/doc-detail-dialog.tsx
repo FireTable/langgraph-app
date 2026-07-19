@@ -606,7 +606,7 @@ export function DocDetailDialog({
                                 {page.referenceText}
                               </div>
                             ) : (
-                              <div className="flex flex-col items-center justify-center min-h-[80px] bg-muted/10 rounded-lg border border-dashed text-muted-foreground/40 text-[11px] italic gap-1">
+                              <div className="flex flex-col items-center justify-center h-[180px] bg-muted/10 rounded-lg border border-dashed text-muted-foreground/40 text-[11px] italic gap-1">
                                 <ScanText className="size-4 opacity-30" />
                                 <span>No text layer</span>
                               </div>
