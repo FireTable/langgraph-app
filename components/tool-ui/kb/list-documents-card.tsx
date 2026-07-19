@@ -66,17 +66,12 @@ function FolderSection({ folder }: { folder: ListDocumentsFolder }) {
           ))}
         </ul>
         {hidden > 0 && (
+          // ponytail: button lives OUTSIDE the inner Collapsible so
+          // it always sits at the bottom of the folder content (not
+          // jumps to the middle of the row when the tail expands).
+          // The inner Collapsible only owns the tail list's height
+          // animation.
           <Collapsible open={docsExpanded} onOpenChange={setDocsExpanded}>
-            {/* ponytail: text-only Show more/less, matches the
-                search_kb chunk-list button style. Animation lives on
-                the CollapsibleContent below so the height still
-                animates (no abrupt jump), but the trigger itself is
-                plain text per CLAUDE.md rule #8. */}
-            <CollapsibleTrigger className="text-primary hover:text-primary/80 self-center text-xs font-medium transition-colors py-1 px-3 mt-1">
-              {docsExpanded
-                ? "Show less"
-                : `Show more (+${hidden} ${hidden === 1 ? "doc" : "docs"})`}
-            </CollapsibleTrigger>
             <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
               <ul className="mt-1.5 flex flex-col gap-1.5">
                 {tail.map((d) => (
@@ -85,6 +80,15 @@ function FolderSection({ folder }: { folder: ListDocumentsFolder }) {
               </ul>
             </CollapsibleContent>
           </Collapsible>
+        )}
+        {hidden > 0 && (
+          <button
+            type="button"
+            onClick={() => setDocsExpanded(!docsExpanded)}
+            className="text-primary hover:text-primary/80 self-center text-xs font-medium transition-colors py-1 px-3 mt-1"
+          >
+            {docsExpanded ? "Show less" : `Show more (+${hidden} ${hidden === 1 ? "doc" : "docs"})`}
+          </button>
         )}
       </CollapsibleContent>
     </Collapsible>
