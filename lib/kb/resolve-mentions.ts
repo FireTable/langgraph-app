@@ -7,7 +7,7 @@ import { getKbEnv } from "@/lib/kb/env";
 import { type HybridSearchResult } from "@/lib/kb/search";
 
 // ponytail: @-mention resolver (issue #13 v3). The composer renders
-// `:kb-document[label]{name=id}` (per-doc) or `:kb-folder[label]{name=id}`
+// `:kb-document[label]{id=id}` (per-doc) or `:kb-folder[label]{id=id}`
 // (per-folder, expands to every success doc inside) directive tokens via
 // assistant-ui's `unstable_useMentionAdapter` +
 // `unstable_defaultDirectiveFormatter`. The directive is preserved through
@@ -25,14 +25,14 @@ import { type HybridSearchResult } from "@/lib/kb/search";
 // — each mention's topK is rebudgeted as
 // ceil(BUDGET / (CHUNK_MAX_CHARS / 4 * mentionCount)).
 
-// aUI's default directive syntax is `:type[label]{name=id}`. id is the
+// aUI's default directive syntax is `:type[label]{id=id}`. id is the
 // canonical mention id (kb_document.id / kb_folder.id) — we extract it
-// from `{name=…}`; if the brace group is missing (label === id), the
+// from `{id=…}`; if the brace group is missing (label === id), the
 // inner capture is undefined and we fall back to the label. Same regex
 // as @assistant-ui/core's `unstable_defaultDirectiveFormatter.DIRECTIVE_RE`
-// (`/^:([\w-]{1,64})\[([^\]\n]{1,1024})\](?:\{name=([^}\n]{1,1024})\})?/u`)
+// (`/^:([\w-]{1,64})\[([^\]\n]{1,1024})\](?:\{id=([^}\n]{1,1024})\})?/u`)
 // — we run a global match so one message can carry multiple mentions.
-const MENTION_REGEX = /:([\w-]{1,64})\[([^\]\n]{1,1024})\](?:\{name=([^}\n]{1,1024})\})?/g;
+const MENTION_REGEX = /:([\w-]{1,64})\[([^\]\n]{1,1024})\](?:\{id=([^}\n]{1,1024})\})?/g;
 
 function mentionIdFromMatch(match: RegExpExecArray): string | null {
   const explicit = match[3];
@@ -322,10 +322,10 @@ export async function resolveKbMentions(
           : doc.status === "failed"
             ? `[doc "${doc.title}" failed ingestion — content unavailable]`
             : `[doc "${doc.title}" not yet ready (status: ${doc.status})]`;
-      resolutions.push({ docId: id, kind: "soft-warning", message });
+      resolutions.push({ docId: doc.docId, kind: "soft-warning", message });
       continue;
     }
-    resolutions.push({ docId: id, kind: "resolved", chunks: [] });
+    resolutions.push({ docId: doc.docId, kind: "resolved", chunks: [] });
   }
   // Plus folder-expanded docs (in folder order). Skip if a direct doc
   // mention already produced a resolution for the same id.

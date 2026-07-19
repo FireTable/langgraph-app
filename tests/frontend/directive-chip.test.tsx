@@ -29,7 +29,7 @@ describe("renderDirectiveSegments", () => {
   });
 
   it("renders a kb-document directive as a chip", () => {
-    const c = renderToContainer("see :kb-document[My Doc]{name=d-abc-123} here");
+    const c = renderToContainer("see :kb-document[My Doc]{id=d-abc-123} here");
     const chip = c.querySelector("[data-directive-id='d-abc-123']");
     expect(chip).not.toBeNull();
     expect(chip!.getAttribute("data-directive-type")).toBe("kb-document");
@@ -41,7 +41,7 @@ describe("renderDirectiveSegments", () => {
   });
 
   it("renders a kb-folder directive as a chip with folder icon", () => {
-    const c = renderToContainer(":kb-folder[Research]{name=f-xyz-789}");
+    const c = renderToContainer(":kb-folder[Research]{id=f-xyz-789}");
     const chip = c.querySelector("[data-directive-id='f-xyz-789']");
     expect(chip).not.toBeNull();
     expect(chip!.getAttribute("data-directive-type")).toBe("kb-folder");
@@ -49,7 +49,7 @@ describe("renderDirectiveSegments", () => {
   });
 
   it("renders multiple directives interleaved with text in order", () => {
-    const c = renderToContainer("a :kb-document[A]{name=da} b :kb-folder[B]{name=fb} c");
+    const c = renderToContainer("a :kb-document[A]{id=da} b :kb-folder[B]{id=fb} c");
     const chips = c.querySelectorAll("[data-directive-id]");
     expect(chips).toHaveLength(2);
     expect(chips[0]!.getAttribute("data-directive-type")).toBe("kb-document");
@@ -72,13 +72,13 @@ describe("renderDirectiveSegments", () => {
     // nothing, but real IME strings can contain `:` / `{` / `}` that
     // would otherwise flash partial chips. Skipping the parse during
     // composition keeps the overlay aligned with the textarea.
-    const c = renderToContainer(":kb-document[d]{name=di} ni3hao3", true);
-    expect(c.textContent).toBe(":kb-document[d]{name=di} ni3hao3");
+    const c = renderToContainer(":kb-document[d]{id=di} ni3hao3", true);
+    expect(c.textContent).toBe(":kb-document[d]{id=di} ni3hao3");
     expect(c.querySelectorAll("[data-directive-id]")).toHaveLength(0);
   });
 
   it("composing=false (default) parses directives normally", () => {
-    const c = renderToContainer(":kb-document[d]{name=di} trailing");
+    const c = renderToContainer(":kb-document[d]{id=di} trailing");
     expect(c.querySelectorAll("[data-directive-id]")).toHaveLength(1);
     expect(c.textContent).toContain("d");
     expect(c.textContent).toContain("trailing");

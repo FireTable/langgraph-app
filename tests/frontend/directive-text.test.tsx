@@ -28,7 +28,7 @@ describe("components/assistant-ui/DirectiveText", () => {
   });
 
   it("renders a kb-document directive as a chip with file icon", () => {
-    renderText("see :kb-document[My Doc]{name=d-abc-123} here");
+    renderText("see :kb-document[My Doc]{id=d-abc-123} here");
     const chip = screen.getByText("My Doc");
     expect(chip.closest("[data-directive-type]")).toHaveAttribute(
       "data-directive-type",
@@ -38,7 +38,7 @@ describe("components/assistant-ui/DirectiveText", () => {
   });
 
   it("renders a kb-folder directive as a chip with folder icon", () => {
-    renderText("see :kb-folder[Research]{name=f-xyz-789}");
+    renderText("see :kb-folder[Research]{id=f-xyz-789}");
     const chip = screen.getByText("Research");
     expect(chip.closest("[data-directive-type]")).toHaveAttribute(
       "data-directive-type",
@@ -49,7 +49,7 @@ describe("components/assistant-ui/DirectiveText", () => {
 
   it("renders multiple directives in order, interleaved with text", () => {
     const { container } = renderText(
-      "first :kb-document[A]{name=da} middle :kb-folder[B]{name=fb} last",
+      "first :kb-document[A]{id=da} middle :kb-folder[B]{id=fb} last",
     );
     // ponytail: text segments and chip labels are all present in DOM
     // order. We read them off the container's textContent (which
@@ -70,15 +70,15 @@ describe("components/assistant-ui/DirectiveText", () => {
     expect(chips[1]).toHaveAttribute("data-directive-id", "fb");
   });
 
-  it("falls back to label when {name=…} is missing (id === label)", () => {
+  it("falls back to label when {id=…} is missing (id === label)", () => {
     renderText("see :kb-document[d-short-id]");
     const chip = screen.getByText("d-short-id");
-    // directive-id is the same as label when no {name=…} attr is present
+    // directive-id is the same as label when no {id=…} attr is present
     expect(chip.closest("[data-directive-id]")).toHaveAttribute("data-directive-id", "d-short-id");
   });
 
   it("renders an unknown directive type without crashing (no icon)", () => {
-    const { container } = renderText("see :kb-thing[whatever]{name=t-1}");
+    const { container } = renderText("see :kb-thing[whatever]{id=t-1}");
     const chip = screen.getByText("whatever");
     expect(chip.closest("[data-directive-type]")).toHaveAttribute(
       "data-directive-type",
