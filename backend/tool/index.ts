@@ -58,7 +58,7 @@ export const CODE_TOOLS = [writeCodeTool, ...(executeCodeTool ? [executeCodeTool
 // message instead of a 500). list_documents is unconditional.
 export const KB_TOOLS = [searchKbTool, searchGraphTool, listDocumentsTool];
 
-export const ALL_TOOLS = [
+export const CHAT_TOOLS = [
   fetchUrl,
   ...(searchWeb ? [searchWeb] : []),
   ...WEATHER_TOOLS,

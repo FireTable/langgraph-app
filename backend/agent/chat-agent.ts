@@ -3,7 +3,7 @@ import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt";
 import type { BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { getChatModel } from "@/backend/model";
-import { ALL_TOOLS } from "@/backend/tool";
+import { CHAT_TOOLS } from "@/backend/tool";
 import { CHAT_AGENT_PROMPT } from "@/backend/prompt/system";
 import { CommonAgentState } from "@/backend/state";
 import {
@@ -49,7 +49,7 @@ async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?:
   const response = await (
     await getChatModel()
   )
-    .bindTools(ALL_TOOLS)
+    .bindTools(CHAT_TOOLS)
     .invoke([sysMsg, ...history], config);
 
   return { messages: [response] };
@@ -59,7 +59,7 @@ function chatModelRoute(state: { messages: BaseMessage[] }) {
   return toolsCondition(state) === END ? END : "chatTools";
 }
 
-const chatToolNode = new ToolNode(ALL_TOOLS);
+const chatToolNode = new ToolNode(CHAT_TOOLS);
 
 const builder = new StateGraph(CommonAgentState)
   .addNode("chatModel", chatModelNode)

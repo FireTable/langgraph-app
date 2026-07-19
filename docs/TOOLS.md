@@ -40,7 +40,7 @@ ask-location card isn't raced by a parallel tool call. See
 | `connect_wallet`     | `crypto/connect-wallet.ts`     | `crypto/connect-wallet-card.tsx`     | Interrupt-driven. Reads wallet from wagmi; resumes with `{ address }`.                     |
 | `place_crypto_order` | `crypto/place-crypto-order.ts` | `crypto/place-crypto-order-card.tsx` | Interrupt-driven. Simulated swap; resumes with `SimulatedOrder` or `cancelled`.            |
 | `get_order_status`   | `crypto/get-order-status.ts`   | `crypto/order-status-card.tsx`       | Interrupt-driven. Synthesizes a status (simulated-swap demo); resumes with status payload. |
-| `get_token_balances` | `crypto/get-token-balances.ts` | —                                    | Defined but not wired into `ALL_TOOLS` yet — dormant.                                      |
+| `get_token_balances` | `crypto/get-token-balances.ts` | —                                    | Defined but not wired into `CHAT_TOOLS` yet — dormant.                                     |
 | `get_NFT_holdings`   | `crypto/get-nft-holdings.ts`   | `crypto/nft-gallery-card.tsx`        | Read-only. Lists NFTs across 5 chains; filters spam by name regex. Renders a gallery grid. |
 
 Trade flow is split into three atomic interrupt tools (connect → place → check)
@@ -154,7 +154,7 @@ tool:
 
 1. Drop the backend file under `backend/tool/` (or `backend/tool/crypto/`).
 2. Export the tool from `backend/tool/index.ts` and add it to the relevant
-   `*_TOOLS` array (and `ALL_TOOLS` if the graph should see it).
+   `*_TOOLS` array (and `CHAT_TOOLS` if the graph should see it).
 3. If the tool has a card, drop it under `components/tool-ui/<group>/` and
    register the name → component in `toolkit.tsx`.
 4. Add a row to the matching table above.
@@ -181,7 +181,7 @@ export const getNftHoldingsTool: StructuredTool | null = process.env.ALCHEMY_API
   ? tool(impl, { name: "get_NFT_holdings", ... })
   : null;
 
-// in ALL_TOOLS:
+// in CHAT_TOOLS:
 ...(getNftHoldingsTool ? [getNftHoldingsTool] : []),
 ```
 
