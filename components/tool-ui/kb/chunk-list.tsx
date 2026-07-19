@@ -41,12 +41,6 @@ export function KbChunkList({ docs, slot }: { docs: KbDocument[]; slot: string }
                   {doc.docTitle}
                 </span>
                 <div className="ms-auto flex items-center gap-1.5 shrink-0">
-                  {typeof doc.rrfScore === "number" && doc.rrfScore > 0 && (
-                    <span className="text-muted-foreground bg-background/50 rounded border border-border/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide shrink-0">
-                      Score:{" "}
-                      {isRerank ? `${Math.round(doc.rrfScore * 100)}%` : doc.rrfScore.toFixed(3)}
-                    </span>
-                  )}
                   {badges.length > 0 && (
                     <div className="flex gap-1">
                       {badges.map((b) => (
@@ -58,6 +52,12 @@ export function KbChunkList({ docs, slot }: { docs: KbDocument[]; slot: string }
                         </span>
                       ))}
                     </div>
+                  )}
+                  {typeof doc.rrfScore === "number" && doc.rrfScore > 0 && (
+                    <span className="text-muted-foreground bg-background/50 rounded border border-border/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide shrink-0">
+                      Score:{" "}
+                      {isRerank ? `${Math.round(doc.rrfScore * 100)}%` : doc.rrfScore.toFixed(3)}
+                    </span>
                   )}
                 </div>
               </div>
