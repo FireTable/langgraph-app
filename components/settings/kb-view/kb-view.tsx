@@ -33,7 +33,14 @@ function KbViewContent({ className }: { className?: string }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/kb/documents");
+      // ponytail: scope the payload to the currently-selected folder —
+      // the sidebar still gets the full folder list, but only the
+      // selected folder's documents are populated (other folders
+      // return `documents: []`). Cuts the JOIN cost on the KB-doc
+      // list query, and lets `anyInflight` stay scoped to the
+      // folder the user is actually looking at.
+      const qs = selectedFolderId ? `?folderId=${encodeURIComponent(selectedFolderId)}` : "";
+      const res = await fetch(`/api/kb/documents${qs}`);
       if (!res.ok) {
         setError(`failed to load (${res.status})`);
         return;
@@ -60,7 +67,7 @@ function KbViewContent({ className }: { className?: string }) {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [focusDocId, initialFolderId]);
+  }, [focusDocId, initialFolderId, selectedFolderId]);
 
   // ponytail: after any "reprocess" / "delete" / "upload" action we
   // brute-force polling for a short window (~12s — covers the worst
@@ -85,8 +92,11 @@ function KbViewContent({ className }: { className?: string }) {
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // ponytail: re-fetch when the user switches folders. The API
+    // payload is scoped via `?folderId=<id>`, so the doc table on
+    // the right side lands on the new folder's data without us
+    // having to do any client-side filtering.
+  }, [load]);
 
   useEffect(() => {
     if (!data) return;
@@ -107,6 +117,7 @@ function KbViewContent({ className }: { className?: string }) {
           ((d.totalChunks ?? 0) == 0 && (d.totalPages ?? 0) > 0),
       ),
     );
+
     // brute-force window after a Reprocess/Upload/Delete dispatch so
     // the wipe→INSERT race doesn't strand the table on stale counts.
     const inDispatchWindow = Date.now() < recentlyDispatchedUntilRef.current;

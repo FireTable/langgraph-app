@@ -12,6 +12,12 @@ import { listKbDocumentsByFolder, listKbDocumentsGroupedWithAttachment } from "@
 // returns a flat list of `status='success'` docs (the popover shows
 // only ingest-ready docs). The flat mode skips the folder grouping and
 // limits each doc to the fields the popover needs.
+//
+// v4: `?folderId=<id>` scopes the doc payload to a single folder. All
+// folders are still listed (the sidebar needs them), but only the
+// targeted folder gets its `documents` array populated — other folders
+// return `documents: []`. The frontend's `anyInflight` poll can then
+// skip the JOIN cost for every other folder the user owns.
 
 type GroupedDoc = {
   id: string;
@@ -37,6 +43,7 @@ type GroupedDoc = {
 export const GET = withAuth(async (req: Request, { user }) => {
   const { searchParams } = new URL(req.url);
   const mentionMode = searchParams.get("mention") === "1";
+  const folderIdParam = searchParams.get("folderId");
 
   try {
     if (mentionMode) {
@@ -45,6 +52,10 @@ export const GET = withAuth(async (req: Request, { user }) => {
       // dropped (a folder with zero ingest-ready docs has nothing to
       // offer the user). Folders with zero docs at all are also dropped
       // — keeps the popover focused on actionable choices.
+      //
+      // ponytail: mention mode is always cross-folder — the popover
+      // shows docs from every folder the user owns, so we never pass
+      // `folderId` here even if the URL has one.
       const groups = await listKbDocumentsGroupedWithAttachment(user.id);
       const folders = groups
         .map(({ folder, documents }) => {
@@ -67,7 +78,10 @@ export const GET = withAuth(async (req: Request, { user }) => {
       return NextResponse.json({ folders });
     }
 
-    const groups = await listKbDocumentsGroupedWithAttachment(user.id);
+    const groups = await listKbDocumentsGroupedWithAttachment(
+      user.id,
+      folderIdParam && folderIdParam.length > 0 ? folderIdParam : null,
+    );
     return NextResponse.json({
       groups: groups.map(({ folder, documents }) => ({
         folder: { id: folder.id, name: folder.name },

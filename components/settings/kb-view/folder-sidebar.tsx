@@ -113,9 +113,15 @@ export function FolderSidebar({
                       <Folder className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
                       <span className="truncate">{g.folder.name}</span>
                       <span className="ml-auto flex items-center gap-1">
-                        <span className="text-muted-foreground text-xs tabular-nums transition-opacity group-hover/folder:opacity-0 group-data-[menu-open]/folder:opacity-0 mr-2">
-                          {g.documents.length}
-                        </span>
+                        {/* ponytail: only show the count for the
+                            selected folder — the scoped API returns
+                            `documents: []` for every other folder, so
+                            a literal 0 there would just be noise. */}
+                        {g.documents.length > 0 && (
+                          <span className="text-muted-foreground text-xs tabular-nums transition-opacity group-hover/folder:opacity-0 group-data-[menu-open]/folder:opacity-0 mr-2">
+                            {g.documents.length}
+                          </span>
+                        )}
                       </span>
                     </button>
                     <DropdownMenu

@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { db } from "@/db/client";
 import { kbDocument, kbFolder } from "@/lib/kb/schema";
+import { extractUserId } from "@/backend/memory/recall";
 
 import { thisUserId } from "./user-id";
 import type { ListDocumentsArgs, ListDocumentsResult } from "./types";
@@ -62,8 +63,9 @@ export async function listKbDocumentsForUser(
 }
 
 export const listDocumentsTool: StructuredTool = tool(
-  async (args) => {
-    const result = await listKbDocumentsForUser({ ...args, userId: thisUserId() });
+  async (args, config) => {
+    const userId = extractUserId(config) ?? thisUserId();
+    const result = await listKbDocumentsForUser({ ...args, userId });
     return JSON.stringify({ ...result, empty: result.documents.length === 0 });
   },
   {

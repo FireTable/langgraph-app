@@ -1,7 +1,20 @@
 import "@/tests/helpers/session";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+
+vi.mock("@/backend/model", () => ({
+  getEmbeddingModel: vi.fn(async () => ({
+    embedQuery: vi.fn(async (q: string) => {
+      if (q.includes("unrelated")) {
+        throw new Error("Simulated embedding failure for unrelated query");
+      }
+      const out = [];
+      for (let i = 0; i < 1024; i++) out.push(0.001);
+      return out;
+    }),
+  })),
+}));
 
 import { db } from "@/db/client";
 import { kbChunk, kbDocument, kbFolder } from "@/lib/kb/schema";

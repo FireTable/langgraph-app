@@ -3,6 +3,8 @@ import { z } from "zod";
 
 import { getKbEnv } from "@/lib/kb/env";
 import { hybridSearch } from "@/lib/kb/search";
+import { getEmbeddingModel } from "@/backend/model";
+import { extractUserId } from "@/backend/memory/recall";
 
 import { formatSearchResult } from "./format";
 import { isPgVectorAvailable } from "./pgvector";
@@ -34,12 +36,22 @@ const searchKbSchema = z.object({
 });
 
 export const searchKbTool: StructuredTool = tool(
-  async ({ query, topK }) => {
+  async ({ query, topK }, config) => {
     if (!(await isPgVectorAvailable())) {
       throw new Error("search_kb unavailable: pgvector extension is not installed on the database");
     }
+    const userId = extractUserId(config) ?? thisUserId();
     const env = getKbEnv();
-    const results = await hybridSearch({ userId: thisUserId(), query, topK });
+
+    let qvec: number[] | null = null;
+    try {
+      const embedder = await getEmbeddingModel();
+      qvec = await embedder.embedQuery(query);
+    } catch (err) {
+      console.warn("[search_kb] Failed to embed query, falling back to non-vector legs:", err);
+    }
+
+    const results = await hybridSearch({ userId, query, qvec, topK });
     return JSON.stringify(formatSearchResult(results, env.chunkMaxChars));
   },
   {

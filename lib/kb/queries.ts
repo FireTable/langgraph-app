@@ -350,8 +350,15 @@ export async function listKbDocumentsByFolderWithAttachment(
 // ponytail: Settings → KB → grouped list with attachmentUrl. The
 // per-folder loop keeps a tight SQL footprint (one query per folder
 // for the JOIN); O(folders) is fine for v2.
+//
+// `scopeFolderId` (optional): when set, only that folder's documents
+// are populated — other folders still appear in the response (so the
+// sidebar list stays intact) but with an empty `documents` array. This
+// lets the frontend pull a single folder's full doc list without
+// paying the JOIN cost for every other folder the user owns.
 export async function listKbDocumentsGroupedWithAttachment(
   userId: string,
+  scopeFolderId?: string | null,
 ): Promise<Array<{ folder: KbFolder; documents: KbDocumentWithAttachment[] }>> {
   const folders = await db.query.kbFolder.findMany({
     where: eq(kbFolder.userId, userId),
@@ -360,7 +367,10 @@ export async function listKbDocumentsGroupedWithAttachment(
   if (folders.length === 0) return [];
   const out: Array<{ folder: KbFolder; documents: KbDocumentWithAttachment[] }> = [];
   for (const folder of folders) {
-    const documents = await listKbDocumentsByFolderWithAttachment(userId, folder.id);
+    const documents =
+      scopeFolderId && folder.id !== scopeFolderId
+        ? []
+        : await listKbDocumentsByFolderWithAttachment(userId, folder.id);
     out.push({ folder, documents });
   }
   return out;
