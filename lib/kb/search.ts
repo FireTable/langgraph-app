@@ -9,7 +9,8 @@ import { getRerankModelFromDB } from "@/lib/provider/model-registry";
 // ponytail: hybrid search (issue #13 v3) — RRF (k=60) over three legs:
 //   1. kw   — tsvector + GIN, ranked by ts_rank_cd
 //   2. vec  — pgvector cosine, ranked by embedding <=> qvec
-//   3. tag  — entities TEXT[] && qents overlap (GIN)
+//   3. tag  — entities name + themes (word-split) + relationships
+//              source|target, all lower() = ANY(qents)
 //
 // Community survey (`.claude/13-kb-v3.md`):
 //   per-leg topK = 50 (LangChain EnsembleRetriever / LlamaIndex
@@ -43,7 +44,10 @@ export type HybridSearchResult = {
   pageNumbers: number[];
   content: string;
   rrfScore: number;
-  legsHit: Array<"kw" | "vec" | "tag">;
+  // ponytail: legsHit values mirror parser.ts legBadges(). "full" is set by
+  // the empty-query scope-dump path; "kw"/"vec"/"tag" come from the fused
+  // BM25 / vector / tag legs in the main path.
+  legsHit: Array<"kw" | "vec" | "tag" | "full">;
 };
 
 export type HybridSearchArgs = {
@@ -69,69 +73,95 @@ const EMPTY_QUERY_LIMIT = 1000;
 // Per HippoRAG 2 / LightRAG / GraphRAG consensus: NEVER call the LLM
 // for entity extraction at query time. If recall is measured poor later,
 // the upgrade path is embedding-based entity linking (not LLM re-call).
+//
+// ponytail: removed the original `.filter((w) => w.length >= 3)` —
+// dropping 1-2 char tokens was clipping valid short entities (AI, ML,
+// JS, HKU abbreviations like 港大, 马总) that the tag leg needs to
+// match against. The trade-off is small: qents are exact-matched
+// (`lower() = ANY(...)`) against entities / themes / relationship
+// source+target+description, so most short tokens don't find anything
+// and stay inert. Most named entities are 3+ chars anyway — short
+// tokens just get *more* chances to hit the few 1-2 char entities
+// that do exist.
 export function deriveQueryEntities(query: string): string[] {
   return Array.from(
     new Set(
       query
         .toLowerCase()
         .split(/[^\p{L}\p{N}]+/u)
-        .filter((w) => w.length >= 3),
+        .filter((w) => w.length > 0),
     ),
   );
+}
+
+// ponytail: full-scope retrieval — used as both the main path
+// (when args.query is empty) and the fallback (when ranked search
+// returns [] but a scope filter is set; called from
+// backend/tool/kb/search-kb.ts). Capped at EMPTY_QUERY_LIMIT (1000)
+// so a giant folder can't OOM the LLM context. The LLM iterates
+// with a narrower scope or a real query if it needs more.
+// rrfScore = 0 hides the Score badge (chunk-list.tsx `> 0` gate);
+// legsHit = ["full"] swaps the misleading "BM25" badge for
+// "full doc" (parser.ts). Same hard-coded values document the
+// intent: this isn't ranked retrieval, it's the filtered scope.
+export async function scopeDump(args: HybridSearchArgs): Promise<HybridSearchResult[]> {
+  const env = getKbEnv();
+  const docFilterSql = args.documentId
+    ? sql`AND c.document_id = ${args.documentId}`
+    : args.folderId
+      ? sql`AND d.folder_id = ${args.folderId}`
+      : sql``;
+
+  const result = await db.execute<{
+    id: string;
+    document_id: string;
+    title: string;
+    content: string;
+  }>(sql`
+    SELECT c.id,
+           c.document_id,
+           d.title,
+           LEFT(c.content, ${env.chunkMaxChars}) AS content
+    FROM kb_chunk c
+    JOIN kb_document d ON d.id = c.document_id
+    WHERE d.user_id = ${args.userId}
+      AND c.status = 'success'
+      AND d.status = 'success'
+      ${docFilterSql}
+    ORDER BY c.document_id, c.ordinal
+    LIMIT ${EMPTY_QUERY_LIMIT}
+  `);
+
+  const rows = Array.isArray(result) ? result : ((result as { rows?: unknown[] }).rows ?? []);
+  return (
+    rows as Array<{
+      id: string;
+      document_id: string;
+      title: string;
+      content: string;
+    }>
+  ).map((r) => ({
+    chunkId: r.id,
+    documentId: r.document_id,
+    docTitle: r.title,
+    pageNumbers: [],
+    content: r.content,
+    rrfScore: 0,
+    legsHit: ["full"],
+  }));
 }
 
 export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearchResult[]> {
   const env = getKbEnv();
   const topK = Math.min(Math.max(args.topK ?? env.hybridTopKDefault, 1), env.hybridTopKMax);
 
-  // ponytail: empty query fallback — "give me everything in this
-  // scope". Capped at EMPTY_QUERY_LIMIT (1000) so a giant folder
-  // can't OOM the LLM context. The LLM iterates with a narrower
-  // scope or a real query if it needs more.
+  // ponytail: empty-query "give me everything in this scope" — see
+  // scopeDump for the full docstring. Pulled out of hybridSearch so
+  // the search_kb tool handler can reuse it as a fallback path
+  // (ranked search returns 0 but a scope filter is set — see path A
+  // in `docs/KNOWLEDGE_BASE.md`).
   if (!args.query || args.query.trim() === "") {
-    const docFilterSql = args.documentId
-      ? sql`AND c.document_id = ${args.documentId}`
-      : args.folderId
-        ? sql`AND d.folder_id = ${args.folderId}`
-        : sql``;
-
-    const result = await db.execute<{
-      id: string;
-      document_id: string;
-      title: string;
-      content: string;
-    }>(sql`
-      SELECT c.id,
-             c.document_id,
-             d.title,
-             LEFT(c.content, ${env.chunkMaxChars}) AS content
-      FROM kb_chunk c
-      JOIN kb_document d ON d.id = c.document_id
-      WHERE d.user_id = ${args.userId}
-        AND c.status = 'success'
-        AND d.status = 'success'
-        ${docFilterSql}
-      ORDER BY c.document_id, c.ordinal
-      LIMIT ${EMPTY_QUERY_LIMIT}
-    `);
-
-    const rows = Array.isArray(result) ? result : ((result as { rows?: unknown[] }).rows ?? []);
-    return (
-      rows as Array<{
-        id: string;
-        document_id: string;
-        title: string;
-        content: string;
-      }>
-    ).map((r) => ({
-      chunkId: r.id,
-      documentId: r.document_id,
-      docTitle: r.title,
-      pageNumbers: [],
-      content: r.content,
-      rrfScore: 1.0,
-      legsHit: ["kw"],
-    }));
+    return scopeDump(args);
   }
 
   const qents = (args.qents ?? deriveQueryEntities(args.query)).map((q) => q.toLowerCase());
@@ -204,10 +234,41 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
       FROM kb_chunk c
       WHERE c.document_id IN (SELECT id FROM valid_docs)
         AND c.status = 'success'
-        AND EXISTS (
-          SELECT 1
-          FROM jsonb_to_recordset(c.entities) AS x(name text)
-          WHERE lower(x.name) = ANY(${textArrayLiteral(qents)}::text[])
+        AND (
+          EXISTS (
+            -- entity name match (canonical: exact lower(name) = ANY(qents))
+            SELECT 1
+            FROM jsonb_to_recordset(c.entities) AS x(name text)
+            WHERE lower(x.name) = ANY(${textArrayLiteral(qents)}::text[])
+          )
+          OR EXISTS (
+            -- ponytail: theme word-split. themes are short tags or 3-7-word
+            -- phrases; the qent side is single words. Word-split bridges
+            -- the gap (English only — Chinese phrases without whitespace
+            -- don't split; trade-off accepted until a CJK segmenter is
+            -- worth a new dependency).
+            SELECT 1
+            FROM unnest(c.themes) AS t(theme),
+                 LATERAL regexp_split_to_table(lower(theme), '\s+') AS w(token)
+            WHERE w.token = ANY(${textArrayLiteral(qents)}::text[])
+          )
+          OR EXISTS (
+            -- ponytail: relationship edges. Match if any edge's source,
+            -- target, or a whitespace-delimited token in the description
+            -- matches a qent. source/target are flat exact match
+            -- (entity-level); description word-split mirrors the themes
+            -- branch — English-only, CJK phrases without whitespace still
+            -- miss (same trade-off; jieba-style segmentation deferred).
+            SELECT 1
+            FROM jsonb_array_elements(c.relationships) AS r
+            WHERE lower(r->>'source') = ANY(${textArrayLiteral(qents)}::text[])
+               OR lower(r->>'target') = ANY(${textArrayLiteral(qents)}::text[])
+               OR EXISTS (
+                 SELECT 1
+                 FROM regexp_split_to_table(lower(r->>'description'), '\s+') AS w(token)
+                 WHERE w.token = ANY(${textArrayLiteral(qents)}::text[])
+               )
+          )
         )
       LIMIT 30
     )
@@ -305,7 +366,7 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
 
   const truncatedRows = finalRows.slice(0, topK);
 
-  return truncatedRows.map((r) => ({
+  const mapped = truncatedRows.map((r) => ({
     chunkId: r.id,
     documentId: r.document_id,
     docTitle: r.title,
@@ -315,6 +376,26 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
     rrfScore: Number(r.rrf_score),
     legsHit: (r.legs_hit ?? []) as Array<"kw" | "vec" | "tag">,
   }));
+
+  // ponytail: path A fallback. When ranked retrieval came back empty
+  // (BM25 + vector + tag fused, optionally reranked and filtered,
+  // produced 0 rows) but the caller set a scope filter
+  // (documentId / folderId), the @-mention pattern means the user
+  // wants to read THIS scope — so transparently retry with an empty
+  // query to dump the full scope (re-uses scopeDump). Without this,
+  // the LLM sees "No KB matches" and has to retry itself — see the
+  // `@梁永焯 - 个人简历.pdf` screenshot where the LLM's abstract-
+  // category keywords ("简历 内容 主要经历 ...") miss concrete
+  // resume entities. scopeDump sets legsHit=["full"] so the UI
+  // shows the "full doc" badge for the dump rows.
+  if (mapped.length === 0 && (args.documentId || args.folderId)) {
+    console.warn(
+      `[hybridSearch] ranked search returned 0 with scope (documentId=${args.documentId ?? "—"}, folderId=${args.folderId ?? "—"}); falling back to scope dump`,
+    );
+    return scopeDump(args);
+  }
+
+  return mapped;
 }
 
 // ponytail: pgvector's wire format is `[1.0,2.0,3.0]`. We bypass the

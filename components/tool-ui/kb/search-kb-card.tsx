@@ -15,9 +15,21 @@ type SearchArgs = { query?: string; folderId?: string; documentId?: string };
 // `content` is the LLM-facing string; hidden here because the assistant
 // message already quotes it inline. `documents[]` drives the cards.
 
+// ponytail: subtitle wording across loading / empty / result states.
+// With a real query the user gets the question text; without a query
+// we name the scope that was dumped (document > folder > everything)
+// so the user understands what they're looking at — and the matching
+// "full doc" badge on each chunk row reinforces the same intent.
+function scopeLabel(args: SearchArgs | undefined): string {
+  if (args?.query?.trim()) return `"${args.query.trim()}"`;
+  if (args?.documentId) return "this document";
+  if (args?.folderId) return "this folder";
+  return "your documents";
+}
+
 export const KbSearchToolUI: ToolCallMessagePartComponent<SearchArgs> = ({ result, args }) => {
   const outcome = parseKbResult(result);
-  const queryLabel = args?.query?.trim() ? `"${args.query.trim()}"` : "the knowledge base";
+  const queryLabel = scopeLabel(args);
 
   if (outcome.kind === "loading") {
     return (

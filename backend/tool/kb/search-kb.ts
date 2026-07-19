@@ -20,19 +20,20 @@ const searchKbSchema = z.object({
     .optional()
     .default("")
     .describe(
-      "Space-separated search entries (NOT a verbatim copy of the user's " +
-        "question). Build the list by extracting concise entities, keywords, " +
-        "and domain terms from TWO sources and concatenating them: (a) the " +
-        "user's question — but break the question apart; never pass the " +
-        "meta-question itself " +
-        "as a single entry, and (b) the @-directive label if one is present " +
-        "in the message — split a file/folder name on spaces / dashes / " +
-        "underscores / dots and treat each piece as an entry. The hybrid " +
-        "search fuses the entries across BM25 (keyword match), vector " +
-        "(semantic match), and tag (entity match) legs. Omit (or pass an " +
-        "empty string) to return the full content of the filtered scope: " +
-        "every chunk in documentId, every chunk in folderId, or — with no " +
-        "other filter — the user's most recent chunks.",
+      "Two modes. (1) Ranked search — pass 5-10 space-separated entries " +
+        "(NOT a verbatim copy of the user's question): build from (a) the " +
+        "user's question, broken apart (never pass the meta-question " +
+        "itself, e.g. 'what is this', 'summarize please', '这是什么', as " +
+        "a single entry), and (b) the @-directive label if present " +
+        "(split the file/folder name on spaces, dashes, underscores, or " +
+        "dots and treat each piece as an entry). Aim for 5-10 entries " +
+        "total; fewer is fine if the question is narrow; don't pad with " +
+        "repeats or filler. (2) Full scope dump — OMIT query (or pass an " +
+        "empty string) when the user wants everything in the filtered " +
+        "scope, e.g. 'summarize @doc', 'extract all clauses from @folder', " +
+        "'list contents of @doc'. Returns every chunk in documentId, " +
+        "every chunk in folderId, or — with no other filter — the user's " +
+        "most recent chunks.",
     ),
   folderId: z
     .string()
@@ -63,7 +64,10 @@ export const searchKbTool: StructuredTool = tool(
     // ponytail: hybridSearch owns the query -> embed -> search
     // pipeline (qvec auto-embedded if not pre-computed; embed
     // failures fall back to the BM25 + tag legs only). Empty query
-    // returns the full filtered scope (capped at 1000).
+    // returns the full filtered scope (capped at 1000). When ranked
+    // retrieval returns 0 with a scope filter, hybridSearch itself
+    // transparently retries with an empty query for the same scope
+    // (see "path A fallback" in lib/kb/search.ts).
     const results = await hybridSearch({ userId, query, folderId, documentId });
     return JSON.stringify(formatSearchResult(results, env.chunkMaxChars));
   },
@@ -74,9 +78,15 @@ export const searchKbTool: StructuredTool = tool(
       "BM25 + vector + entity-tag retrieval. Returns the most relevant " +
       "chunks with `[1]`, `[2]`, ... markers the LLM can cite inline. Use " +
       "when the user references their KB or asks about content they've uploaded. " +
+      "Pass a natural-language query to rank by relevance, OR omit query " +
+      "(pass an empty string) to dump the full filtered scope — useful " +
+      "for 'summarize @doc', 'extract all clauses from @folder'. " +
       "If the user @-mentioned a doc or folder, narrow the search by copying " +
       "the id from the ':kb-document[label]{documentId=...}' or " +
-      "':kb-folder[label]{folderId=...}' directive in the message.",
+      "':kb-folder[label]{folderId=...}' directive in the message. " +
+      "If results are empty or insufficient, retry with a fresh query " +
+      "(rephrased keywords, synonyms, English↔Chinese, or relaxed filters) " +
+      "— up to 3 attempts per turn before falling back to search_web.",
     schema: searchKbSchema,
   },
 );

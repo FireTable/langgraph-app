@@ -16,7 +16,8 @@ export type KbSearchDocument = {
   pageNumbers: number[];
   content: string;
   rrfScore: number;
-  legsHit: Array<"kw" | "vec" | "tag">;
+  // ponytail: mirrors HybridSearchResult.legsHit in lib/kb/search.ts.
+  legsHit: Array<"kw" | "vec" | "tag" | "full">;
 };
 
 export type KbToolResult = {
