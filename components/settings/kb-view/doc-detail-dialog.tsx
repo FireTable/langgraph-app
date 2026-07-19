@@ -87,7 +87,7 @@ export function DocDetailDialog({
             console.error("DocDetailDialog poll failed", err);
           }
         });
-    }, 2000);
+    }, 5000);
     return () => {
       controller.abort();
       clearInterval(t);

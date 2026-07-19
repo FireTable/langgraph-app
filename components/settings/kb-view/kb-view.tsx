@@ -103,14 +103,15 @@ function KbViewContent({ className }: { className?: string }) {
         (d) =>
           d.status === "pending" ||
           d.status === "parsing" ||
-          (d.totalChunks ?? 0) > (d.successChunks ?? 0) + (d.failedChunks ?? 0),
+          (d.totalChunks ?? 0) > (d.successChunks ?? 0) + (d.failedChunks ?? 0) ||
+          ((d.totalChunks ?? 0) == 0 && (d.totalPages ?? 0) > 0),
       ),
     );
     // brute-force window after a Reprocess/Upload/Delete dispatch so
     // the wipe→INSERT race doesn't strand the table on stale counts.
     const inDispatchWindow = Date.now() < recentlyDispatchedUntilRef.current;
     if (!anyInflight && !inDispatchWindow) return;
-    const t = setInterval(() => void load(), 2000);
+    const t = setInterval(() => void load(), 5000);
     return () => clearInterval(t);
   }, [data, load]);
 
