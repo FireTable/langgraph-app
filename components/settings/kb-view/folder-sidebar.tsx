@@ -46,6 +46,20 @@ export function FolderSidebar({
   const [editTarget, setEditTarget] = useState<KbFolder | null>(null);
   const [openFolderId, setOpenFolderId] = useState<string | null>(null);
 
+  // ponytail: mirror folder selection onto ?folder=<id> so refreshing
+  // the page (or sharing the URL) lands back on the same folder.
+  // replaceState (not pushState) — folder switching is a sub-state of
+  // the page, not a history step worth a back-button entry.
+  const handleSelect = (id: string) => {
+    onSelect(id);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("folder") === id) return;
+      url.searchParams.set("folder", id);
+      window.history.replaceState(window.history.state, "", url.toString());
+    }
+  };
+
   return (
     <>
       <Card className="h-fit p-0 w-full min-w-0 overflow-hidden">
@@ -89,7 +103,7 @@ export function FolderSidebar({
                   >
                     <button
                       type="button"
-                      onClick={() => onSelect(g.folder.id)}
+                      onClick={() => handleSelect(g.folder.id)}
                       data-active={active || undefined}
                       className={cn(
                         "hover:bg-muted/60 data-[active=true]:bg-muted flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",

@@ -24,9 +24,10 @@ export function KbView({ className }: { className?: string }) {
 function KbViewContent({ className }: { className?: string }) {
   const searchParams = useSearchParams();
   const focusDocId = searchParams.get("doc");
+  const initialFolderId = searchParams.get("folder");
   const [data, setData] = useState<KbResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(initialFolderId);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -41,6 +42,14 @@ function KbViewContent({ className }: { className?: string }) {
       setData(body);
       setSelectedFolderId((prev) => {
         if (prev && body.groups.some((g) => g.folder.id === prev)) return prev;
+        // ponytail: ?folder=<id> from the URL outranks the
+        // doc-derived heuristic on cold-load — refreshing a deep
+        // link lands on the requested folder, not on the folder
+        // owning the focus doc. Falls through to focusDocId only
+        // when the URL didn't pin a folder.
+        if (initialFolderId && body.groups.some((g) => g.folder.id === initialFolderId)) {
+          return initialFolderId;
+        }
         if (focusDocId) {
           const owning = body.groups.find((g) => g.documents.some((d) => d.id === focusDocId));
           if (owning) return owning.folder.id;
@@ -51,7 +60,7 @@ function KbViewContent({ className }: { className?: string }) {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [focusDocId]);
+  }, [focusDocId, initialFolderId]);
 
   // ponytail: after any "reprocess" / "delete" / "upload" action we
   // brute-force polling for a short window (~12s — covers the worst
