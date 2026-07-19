@@ -88,21 +88,103 @@ export function KnowledgeGraph({
   // ponytail: stable callbacks for ForceGraph2D so the lib doesn't see
   // a new function identity every poll and re-stage its render loop.
   // nodeVal / nodeLabel / linkLabel are stateless — empty fns are fine.
+  // ponytail: nodeVal formula mirrors nodeCanvasObject's r formula
+  // (2.5 + degree*0.6, max 8) so react-force-graph-2d's internal
+  // collision / label-clearance uses the SAME circle we paint.
+  // nodeRelSize is the per-unit diameter, so nodeRelSize * sqrt(nodeVal)
+  // = the visible radius on screen.
   const nodeVal = useCallback((node: any) => {
     const degree = node.degree || 1;
-    const r = Math.min(12, Math.max(2.5, 4.5 + degree * 0.4));
+    const r = Math.min(8, Math.max(2.5, 2.5 + degree * 0.6));
     return Math.pow(r / 6, 2);
   }, []);
   const emptyLabel = useCallback(() => "", []);
+  // ponytail: thinner, more transparent links + arrows after the
+  // 321-entity folder view flooded the canvas with overlapping
+  // geometry. 0.2-0.6px line, 0.1-0.32 alpha — halve the second
+  // pass too. Structural meaning (hub links slightly thicker) is
+  // still there but links no longer dominate the canvas.
   const linkWidth = useCallback((link: any) => {
     const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
-    return Math.min(1.8, 0.8 + Math.log2(1 + degree) * 0.3);
+    return Math.min(0.6, 0.2 + Math.log2(1 + degree) * 0.1);
   }, []);
   const linkColor = useCallback((link: any) => {
     const degree = Math.max(link.source?.degree ?? 1, link.target?.degree ?? 1);
-    const alpha = Math.min(0.7, 0.28 + Math.log2(1 + degree) * 0.16);
+    const alpha = Math.min(0.32, 0.1 + Math.log2(1 + degree) * 0.06);
     return `rgba(100, 116, 139, ${alpha.toFixed(3)})`;
   }, []);
+  // ponytail: matches nodeCanvasObject's r formula so the link's
+  // endpoint offset lands on the visible circle, not the internal
+  // collision radius that react-force-graph-2d uses for layout.
+  const nodeRadius = useCallback((node: any) => {
+    if (!node) return 4;
+    const degree = node.degree || 1;
+    return Math.min(8, Math.max(2.5, 2.5 + degree * 0.6));
+  }, []);
+  // ponytail: custom link render so the directional arrow lands on
+  // the target node's circle edge instead of its center. Default
+  // react-force-graph-2d arrow drawing uses the raw line endpoints
+  // (node.x/y), so the arrowhead is buried under the node. We
+  // shorten both ends by each node's radius along the link
+  // direction, then draw line + filled triangle arrow.
+  const linkCanvasObject = useCallback(
+    (link: any, ctx: CanvasRenderingContext2D) => {
+      const s = link.source as { x: number; y: number; degree?: number };
+      const t = link.target as { x: number; y: number; degree?: number };
+      if (
+        typeof s?.x !== "number" ||
+        typeof s?.y !== "number" ||
+        typeof t?.x !== "number" ||
+        typeof t?.y !== "number"
+      ) {
+        return;
+      }
+      const dx = t.x - s.x;
+      const dy = t.y - s.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 0.001) return;
+      const ux = dx / dist;
+      const uy = dy / dist;
+      const sr = nodeRadius(s);
+      const tr = nodeRadius(t);
+      // Shorten by source radius on the source end, by (target
+      // radius + arrow length) on the target end so the arrowhead
+      // tip lands exactly on the target circle edge. Arrow shrunk
+      // from 5px / 2.5 half-width to 3.5 / 1.8 to match the new
+      // thinner lines (was 5x5 triangle on a 0.4-1.2px line —
+      // looked heavier than the line itself).
+      const arrowLen = 2.5;
+      const halfWidth = 1.2;
+      const sx = s.x + ux * sr;
+      const sy = s.y + uy * sr;
+      const tx = t.x - ux * (tr + arrowLen);
+      const ty = t.y - uy * (tr + arrowLen);
+
+      // Line: matches linkWidth / linkColor formulas above (halved
+      // the second pass: 0.2-0.6px line, 0.1-0.32 alpha).
+      const degree = Math.max(s.degree ?? 1, t.degree ?? 1);
+      const alpha = Math.min(0.32, 0.1 + Math.log2(1 + degree) * 0.06);
+      ctx.strokeStyle = `rgba(100, 116, 139, ${alpha.toFixed(3)})`;
+      ctx.lineWidth = Math.min(0.6, 0.2 + Math.log2(1 + degree) * 0.1);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+
+      // Filled triangle arrowhead pointing along the link direction
+      // at the (tx, ty) tip.
+      const nx = -uy;
+      const ny = ux;
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.beginPath();
+      ctx.moveTo(tx + ux * arrowLen, ty + uy * arrowLen);
+      ctx.lineTo(tx + nx * halfWidth, ty + ny * halfWidth);
+      ctx.lineTo(tx - nx * halfWidth, ty - ny * halfWidth);
+      ctx.closePath();
+      ctx.fill();
+    },
+    [nodeRadius],
+  );
   const onNodeHover = useCallback((node: any) => {
     setHoveredNode(node || null);
     if (node) setHoveredLink(null);
@@ -370,10 +452,15 @@ export function KnowledgeGraph({
           displayLabel = label.substring(0, maxLen - 2) + "...";
         }
 
-        // ponytail: no white stroke halo around the label anymore.
-        // The plain muted text on the slate-50 bg reads cleanly
-        // without it, and the stroke was making labels visually
-        // heavier than the nodes themselves.
+        // ponytail: thin white halo around the label. 3px was
+        // overpowering the small text (2.6-3.4px fontSize). 1.5px
+        // + low alpha keeps overlapping geometry from breaking
+        // legibility without making each label look like it's
+        // outlined in chalk.
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = "rgba(248, 250, 252, 0.55)";
+        ctx.lineJoin = "round";
+        ctx.strokeText(displayLabel, node.x, node.y + r + 3.5);
         ctx.fillStyle = "#475569";
         ctx.fillText(displayLabel, node.x, node.y + r + 3.5);
       }
@@ -482,8 +569,12 @@ export function KnowledgeGraph({
                   nodeVal={nodeVal}
                   nodeLabel={emptyLabel}
                   linkLabel={emptyLabel}
-                  linkDirectionalArrowLength={6}
-                  linkDirectionalArrowRelPos={1}
+                  // ponytail: replace default link render — we draw
+                  // line + arrow ourselves so the arrowhead lands
+                  // on the target circle edge instead of its center.
+                  linkDirectionalArrowLength={0}
+                  linkCanvasObjectMode={() => "replace"}
+                  linkCanvasObject={linkCanvasObject}
                   linkWidth={linkWidth}
                   linkColor={linkColor}
                   cooldownTicks={80}
