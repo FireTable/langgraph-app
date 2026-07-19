@@ -86,20 +86,26 @@ describe("routerAgentNode", () => {
 
     // withStructuredOutput is called once at module load + once per
     // routerAgentNode invocation. The router invocation must pass the
-    // route_decision schema and the jsonSchema method — a regression
-    // to functionCalling breaks compatibility with strict jsonSchema
-    // providers.
+    // route_decision schema, the jsonSchema method, AND strict: true
+    // — a regression to functionCalling or non-strict jsonSchema breaks
+    // compatibility with strict-mode OpenAI providers (would let the
+    // LLM emit extra fields / truncations that crash output parsing).
     const schemaArg = mockWithStructuredArgs.mock.calls.at(-1)?.[0] as {
       safeParse: (v: unknown) => { success: boolean };
     };
     const optionsArg = mockWithStructuredArgs.mock.calls.at(-1)?.[1] as {
       name: string;
       method: string;
+      strict?: boolean;
     };
     expect(schemaArg?.safeParse({ next: "weatherAgent" }).success).toBe(true);
     expect(schemaArg?.safeParse({ next: "cryptoAgent" }).success).toBe(true);
     expect(schemaArg?.safeParse({ next: "bogus" }).success).toBe(false);
-    expect(optionsArg).toEqual({ name: "route_decision", method: "jsonSchema" });
+    expect(optionsArg).toEqual({
+      name: "route_decision",
+      method: "jsonSchema",
+      strict: true,
+    });
   });
 
   // ponytail: router is a yes/no classifier on the CURRENT turn. Full

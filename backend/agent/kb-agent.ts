@@ -465,7 +465,10 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
   const ocrModel = await getOcrModel();
 
   const system = new SystemMessage(KB_OCR_PAGE_PROMPT);
-  const structured = ocrModel.withStructuredOutput(ocrPageSchema, { method: "jsonSchema" });
+  const structured = ocrModel.withStructuredOutput(ocrPageSchema, {
+    method: "jsonSchema",
+    strict: true,
+  });
 
   // ponytail: one p-queue across ALL docs — caps total apimart
   // concurrency at OCR_CONCURRENCY regardless of how many PDFs were
@@ -837,7 +840,7 @@ export async function resolveEntityAliasesForDoc(args: {
 
     // 4. Call LLM to find alignments
     const alignmentResult = (await extractModel
-      .withStructuredOutput(alignmentSchema, { method: "jsonSchema" })
+      .withStructuredOutput(alignmentSchema, { method: "jsonSchema", strict: true })
       .invoke([systemMsg, humanMsg], { ...config, tags: ["nostream"] })) as z.infer<
       typeof alignmentSchema
     >;
@@ -1064,7 +1067,7 @@ async function generateChunkEmbedNode(
 
                   try {
                     const out = (await extractModel
-                      .withStructuredOutput(lightRagSchema, { method: "jsonSchema" })
+                      .withStructuredOutput(lightRagSchema, { method: "jsonSchema", strict: true })
                       .invoke([systemMessage, humanMessage], {
                         ...config,
                         tags: ["nostream"],

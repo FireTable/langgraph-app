@@ -60,6 +60,7 @@ export async function routerAgentNode(
     .withStructuredOutput(InvokeRouteDecisionSchema, {
       name: "route_decision",
       method: "jsonSchema",
+      strict: true,
     })
     .invoke(invokeMessages, {
       ...config,

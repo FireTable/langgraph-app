@@ -254,7 +254,7 @@ export function DocReprocessDialog({
             />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium leading-tight flex items-center justify-between">
-                <span>Rebuild chunks from cache</span>
+                <span>Rebuild chunks from pages</span>
                 {isChunksOnlyDisabled && (
                   <span className="text-[9px] font-medium text-muted-foreground border px-1 rounded bg-muted/30">
                     No pages cache
@@ -291,7 +291,7 @@ export function DocReprocessDialog({
             />
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium leading-tight flex items-center justify-between">
-                <span>Retry failed pages & rebuild</span>
+                <span>Retry failed pages & rebuild chunks</span>
                 {isRetryFailedDisabled && (
                   <span className="text-[9px] font-medium text-muted-foreground border px-1 rounded bg-muted/30">
                     No failed pages

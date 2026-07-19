@@ -336,7 +336,7 @@ export async function threadSummarizeNode(
     out = await (
       await getChatModel()
     )
-      .withStructuredOutput(summaryOutputSchema, { method: "jsonSchema" })
+      .withStructuredOutput(summaryOutputSchema, { method: "jsonSchema", strict: true })
       .invoke(
         [
           { role: "system", content: THREAD_SUMMARIZE_PROMPT },
