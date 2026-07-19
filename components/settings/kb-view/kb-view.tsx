@@ -53,6 +53,27 @@ function KbViewContent({ className }: { className?: string }) {
     }
   }, [focusDocId]);
 
+  // ponytail: after any "reprocess" / "delete" / "upload" action we
+  // brute-force polling for a short window (~12s — covers the worst
+  // case of "kbAgent gets dispatched → wipe commits → fire-and-forget
+  // chunk INSERT lands 1-5s later"). Without this window the table's
+  // `anyInflight` heuristic can race: the wipe returns success/failed
+  // with totalChunks=0 BEFORE kbAgent has had a chance to INSERT the
+  // new chunks, so 0 > 0+0 is false and the polling timer stops —
+  // table then stays on "No Chunks" forever (until the user clicks
+  // Preview or refresh).
+  const recentlyDispatchedUntilRef = useRef<number>(0);
+  const markRecentlyDispatched = useCallback(() => {
+    recentlyDispatchedUntilRef.current = Date.now() + 12_000;
+  }, []);
+  // wraps `load` so any caller using it as `onRefresh` automatically
+  // primes the post-dispatch polling window. DocDetailDialog /
+  // DocTable / FolderSidebar all keep their existing onRefresh wiring.
+  const loadWithHeartbeat = useCallback(async () => {
+    markRecentlyDispatched();
+    await load();
+  }, [load, markRecentlyDispatched]);
+
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,7 +97,10 @@ function KbViewContent({ className }: { className?: string }) {
           (d.totalChunks ?? 0) > (d.successChunks ?? 0) + (d.failedChunks ?? 0),
       ),
     );
-    if (!anyInflight) return;
+    // brute-force window after a Reprocess/Upload/Delete dispatch so
+    // the wipe→INSERT race doesn't strand the table on stale counts.
+    const inDispatchWindow = Date.now() < recentlyDispatchedUntilRef.current;
+    if (!anyInflight && !inDispatchWindow) return;
     const t = setInterval(() => void load(), 2000);
     return () => clearInterval(t);
   }, [data, load]);
@@ -115,13 +139,13 @@ function KbViewContent({ className }: { className?: string }) {
             selectedId={selectedFolderId}
             onSelect={setSelectedFolderId}
             onNewFolder={() => setNewFolderOpen(true)}
-            onRefresh={load}
+            onRefresh={loadWithHeartbeat}
           />
           <DocTable
             group={selectedGroup}
             focusDocId={focusDocId}
             onAddDoc={() => fileInputRef.current?.click()}
-            onRefresh={load}
+            onRefresh={loadWithHeartbeat}
           />
         </div>
 
@@ -133,7 +157,7 @@ function KbViewContent({ className }: { className?: string }) {
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file && selectedGroup) {
-              void handleAddDoc(file, selectedGroup.folder.id, load);
+              void handleAddDoc(file, selectedGroup.folder.id, loadWithHeartbeat);
             }
             e.target.value = ""; // allow re-pick same file
           }}
@@ -146,7 +170,7 @@ function KbViewContent({ className }: { className?: string }) {
           onOpenChange={setNewFolderOpen}
           onCreated={(folder) => {
             setSelectedFolderId(folder.id);
-            void load();
+            void loadWithHeartbeat();
           }}
         />
       </div>
