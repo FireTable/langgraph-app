@@ -16,7 +16,7 @@ export const providerApiKeySchema = z.object({
 // structured-output extraction (entity/relationship/theme triples
 // from KB chunks). A single upstream model can serve multiple kinds
 // (gpt-4o-mini is both chat + ocr + extract).
-export const modelKindSchema = z.enum(["chat", "ocr", "embed", "extract"]);
+export const modelKindSchema = z.enum(["chat", "ocr", "embed", "extract", "rerank"]);
 
 export const modelConfigSchema = z.object({
   name: z.string().min(1).max(128),

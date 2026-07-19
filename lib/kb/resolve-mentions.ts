@@ -1,5 +1,5 @@
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
-import { eq, inArray, or } from "drizzle-orm";
+import { eq, inArray, or, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { kbChunk, kbDocument, kbFolder } from "@/lib/kb/schema";
@@ -43,7 +43,13 @@ function mentionIdFromMatch(match: RegExpExecArray): string | null {
 }
 
 export type MentionResolution =
-  | { docId: string; kind: "resolved"; chunks: HybridSearchResult[]; sourceFolderId?: string }
+  | {
+      docId: string;
+      kind: "resolved";
+      chunks: HybridSearchResult[];
+      sourceFolderId?: string;
+      mode?: "meta" | "full";
+    }
   | { docId: string; kind: "soft-warning"; message: string; sourceFolderId?: string }
   | { docId: string; kind: "not-found"; sourceFolderId?: string };
 
@@ -177,56 +183,6 @@ async function docsInFolders(
       folderId: r.folderId,
     });
   }
-  return out;
-}
-
-async function fetchChunksForDocs(
-  docIds: string[],
-  topK: number,
-  chunkMaxChars: number,
-): Promise<Map<string, HybridSearchResult[]>> {
-  const out = new Map<string, HybridSearchResult[]>();
-  if (docIds.length === 0) return out;
-
-  const uuids = docIds.filter((id) => id.startsWith("d-"));
-  const titles = docIds.filter((id) => !id.startsWith("d-"));
-
-  const conditions = [];
-  if (uuids.length > 0) conditions.push(inArray(kbChunk.documentId, uuids));
-  if (titles.length > 0) conditions.push(inArray(kbDocument.title, titles));
-
-  if (conditions.length === 0) return out;
-
-  const rows = await db
-    .select({
-      chunkId: kbChunk.id,
-      documentId: kbChunk.documentId,
-      docTitle: kbDocument.title,
-      content: kbChunk.content,
-    })
-    .from(kbChunk)
-    .innerJoin(kbDocument, eq(kbChunk.documentId, kbDocument.id))
-    .where(or(...conditions))
-    .orderBy(kbChunk.documentId, kbChunk.ordinal);
-  const perDoc = new Map<string, HybridSearchResult[]>();
-  for (const r of rows) {
-    const key = docIds.find((id) => id === r.documentId || id === r.docTitle);
-    if (!key) continue;
-    const list = perDoc.get(key) ?? [];
-    if (list.length < topK) {
-      list.push({
-        chunkId: r.chunkId,
-        documentId: r.documentId,
-        docTitle: r.docTitle,
-        pageNumbers: [],
-        content: r.content.slice(0, chunkMaxChars),
-        rrfScore: 1.0,
-        legsHit: ["kw"],
-      });
-      perDoc.set(key, list);
-    }
-  }
-  for (const [key, list] of perDoc) out.set(key, list);
   return out;
 }
 
@@ -369,7 +325,6 @@ export async function resolveKbMentions(
       resolutions.push({ docId: id, kind: "soft-warning", message });
       continue;
     }
-    // placeholder; chunks filled after the bulk fetch
     resolutions.push({ docId: id, kind: "resolved", chunks: [] });
   }
   // Plus folder-expanded docs (in folder order). Skip if a direct doc
@@ -379,115 +334,230 @@ export async function resolveKbMentions(
     resolutions.push({ docId, kind: "resolved", chunks: [], sourceFolderId: folderId });
   }
 
-  // Bulk-fetch chunks for every resolved doc in one query.
+  // Pre-validate chunk counts for all successfully resolved docs in one batch
   const resolvedIds = resolutions.filter((r) => r.kind === "resolved").map((r) => r.docId);
-  const chunksByDoc = await fetchChunksForDocs(resolvedIds, topK, env.chunkMaxChars);
-  for (const r of resolutions) {
-    if (r.kind === "resolved") r.chunks = chunksByDoc.get(r.docId) ?? [];
+  const chunkCountMap = new Map<string, number>();
+  if (resolvedIds.length > 0) {
+    const counts = await db
+      .select({
+        docId: kbChunk.documentId,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(kbChunk)
+      .where(inArray(kbChunk.documentId, resolvedIds))
+      .groupBy(kbChunk.documentId);
+    for (const c of counts) {
+      chunkCountMap.set(c.docId, c.count);
+    }
   }
 
-  const hasResolved = resolutions.some((r) => r.kind === "resolved" && r.chunks.length > 0);
+  // Assign resolution modes based on chunk count (Branch 1 vs Branch 2)
+  for (const r of resolutions) {
+    if (r.kind === "resolved") {
+      const count = chunkCountMap.get(r.docId) ?? 0;
+      r.mode = count > 0 ? "meta" : "full";
+    }
+  }
+
+  // Fetch full page contents for Branch 2 (full fallback mode) documents
+  const fallbackDocIds = resolutions
+    .filter(
+      (r): r is Extract<MentionResolution, { kind: "resolved" }> =>
+        r.kind === "resolved" && r.mode === "full",
+    )
+    .map((r) => r.docId);
+
+  const pagesByDoc = new Map<string, string>();
+  if (fallbackDocIds.length > 0) {
+    const fallbackDocs = await db
+      .select({
+        id: kbDocument.id,
+        pages: kbDocument.pages,
+      })
+      .from(kbDocument)
+      .where(inArray(kbDocument.id, fallbackDocIds));
+
+    for (const d of fallbackDocs) {
+      const pagesArray = (d.pages ?? []) as Array<{
+        pageIndex?: number;
+        pageNumber?: number;
+        markdown?: string;
+      }>;
+      const sortedPages = [...pagesArray].sort((a, b) => {
+        const aNum = a.pageNumber ?? a.pageIndex ?? 0;
+        const bNum = b.pageNumber ?? b.pageIndex ?? 0;
+        return aNum - bNum;
+      });
+      const fullText = sortedPages
+        .map((p) => p.markdown ?? "")
+        .filter(Boolean)
+        .join("\n\n");
+      pagesByDoc.set(d.id, fullText);
+    }
+  }
+
   const softWarnings = resolutions
     .filter(
       (r): r is Extract<MentionResolution, { kind: "soft-warning" }> => r.kind === "soft-warning",
     )
     .map((r) => r.message);
 
-  // ponytail: don't inject a ToolMessage if there's nothing useful to
-  // surface (no resolved chunks + no warnings). Caller gets the original
-  // messages back unchanged. Router / sub-agents see no extra noise.
-  if (!hasResolved && softWarnings.length === 0) return messages;
+  // Group doc metadata representations by folder for the prompt block
+  const docsByFolderGrouped = new Map<string, typeof docsFromFolders>();
+  for (const d of docsFromFolders) {
+    const list = docsByFolderGrouped.get(d.folderId) ?? [];
+    list.push(d);
+    docsByFolderGrouped.set(d.folderId, list);
+  }
 
-  // ponytail: render the section. Each doc gets its own header
-  // (`## "doc title"`). If the doc came from a folder mention, prepend
-  // the folder name as context so the LLM knows which folder the user
-  // pulled from.
+  const metaBlocks: string[] = [];
+  for (const folderId of folderIdSet) {
+    const folder = folderById.get(folderId);
+    if (!folder) continue;
+    const children = docsByFolderGrouped.get(folderId) ?? [];
+    const metaChildren = children.filter((c) => {
+      const r = resolutions.find((res) => res.docId === c.docId && res.kind === "resolved");
+      return r?.kind === "resolved" && r.mode === "meta";
+    });
+
+    if (metaChildren.length > 0) {
+      const childLines = metaChildren
+        .map((c) => `    - Document: "${c.title}" (ID: "${c.docId}")`)
+        .join("\n");
+      metaBlocks.push(`- Folder: "${folder.name}" (ID: "${folder.id}") containing:\n${childLines}`);
+    }
+  }
+
+  // Plus direct doc mentions that are in meta mode and not inside folder mentions
+  for (const id of rawDocIds) {
+    const doc = docById.get(id);
+    if (doc?.status === "success") {
+      const r = resolutions.find((res) => res.docId === doc.docId && res.kind === "resolved");
+      if (r?.kind === "resolved" && r.mode === "meta") {
+        const isFromFolder = docsFromFolders.some((df) => df.docId === doc.docId);
+        if (!isFromFolder) {
+          metaBlocks.push(`- Document: "${doc.title}" (ID: "${doc.docId}")`);
+        }
+      }
+    }
+  }
+
+  // Build Full content representations (Branch 2)
   const folderNameById = new Map<string, string>(
     docsFromFolders.map((d) => [d.docId, d.folderName]),
   );
-  const blocks: string[] = [];
+  const fallbackBlocks: string[] = [];
   for (const r of resolutions) {
-    if (r.kind !== "resolved" || r.chunks.length === 0) continue;
-    const doc = docById.get(r.docId);
-    const title = doc?.title ?? "(unknown)";
-    const folderLabel = folderNameById.get(r.docId);
-    const header = folderLabel ? `## "${title}" (from folder "${folderLabel}")` : `## "${title}"`;
-    const numbered = r.chunks.map((c, i) => `[${i + 1}] ${c.content}`).join("\n\n");
-    blocks.push(`${header}\n${numbered}`);
+    if (r.kind === "resolved" && r.mode === "full") {
+      const doc = docById.get(r.docId);
+      const title = doc?.title ?? "(unknown)";
+      const folderLabel = folderNameById.get(r.docId);
+      const header = folderLabel
+        ? `## "${title}" (from folder "${folderLabel}") [Fallback: Full Content]`
+        : `## "${title}" [Fallback: Full Content]`;
+      const content = pagesByDoc.get(r.docId) ?? "";
+      fallbackBlocks.push(`${header}\n${content}`);
+    }
   }
 
-  const section = [
-    "<mentioned-documents>",
-    "The user mentioned the following knowledge-base documents in this turn.",
-    "Use the chunks below as ground truth. Cite with the `[1] [2]` markers you see.",
-    "",
-    ...blocks,
-    ...(softWarnings.length > 0 ? ["", "## Soft warnings", ...softWarnings] : []),
-    "</mentioned-documents>",
-  ].join("\n");
+  // Build UI Payload documents list
+  const documentsPayload: any[] = [];
 
-  // ponytail: de-dup. A previous prepareData pass may have already
-  // injected a kb-context pair in this thread's state.messages (the
-  // LangGraph messages reducer appends, so it persists across turns
-  // until something explicitly drops it). Re-inserting with the same
-  // `tool_call_id` would create a duplicate that strict LLM providers
-  // (Anthropic, OpenAI) reject with "no tool call found for function
-  // call output with call_id …". Skip the injection when we see an
-  // existing one — the previously-injected context is still in scope
-  // for the LLM, and the user's NEW directive text in the most
-  // recent HumanMessage is enough for the LLM to call search_kb for
-  // a fresh pull if the old chunks aren't enough.
+  // For meta-mode doc mentions (including folder children and direct mentions)
+  for (const id of docIdSet) {
+    const doc = docById.get(id);
+    if (doc?.status === "success") {
+      const r = resolutions.find((res) => res.docId === doc.docId && res.kind === "resolved");
+      if (r?.kind === "resolved" && r.mode === "meta") {
+        documentsPayload.push({
+          chunkId: `meta-${doc.docId}`,
+          documentId: doc.docId,
+          docTitle: doc.title,
+          pageNumbers: [],
+          content: `Document loaded. The model will query its content as needed via search_kb.`,
+          rrfScore: 1.0,
+          legsHit: ["mention"],
+        });
+      }
+    }
+  }
+
+  // For full-mode doc mentions
+  for (const r of resolutions) {
+    if (r.kind === "resolved" && r.mode === "full") {
+      const doc = docById.get(r.docId);
+      if (doc) {
+        documentsPayload.push({
+          chunkId: `full-${doc.docId}`,
+          documentId: doc.docId,
+          docTitle: doc.title,
+          pageNumbers: [],
+          content: pagesByDoc.get(doc.docId) ?? "",
+          rrfScore: 1.0,
+          legsHit: ["full"],
+        });
+      }
+    }
+  }
+
+  const hasResolved = documentsPayload.length > 0;
+  if (!hasResolved && softWarnings.length === 0) return messages;
+
+  const sectionParts = [
+    "<mentioned-documents>",
+    "The user mentioned knowledge-base documents/folders in this turn.",
+  ];
+
+  if (metaBlocks.length > 0) {
+    sectionParts.push(
+      "The following sources are available for search. You MUST call the `search_kb` or `search_graph` tool with `documentId` or `folderId` filters to search their contents. DO NOT answer from pre-trained knowledge if retrieval from these sources is possible.",
+      "",
+      ...metaBlocks,
+      "",
+    );
+  }
+
+  if (fallbackBlocks.length > 0) {
+    sectionParts.push(
+      "The following sources had no chunk index yet, so their full page contents are provided below. Use this content directly to answer:",
+      "",
+      ...fallbackBlocks,
+      "",
+    );
+  }
+
+  if (softWarnings.length > 0) {
+    sectionParts.push("## Soft warnings", ...softWarnings);
+  }
+
+  sectionParts.push("</mentioned-documents>");
+  const section = sectionParts.join("\n");
+
   const toolCallId = "kb-context";
   if (messages.some((m) => m instanceof ToolMessage && m.tool_call_id === toolCallId)) {
     return messages;
   }
 
-  // ponytail: payload matches the search_kb / search_graph ToolMessage
-  // shape (`{ content, documents, empty }`) so the existing
-  // KbSearchToolUI card picks it up via the same parseResult path —
-  // no custom card needed. `content` is the LLM-facing markdown text
-  // with `[1] [2]` markers; `documents` is the structured chunks for
-  // the UI. JSON-stringified because ToolMessage content is a string.
   const toolResultPayload = JSON.stringify({
     content: section,
-    documents: blocks.map((block, i) => {
-      // ponytail: rebuild a per-chunk record that matches the
-      // KbSearchDocument shape. The LLM-facing block has the doc
-      // title and `[1]`-prefixed chunks; we split the title out and
-      // re-attach the raw chunk content so the UI card can render
-      // the chunk list with leg badges.
-      const titleMatch = block.match(/^## "?([^"(]+?)"?(?:\s*\(from folder "[^"]+"\))?\n/);
-      const title = titleMatch?.[1]?.trim() ?? "(unknown)";
-      const chunkTexts = block
-        .split("\n\n")
-        .slice(1) // drop the ## header
-        .map((s) => s.replace(/^\[\d+\]\s*/, ""));
-      return {
-        chunkId: `c-synthetic-${i}`,
-        documentId: title,
-        docTitle: title,
-        pageNumbers: [],
-        content: chunkTexts.join("\n\n"),
-        rrfScore: 1.0,
-        legsHit: ["kw"],
-      };
-    }),
+    documents: documentsPayload,
     empty: false,
   });
 
-  // ponytail: AIMessage + ToolMessage PAIR. LLM providers validate
-  // tool_call_id pairing and reject a lone ToolMessage — the synthetic
-  // call needs both halves. AIMessage has empty content + a
-  // `tool_calls` entry whose `id` matches the ToolMessage's
-  // `tool_call_id`. `args` mirrors search_kb's args so the existing
-  // KbSearchToolUI card renders the right label.
+  const queryParts: string[] = [];
+  for (const fid of rawFolderIds) {
+    const f = folderById.get(fid);
+    if (f) queryParts.push(`@${f.name}`);
+  }
+  for (const id of rawDocIds) {
+    const d = docById.get(id);
+    if (d) queryParts.push(`@${d.title}`);
+  }
   const toolArgs = {
-    query: blocks
-      .map((b) => b.match(/^## "?([^"(]+?)"?/)?.[1]?.trim() ?? "")
-      .filter(Boolean)
-      .join(", "),
+    query: queryParts.join(", "),
     topK: env.hybridTopKDefault,
   };
+
   const assistantCall = new AIMessage({
     content: "",
     tool_calls: [

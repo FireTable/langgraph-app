@@ -25,10 +25,18 @@ const searchGraphSchema = z.object({
         "or multi-hop questions ('who acquired X', 'what orgs mention Y').",
     ),
   topK: z.number().int().min(1).optional(),
+  folderId: z
+    .string()
+    .optional()
+    .describe("Filter results to documents within this specific folder ID (optional)."),
+  documentId: z
+    .string()
+    .optional()
+    .describe("Filter results to this specific document ID only (optional)."),
 });
 
 export const searchGraphTool: StructuredTool = tool(
-  async ({ query, topK }, config) => {
+  async ({ query, topK, folderId, documentId }, config) => {
     if (!(await isPgVectorAvailable())) {
       throw new Error(
         "search_graph unavailable: pgvector extension is not installed on the database",
@@ -55,6 +63,8 @@ export const searchGraphTool: StructuredTool = tool(
       qvec,
       qents: qents.length > 0 ? qents : undefined,
       topK,
+      folderId,
+      documentId,
     });
     return JSON.stringify(formatSearchResult(results, env.chunkMaxChars));
   },

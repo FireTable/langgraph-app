@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { getKbEnv } from "@/lib/kb/env";
 import { EMBEDDING_DIM } from "@/lib/kb/schema";
+import { getRerankModelFromDB } from "@/lib/provider/model-registry";
 
 // ponytail: hybrid search (issue #13 v3) — RRF (k=60) over three legs:
 //   1. kw   — tsvector + GIN, ranked by ts_rank_cd
@@ -43,6 +44,8 @@ export type HybridSearchArgs = {
   qvec?: number[] | null;
   qents?: string[];
   topK?: number;
+  folderId?: string;
+  documentId?: string;
 };
 
 // ponytail: cheap query-time entity candidate extraction. Index-time
@@ -65,6 +68,54 @@ export function deriveQueryEntities(query: string): string[] {
 export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearchResult[]> {
   const env = getKbEnv();
   const topK = Math.min(Math.max(args.topK ?? env.hybridTopKDefault, 1), env.hybridTopKMax);
+
+  // ponytail: empty query fallback — returns chunks sorted by documentId and ordinal
+  if (!args.query || args.query.trim() === "") {
+    const docFilterSql = args.documentId
+      ? sql`AND c.document_id = ${args.documentId}`
+      : args.folderId
+        ? sql`AND d.folder_id = ${args.folderId}`
+        : sql``;
+
+    const result = await db.execute<{
+      id: string;
+      document_id: string;
+      title: string;
+      content: string;
+    }>(sql`
+      SELECT c.id,
+             c.document_id,
+             d.title,
+             LEFT(c.content, ${env.chunkMaxChars}) AS content
+      FROM kb_chunk c
+      JOIN kb_document d ON d.id = c.document_id
+      WHERE d.user_id = ${args.userId}
+        AND c.status = 'success'
+        AND d.status = 'success'
+        ${docFilterSql}
+      ORDER BY c.document_id, c.ordinal
+      LIMIT ${topK}
+    `);
+
+    const rows = Array.isArray(result) ? result : ((result as { rows?: unknown[] }).rows ?? []);
+    return (
+      rows as Array<{
+        id: string;
+        document_id: string;
+        title: string;
+        content: string;
+      }>
+    ).map((r) => ({
+      chunkId: r.id,
+      documentId: r.document_id,
+      docTitle: r.title,
+      pageNumbers: [],
+      content: r.content,
+      rrfScore: 1.0,
+      legsHit: ["kw"],
+    }));
+  }
+
   const qents = (args.qents ?? deriveQueryEntities(args.query)).map((q) => q.toLowerCase());
 
   // ponytail: pgvector's `vector(1024)` rejects a wrong-dim input with
@@ -80,6 +131,15 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
 
   const hasVec = qvecLiteral != null;
   const hasTag = qents.length > 0;
+
+  const reranker = await getRerankModelFromDB().catch(() => null);
+  const finalLimit = reranker ? Math.max(50, topK * 5) : topK;
+
+  const docFilterClause = args.documentId
+    ? sql`AND kd.id = ${args.documentId}`
+    : args.folderId
+      ? sql`AND kd.folder_id = ${args.folderId}`
+      : sql``;
 
   // ponytail: dynamically assemble the SQL with only the legs that
   // actually fire — pure keyword query skips `vec`, empty qents skips
@@ -147,7 +207,7 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
       ),
       valid_docs AS (
         SELECT kd.id FROM kb_document kd, q
-        WHERE kd.user_id = q.uid AND kd.status = 'success'
+        WHERE kd.user_id = q.uid AND kd.status = 'success' ${docFilterClause}
       ),
       kw AS (
         SELECT c.id, ROW_NUMBER() OVER (ORDER BY ts_rank_cd(c.tsv, q.tsq) DESC) AS rk
@@ -172,22 +232,46 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
       JOIN kb_document d ON d.id = c.document_id
       GROUP BY c.id, c.document_id, d.title, c.content
       ORDER BY rrf_score DESC
-      LIMIT ${topK}
+      LIMIT ${finalLimit}
     `);
 
   // ponytail: postgres.js returns rows directly; Drizzle wraps in
   // { rows }. Normalize so callers get a plain array.
   const rows = Array.isArray(result) ? result : ((result as { rows?: unknown[] }).rows ?? []);
-  return (
-    rows as Array<{
-      id: string;
-      document_id: string;
-      title: string;
-      legs_hit: string[];
-      rrf_score: number;
-      content: string;
-    }>
-  ).map((r) => ({
+  const normalizedRows = rows as Array<{
+    id: string;
+    document_id: string;
+    title: string;
+    legs_hit: string[];
+    rrf_score: number;
+    content: string;
+  }>;
+
+  let finalRows = normalizedRows;
+
+  // ponytail: two-stage ranking using Reranker model
+  if (reranker && normalizedRows.length > 0) {
+    try {
+      const docsToRerank = normalizedRows.map((r) => r.content);
+      const rerankResult = await reranker.rerank(args.query, docsToRerank);
+
+      const scoredRows = rerankResult.map((item) => {
+        const original = normalizedRows[item.index];
+        return {
+          ...original,
+          rrf_score: item.score,
+        };
+      });
+      scoredRows.sort((a, b) => b.rrf_score - a.rrf_score);
+      finalRows = scoredRows;
+    } catch (err) {
+      console.warn("[hybridSearch] Reranking failed, falling back to RRF rankings:", err);
+    }
+  }
+
+  const truncatedRows = finalRows.slice(0, topK);
+
+  return truncatedRows.map((r) => ({
     chunkId: r.id,
     documentId: r.document_id,
     docTitle: r.title,

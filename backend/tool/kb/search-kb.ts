@@ -33,10 +33,18 @@ const searchKbSchema = z.object({
       "How many chunks to return. Defaults to KB_HYBRID_TOPK_DEFAULT " +
         "(usually 8). Capped at KB_HYBRID_TOPK_MAX.",
     ),
+  folderId: z
+    .string()
+    .optional()
+    .describe("Filter results to documents within this specific folder ID (optional)."),
+  documentId: z
+    .string()
+    .optional()
+    .describe("Filter results to this specific document ID only (optional)."),
 });
 
 export const searchKbTool: StructuredTool = tool(
-  async ({ query, topK }, config) => {
+  async ({ query, topK, folderId, documentId }, config) => {
     if (!(await isPgVectorAvailable())) {
       throw new Error("search_kb unavailable: pgvector extension is not installed on the database");
     }
@@ -51,7 +59,7 @@ export const searchKbTool: StructuredTool = tool(
       console.warn("[search_kb] Failed to embed query, falling back to non-vector legs:", err);
     }
 
-    const results = await hybridSearch({ userId, query, qvec, topK });
+    const results = await hybridSearch({ userId, query, qvec, topK, folderId, documentId });
     return JSON.stringify(formatSearchResult(results, env.chunkMaxChars));
   },
   {

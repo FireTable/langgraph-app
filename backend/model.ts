@@ -6,8 +6,10 @@ import {
   getEmbeddingModelFromDB,
   getExtractModelFromDB,
   getOcrModelFromDB,
+  getRerankModelFromDB,
   invalidateModelCache,
   type GetChatModelOpts,
+  type RerankModel,
 } from "@/lib/provider/model-registry";
 
 function buildEnvChatModel(): ChatOpenAI {
@@ -107,6 +109,18 @@ export async function getEmbeddingModel(opts: GetChatModelOpts = {}): Promise<Em
  */
 export async function getExtractModel(opts: GetChatModelOpts = {}): Promise<ChatOpenAI> {
   return (await getExtractModelFromDB(opts)) as ChatOpenAI;
+}
+
+/**
+ * Retrieve the rerank model. If none is configured in DB, returns null,
+ * allowing caller to gracefully skip reranking.
+ */
+export async function getRerankModel(opts: GetChatModelOpts = {}): Promise<RerankModel | null> {
+  try {
+    return await getRerankModelFromDB(opts);
+  } catch {
+    return null;
+  }
 }
 
 export { invalidateModelCache };

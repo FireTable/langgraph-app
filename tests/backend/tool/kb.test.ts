@@ -3,6 +3,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
+const mockReranker = {
+  rerank: vi.fn(async (query: string, docs: string[]) => {
+    const mapped = docs.map((d, index) => {
+      const isBeta = d.includes("BetaCorp");
+      return {
+        index,
+        score: isBeta ? 0.95 : 0.1,
+      };
+    });
+    return mapped as any;
+  }),
+};
+
+vi.mock("@/lib/provider/model-registry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/provider/model-registry")>();
+  return {
+    ...actual,
+    getRerankModelFromDB: vi.fn(async () => {
+      if ((globalThis as any).shouldMockRerank) {
+        return mockReranker;
+      }
+      throw new Error("No rerank model configured");
+    }),
+  };
+});
+
 vi.mock("@/backend/model", () => ({
   getEmbeddingModel: vi.fn(async () => ({
     embedQuery: vi.fn(async (q: string) => {
@@ -99,6 +125,7 @@ beforeEach(async () => {
 afterEach(async () => {
   _resetPgVectorCache(null);
   setKbToolUserId("");
+  (globalThis as any).shouldMockRerank = false;
   await db.delete(kbChunk);
   await db.delete(kbDocument).where(eq(kbDocument.userId, TEST_USER.id));
   await db.delete(kbFolder).where(eq(kbFolder.userId, TEST_USER.id));
@@ -327,5 +354,43 @@ describe("backend/tool/kb — formatSearchResult", () => {
 describe("backend/tool/kb — LIST_DOCUMENTS_STATUSES", () => {
   it("exposes the four valid statuses", () => {
     expect(LIST_DOCUMENTS_STATUSES).toEqual(["success", "failed", "parsing", "pending"]);
+  });
+});
+
+describe("backend/tool/kb — search_kb improvements", () => {
+  it("filters search results by documentId", async () => {
+    const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
+    const raw = await tool.invoke({ query: "Acme", topK: 3, documentId: DOC_A_ID });
+    const parsed = JSON.parse(raw);
+    expect(parsed.empty).toBe(false);
+    expect(parsed.documents.every((d: any) => d.documentId === DOC_A_ID)).toBe(true);
+  });
+
+  it("filters search results by folderId", async () => {
+    const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
+    const raw = await tool.invoke({ query: "Acme", topK: 3, folderId: FOLDER_ID });
+    const parsed = JSON.parse(raw);
+    expect(parsed.empty).toBe(false);
+    expect(parsed.documents.length).toBeGreaterThan(0);
+  });
+
+  it("supports empty query fallback to return ordinal sorted chunks", async () => {
+    const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
+    const raw = await tool.invoke({ query: "   ", topK: 3, documentId: DOC_A_ID });
+    const parsed = JSON.parse(raw);
+    expect(parsed.empty).toBe(false);
+    expect(parsed.documents.length).toBe(2);
+    expect(parsed.documents[0].content).toContain("founded");
+    expect(parsed.documents[1].content).toContain("acquired");
+  });
+
+  it("supports Reranker scoring if configured", async () => {
+    (globalThis as any).shouldMockRerank = true;
+    const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
+    const raw = await tool.invoke({ query: "Acme", topK: 3 });
+    const parsed = JSON.parse(raw);
+    expect(parsed.empty).toBe(false);
+    expect(parsed.documents[0].content).toContain("BetaCorp");
+    expect(parsed.documents[0].rrfScore).toBe(0.95);
   });
 });

@@ -94,7 +94,10 @@ describe("lib/kb/resolve-mentions folder support", () => {
     expect(content).toMatch(/<mentioned-documents>/);
     expect(content).toMatch(/doc-1\.pdf/);
     expect(content).toMatch(/doc-2\.pdf/);
-    expect(content).toMatch(/from folder \\"Research\\"/);
+    // ponytail: meta-mode folder expansion uses the spec format
+    // (`.claude/14-kb-improvements.md` Stage 2) — `Folder: "name"
+    // (ID: "...") containing:` followed by indented Document rows.
+    expect(content).toMatch(/Folder: \\"Research\\" \(ID: /);
   });
 
   it("inserts a ToolMessage with a soft-warning when the folder is empty", async () => {
@@ -200,7 +203,10 @@ describe("lib/kb/resolve-mentions folder support", () => {
     // regex needs to match the escaped form, not the raw text.
     const content = String(tm!.content);
     expect(content).toMatch(/in-folder\.pdf/);
-    expect(content).toMatch(/from folder \\"Research\\"/);
+    // ponytail: meta-mode folder expansion format (see Stage 2 of
+    // .claude/14-kb-improvements.md). Direct doc mentions get a
+    // flat `- Document: "..."` row without the folder wrap.
+    expect(content).toMatch(/Folder: \\"Research\\" \(ID: /);
     expect(content).toMatch(/direct\.pdf/);
     // Direct doc mention's block does NOT carry the folder label.
     // Earlier assertions verify the direct block exists ("direct.pdf")

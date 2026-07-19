@@ -132,13 +132,75 @@ export async function getExtractModelFromDB(opts: GetModelOpts = {}): Promise<Ba
  * embedding-3-small etc.); the wrapper instantiates the right class
  * from the picked tuple.
  */
+export class RerankModel {
+  constructor(
+    public readonly config: {
+      providerId: string;
+      baseUrl: string | undefined;
+      modelName: string;
+      apiKey: string;
+    },
+  ) {}
+
+  async rerank(
+    query: string,
+    documents: string[],
+    topN?: number,
+  ): Promise<Array<{ index: number; score: number }>> {
+    const baseUrl =
+      this.config.baseUrl ||
+      (this.config.providerId === "jina" ? "https://api.jina.ai/v1" : "https://api.cohere.com/v1");
+    // Ensure we don't have trailing slash on baseURL, and append /rerank if not present
+    let url = baseUrl.replace(/\/$/, "");
+    if (!url.endsWith("/rerank")) {
+      url = `${url}/rerank`;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.config.modelName,
+        query,
+        documents,
+        top_n: topN,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      throw new Error(`Rerank API error (${response.status}): ${errText || response.statusText}`);
+    }
+
+    const data = (await response.json()) as {
+      results: Array<{ index: number; relevance_score: number }>;
+    };
+
+    if (!data.results || !Array.isArray(data.results)) {
+      throw new Error("Invalid response format from Rerank API: missing 'results' array");
+    }
+
+    return data.results.map((r) => ({
+      index: r.index,
+      score: r.relevance_score,
+    }));
+  }
+}
+
+export async function getRerankModelFromDB(opts: GetModelOpts = {}): Promise<RerankModel> {
+  return getModelFromDB({ ...opts, kind: "rerank" }) as Promise<RerankModel>;
+}
+
 export async function getEmbeddingModelFromDB(opts: GetModelOpts = {}): Promise<Embeddings> {
   return getModelFromDB({ ...opts, kind: "embed" }) as Promise<Embeddings>;
 }
 
 async function getModelFromDB(
   opts: GetModelOpts & { kind: ModelKind },
-): Promise<BaseChatModel | Embeddings> {
+): Promise<BaseChatModel | Embeddings | RerankModel> {
   const cacheKey = `${kindPrefix(opts.kind)}|${opts.providerId ?? "*"}:${opts.modelName ?? "*"}`;
 
   let tuples = tupleCache.get(cacheKey);
@@ -158,6 +220,15 @@ async function getModelFromDB(
   const start = counter % tuples.length;
 
   const picked = tuples[start];
+
+  if (opts.kind === "rerank") {
+    return new RerankModel({
+      providerId: picked.providerId,
+      baseUrl: picked.baseUrl,
+      modelName: picked.modelName,
+      apiKey: decryptApiKey(picked.key),
+    });
+  }
 
   if (opts.kind === "embed") {
     return new OpenAIEmbeddings({

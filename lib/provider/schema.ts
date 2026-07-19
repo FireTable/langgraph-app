@@ -32,7 +32,7 @@ export type ProviderApiKey = {
 //             cheaper model (e.g. gpt-4o-mini) as the canonical
 //             extraction surface without forcing it to also be the
 //             chat default.
-export type ModelKind = "chat" | "ocr" | "embed" | "extract";
+export type ModelKind = "chat" | "ocr" | "embed" | "extract" | "rerank";
 
 /**
  * Per-model rate config inside `provider.models`.

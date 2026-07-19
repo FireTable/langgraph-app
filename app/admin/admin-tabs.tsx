@@ -33,7 +33,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { toast } from "sonner";
 
 type PublicProviderApiKey = { name: string };
-type ModelKind = "chat" | "ocr" | "embed" | "extract";
+type ModelKind = "chat" | "ocr" | "embed" | "extract" | "rerank";
 type PublicModel = {
   name: string;
   enabled: boolean;
@@ -652,7 +652,7 @@ function ModelDialog(
         <div className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Kind</span>
           <div className="flex flex-wrap gap-3">
-            {(["chat", "ocr", "embed", "extract"] as const).map((k) => (
+            {(["chat", "ocr", "embed", "extract", "rerank"] as const).map((k) => (
               <label key={k} className="flex items-center gap-2 text-sm">
                 <Checkbox
                   checked={kind.includes(k)}
@@ -663,13 +663,14 @@ function ModelDialog(
                 {/* ponytail: title-case label for the dialog checkbox; the
                     wire-format enum stays lowercase (matches the JSONB value
                     and the registry's `m.kind ?? ["chat"]` contract). */}
-                <span>{k.charAt(0).toUpperCase() + k.slice(1)}</span>
+                <span>{k === "ocr" ? "OCR" : k.charAt(0).toUpperCase() + k.slice(1)}</span>
               </label>
             ))}
           </div>
           <p className="text-muted-foreground text-xs">
             At least one kind is required — chat for general inference, ocr for PDF vision, embed
-            for KB chunk vectors, extract for structured-output triples from chunks.
+            for KB chunk vectors, extract for structured-output triples from chunks, rerank for
+            secondary retrieval reranking.
           </p>
         </div>
       </div>
