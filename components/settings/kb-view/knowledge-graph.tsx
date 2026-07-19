@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { ArrowRight, Eye, Hash, Link2, Tags } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { entityColor, type EntityColor } from "@/lib/kb/entityColor";
 
 // ponytail: shared KnowledgeGraph card used by both the per-document
 // preview dialog (doc-detail-dialog) and the per-folder graph dialog
@@ -110,85 +111,6 @@ export function KnowledgeGraph({
     setHoveredLink(link || null);
     if (link) setHoveredNode(null);
   }, []);
-  const nodeCanvasObject = useCallback(
-    (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-      if (
-        typeof node.x !== "number" ||
-        typeof node.y !== "number" ||
-        !isFinite(node.x) ||
-        !isFinite(node.y)
-      ) {
-        return;
-      }
-
-      const label = node.name;
-      const degree = node.degree || 1;
-      const zoomBoost = Math.min(0.6, Math.max(-0.5, (globalScale - 1) * -0.55));
-      const r = Math.min(12, Math.max(2.5, 4.5 + degree * 0.4 + zoomBoost));
-
-      let colorStart = "#f8fafc";
-      let colorEnd = "#cbd5e1";
-      let strokeColor = "#475569";
-      const typeLower = node.type?.toLowerCase();
-      if (typeLower === "person") {
-        colorStart = "#dbeafe";
-        colorEnd = "#3b82f6";
-        strokeColor = "#1d4ed8";
-      } else if (typeLower === "organization") {
-        colorStart = "#fef3c7";
-        colorEnd = "#f59e0b";
-        strokeColor = "#d97706";
-      } else if (typeLower === "concept") {
-        colorStart = "#d1fae5";
-        colorEnd = "#10b981";
-        strokeColor = "#059669";
-      }
-
-      const gradient = ctx.createRadialGradient(
-        node.x - r * 0.15,
-        node.y - r * 0.15,
-        r * 0.1,
-        node.x,
-        node.y,
-        r,
-      );
-      gradient.addColorStop(0, colorStart);
-      gradient.addColorStop(0.85, colorEnd);
-      gradient.addColorStop(1, strokeColor);
-
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-      ctx.fillStyle = gradient;
-      ctx.fill();
-      ctx.lineWidth = 1.0;
-      ctx.strokeStyle = strokeColor;
-      ctx.stroke();
-
-      const showLabel = globalScale > 1.2 || (globalScale > 0.6 && degree >= 3) || degree >= 6;
-      if (showLabel) {
-        const fontSize = Math.max(2.8, 3.8 - Math.min(1.0, degree * 0.08));
-        const isHub = degree >= 4;
-        ctx.font = `${isHub ? 600 : 500} ${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "top";
-
-        const maxLen = globalScale > 1.5 ? 18 : globalScale > 0.9 ? 12 : 8;
-        let displayLabel = label;
-        if (label.length > maxLen) {
-          displayLabel = label.substring(0, maxLen - 2) + "...";
-        }
-
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-        ctx.lineWidth = 1.2;
-        ctx.lineJoin = "round";
-        ctx.strokeText(displayLabel, node.x, node.y + r + 3.5);
-
-        ctx.fillStyle = isHub ? "#0f172a" : "#475569";
-        ctx.fillText(displayLabel, node.x, node.y + r + 3.5);
-      }
-    },
-    [],
-  );
 
   // ponytail: react-force-graph-2d instance ref so we can call
   // zoomToFit() once after first layout, animating into the cluster
@@ -210,6 +132,15 @@ export function KnowledgeGraph({
     return () => resizeObserver.disconnect();
   }, [graphView]);
 
+  // ponytail: graphRAG-native node color map. Built once per graphData
+  // shape. Each entry: name → {h,s,l,bg,fg,border}. Consumers:
+  // nodeCanvasObject (canvas fill), hover tooltip badge, uniqueEntities
+  // list badge, doc-detail-dialog entity badge. All read from this
+  // single source. Neighbor signature drives hue (catches "two
+  // entities in the same neighborhood"); degree drives saturation +
+  // lightness (catches hubs vs leaves). Replaces the person /
+  // organization / concept string whitelist that left ~40 LLM-extracted
+  // types grey.
   // ponytail: doc-detail-dialog polls /api/kb/documents/[id] every 2s.
   // Each poll lands a fresh `chunks` array reference, which would force a
   // re-dedup + new graphData object, which would re-trigger
@@ -331,6 +262,124 @@ export function KnowledgeGraph({
     // ponytail: depend on the fingerprint (stable across same-content polls),
     // not the raw `chunks` array (which flips reference every 2s poll).
   }, [dedupFingerprint, chunks?.length, skipFailedChunks]);
+
+  // ponytail: graphRAG-native node color map. Built once per graphData
+  // shape (graphData refs are pinned by the dedup fingerprint above so
+  // polls with unchanged content don't churn this). Each entry:
+  // name → {h,s,l,bg,fg,border}. Consumers: nodeCanvasObject (canvas
+  // fill), hover tooltip badge, uniqueEntities list badge, and
+  // doc-detail-dialog entity badge (all import entityColor from
+  // lib/kb/entityColor — single source of truth).
+  // ponytail: same neighbor signature = same hue (catches "two
+  // entities in the same neighborhood"); degree drives saturation +
+  // lightness (catches hubs vs leaves). Replaces the person /
+  // organization / concept string whitelist that left ~40 LLM-
+  // extracted types grey.
+  const nodeColors = useMemo(() => {
+    const degreeByName = new Map<string, number>();
+    const neighborsByName = new Map<string, Set<string>>();
+    for (const link of graphData.links) {
+      const s = link.source as unknown as { name?: string; id?: string };
+      const t = link.target as unknown as { name?: string; id?: string };
+      const src = (s?.name ?? s?.id ?? String(link.source)) as string;
+      const tgt = (t?.name ?? t?.id ?? String(link.target)) as string;
+      degreeByName.set(src, (degreeByName.get(src) ?? 0) + 1);
+      degreeByName.set(tgt, (degreeByName.get(tgt) ?? 0) + 1);
+      if (!neighborsByName.has(src)) neighborsByName.set(src, new Set());
+      if (!neighborsByName.has(tgt)) neighborsByName.set(tgt, new Set());
+      neighborsByName.get(src)!.add(tgt);
+      neighborsByName.get(tgt)!.add(src);
+    }
+    const out = new Map<string, EntityColor>();
+    for (const n of graphData.nodes) {
+      const name = (n as { name?: string; id?: string }).name ?? (n as { id: string }).id;
+      const degree = degreeByName.get(name) ?? (n as { degree?: number }).degree ?? 0;
+      out.set(name, entityColor(name, [...(neighborsByName.get(name) ?? [])], degree));
+    }
+    return out;
+  }, [graphData.nodes, graphData.links]);
+
+  // ponytail: lookup helper with muted-slate fallback for any entity
+  // name not in the color map (e.g. a row that survived dedup
+  // filtering but lost its neighbors).
+  const colorFor = useCallback(
+    (name: string): EntityColor => nodeColors.get(name) ?? entityColor(name, [], 0),
+    [nodeColors],
+  );
+
+  // ponytail: canvas node paint. Reads bg/fg/border from the
+  // graphRAG-native color map instead of the person/organization/
+  // concept whitelist (which left 39/40 of this doc's entity types
+  // grey). Pulled after nodeColors so the closure can read it.
+  const nodeCanvasObject = useCallback(
+    (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+      if (
+        typeof node.x !== "number" ||
+        typeof node.y !== "number" ||
+        !isFinite(node.x) ||
+        !isFinite(node.y)
+      ) {
+        return;
+      }
+
+      const label = node.name;
+      const degree = node.degree || 1;
+      const zoomBoost = Math.min(0.6, Math.max(-0.5, (globalScale - 1) * -0.55));
+      // ponytail: smaller radius range after the redesign. degree
+      // 1-2 sits at 2.5 (tiny), 8+ at 8 (visible hub). Avoids the
+      // "1.5x the size of everything else" effect we saw in the first
+      // visual pass.
+      const r = Math.min(8, Math.max(2.5, 2.5 + degree * 0.6 + zoomBoost));
+
+      // ponytail: flat fill + 1px stroke. Replaces the radial gradient
+      // (which gave every node a 3D ball look) — now matches the
+      // outline style of the badges: light bg fill, same-hue border.
+      // Hue from entityColor (neighbor signature); saturation pulled
+      // down so dots don't compete with each other on the slate bg.
+      let fillColor = "#f1f5f9";
+      let strokeColor = "#475569";
+      const nodeColor = nodeColors.get(label);
+      if (nodeColor) {
+        fillColor = nodeColor.bg;
+        strokeColor = nodeColor.border;
+      }
+
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+      ctx.fillStyle = fillColor;
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = strokeColor;
+      ctx.stroke();
+
+      // ponytail: label visibility tightened — only hubs (degree >= 6)
+      // and nodes the user explicitly zoomed into (globalScale > 1.6)
+      // get a label. The old "globalScale > 0.6 + degree 3" rule
+      // flooded the canvas with overlapping text on the 321-entity
+      // folder view.
+      const showLabel = degree >= 6 || globalScale > 1.6;
+      if (showLabel) {
+        const fontSize = Math.max(2.6, 3.4 - Math.min(0.8, degree * 0.06));
+        ctx.font = `${fontSize}px Inter, system-ui, -apple-system, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+
+        const maxLen = globalScale > 1.5 ? 18 : globalScale > 0.9 ? 12 : 8;
+        let displayLabel = label;
+        if (label.length > maxLen) {
+          displayLabel = label.substring(0, maxLen - 2) + "...";
+        }
+
+        // ponytail: no white stroke halo around the label anymore.
+        // The plain muted text on the slate-50 bg reads cleanly
+        // without it, and the stroke was making labels visually
+        // heavier than the nodes themselves.
+        ctx.fillStyle = "#475569";
+        ctx.fillText(displayLabel, node.x, node.y + r + 3.5);
+      }
+    },
+    [nodeColors],
+  );
 
   // ponytail: re-fit whenever the node/edge count materially changes
   // so the graph lands on a useful framing for the user. Defers a
@@ -456,32 +505,12 @@ export function KnowledgeGraph({
                   const top = Math.max(8, rawY);
 
                   if (hoveredNode) {
-                    const typeLower = hoveredNode.type?.toLowerCase() || "";
-                    let badgeColor =
-                      "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20";
-                    if (typeLower === "person") {
-                      badgeColor =
-                        "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25";
-                    } else if (typeLower === "organization" || typeLower === "company") {
-                      badgeColor =
-                        "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25";
-                    } else if (
-                      typeLower === "concept" ||
-                      typeLower === "tech stack" ||
-                      typeLower === "tool" ||
-                      typeLower === "technology"
-                    ) {
-                      badgeColor =
-                        "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/25";
-                    } else if (typeLower === "team" || typeLower === "group") {
-                      badgeColor =
-                        "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25";
-                    } else if (typeLower === "job role" || typeLower === "position") {
-                      badgeColor = "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/25";
-                    } else if (typeLower === "motto" || typeLower === "contact information") {
-                      badgeColor =
-                        "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25";
-                    }
+                    // ponytail: hover tooltip type badge — color from
+                    // graphRAG-native entityColor (hue = neighbor
+                    // signature, sat/light = degree). Replaces the
+                    // person/organization/concept/team/job/motto
+                    // string whitelist.
+                    const hoveredColor = colorFor(hoveredNode.name);
 
                     return (
                       <div
@@ -502,8 +531,12 @@ export function KnowledgeGraph({
                             <Badge
                               className={cn(
                                 "text-[9px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-md shadow-none border shrink-0",
-                                badgeColor,
                               )}
+                              style={{
+                                backgroundColor: hoveredColor.bg,
+                                color: hoveredColor.fg,
+                                borderColor: hoveredColor.border,
+                              }}
                             >
                               {hoveredNode.type || "Other"}
                             </Badge>
@@ -605,14 +638,12 @@ export function KnowledgeGraph({
                 <div>Description</div>
               </div>
               {uniqueEntities.map((e, idx) => {
-                const badgeColor =
-                  e.type.toLowerCase() === "person"
-                    ? "bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border-blue-500/20"
-                    : e.type.toLowerCase() === "organization"
-                      ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border-amber-500/20"
-                      : e.type.toLowerCase() === "concept"
-                        ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/20"
-                        : "bg-muted text-muted-foreground border-border";
+                // ponytail: list-view type badge — color from
+                // graphRAG-native entityColor (same source as canvas
+                // nodes + hover tooltip + doc-detail-dialog). No
+                // string-type whitelist; hue = neighbor signature,
+                // saturation/lightness = degree.
+                const listColor = colorFor(e.name);
                 return (
                   <div
                     key={idx}
@@ -624,10 +655,12 @@ export function KnowledgeGraph({
                         Type:
                       </span>
                       <Badge
-                        className={cn(
-                          "text-[10px] font-medium py-0 px-1.5 rounded border shadow-none truncate max-w-full block",
-                          badgeColor,
-                        )}
+                        className="text-[10px] font-medium py-0 px-1.5 rounded border shadow-none truncate max-w-full block"
+                        style={{
+                          backgroundColor: listColor.bg,
+                          color: listColor.fg,
+                          borderColor: listColor.border,
+                        }}
                         title={e.type}
                       >
                         {e.type}

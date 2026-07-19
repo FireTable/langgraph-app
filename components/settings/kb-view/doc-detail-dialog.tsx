@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { TOAST_DESCRIPTION_CLASS } from "./helpers";
 import { KnowledgeGraph } from "./knowledge-graph";
 import { ChunkStatusBadge, DocStatusBadge, ChunksStatusBadge } from "./status-badge";
+import { entityColor, type EntityColor } from "@/lib/kb/entityColor";
 import { KbDocDetail } from "./types";
 
 export function DocDetailDialog({
@@ -121,6 +122,45 @@ export function DocDetailDialog({
       chunksInflight ||
       (detail.chunks.length === 0 && detail.doc.status === "success")
     );
+  }, [detail]);
+
+  // ponytail: graphRAG-native entity color map for chunk-level
+  // entity badges. Same single-source-of-truth pattern as
+  // knowledge-graph.tsx — collect degree + neighbor signature from
+  // every chunk's relationships, then look up per entity.
+  // chunk-level entities reference the SAME entity across chunks
+  // (after alignment), so colors stay stable as the user scrolls.
+  const entityColorMap = useMemo(() => {
+    const out = new Map<string, EntityColor>();
+    if (!detail) return out;
+    const degreeByName = new Map<string, number>();
+    const neighborsByName = new Map<string, Set<string>>();
+    for (const c of detail.chunks) {
+      for (const r of c.relationships ?? []) {
+        const src = r.source;
+        const tgt = r.target;
+        if (!src || !tgt) continue;
+        degreeByName.set(src, (degreeByName.get(src) ?? 0) + 1);
+        degreeByName.set(tgt, (degreeByName.get(tgt) ?? 0) + 1);
+        if (!neighborsByName.has(src)) neighborsByName.set(src, new Set());
+        if (!neighborsByName.has(tgt)) neighborsByName.set(tgt, new Set());
+        neighborsByName.get(src)!.add(tgt);
+        neighborsByName.get(tgt)!.add(src);
+      }
+    }
+    // ponytail: only color entities that actually appear in the
+    // current chunks. An entity not in neighborsByName (no outgoing
+    // or incoming relationship) gets the muted-slate fallback.
+    const seen = new Set<string>();
+    for (const c of detail.chunks) {
+      for (const e of c.entities ?? []) {
+        if (!e?.name || seen.has(e.name)) continue;
+        seen.add(e.name);
+        const degree = degreeByName.get(e.name) ?? 0;
+        out.set(e.name, entityColor(e.name, [...(neighborsByName.get(e.name) ?? [])], degree));
+      }
+    }
+    return out;
   }, [detail]);
 
   // ponytail: while the doc detail is loading, skip the entire
@@ -723,21 +763,25 @@ export function DocDetailDialog({
                                 </span>
                                 <div className="flex flex-wrap gap-1.5">
                                   {c.entities.map((e, idx) => {
-                                    const badgeColor =
-                                      e.type.toLowerCase() === "person"
-                                        ? "bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border-blue-500/20"
-                                        : e.type.toLowerCase() === "organization"
-                                          ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border-amber-500/20"
-                                          : e.type.toLowerCase() === "concept"
-                                            ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/20"
-                                            : "bg-muted text-muted-foreground border-border";
+                                    // ponytail: chunk-level entity badge
+                                    // color — graphRAG-native
+                                    // entityColor (hue = neighbor
+                                    // signature, sat/light = degree),
+                                    // single source of truth shared
+                                    // with knowledge-graph canvas +
+                                    // hover tooltip + uniqueEntities
+                                    // list. No string-type whitelist.
+                                    const entityColorFor =
+                                      entityColorMap.get(e.name) ?? entityColor(e.name, [], 0);
                                     return (
                                       <Badge
                                         key={idx}
-                                        className={cn(
-                                          "text-[9px] font-medium py-0.5 px-1.5 rounded border shadow-none",
-                                          badgeColor,
-                                        )}
+                                        className="text-[9px] font-medium py-0.5 px-1.5 rounded border shadow-none"
+                                        style={{
+                                          backgroundColor: entityColorFor.bg,
+                                          color: entityColorFor.fg,
+                                          borderColor: entityColorFor.border,
+                                        }}
                                         title={`${e.name} (${e.type}): ${e.description}`}
                                       >
                                         {e.name}
