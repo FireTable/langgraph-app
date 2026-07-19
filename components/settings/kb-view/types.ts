@@ -14,14 +14,19 @@ export type KbDocument = {
     markdown: string;
     referenceText?: string;
     errorMessage?: string;
+    status?: "pending" | "parsing" | "success" | "failed";
   }>;
   createdAt: string;
   updatedAt: string;
   totalChunks?: number;
   successChunks?: number;
   failedChunks?: number;
+  pendingChunks?: number;
+  parsingChunks?: number;
   totalPages?: number;
   failedPages?: number;
+  pendingPages?: number;
+  parsingPages?: number;
 };
 
 export type KbFolder = { id: string; name: string };

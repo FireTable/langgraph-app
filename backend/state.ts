@@ -32,6 +32,14 @@ export type PageResult = {
   /** Native text extracted from the PDF text layer by mupdf. Empty for scanned/image-only pages. */
   referenceText?: string;
   errorMessage?: string;
+  // ponytail: per-page 4-stage status mirroring kbChunkStatusEnum.
+  // Written by pageToMarkdownNode when OCR succeeds/fails; pending
+  // is the default for a freshly-screenshot page whose markdown
+  // hasn't been produced yet. Legacy rows (no status field) read as
+  // "success" when markdown is non-empty, "failed" when errorMessage
+  // is set, "pending" when both are empty — preserves existing UI
+  // behaviour for docs ingested before this field existed.
+  status?: "pending" | "parsing" | "success" | "failed";
 };
 
 // Per-file record. One entry per PDF file part found across every

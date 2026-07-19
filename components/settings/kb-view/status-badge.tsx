@@ -51,15 +51,25 @@ export function StatusIcon({ status }: { status: KbStatus }) {
 export function DocStatusBadge({
   status,
   errorMessage,
+  totalPages,
+  successPages,
+  failedPages,
+  parsingPages,
+  pendingPages,
   className,
 }: {
   status: KbStatus;
   errorMessage: string | null;
+  totalPages?: number;
+  successPages?: number;
+  failedPages?: number;
+  parsingPages?: number;
+  pendingPages?: number;
   className?: string;
 }) {
   const variant: "success" | "destructive" | "muted" =
     status === "success" ? "success" : status === "failed" ? "destructive" : "muted";
-  const label =
+  let label =
     status === "success"
       ? "Ready"
       : status === "parsing"
@@ -68,11 +78,26 @@ export function DocStatusBadge({
           ? "Failed"
           : "Pending";
 
+  // ponytail: when the parent row knows the page-level counts we surface them
+  // inline — "Parsing (3/12)" tells the user that OCR has produced 3 of 12
+  // pages (success) and 9 are still pending. Without the counts (legacy row)
+  // we fall back to the bare label.
+  if (status === "parsing" && totalPages !== undefined && totalPages > 0) {
+    const success = successPages ?? 0;
+    label = `Parsing (${success}/${totalPages})`;
+  } else if (status === "pending" && totalPages !== undefined && totalPages > 0) {
+    label = `Pending (0/${totalPages})`;
+  }
+
   let tooltipText = "Document Status: Pending page processing...";
   if (status === "success") {
-    tooltipText = "Document Status: Successfully processed pages & extracted Markdown";
+    tooltipText = `Document Status: Successfully processed pages & extracted Markdown (${successPages ?? totalPages ?? "?"}/${totalPages ?? "?"} pages succeeded)`;
   } else if (status === "parsing") {
-    tooltipText = "Document Status: Parsing PDF pages & running OCR...";
+    const done = successPages ?? 0;
+    const inFlight = parsingPages ?? 0;
+    const waiting = pendingPages ?? 0;
+    const failed = failedPages ?? 0;
+    tooltipText = `Document Status: Parsing PDF pages & running OCR (${done}/${totalPages ?? "?"} done, ${inFlight} in flight, ${waiting} waiting, ${failed} failed)`;
   } else if (status === "failed") {
     tooltipText = `Document Status: Failed parsing OCR. ${errorMessage ? `Error: ${errorMessage}` : ""}`;
   }
@@ -106,12 +131,16 @@ export function ChunksStatusBadge({
   totalChunks,
   successChunks,
   failedChunks,
+  pendingChunks,
+  parsingChunks,
   docStatus,
   className,
 }: {
   totalChunks?: number;
   successChunks?: number;
   failedChunks?: number;
+  pendingChunks?: number;
+  parsingChunks?: number;
   docStatus: KbStatus;
   className?: string;
 }) {
@@ -150,6 +179,8 @@ export function ChunksStatusBadge({
     const total = totalChunks ?? 0;
     const success = successChunks ?? 0;
     const failed = failedChunks ?? 0;
+    const parsing = parsingChunks ?? 0;
+    const pending = pendingChunks ?? 0;
 
     if (total === 0) {
       tooltipText = "Indexing Status: No chunks generated";
@@ -166,8 +197,9 @@ export function ChunksStatusBadge({
         </Badge>
       );
     } else {
+      const terminal = success + failed;
       const isCompleted = success === total;
-      const isFailed = failed > 0 && success + failed === total;
+      const isFailed = failed > 0 && terminal === total;
       const isIndexing = !isCompleted && !isFailed;
 
       let variant: "success" | "destructive" | "muted" = "muted";
@@ -181,8 +213,12 @@ export function ChunksStatusBadge({
       let iconElement = <CheckCircle2 className="size-3" />;
 
       if (isIndexing) {
+        // ponytail: split the in-flight count into "in-flight" (parsing)
+        // vs "queued" (pending) so the user can tell whether the pipeline
+        // is actually working or stuck on the LLM. Format:
+        //   Indexing (8 done · 3 in flight · 2 queued)
         label = `Indexing (${success}/${total})`;
-        tooltipText = `Indexing Status: Embedding chunks (${success}/${total} processed, ${failed} failed)...`;
+        tooltipText = `Indexing Status: ${success} chunks embedded, ${parsing} chunks in LLM extraction, ${pending} chunks queued, ${failed} chunks failed`;
         const radius = 4.5;
         const circumference = 2 * Math.PI * radius;
         const pct = total > 0 ? success / total : 0;

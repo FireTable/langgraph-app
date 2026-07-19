@@ -399,6 +399,7 @@ async function splitFileToPageNode(state: KbAgentStateShape): Promise<Partial<Kb
             imageUrl,
             markdown: "",
             referenceText: textByPage[p.pageIndex] ?? "",
+            status: "pending",
           };
         }),
       );
@@ -501,6 +502,7 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
               return {
                 ...p,
                 markdown: "",
+                status: "failed" as const,
                 errorMessage:
                   "Bypassed: OCR aborted due to another page failure in the same document",
               };
@@ -520,6 +522,7 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
                 return {
                   ...p,
                   markdown: "",
+                  status: "failed" as const,
                   errorMessage:
                     "Bypassed: OCR aborted due to another page failure in the same document",
                 };
@@ -528,7 +531,12 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
                 [system, new HumanMessage({ content: contentParts })],
                 { tags: ["nostream"], signal: controller.signal },
               )) as z.infer<typeof ocrPageSchema>;
-              return { ...p, markdown: out.markdown.trim(), errorMessage: undefined };
+              return {
+                ...p,
+                markdown: out.markdown.trim(),
+                status: "success" as const,
+                errorMessage: undefined,
+              };
             } catch (err) {
               hasFailed = true;
               controller.abort();
@@ -544,7 +552,7 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
                 : err instanceof Error
                   ? err.message
                   : String(err);
-              return { ...p, markdown: "", errorMessage: msg };
+              return { ...p, markdown: "", status: "failed" as const, errorMessage: msg };
             }
           }),
         );

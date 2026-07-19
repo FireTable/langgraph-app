@@ -230,6 +230,33 @@ export function DocDetailDialog({
   const totalChunks = d.chunks.length;
   const successChunks = d.chunks.filter((c) => c.status === "success").length;
   const failedChunks = d.chunks.filter((c) => c.status === "failed").length;
+  const pendingChunks = d.chunks.filter((c) => c.status === "pending").length;
+  const parsingChunks = d.chunks.filter((c) => c.status === "parsing").length;
+
+  // ponytail: derive page-level counts the same way chunksStatusBadge
+  // does. When pages carry an explicit `status` mirror it; legacy rows
+  // (status absent) fall back to the markdown/errorMessage heuristic.
+  const pagesTotal = d.doc.pages?.length ?? 0;
+  const inferPageStatus = (
+    p: NonNullable<KbDocDetail["doc"]["pages"]>[number],
+  ): "pending" | "parsing" | "success" | "failed" => {
+    if (
+      p.status === "pending" ||
+      p.status === "parsing" ||
+      p.status === "success" ||
+      p.status === "failed"
+    ) {
+      return p.status;
+    }
+    if (p.errorMessage) return "failed";
+    if ((p.markdown ?? "").trim().length > 0) return "success";
+    return "pending";
+  };
+  const pages = d.doc.pages ?? [];
+  const successPages = pages.filter((p) => inferPageStatus(p) === "success").length;
+  const failedPages = pages.filter((p) => inferPageStatus(p) === "failed").length;
+  const parsingPages = pages.filter((p) => inferPageStatus(p) === "parsing").length;
+  const pendingPages = pages.filter((p) => inferPageStatus(p) === "pending").length;
 
   return (
     <Dialog
@@ -257,11 +284,21 @@ export function DocDetailDialog({
           </div>
           <DialogDescription asChild>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs select-none">
-              <DocStatusBadge status={d.doc.status} errorMessage={d.doc.errorMessage} />
+              <DocStatusBadge
+                status={d.doc.status}
+                errorMessage={d.doc.errorMessage}
+                totalPages={pagesTotal || undefined}
+                successPages={pagesTotal ? successPages : undefined}
+                failedPages={pagesTotal ? failedPages : undefined}
+                parsingPages={pagesTotal ? parsingPages : undefined}
+                pendingPages={pagesTotal ? pendingPages : undefined}
+              />
               <ChunksStatusBadge
                 totalChunks={totalChunks}
                 successChunks={successChunks}
                 failedChunks={failedChunks}
+                pendingChunks={pendingChunks}
+                parsingChunks={parsingChunks}
                 docStatus={d.doc.status}
               />
               <span className="size-1 rounded-full bg-muted-foreground/30 shrink-0" aria-hidden />
@@ -419,6 +456,7 @@ export function DocDetailDialog({
                     markdown: string;
                     referenceText?: string;
                     errorMessage?: string;
+                    status?: "pending" | "parsing" | "success" | "failed";
                   };
                   const hasRef = !!page.referenceText?.trim();
                   return (
@@ -431,30 +469,57 @@ export function DocDetailDialog({
                         <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
                           Page #{page.pageIndex + 1}
                         </span>
-                        {page.errorMessage &&
-                        d.doc.status !== "parsing" &&
-                        d.doc.status !== "pending" ? (
-                          <Badge
-                            variant="destructive"
-                            className="text-[9px] py-0 px-1.5 font-medium leading-none"
-                          >
-                            Failed
-                          </Badge>
-                        ) : (page.markdown ?? "").trim().length > 0 ? (
-                          <Badge
-                            variant="success"
-                            className="text-[9px] py-0 px-1.5 font-medium leading-none"
-                          >
-                            Succeeded
-                          </Badge>
-                        ) : (
-                          <Badge
-                            variant="muted"
-                            className="text-[9px] py-0 px-1.5 font-medium leading-none"
-                          >
-                            Pending
-                          </Badge>
-                        )}
+                        {(() => {
+                          // ponytail: prefer page.status when set (fresh
+                          // ingest); fall back to errorMessage/markdown
+                          // heuristic for legacy rows.
+                          const s =
+                            page.status ??
+                            (page.errorMessage
+                              ? "failed"
+                              : (page.markdown ?? "").trim().length > 0
+                                ? "success"
+                                : "pending");
+                          const inFlight = d.doc.status === "pending" || d.doc.status === "parsing";
+                          if (s === "failed" && !inFlight) {
+                            return (
+                              <Badge
+                                variant="destructive"
+                                className="text-[9px] py-0 px-1.5 font-medium leading-none"
+                              >
+                                Failed
+                              </Badge>
+                            );
+                          }
+                          if (s === "success") {
+                            return (
+                              <Badge
+                                variant="success"
+                                className="text-[9px] py-0 px-1.5 font-medium leading-none"
+                              >
+                                Succeeded
+                              </Badge>
+                            );
+                          }
+                          if (s === "parsing" && inFlight) {
+                            return (
+                              <Badge
+                                variant="muted"
+                                className="text-[9px] py-0 px-1.5 font-medium leading-none"
+                              >
+                                Parsing…
+                              </Badge>
+                            );
+                          }
+                          return (
+                            <Badge
+                              variant="muted"
+                              className="text-[9px] py-0 px-1.5 font-medium leading-none"
+                            >
+                              Pending
+                            </Badge>
+                          );
+                        })()}
                       </div>
 
                       {/* Body: [Image + Ref] → [Markdown] */}

@@ -210,11 +210,28 @@ export function DocRow({
         </time>
       </div>
       <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-        <DocStatusBadge status={doc.status} errorMessage={doc.errorMessage} />
+        <DocStatusBadge
+          status={doc.status}
+          errorMessage={doc.errorMessage}
+          totalPages={doc.totalPages}
+          successPages={
+            doc.totalPages !== undefined
+              ? doc.totalPages -
+                (doc.failedPages ?? 0) -
+                (doc.parsingPages ?? 0) -
+                (doc.pendingPages ?? 0)
+              : undefined
+          }
+          failedPages={doc.failedPages}
+          parsingPages={doc.parsingPages}
+          pendingPages={doc.pendingPages}
+        />
         <ChunksStatusBadge
           totalChunks={doc.totalChunks}
           successChunks={doc.successChunks}
           failedChunks={doc.failedChunks}
+          pendingChunks={doc.pendingChunks}
+          parsingChunks={doc.parsingChunks}
           docStatus={doc.status}
         />
       </div>
@@ -256,12 +273,26 @@ export function DocRow({
           <DocStatusBadge
             status={doc.status}
             errorMessage={doc.errorMessage}
+            totalPages={doc.totalPages}
+            successPages={
+              doc.totalPages !== undefined
+                ? doc.totalPages -
+                  (doc.failedPages ?? 0) -
+                  (doc.parsingPages ?? 0) -
+                  (doc.pendingPages ?? 0)
+                : undefined
+            }
+            failedPages={doc.failedPages}
+            parsingPages={doc.parsingPages}
+            pendingPages={doc.pendingPages}
             className="w-[120px] justify-center"
           />
           <ChunksStatusBadge
             totalChunks={doc.totalChunks}
             successChunks={doc.successChunks}
             failedChunks={doc.failedChunks}
+            pendingChunks={doc.pendingChunks}
+            parsingChunks={doc.parsingChunks}
             docStatus={doc.status}
             className="w-[120px] justify-center"
           />

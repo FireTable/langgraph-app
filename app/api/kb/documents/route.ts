@@ -26,8 +26,12 @@ type GroupedDoc = {
   totalChunks?: number;
   successChunks?: number;
   failedChunks?: number;
+  pendingChunks?: number;
+  parsingChunks?: number;
   totalPages?: number;
   failedPages?: number;
+  pendingPages?: number;
+  parsingPages?: number;
 };
 
 export const GET = withAuth(async (req: Request, { user }) => {
@@ -81,8 +85,12 @@ export const GET = withAuth(async (req: Request, { user }) => {
             totalChunks: d.totalChunks,
             successChunks: d.successChunks,
             failedChunks: d.failedChunks,
+            pendingChunks: d.pendingChunks,
+            parsingChunks: d.parsingChunks,
             totalPages: d.totalPages,
             failedPages: d.failedPages,
+            pendingPages: d.pendingPages,
+            parsingPages: d.parsingPages,
           }),
         ),
       })),

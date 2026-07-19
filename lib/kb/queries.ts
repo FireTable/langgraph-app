@@ -213,8 +213,12 @@ export type KbDocumentWithAttachment = KbDocument & {
   totalChunks?: number;
   successChunks?: number;
   failedChunks?: number;
+  pendingChunks?: number;
+  parsingChunks?: number;
   totalPages?: number;
   failedPages?: number;
+  pendingPages?: number;
+  parsingPages?: number;
 };
 
 export async function listKbDocumentsByFolderWithAttachment(
@@ -245,6 +249,12 @@ export async function listKbDocumentsByFolderWithAttachment(
       failedChunks: sql<number>`count(case when ${kbChunk.status} = 'failed' then 1 end)::int`.as(
         "failed_chunks",
       ),
+      pendingChunks: sql<number>`count(case when ${kbChunk.status} = 'pending' then 1 end)::int`.as(
+        "pending_chunks",
+      ),
+      parsingChunks: sql<number>`count(case when ${kbChunk.status} = 'parsing' then 1 end)::int`.as(
+        "parsing_chunks",
+      ),
     })
     .from(kbChunk)
     .groupBy(kbChunk.documentId)
@@ -257,11 +267,27 @@ export async function listKbDocumentsByFolderWithAttachment(
       totalChunks: sql<number>`coalesce(${chunksSubquery.totalChunks}, 0)::int`,
       successChunks: sql<number>`coalesce(${chunksSubquery.successChunks}, 0)::int`,
       failedChunks: sql<number>`coalesce(${chunksSubquery.failedChunks}, 0)::int`,
+      pendingChunks: sql<number>`coalesce(${chunksSubquery.pendingChunks}, 0)::int`,
+      parsingChunks: sql<number>`coalesce(${chunksSubquery.parsingChunks}, 0)::int`,
       totalPages: sql<number>`coalesce(jsonb_array_length(${kbDocument.pages}), 0)::int`,
+      // ponytail: each page carries an explicit `status` mirror of
+      // kbChunkStatusEnum written by kb-agent's pageToMarkdownNode.
+      // Legacy rows (status absent) are inferred from markdown +
+      // errorMessage so old docs still report a sensible split:
+      //   errorMessage set → failed
+      //   else markdown non-empty → success
+      //   else → pending
+      pendingPages: sql<number>`(
+        select count(*)::int from jsonb_array_elements(coalesce(${kbDocument.pages}, '[]'::jsonb)) as p
+        where coalesce(p->>'status', case when p->>'errorMessage' is null and trim(coalesce(p->>'markdown', '')) = '' then 'pending' when p->>'errorMessage' is not null then 'failed' else 'success' end) = 'pending'
+      )`.as("pending_pages"),
+      parsingPages: sql<number>`(
+        select count(*)::int from jsonb_array_elements(coalesce(${kbDocument.pages}, '[]'::jsonb)) as p
+        where coalesce(p->>'status', case when p->>'errorMessage' is null and trim(coalesce(p->>'markdown', '')) = '' then 'pending' when p->>'errorMessage' is not null then 'failed' else 'success' end) = 'parsing'
+      )`.as("parsing_pages"),
       failedPages: sql<number>`(
-        select count(*)::int
-        from jsonb_array_elements(coalesce(${kbDocument.pages}, '[]'::jsonb)) as p
-        where p->>'errorMessage' is not null or trim(coalesce(p->>'markdown', '')) = ''
+        select count(*)::int from jsonb_array_elements(coalesce(${kbDocument.pages}, '[]'::jsonb)) as p
+        where coalesce(p->>'status', case when p->>'errorMessage' is null and trim(coalesce(p->>'markdown', '')) = '' then 'pending' when p->>'errorMessage' is not null then 'failed' else 'success' end) = 'failed'
       )`,
     })
     .from(kbDocument)
@@ -277,8 +303,12 @@ export async function listKbDocumentsByFolderWithAttachment(
     totalChunks: r.totalChunks,
     successChunks: r.successChunks,
     failedChunks: r.failedChunks,
+    pendingChunks: r.pendingChunks,
+    parsingChunks: r.parsingChunks,
     totalPages: r.totalPages,
     failedPages: r.failedPages,
+    pendingPages: r.pendingPages,
+    parsingPages: r.parsingPages,
   }));
 }
 
