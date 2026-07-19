@@ -188,7 +188,7 @@ export function ChunksStatusBadge({
         <Badge
           variant="muted"
           className={cn(
-            "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none text-muted-foreground bg-muted/10 border-dashed whitespace-nowrap",
+            "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none text-muted-foreground border-dashed whitespace-nowrap",
             className,
           )}
         >
