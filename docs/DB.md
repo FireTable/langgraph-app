@@ -216,15 +216,75 @@ The hybrid search function (`lib/kb/search.ts`) runs RRF (k=60) over three legs 
 | `kb_chunk_embedding_idx`           | HNSW         | `vec` (pgvector cosine `<=>`)             | Online-friendly (no training required, unlike ivfflat). m=16, ef_construction=64 from pgvector README defaults.      |
 | `kb_chunk_tsv_idx`                 | GIN          | `kw` (`tsv @@ websearch_to_tsquery`)      | Postgres built-in BM25-style. `tsv` is a `GENERATED ALWAYS AS to_tsvector('english', content) STORED` column.        |
 | `kb_chunk_entities_idx`            | GIN          | `tag` (`entities && qents`)               | Stores the entities extracted at ingest time. Pure string-split at query time feeds `qents` — no LLM call per query. |
+| `kb_chunk_themes_idx`              | GIN          | Theme-overlap variant of the tag leg      | GIN over `themes text[]` for theme-level recall (v3).                                                                |
 | `kb_chunk_document_ordinal_idx`    | btree        | Per-doc chunk ordering                    | Composite `(document_id, ordinal)`; supports the `findKbChunksByDocumentId` resolver and per-doc scans.              |
 | `kb_document_user_contenthash_idx` | unique btree | PRIMARY dedup in `kbAgent.screenshotNode` | Composite `(user_id, content_hash)`; same PDF re-uploaded short-circuits.                                            |
+| `kb_document_user_attachment_idx`  | btree        | Backup dedup path                         | Composite `(user_id, attachment_id)`; covers the case where two PDFs collide on sha256 (rare but cheap to defend).   |
 | `kb_document_user_created_idx`     | btree        | `list_documents` ordering                 | Composite `(user_id, created_at DESC)`; covers the Settings → KB tab list.                                           |
+| `kb_document_folder_idx`           | btree        | Folder-scoped queries                     | `(folder_id)`; the per-folder doc list inside `kbAgent` and the Settings folder filter.                              |
+| `kb_folder_user_name_idx`          | unique btree | Default-folder bootstrap                  | Composite `(user_id, name)`; lets the "Attachments" folder be auto-created idempotently on first upload.             |
+| `kb_folder_user_idx`               | btree        | Folder list                               | `(user_id)`; covers the Settings sidebar.                                                                            |
 
 All KB queries scope by `user_id` first; the composite indexes above let the planner index-only-scan the per-user slice.
 
 Missing fields (follow-up migrations):
 
 - `kb_chunk.page_numbers INTEGER[]` — currently absent. The Pages tab UI reads page numbers from `kb_document.pages` (the JSON column populated during ingest). `HybridSearchResult.pageNumbers` returns `[]` until a migration adds the column and the ingest pipeline writes per-chunk page boundaries.
+
+## `kb_folder`
+
+Per-user grouping. Default `Attachments` is auto-created on first upload; users can create more by hand. `(user_id, name)` is unique so the auto-create is idempotent.
+
+| Column       | Type         | Notes                       |
+| ------------ | ------------ | --------------------------- |
+| `id`         | text PK      | `f-<uuid>`                  |
+| `user_id`    | text FK→user | CASCADE on user delete      |
+| `name`       | text         | 1..128 chars; user-editable |
+| `created_at` | timestamptz  |                             |
+
+Indexes: `kb_folder_user_name_idx` `(user_id, name)` UNIQUE, `kb_folder_user_idx` `(user_id)`.
+
+## `kb_document`
+
+One row per ingested PDF. `attachment_id` is the source FK (chat upload → KB) — no `source_url` column in v3 (URL ingestion deferred). `pages` is the JSONB page cache populated by `pageToMarkdownNode` during ingest and reused by `chunksOnly` / `retryFailed` reprocess modes. `content_hash` is sha256 (or `r2key:<key>` fallback) and is the primary dedup key.
+
+| Column          | Type                     | Notes                                                                                                                        |
+| --------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `id`            | text PK                  | `d-<uuid>`                                                                                                                   |
+| `user_id`       | text FK→user             | CASCADE                                                                                                                      |
+| `folder_id`     | text FK→kb_folder        | `NOT NULL`, `ON DELETE RESTRICT` (move docs before deleting a folder)                                                        |
+| `attachment_id` | text FK→attachments NULL | `ON DELETE SET NULL`; NULL after a `kb-tmp/` retention sweep, but the doc still appears in the Settings list                 |
+| `title`         | text                     | User-given (from upload) or filename fallback                                                                                |
+| `content_type`  | text                     | MIME; today only `application/pdf` is wired through kbAgent                                                                  |
+| `content_hash`  | text                     | sha256 hex, or `r2key:<key>` fallback when `attachments.sha256` is null (legacy browsers)                                    |
+| `status`        | enum `kb_doc_status`     | `pending` (default) → `parsing` → `success` / `failed`                                                                       |
+| `error_message` | text NULL                | Populated when `status='failed'`; surfaced on the doc row badge and the doc detail dialog                                    |
+| `pages`         | jsonb NULL               | `Array<{ pageNumber, markdown, errorMessage, status? }>`; populated by the ingest pipeline, reused by `chunksOnly` reprocess |
+| `created_at`    | timestamptz              |                                                                                                                              |
+| `updated_at`    | timestamptz              | `$onUpdate`                                                                                                                  |
+
+Indexes: `kb_document_user_contenthash_idx` `(user_id, content_hash)` UNIQUE, `kb_document_user_created_idx` `(user_id, created_at DESC)`, `kb_document_user_attachment_idx` `(user_id, attachment_id)`, `kb_document_folder_idx` `(folder_id)`.
+
+## `kb_chunk`
+
+One row per text chunk emitted by `kbAgent.chunkEmbedStoreNode`. Embeddings stored as `pgvector` (`vector(1024)` for BAAI/bge-m3 via apimart). `tsv` is a generated English tsvector used by the BM25 leg. `entities` / `relationships` / `themes` are JSONB seeded by the LLM-driven entity-extract pass and read by the tag leg + Folder Graph.
+
+| Column          | Type                                                                    | Notes                                                                                                                                                      |
+| --------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`            | text PK                                                                 | `c-<uuid>`                                                                                                                                                 |
+| `document_id`   | text FK→kb_document                                                     | CASCADE on doc delete                                                                                                                                      |
+| `ordinal`       | integer                                                                 | 0-based chunk index within the doc (drives the Empty-ordinal rerun modes)                                                                                  |
+| `content`       | text                                                                    | The chunk text, truncated to `KB_CHUNK_MAX_CHARS` (default 2000)                                                                                           |
+| `embedding`     | `vector(1024)`                                                          | BAAI/bge-m3 cosine; dim of column + dim of HNSW index + dim of embedder MUST agree (`22P02` otherwise)                                                     |
+| `tsv`           | `tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED` | Read-only, maintained by Postgres; powers the BM25 leg. `INSERT` writes `content` only.                                                                    |
+| `entities`      | jsonb                                                                   | `Array<{ name, type, description }>`; written by the entity-extract LLM call. Default `[]`.                                                                |
+| `relationships` | jsonb                                                                   | `Array<{ source, target, relation, description }>`; written by the entity-extract LLM call. Default `[]`.                                                  |
+| `themes`        | `text[]`                                                                | Hashtag-style themes; written by the entity-extract LLM call. Default `'{}'::text[]`.                                                                      |
+| `status`        | enum `kb_chunk_status`                                                  | `pending` (default) → `parsing` → `success` / `failed`. Independent of `kb_document.status` so a single chunk can fail without downgrading the parent doc. |
+| `error_message` | text NULL                                                               | Populated when `status='failed'`; surfaced on the chunk badge in the doc detail dialog                                                                     |
+| `created_at`    | timestamptz                                                             |                                                                                                                                                            |
+
+Indexes: `kb_chunk_embedding_idx` HNSW `(embedding vector_cosine_ops)`, `kb_chunk_tsv_idx` GIN `(tsv)`, `kb_chunk_entities_idx` GIN `(entities)`, `kb_chunk_themes_idx` GIN `(themes)`, `kb_chunk_document_ordinal_idx` `(document_id, ordinal)`.
 
 ## Code → table map
 

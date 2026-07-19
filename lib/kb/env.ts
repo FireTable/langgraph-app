@@ -16,6 +16,7 @@ type KbEnv = {
   hybridTopKDefault: number;
   hybridTopKMax: number;
   chunkMaxChars: number;
+  rerankMinScore: number;
 };
 
 let cached: KbEnv | null = null;
@@ -27,6 +28,13 @@ function readInt(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function readFloat(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 export function getKbEnv(): KbEnv {
   if (cached) return cached;
   cached = {
@@ -36,6 +44,7 @@ export function getKbEnv(): KbEnv {
     hybridTopKDefault: readInt("KB_HYBRID_TOPK_DEFAULT", 8),
     hybridTopKMax: readInt("KB_HYBRID_TOPK_MAX", 20),
     chunkMaxChars: readInt("KB_CHUNK_MAX_CHARS", 2000),
+    rerankMinScore: readFloat("KB_RERANK_MIN_SCORE", 0.4),
   };
   return cached;
 }

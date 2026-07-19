@@ -17,6 +17,7 @@ export function KbChunkList({ docs, slot }: { docs: KbDocument[]; slot: string }
 
   if (docs.length === 0) return null;
 
+  const isRerank = docs.some((d) => d.rrfScore > 0.05);
   const visibleDocs = expanded ? docs : docs.slice(0, 3);
   const hasMore = docs.length > 3;
 
@@ -39,18 +40,26 @@ export function KbChunkList({ docs, slot }: { docs: KbDocument[]; slot: string }
                 <span className="text-foreground truncate font-semibold max-w-[200px] sm:max-w-[400px]">
                   {doc.docTitle}
                 </span>
-                {badges.length > 0 && (
-                  <div className="ms-auto flex gap-1">
-                    {badges.map((b) => (
-                      <span
-                        key={b}
-                        className="text-muted-foreground bg-background/50 rounded border border-border/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide shrink-0"
-                      >
-                        {b}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <div className="ms-auto flex items-center gap-1.5 shrink-0">
+                  {typeof doc.rrfScore === "number" && doc.rrfScore > 0 && (
+                    <span className="text-muted-foreground bg-background/50 rounded border border-border/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide shrink-0">
+                      Score:{" "}
+                      {isRerank ? `${Math.round(doc.rrfScore * 100)}%` : doc.rrfScore.toFixed(3)}
+                    </span>
+                  )}
+                  {badges.length > 0 && (
+                    <div className="flex gap-1">
+                      {badges.map((b) => (
+                        <span
+                          key={b}
+                          className="text-muted-foreground bg-background/50 rounded border border-border/60 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide shrink-0"
+                        >
+                          {b}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
               <p className="text-muted-foreground text-xs leading-relaxed break-words whitespace-pre-wrap">
                 {chunkPreview(doc.content)}

@@ -133,6 +133,7 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
   const hasTag = qents.length > 0;
 
   const reranker = await getRerankModelFromDB().catch(() => null);
+
   const finalLimit = reranker ? Math.max(50, topK * 5) : topK;
 
   const docFilterClause = args.documentId
@@ -263,7 +264,9 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
         };
       });
       scoredRows.sort((a, b) => b.rrf_score - a.rrf_score);
-      finalRows = scoredRows;
+
+      const env = getKbEnv();
+      finalRows = scoredRows.filter((r) => r.rrf_score >= env.rerankMinScore);
     } catch (err) {
       console.warn("[hybridSearch] Reranking failed, falling back to RRF rankings:", err);
     }
