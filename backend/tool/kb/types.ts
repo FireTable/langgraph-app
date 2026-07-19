@@ -1,4 +1,3 @@
-import type { KbDocument } from "@/lib/kb/schema";
 import type { HybridSearchResult } from "@/lib/kb/search";
 
 // ponytail: ToolMessage shape returned by every KB search tool. Both
@@ -10,7 +9,6 @@ import type { HybridSearchResult } from "@/lib/kb/search";
 //   - `documents` — the UI-facing structured array for Sources cards.
 //                   Carries `rrfScore` + `legsHit` so the frontend can
 //                   show debug badges.
-
 export type KbSearchDocument = {
   chunkId: string;
   documentId: string;
@@ -27,10 +25,12 @@ export type KbToolResult = {
   empty: boolean;
 };
 
-// ponytail: `list_documents` returns a thin shape — no chunk rows, just
-// the document metadata the LLM needs to decide what to do next. The
-// UI's `mention=1` API and the Settings → KB tab both build richer
-// shapes from the same table.
+// ponytail: `list_documents` returns a folder-grouped shape so the
+// chat-side card can render each folder as a collapsible section and
+// the LLM can see the folder structure in `content`. `documents[]`
+// carries the same per-doc status counts (totalPages / successPages /
+// totalChunks / …) that the Settings → KB DocStatusBadge +
+// ChunksStatusBadge read — same source of truth for both surfaces.
 
 export type ListDocumentsArgs = {
   folderId?: string;
@@ -40,8 +40,32 @@ export type ListDocumentsArgs = {
   pageSize?: number;
 };
 
+export type ListDocumentsDoc = {
+  id: string;
+  title: string;
+  status: "success" | "failed" | "parsing" | "pending";
+  errorMessage: string | null;
+  createdAt: string;
+  totalPages: number;
+  successPages: number;
+  failedPages: number;
+  parsingPages: number;
+  pendingPages: number;
+  totalChunks: number;
+  successChunks: number;
+  failedChunks: number;
+  pendingChunks: number;
+  parsingChunks: number;
+};
+
+export type ListDocumentsFolder = {
+  id: string;
+  name: string;
+  documents: ListDocumentsDoc[];
+};
+
 export type ListDocumentsResult = {
-  documents: KbDocument[];
+  folders: ListDocumentsFolder[];
   total: number;
   page: number;
   pageSize: number;

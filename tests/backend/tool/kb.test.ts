@@ -48,6 +48,7 @@ import {
   _resetPgVectorCache,
   formatSearchResult,
   isPgVectorAvailable,
+  listDocumentsTool,
   listKbDocumentsForUser,
   listKbFoldersForUser,
   LIST_DOCUMENTS_STATUSES,
@@ -205,13 +206,40 @@ describe("backend/tool/kb — search_kb ToolMessage shape", () => {
 });
 
 describe("backend/tool/kb — list_documents SQL helper", () => {
-  it("lists user's success docs by default", async () => {
+  it("lists user's success docs by default, grouped by folder", async () => {
     const out = await listKbDocumentsForUser({ userId: TEST_USER.id });
     expect(out.total).toBe(1);
-    expect(out.documents).toHaveLength(1);
-    expect(out.documents[0].id).toBe(DOC_A_ID);
+    expect(out.folders).toHaveLength(1);
+    expect(out.folders[0].id).toBe(FOLDER_ID);
+    expect(out.folders[0].name).toBe("Attachments");
+    expect(out.folders[0].documents).toHaveLength(1);
+    expect(out.folders[0].documents[0].id).toBe(DOC_A_ID);
     expect(out.page).toBe(1);
     expect(out.pageSize).toBe(20);
+  });
+
+  it("each document carries the per-doc page + chunk counts for badges", async () => {
+    const out = await listKbDocumentsForUser({ userId: TEST_USER.id });
+    const doc = out.folders[0].documents[0];
+    // ponytail: DocStatusBadge + ChunksStatusBadge read these exact
+    // fields. The shape MUST stay in lockstep with the chat card
+    // and the Settings → KB DocRow.
+    expect(doc).toMatchObject({
+      id: DOC_A_ID,
+      title: "alpha.pdf",
+      status: "success",
+      errorMessage: null,
+      totalChunks: 2,
+      successChunks: 2,
+      failedChunks: 0,
+      pendingChunks: 0,
+      parsingChunks: 0,
+    });
+    expect(typeof doc.totalPages).toBe("number");
+    expect(typeof doc.successPages).toBe("number");
+    expect(typeof doc.failedPages).toBe("number");
+    expect(typeof doc.parsingPages).toBe("number");
+    expect(typeof doc.pendingPages).toBe("number");
   });
 
   it("filters by status", async () => {
@@ -219,7 +247,8 @@ describe("backend/tool/kb — list_documents SQL helper", () => {
       userId: TEST_USER.id,
       status: "failed",
     });
-    expect(out.documents).toEqual([]);
+    expect(out.folders).toHaveLength(1);
+    expect(out.folders[0].documents).toEqual([]);
     expect(out.total).toBe(0);
   });
 
@@ -228,13 +257,13 @@ describe("backend/tool/kb — list_documents SQL helper", () => {
       userId: TEST_USER.id,
       titleQuery: "ALPHA",
     });
-    expect(out.documents).toHaveLength(1);
+    expect(out.folders[0].documents).toHaveLength(1);
 
     const miss = await listKbDocumentsForUser({
       userId: TEST_USER.id,
       titleQuery: "no-match-xxx",
     });
-    expect(miss.documents).toEqual([]);
+    expect(miss.folders[0].documents).toEqual([]);
   });
 
   it("filters by folderId", async () => {
@@ -242,15 +271,19 @@ describe("backend/tool/kb — list_documents SQL helper", () => {
       userId: TEST_USER.id,
       folderId: "f-nonexistent",
     });
-    expect(out.documents).toEqual([]);
+    // ponytail: the helper still emits every folder the user owns
+    // (sidebar parity with listKbDocumentsGroupedWithAttachment);
+    // folderId just narrows which folder's `documents` are populated.
+    expect(out.folders).toHaveLength(1);
+    expect(out.folders[0].documents).toEqual([]);
   });
 
-  it("paginates", async () => {
+  it("paginates per-folder with pageSize", async () => {
     const out = await listKbDocumentsForUser({
       userId: TEST_USER.id,
       pageSize: 1,
     });
-    expect(out.documents).toHaveLength(1);
+    expect(out.folders[0].documents).toHaveLength(1);
     expect(out.total).toBe(1);
   });
 
@@ -275,11 +308,89 @@ describe("backend/tool/kb — list_documents SQL helper", () => {
     });
 
     const out = await listKbDocumentsForUser({ userId: TEST_USER.id });
-    expect(out.documents.find((d) => d.userId === other.id)).toBeUndefined();
+    const ids = out.folders.flatMap((f) => f.documents.map((d) => d.id));
+    expect(ids).not.toContain(expect.stringMatching(/^d-/));
+    expect(out.folders.every((f) => f.id !== otherFolderId)).toBe(true);
 
     // cleanup
     await db.delete(kbDocument).where(eq(kbDocument.userId, other.id));
     await db.delete(kbFolder).where(eq(kbFolder.userId, other.id));
+  });
+
+  it("emits createdAt as ISO so the chat card can render a per-doc date", async () => {
+    const out = await listKbDocumentsForUser({ userId: TEST_USER.id });
+    const doc = out.folders[0].documents[0];
+    // ponytail: the chat card renders <time dateTime={d.createdAt}>
+    // + a locale-formatted string. Both need a valid ISO — the
+    // schema's Date gets serialised to ISO in toListDoc.
+    expect(typeof doc.createdAt).toBe("string");
+    expect(() => new Date(doc.createdAt).toISOString()).not.toThrow();
+    expect(new Date(doc.createdAt).toISOString()).toBe(doc.createdAt);
+  });
+
+  it("Title Cases folder names in the LLM-facing content but keeps the structured name as-is", async () => {
+    // ponytail: the chat card displays the user's original folder
+    // name (e.g. "ArcBlock"); only the LLM string is normalised so
+    // the model doesn't have to deal with all-caps user-typed names.
+    const folder2 = `f-${randomUUID()}`;
+    await db.insert(kbFolder).values({ id: folder2, userId: TEST_USER.id, name: "ARCBLOCK" });
+    await db.insert(kbDocument).values({
+      id: `d-${randomUUID()}`,
+      userId: TEST_USER.id,
+      folderId: folder2,
+      title: "whitepaper.pdf",
+      contentType: "application/pdf",
+      contentHash: `hash-${randomUUID()}`,
+      status: "success",
+    });
+
+    const out = await listKbDocumentsForUser({ userId: TEST_USER.id });
+    // structured name keeps user casing
+    const folder = out.folders.find((f) => f.id === folder2);
+    expect(folder?.name).toBe("ARCBLOCK");
+
+    // LLM-facing content is Title Cased (first letter cap, rest lower)
+    const tool = listDocumentsTool as unknown as { invoke: (args: unknown) => Promise<string> };
+    const raw = await tool.invoke({ userId: TEST_USER.id });
+    const parsed = JSON.parse(raw);
+    expect(parsed.content).toMatch(/\[Folder "Arcblock"/);
+    expect(parsed.content).not.toMatch(/\[Folder "ARCBLOCK"/);
+
+    // cleanup
+    await db.delete(kbDocument).where(eq(kbDocument.folderId, folder2));
+    await db.delete(kbFolder).where(eq(kbFolder.id, folder2));
+  });
+
+  it("groups multiple folders, each with their own docs", async () => {
+    // ponytail: regression for the user's "list-documents 现在不会按
+    // 照 folder id 归类" complaint. After the helper migrated to
+    // listKbDocumentsGroupedWithAttachment, multi-folder responses
+    // must keep every folder in `out.folders` (sidebar parity) and
+    // each folder's docs must be its own slice.
+    const folder2 = `f-${randomUUID()}`;
+    await db.insert(kbFolder).values({ id: folder2, userId: TEST_USER.id, name: "Research" });
+    const docB = `d-${randomUUID()}`;
+    await db.insert(kbDocument).values({
+      id: docB,
+      userId: TEST_USER.id,
+      folderId: folder2,
+      title: "beta.pdf",
+      contentType: "application/pdf",
+      contentHash: `hash-${randomUUID()}`,
+      status: "success",
+    });
+
+    const out = await listKbDocumentsForUser({ userId: TEST_USER.id });
+    expect(out.folders).toHaveLength(2);
+    expect(out.total).toBe(2);
+
+    const byFolder = new Map(out.folders.map((f) => [f.id, f]));
+    expect(byFolder.get(FOLDER_ID)?.documents.map((d) => d.id)).toEqual([DOC_A_ID]);
+    expect(byFolder.get(folder2)?.documents.map((d) => d.id)).toEqual([docB]);
+
+    // cleanup
+    await db.delete(kbDocument).where(eq(kbDocument.id, docB));
+    await db.delete(kbFolder).where(eq(kbFolder.id, folder2));
   });
 });
 
