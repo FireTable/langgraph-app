@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileTextIcon, FolderIcon, LoaderIcon } from "lucide-react";
+import { ChevronRightIcon, FileTextIcon, FolderIcon, LoaderIcon } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
 import { CardShell, CardHeader } from "@/components/tool-ui/primitives/card";
@@ -46,16 +46,14 @@ function FolderSection({ folder }: { folder: ListDocumentsFolder }) {
   return (
     <Collapsible open={folderOpen} onOpenChange={setFolderOpen} className="flex flex-col gap-2">
       <CollapsibleTrigger className="text-muted-foreground hover:text-foreground group flex items-center gap-1.5 px-1 text-left text-xs font-semibold tracking-wide transition-colors">
-        <FolderIcon className="size-3.5 shrink-0" aria-hidden />
-        <span
+        <ChevronRightIcon
           className={cn(
-            "inline-block transition-transform duration-200 ease-out",
+            "size-3.5 shrink-0 transition-transform duration-200 ease-out",
             folderOpen ? "rotate-90" : "rotate-0",
           )}
           aria-hidden
-        >
-          ▸
-        </span>
+        />
+        <FolderIcon className="size-3.5 shrink-0" aria-hidden />
         <span className="truncate">{folder.name}</span>
         <span className="text-muted-foreground/70 ms-1 font-normal">
           · {folder.documents.length}
@@ -70,15 +68,13 @@ function FolderSection({ folder }: { folder: ListDocumentsFolder }) {
         {hidden > 0 && (
           <Collapsible open={docsExpanded} onOpenChange={setDocsExpanded}>
             <CollapsibleTrigger className="text-primary hover:text-primary/80 mx-auto inline-flex items-center gap-1 px-3 py-1 text-xs font-medium transition-colors">
-              <span
+              <ChevronRightIcon
                 className={cn(
-                  "inline-block transition-transform duration-200 ease-out",
+                  "size-3 shrink-0 transition-transform duration-200 ease-out",
                   docsExpanded ? "rotate-90" : "rotate-0",
                 )}
                 aria-hidden
-              >
-                ▸
-              </span>
+              />
               <span>
                 {docsExpanded
                   ? "Show less"
