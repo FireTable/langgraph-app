@@ -8,7 +8,7 @@ import { CardShell, CardHeader } from "@/components/tool-ui/primitives/card";
 import { KbChunkList } from "./chunk-list";
 import { parseKbResult } from "./parser";
 
-type SearchArgs = { query?: string; topK?: number };
+type SearchArgs = { query?: string; folderId?: string; documentId?: string };
 
 // ponytail: KB tool UI (issue #13 v3). Renders the structured ToolMessage
 // payload returned by backend/tool/kb.ts: { content, documents[], empty }.

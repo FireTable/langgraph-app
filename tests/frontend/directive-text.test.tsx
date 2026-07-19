@@ -27,8 +27,8 @@ describe("components/assistant-ui/DirectiveText", () => {
     expect(span.tagName).toBe("SPAN");
   });
 
-  it("renders a kb-document directive as a chip with file icon", () => {
-    renderText("see :kb-document[My Doc]{id=d-abc-123} here");
+  it("renders a kb-document directive as a chip with file icon (new {documentId} format)", () => {
+    renderText("see :kb-document[My Doc]{documentId=d-abc-123} here");
     const chip = screen.getByText("My Doc");
     expect(chip.closest("[data-directive-type]")).toHaveAttribute(
       "data-directive-type",
@@ -37,8 +37,8 @@ describe("components/assistant-ui/DirectiveText", () => {
     expect(chip.closest("[data-directive-id]")).toHaveAttribute("data-directive-id", "d-abc-123");
   });
 
-  it("renders a kb-folder directive as a chip with folder icon", () => {
-    renderText("see :kb-folder[Research]{id=f-xyz-789}");
+  it("renders a kb-folder directive as a chip with folder icon (new {folderId} format)", () => {
+    renderText("see :kb-folder[Research]{folderId=f-xyz-789}");
     const chip = screen.getByText("Research");
     expect(chip.closest("[data-directive-type]")).toHaveAttribute(
       "data-directive-type",
@@ -49,7 +49,7 @@ describe("components/assistant-ui/DirectiveText", () => {
 
   it("renders multiple directives in order, interleaved with text", () => {
     const { container } = renderText(
-      "first :kb-document[A]{id=da} middle :kb-folder[B]{id=fb} last",
+      "first :kb-document[A]{documentId=da} middle :kb-folder[B]{folderId=fb} last",
     );
     // ponytail: text segments and chip labels are all present in DOM
     // order. We read them off the container's textContent (which
@@ -70,10 +70,12 @@ describe("components/assistant-ui/DirectiveText", () => {
     expect(chips[1]).toHaveAttribute("data-directive-id", "fb");
   });
 
-  it("falls back to label when {id=…} is missing (id === label)", () => {
+  it("falls back to label when the brace group is missing (id === label)", () => {
     renderText("see :kb-document[d-short-id]");
     const chip = screen.getByText("d-short-id");
-    // directive-id is the same as label when no {id=…} attr is present
+    // ponytail: the brace group is now optional in the new format too.
+    // When missing, directive-id === label (same fallback as the old
+    // {id=…} form).
     expect(chip.closest("[data-directive-id]")).toHaveAttribute("data-directive-id", "d-short-id");
   });
 

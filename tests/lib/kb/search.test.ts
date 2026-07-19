@@ -1,5 +1,5 @@
 import "@/tests/helpers/session";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
@@ -9,9 +9,22 @@ import { deriveQueryEntities, hybridSearch } from "@/lib/kb/search";
 import { _resetKbEnvCache } from "@/lib/kb/env";
 import { TEST_USER, ensureTestUser, makeUser } from "@/tests/helpers/auth";
 
-// ponytail: hybridSearch runs against the real DB (RRF CTE, GIN, HNSW).
-// Seed two docs with known chunks; assert ranking, leg hit semantics,
-// truncation, and user-scoping. No mocks — the SQL is the SUT.
+// ponytail: hybridSearch now auto-embeds the query when qvec isn't
+// pre-computed (previously that lived in search_kb.ts). Tests pin
+// the embedder to a 1024-dim vector (matching the schema column)
+// so the SQL + dim check run on the expected shape.
+vi.mock("@/backend/model", () => ({
+  getEmbeddingModel: vi.fn(async () => ({
+    embedQuery: vi.fn(async (q: string) => {
+      // Match the schema dim (EMBEDDING_DIM=1024). The 1536-dim
+      // embedder from backend/model.ts isn't available in tests —
+      // the real one would trip the dim check.
+      const out: number[] = [];
+      for (let i = 0; i < 1024; i++) out.push(Math.sin(q.length + i * 0.01) * 0.001);
+      return out;
+    }),
+  })),
+}));
 
 const FOLDER_ID = `f-${randomUUID()}`;
 const DOC_A_ID = `d-${randomUUID()}`;

@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { getKbEnv } from "@/lib/kb/env";
 import { EMBEDDING_DIM } from "@/lib/kb/schema";
+import { getEmbeddingModel } from "@/backend/model";
 import { getRerankModelFromDB } from "@/lib/provider/model-registry";
 
 // ponytail: hybrid search (issue #13 v3) — RRF (k=60) over three legs:
@@ -20,6 +21,13 @@ import { getRerankModelFromDB } from "@/lib/provider/model-registry";
 //
 // qvec nullable → vec leg no-ops. qents empty → tag leg no-ops
 // (Postgres `entities && '{}'` returns no rows).
+//
+// 0-chunk fallback (documentId filter only): when a @doc mention's
+// chunk index is empty (OCR finished but the chunking pass didn't
+// land any rows), search_kb can't return chunks. Instead of an empty
+// result, return a single "full" row with the joined page markdown
+// — same content the LLM would have gotten via the old
+// resolveKbMentions ToolMessage, but as a real search result.
 //
 // MISSING FIELD NOTE: kb_chunk does NOT yet have a `page_numbers` column
 // (per `lib/kb/schema.ts` and migration `0005_past_grey_gargoyle.sql`).
@@ -48,6 +56,13 @@ export type HybridSearchArgs = {
   documentId?: string;
 };
 
+// ponytail: safety cap for the "no query" path. The LLM-facing tool
+// no longer exposes topK; an empty query is a "give me everything in
+// this scope" intent (e.g. summarise @doc.pdf). We cap at 1000 to
+// prevent OOM on a giant folder — the LLM can iterate with a
+// narrower scope or a real query if it needs more.
+const EMPTY_QUERY_LIMIT = 1000;
+
 // ponytail: cheap query-time entity candidate extraction. Index-time
 // extraction (kbAgent.generateChunkEmbedNode) is the canonical source of
 // entities — query-time does lightweight keyphrase-style linking only.
@@ -69,7 +84,10 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
   const env = getKbEnv();
   const topK = Math.min(Math.max(args.topK ?? env.hybridTopKDefault, 1), env.hybridTopKMax);
 
-  // ponytail: empty query fallback — returns chunks sorted by documentId and ordinal
+  // ponytail: empty query fallback — "give me everything in this
+  // scope". Capped at EMPTY_QUERY_LIMIT (1000) so a giant folder
+  // can't OOM the LLM context. The LLM iterates with a narrower
+  // scope or a real query if it needs more.
   if (!args.query || args.query.trim() === "") {
     const docFilterSql = args.documentId
       ? sql`AND c.document_id = ${args.documentId}`
@@ -94,7 +112,7 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
         AND d.status = 'success'
         ${docFilterSql}
       ORDER BY c.document_id, c.ordinal
-      LIMIT ${topK}
+      LIMIT ${EMPTY_QUERY_LIMIT}
     `);
 
     const rows = Array.isArray(result) ? result : ((result as { rows?: unknown[] }).rows ?? []);
@@ -118,10 +136,23 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
 
   const qents = (args.qents ?? deriveQueryEntities(args.query)).map((q) => q.toLowerCase());
 
+  // ponytail: auto-embed the query if the caller didn't pass qvec
+  // (the search_kb tool doesn't bother pre-embedding — the embed +
+  // catch-fall-back-to-non-vector-legs is colocated with the search).
+  let qvec = args.qvec;
+  if (qvec == null && args.query.trim() !== "") {
+    try {
+      const embedder = await getEmbeddingModel();
+      qvec = await embedder.embedQuery(args.query);
+    } catch (err) {
+      console.warn("[hybridSearch] Failed to embed query, falling back to non-vector legs:", err);
+    }
+  }
+
   // ponytail: pgvector's `vector(1024)` rejects a wrong-dim input with
   // 22P02 — fail fast at the boundary instead of letting the SQL fail.
-  if (args.qvec != null && args.qvec.length !== EMBEDDING_DIM) {
-    throw new Error(`qvec dimension mismatch: expected ${EMBEDDING_DIM}, got ${args.qvec.length}`);
+  if (qvec != null && qvec.length !== EMBEDDING_DIM) {
+    throw new Error(`qvec dimension mismatch: expected ${EMBEDDING_DIM}, got ${qvec.length}`);
   }
 
   // ponytail: pgvector wire form is `[1.0,2.0,3.0]` — postgres.js lacks

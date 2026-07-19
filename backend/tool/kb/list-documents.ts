@@ -20,7 +20,14 @@ import type {
 export const LIST_DOCUMENTS_STATUSES = ["success", "failed", "parsing", "pending"] as const;
 
 const listDocumentsSchema = z.object({
-  folderId: z.string().optional().describe("Restrict to a specific folder. Omit for all folders."),
+  folderId: z
+    .string()
+    .optional()
+    .describe(
+      "Restrict to a specific folder. Copy the value verbatim from the " +
+        "':kb-folder[label]{folderId=...}' directive in the user message " +
+        "(optional — omit for all folders).",
+    ),
   status: z
     .enum(["success", "failed", "parsing", "pending"])
     .optional()
@@ -154,7 +161,9 @@ export const listDocumentsTool: StructuredTool = tool(
       "List the user's knowledge-base documents grouped by folder. Supports filtering " +
       "by folder, ingest status, and title substring. Returns each document's id, " +
       "title, status, and per-doc page/chunk progress counts. Use when the user " +
-      "asks what's in their KB or wants to navigate to a specific doc.",
+      "asks what's in their KB or wants to navigate to a specific doc. " +
+      "If the user @-mentioned a folder, copy the id from the " +
+      "':kb-folder[label]{folderId=...}' directive into the folderId arg.",
     schema: listDocumentsSchema,
   },
 );

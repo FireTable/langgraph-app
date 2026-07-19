@@ -205,43 +205,39 @@ otherwise. ToolMessage chips in the chat distinguish the two modes
 
 ## 5. Mention Resolution
 
-The composer renders `:kb-doc[label]{id=<UUID>}` directive tokens via
-assistant-ui's `unstable_useMentionAdapter` +
-`unstable_defaultDirectiveFormatter`. The directive is preserved
-through the SDK wire and lands in the `HumanMessage.content` as a
-plain string. The LLM reads the directive directly and calls
-`search_kb(documentId=…)` itself.
+The composer renders two KB directive tokens via assistant-ui's
+`unstable_useMentionAdapter` + a custom
+`kbMentionFormatter`:
 
-`resolveKbMentions` is a pre-LLM pass that does **only one thing**:
-the 0-chunk fallback. When the user mentions a doc whose status is
-`success` but the chunk index is empty (chunking pass didn't land
-any rows), the resolver pre-loads `kb_document.pages[*].markdown`
-and injects a synthetic `search_kb` `AIMessage+ToolMessage` pair
-right after the last `HumanMessage` — `tool_call_id: "kb-fallback"`,
-`name: "search_kb"`, `legsHit: ["full"]`, content = joined page
-markdown. The chat card renders this via the existing search_kb
-toolkit entry.
+- `:kb-document[label]{documentId=<UUID>}` — mention a single doc
+- `:kb-folder[label]{folderId=<UUID>}` — mention a folder (the
+  popover's first item per folder)
 
-Everything else is dropped:
+The brace-group key **matches the `search_kb` / `list_documents`
+parameter name** so the LLM can copy the value verbatim into the
+tool call — no ambiguity, no resolver in the loop.
 
-- `:kb-doc` with chunks → no injection. The LLM sees the directive
-  in the message text and calls `search_kb(documentId=…)` itself.
-- `:kb-folder` → no injection. The LLM sees the directive in the
-  message text and calls `search_kb(folderId=…)` itself.
-- `@doc` with `parsing` / `failed` status → dropped silently. The
-  user sees the status in Settings → KB; the chat resolver stays
-  out of the way.
-- Unknown / cross-user ids → silently dropped (no existence leak).
+The directive survives the SDK wire and lands in
+`HumanMessage.content` as a plain string. From there the LLM does
+the work:
 
-The directive syntax is mirrored end-to-end:
+- `:kb-document[…]` → `search_kb({ documentId: "<UUID>", query: <user's question> })`
+  (or `list_documents({ documentId: "<UUID>" })` to inspect the doc)
+- `:kb-folder[…]` → `search_kb({ folderId: "<UUID>", query: <user's question> })`
+  or `list_documents({ folderId: "<UUID>" })` to enumerate
 
-- The composer serializes a chip via
-  `components/assistant-ui/kb-mention-formatter.ts` →
-  `:kb-document[<label>]{id=<docId>}`.
-- `lib/kb/resolve-mentions.ts` parses with a global regex, extracts
-  the canonical id (or falls back to the label if the brace group
-  is absent), then validates user-ownership + status + chunk count
-  in a single batch.
+The system prompt
+(`backend/prompt/system.ts`, `[KNOWLEDGE BASE]` clause) names the
+two directive forms and tells the LLM to copy the id into the
+matching tool arg. `search_kb` itself enforces per-user scoping,
+so cross-user mentions return empty rather than leaking.
+
+`backend/node/prepare-data-node.ts` is now a pass-through — no
+pre-LLM resolver. The KB agent's `tool-loop` handles the full flow:
+
+1. LLM reads the directive from `HumanMessage.content`
+2. LLM calls `search_kb` (or `list_documents`) with the right filter
+3. The tool returns the content; the LLM reasons over it
 
 The chip survives the assistant-ui SDK wire because the SDK's
 `contentToParts` rebuilds `text` parts from scratch but preserves the
@@ -251,6 +247,14 @@ custom `{type: "kb_ref"}` part (which the SDK filters to `null`).
 `kb_ref` itself rides as a **sibling field on `type: "file"` parts**
 — see the in-repo memory entry on `kb_ref rides as file sibling` for
 the full rationale.
+
+### Legacy format
+
+The parser still accepts the old `:kb-document[label]{id=…}` /
+`:kb-folder[label]{id=…}` form so existing transcript lines keep
+rendering as chips. Only the formatter's `serialize` writes the new
+typed keys — newly inserted chips always carry
+`{documentId=…}` / `{folderId=…}`.
 
 ---
 

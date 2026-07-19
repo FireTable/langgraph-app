@@ -3,13 +3,24 @@ import {
   type Unstable_DirectiveSegment,
 } from "@assistant-ui/react";
 
+// ponytail: the key in the brace group matches the search_kb /
+// list_documents parameter name so the LLM can copy the value
+// directly into the tool call. Doc directive: {documentId=…};
+// folder directive: {folderId=…}. No more generic {id=…} — the
+// LLM no longer has to guess which arg to pass.
+
 export const kbMentionFormatter: Unstable_DirectiveFormatter = {
   serialize(item) {
-    const type = item.type === "kb-document" ? "kb-doc" : item.type;
-    return `:${type}[${item.label}]{id=${item.id}}`;
+    const key = item.type === "kb-folder" ? "folderId" : "documentId";
+    return `:${item.type}[${item.label}]{${key}=${item.id}}`;
   },
   parse(text) {
-    const regex = /:([\w-]{1,64})\[([^\]\n]{1,1024})\](?:\{id=([^}\n]{1,1024})\})?/g;
+    // ponytail: accept both {documentId=…} / {folderId=…} and the
+    // older {id=…} so existing transcript lines (and tests pinned to
+    // the old format) keep rendering. The LLM only sees the wire
+    // form, so newly serialised chips will all use the typed keys.
+    const regex =
+      /:([\w-]{1,64})\[([^\]\n]{1,1024})\](?:\{(?:documentId|folderId|id)=([^}\n]{1,1024})\})?/g;
     const segments: Unstable_DirectiveSegment[] = [];
     let lastIndex = 0;
     let match: RegExpExecArray | null;

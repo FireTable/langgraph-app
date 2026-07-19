@@ -156,7 +156,11 @@ const kbToolkit = defineToolkit({
   // prose). order locked to backend RRF ranking.
   search_kb: {
     description: "Render a KB search result card with [1] [2] numbered chunks.",
-    parameters: z.object({ query: z.string(), topK: z.number().optional() }),
+    parameters: z.object({
+      query: z.string().optional(),
+      folderId: z.string().optional(),
+      documentId: z.string().optional(),
+    }),
     render: KbSearchToolUI,
   },
   // ponytail: search_kb doubles as the @-mention synthetic tool —
