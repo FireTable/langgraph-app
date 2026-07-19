@@ -5,23 +5,27 @@ import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { KB_POLL_INTERVAL_MS } from "@/lib/constants";
 import { KbResponse, KbDocument } from "./types";
 import { HeaderBar } from "./folder-sidebar";
 import { DocStatusBadge, ChunksStatusBadge, formatTimestamp } from "./status-badge";
 import { DocDetailDialog } from "./doc-detail-dialog";
 import { DocDeleteDialog, DocReprocessDialog } from "./dialogs";
 import { FolderGraphDialog } from "./folder-graph-dialog";
+import { LivePollIndicator } from "./live-poll-indicator";
 
 export function DocTable({
   group,
   focusDocId,
   onAddDoc,
   onRefresh,
+  isLivePolling,
 }: {
   group: KbResponse["groups"][number] | null;
   focusDocId: string | null;
   onAddDoc: () => void;
   onRefresh: () => Promise<void> | void;
+  isLivePolling: boolean;
 }) {
   const [folderGraphOpen, setFolderGraphOpen] = useState(false);
 
@@ -42,6 +46,7 @@ export function DocTable({
           label={`${group.folder.name} · ${group.documents.length}`}
           action={
             <div className="flex items-center gap-1.5">
+              <LivePollIndicator active={isLivePolling} intervalMs={KB_POLL_INTERVAL_MS} />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -301,12 +306,7 @@ export function DocRow({
       </div>
 
       {previewOpen && (
-        <DocDetailDialog
-          docId={doc.id}
-          open={previewOpen}
-          onOpenChange={setPreviewOpen}
-          onRefresh={onRefresh}
-        />
+        <DocDetailDialog docId={doc.id} open={previewOpen} onOpenChange={setPreviewOpen} />
       )}
       {deleteOpen && (
         <DocDeleteDialog

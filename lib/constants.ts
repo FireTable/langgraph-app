@@ -53,3 +53,10 @@ export const KB_REF_PREFIX_REGEX = /^\[kb:([^\]]+)\]\s?/;
 // upstream tier changes; lower if you start hitting 429s.
 export const KB_OCR_CONCURRENCY = 5;
 export const KB_ENTITY_CONCURRENCY = 5;
+
+// ponytail: KB view + Preview-dialog auto-refresh cadence. Same value
+// across both surfaces so the user's mental model ("docs refresh
+// every N seconds while something is in flight") stays consistent.
+// The Settings → KB table and the per-doc Preview dialog both use
+// this single knob; bump it if backend load warrants.
+export const KB_POLL_INTERVAL_MS = 5000;

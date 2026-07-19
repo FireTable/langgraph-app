@@ -25,7 +25,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { TOAST_DESCRIPTION_CLASS } from "./helpers";
+import { KB_POLL_INTERVAL_MS } from "@/lib/constants";
 import { KnowledgeGraph } from "./knowledge-graph";
 import { ChunkStatusBadge, DocStatusBadge, ChunksStatusBadge } from "./status-badge";
 import { entityColor, type EntityColor } from "@/lib/kb/entityColor";
@@ -35,12 +35,10 @@ export function DocDetailDialog({
   docId,
   open,
   onOpenChange,
-  onRefresh,
 }: {
   docId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onRefresh: () => Promise<void> | void;
 }) {
   const [detail, setDetail] = useState<KbDocDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -87,7 +85,7 @@ export function DocDetailDialog({
             console.error("DocDetailDialog poll failed", err);
           }
         });
-    }, 5000);
+    }, KB_POLL_INTERVAL_MS);
     return () => {
       controller.abort();
       clearInterval(t);
@@ -109,19 +107,6 @@ export function DocDetailDialog({
         .join("\n\n");
     }
     return detail.chunks.map((c) => c.content).join("\n\n");
-  }, [detail]);
-
-  const isPolling = useMemo(() => {
-    if (!detail) return false;
-    const docInflight = detail.doc.status === "pending" || detail.doc.status === "parsing";
-    const chunksInflight = detail.chunks.some(
-      (c) => c.status === "pending" || c.status === "parsing",
-    );
-    return (
-      docInflight ||
-      chunksInflight ||
-      (detail.chunks.length === 0 && detail.doc.status === "success")
-    );
   }, [detail]);
 
   // ponytail: graphRAG-native entity color map for chunk-level

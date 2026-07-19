@@ -7,6 +7,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { KB_POLL_INTERVAL_MS } from "@/lib/constants";
 import { KbResponse } from "./types";
 import { FolderSidebar } from "./folder-sidebar";
 import { DocTable } from "./doc-table";
@@ -29,6 +30,7 @@ function KbViewContent({ className }: { className?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(initialFolderId);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [isLivePolling, setIsLivePolling] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
@@ -121,8 +123,20 @@ function KbViewContent({ className }: { className?: string }) {
     // brute-force window after a Reprocess/Upload/Delete dispatch so
     // the wipe→INSERT race doesn't strand the table on stale counts.
     const inDispatchWindow = Date.now() < recentlyDispatchedUntilRef.current;
-    if (!anyInflight && !inDispatchWindow) return;
-    const t = setInterval(() => void load(), 5000);
+    if (!anyInflight && !inDispatchWindow) {
+      setIsLivePolling(false);
+      return;
+    }
+    setIsLivePolling(true);
+    // ponytail: if polling is sustained only by the post-dispatch
+    // window (no in-flight docs to drive it), schedule a state flip
+    // so the live indicator turns off when the window expires.
+    if (!anyInflight && inDispatchWindow) {
+      const ms = recentlyDispatchedUntilRef.current - Date.now();
+      const t = setTimeout(() => setIsLivePolling(false), ms);
+      return () => clearTimeout(t);
+    }
+    const t = setInterval(() => void load(), KB_POLL_INTERVAL_MS);
     return () => clearInterval(t);
   }, [data, load]);
 
@@ -167,6 +181,7 @@ function KbViewContent({ className }: { className?: string }) {
             focusDocId={focusDocId}
             onAddDoc={() => fileInputRef.current?.click()}
             onRefresh={loadWithHeartbeat}
+            isLivePolling={isLivePolling}
           />
         </div>
 
