@@ -11,16 +11,25 @@ export function ChunkStatusBadge({
   status: KbChunkPreviewLocal["status"];
   errorMessage: string | null;
 }) {
+  // ponytail: match the Pages tab's "Succeeded"/"Failed"/"Parsing…"/"Pending"
+  // badge shape exactly — same variant, same dimensions
+  // (text-[9px] py-0 px-1.5), same label text. Without this, the
+  // Pages "SUCCEEDED" pill and the Chunks "SUCCESS" pill looked like
+  // two different status indicators even though they meant the same
+  // thing.
   const variant: "success" | "destructive" | "muted" =
     status === "success" ? "success" : status === "failed" ? "destructive" : "muted";
   const label =
-    status === "parsing" ? "Indexing" : status.charAt(0).toUpperCase() + status.slice(1);
+    status === "success"
+      ? "Succeeded"
+      : status === "failed"
+        ? "Failed"
+        : status === "parsing"
+          ? "Parsing…"
+          : "Pending";
   const content = (
-    <Badge
-      variant={variant}
-      className="inline-flex items-center gap-1 py-0.5 font-medium leading-none"
-    >
-      <span className="leading-none">{label}</span>
+    <Badge variant={variant} className="text-[9px] py-0 px-1.5 font-medium leading-none">
+      {label}
     </Badge>
   );
   if (status === "failed" && errorMessage) {

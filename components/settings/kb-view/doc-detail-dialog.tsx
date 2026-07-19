@@ -733,8 +733,8 @@ export function DocDetailDialog({
                           <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
                             Chunk #{c.ordinal + 1}
                           </span>
-                          <ChunkStatusBadge status={c.status} errorMessage={c.errorMessage} />
                         </div>
+                        <ChunkStatusBadge status={c.status} errorMessage={c.errorMessage} />
                       </div>
                       {/* Card Body */}
                       <div className="p-4">
