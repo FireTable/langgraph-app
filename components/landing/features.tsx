@@ -8,6 +8,7 @@
 import type { FC, ReactNode } from "react";
 import {
   ActivityIcon,
+  BookOpenTextIcon,
   BrainIcon,
   GitBranchIcon,
   MessagesSquareIcon,
@@ -131,6 +132,14 @@ const BENTO: BentoCard[] = [
       "Every span, every tool — one tree. Redacted at write, indexed by turn, viewable alongside the reply.",
     icon: <ActivityIcon className="size-4" />,
     hue: "indigo",
+    span: "default",
+  },
+  {
+    title: "Knowledge base",
+    description:
+      "Drop a PDF, get a searchable index. Hybrid retrieval (BM25 + vector + entity), Rerank, @-mention in chat, four reprocess modes.",
+    icon: <BookOpenTextIcon className="size-4" />,
+    hue: "teal",
     span: "default",
   },
 ];
