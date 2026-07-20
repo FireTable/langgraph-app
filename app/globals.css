@@ -153,6 +153,15 @@
     @apply bg-background text-foreground;
   }
 
+  /* ponytail: smooth-scroll the landing anchor nav. Reduced-motion
+     keeps the native instant jump so accessibility users aren't
+     forced through animation. */
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+
   /* Thin scrollbar to match the official assistant-ui base.tsx example.
      Without this, browsers render the default ~17px scrollbar, which
      looks heavy against the muted background. Width 6px / transparent

@@ -65,9 +65,6 @@ export const Cta: FC<CtaProps> = ({ signedIn }) => {
                 View on GitHub
               </a>
             </Button>
-            <Button asChild size="lg" variant="ghost">
-              <Link href="#how-it-works">Re-read the explainers</Link>
-            </Button>
           </div>
         </div>
       </div>
