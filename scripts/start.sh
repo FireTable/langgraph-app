@@ -1,4 +1,5 @@
 #!/bin/sh
+# cspell:ignore LANGSERVE uvicorn
 # Single image, role-dispatched entrypoint.
 #
 # ROLE controls what runs in this container:
@@ -11,6 +12,14 @@
 # is set (LANGGRAPH_RUNTIME_EDITION=postgres is baked into the base).
 
 set -eu
+
+# Keep the production graph registry in sync with langgraph.json.
+LANGSERVE_GRAPHS="$(node -e '
+  const fs = require("node:fs");
+  const { graphs } = JSON.parse(fs.readFileSync("langgraph.json", "utf8"));
+  process.stdout.write(JSON.stringify(graphs));
+')"
+export LANGSERVE_GRAPHS
 
 ROLE="${ROLE:-all}"
 

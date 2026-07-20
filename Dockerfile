@@ -60,8 +60,8 @@ ENV LANGGRAPH_ASSISTANT_ID=agent
 # injected by app/layout.tsx. CLAUDE.md rule #12.
 RUN pnpm build
 
-# LangGraph runtime config — point at our graphs and DB.
-ENV LANGSERVE_GRAPHS='{"agent":"./backend/agent.ts:graph","background_agent":"./backend/background-agent.ts:graph"}'
+# LangGraph runtime config — start.sh loads graph registrations from
+# langgraph.json; point the runtime at our DB.
 ENV POSTGRES_URI=${DATABASE_URL}
 ENV LANGGRAPH_RUNTIME_EDITION=postgres
 # Override base image PORT=8000 → 2024 (matches docker-compose + CLAUDE.md).
