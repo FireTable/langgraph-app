@@ -272,9 +272,11 @@ export const KbExplainerDemo = () => {
     <div ref={ref} className="bg-background flex w-full max-w-lg flex-col gap-4 rounded-xl p-5">
       {/* === Pipeline row === */}
       <div className="flex flex-col gap-3">
-        <div className="text-muted-foreground flex items-center justify-between text-[11px] font-medium tracking-wide uppercase">
+        <div className="text-muted-foreground flex flex-col gap-0.5 text-[11px] font-medium tracking-wide uppercase">
           <span>KB ingest pipeline</span>
-          <span>per document</span>
+          <span className="text-muted-foreground/70 text-[10px] font-normal normal-case tracking-normal">
+            per document
+          </span>
         </div>
 
         <div className="relative">
@@ -334,9 +336,11 @@ export const KbExplainerDemo = () => {
 
       {/* === Graph row === */}
       <div className="border-border/60 flex flex-col gap-3 border-t pt-3">
-        <div className="text-muted-foreground flex items-center justify-between text-[11px] font-medium tracking-wide uppercase">
+        <div className="text-muted-foreground flex flex-col gap-0.5 text-[11px] font-medium tracking-wide uppercase">
           <span>Entity graph</span>
-          <span>graph traversal</span>
+          <span className="text-muted-foreground/70 text-[10px] font-normal normal-case tracking-normal">
+            graph traversal
+          </span>
         </div>
 
         <div className="border-border/40 bg-muted/20 relative overflow-hidden rounded-md border p-2">
