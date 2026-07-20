@@ -280,7 +280,7 @@ export const KbExplainerDemo = () => {
         </div>
 
         <div className="relative">
-          <div className="flex items-center justify-between gap-1.5">
+          <div className="flex flex-wrap items-center justify-center md:justify-between flex-wrap gap-x-1.5 gap-y-2">
             {STAGES.map((stage, i) => (
               <Fragment key={stage.id}>
                 <StageBox stage={stage} lit={i < pipelineLit} />
@@ -489,7 +489,7 @@ const StageBox = ({ stage, lit }: { stage: Stage; lit: boolean }) => {
       animate={lit ? { opacity: 1, scale: 1 } : { opacity: 0.5, scale: 0.96 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
       className={cn(
-        "border-border/40 bg-muted/30 text-muted-foreground flex size-11 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border",
+        "border-border/40 bg-muted/30 text-muted-foreground flex size-10 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border",
         lit && stage.lit,
       )}
       aria-label={stage.label}
