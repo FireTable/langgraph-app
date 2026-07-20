@@ -18,14 +18,23 @@ schemas and query APIs under `lib/kb/`; the user-facing settings under
   PDF parsing, page rendering (screenshots), text splitting, embedding
   generation, and entity/relationship extraction.
 - **`lib/kb/`** — Database schema (`schema.ts`), queries (`queries.ts`),
-  environment loader (`env.ts`), and hybrid search + Reranker
-  (`search.ts`).
-- **`lib/kb/resolve-mentions.ts`** — Server-side middleware that intercepts
-  `@` mentions (docs or folders) in user messages and formats them for
-  the LLM before the turn starts.
-- **`components/assistant-ui/kb-mention-formatter.ts`** — Client-side
-  serializer/parser for the `kb-document` / `kb-folder` directive tokens
-  used inside the chat composer.
+  environment loader (`env.ts`), resolve (`resolve.ts`),
+  ingest dispatch (`ingest.ts`), screenshot helpers (`screenshot.ts`),
+  text utilities (`text.ts`), entity color map (`entityColor.ts`),
+  LRU cache (`cache.ts`), and hybrid search + Reranker (`search.ts`).
+- **`lib/kb/resolve.ts`** — Server-side middleware that runs at
+  LLM-invoke time (`prepareMessagesForInvoke`): replaces every
+  `kb_ref`-bearing part on every `HumanMessage` with a text part
+  containing either the concatenated chunks or a status placeholder.
+  Two shapes are accepted today — file part with `kb_ref` sibling
+  (canonical) and the legacy standalone `{ type: "kb_ref", docId }`
+  part (back-compat for older threads). Never modifies `state.messages`
+  at rest.
+- **`components/assistant-ui/kb-mention-formatter.ts`** +
+  **`components/assistant-ui/kb-mention.tsx`** — Client-side
+  serializer / parser for the `:kb-document[label]{documentId=…}` /
+  `:kb-folder[label]{folderId=…}` directive tokens, plus the chip +
+  formatters used inside the chat composer.
 - **`components/settings/kb-view/`** — Settings UI dashboard (document
   tables, folder sidebar, reprocess dialog, Folder Graph, doc detail,
   Observability popover).
@@ -109,8 +118,9 @@ Generate Embeddings (Vector) ─▶ Extract Entities (JSONB) ─▶ Status='succ
    screenshots (saved to R2 via the attachments store), and extracts
    markdown text page by page. Each page carries a `status` mirror
    (`pending | parsing | success | failed`) written by `pageToMarkdownNode`.
-3. **Text Chunking** — `RecursiveCharacterTextSplitter` over the joined
-   page markdown. Chunk size is `KB_CHUNK_MAX_CHARS` (default 2000).
+3. **Text Chunking** — `MarkdownTextSplitter` (from `@langchain/textsplitters`)
+   over the joined page markdown. Chunk size is `KB_CHUNK_MAX_CHARS`
+   (default 2000).
 4. **Vector Generation** — 1024-dim embeddings per chunk via the
    `OPENAI_EMBEDDING_MODEL` alias (BAAI/bge-m3). Written to `kb_chunk.embedding`
    inside a single `INSERT` (raw SQL — Drizzle's `vector` customType
@@ -388,8 +398,15 @@ table — see [`docs/ADMIN.md`](./ADMIN.md).
 - **Reranker streaming** — Rerank is a single batched call after the
   SQL round-trip. A streaming variant (return top-K as soon as the
   Reranker scores them) is a future optimisation.
+- **Multi-doc `@folder` re-chunk** — When a folder's docs are
+  collectively re-chunked, each doc is still re-processed independently.
+  A true folder-level pipeline is a v4 design.
+- **`kebab-case` in directives** — The id capture (`[^\]\n]{1,1024}`)
+  is liberal. Tightening to UUID-only would prevent accidental
+  non-uuid id values but breaks future plans (e.g. short folder
+  slugs).
 
-## 7. Per-Doc Observability (Observability List popover)
+## 11. Per-Doc Observability (Observability List popover)
 
 Each `<DocRow>` exposes an Activity icon between RefreshCw and Search.
 Click → `<ObservabilityPopover>` lazy-fetches
@@ -423,11 +440,3 @@ not the default enqueue.
 
 See [`docs/OBSERVABILITY.md`](./OBSERVABILITY.md#kb-ingestion-runs-settings--kb)
 for the full wiring + rationale.
-
-- **Multi-doc `@folder` re-chunk** — When a folder's docs are
-  collectively re-chunked, each doc is still re-processed independently.
-  A true folder-level pipeline is a v4 design.
-- **`kebab-case` in directives** — The id capture (`[^\]\n]{1,1024}`)
-  is liberal. Tightening to UUID-only would prevent accidental
-  non-uuid id values but breaks future plans (e.g. short folder
-  slugs).

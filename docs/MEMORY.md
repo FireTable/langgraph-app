@@ -10,7 +10,7 @@ endpoints (request / response / status codes) live in
 
 ## Topology at a glance
 
-The agent runtime runs **two graphs** side by side, both registered in
+The agent runtime runs **three graphs** side by side, all registered in
 `langgraph.json`:
 
 - `agent` (`backend/agent.ts:graph`) — the user-facing chat graph.
@@ -24,12 +24,23 @@ The agent runtime runs **two graphs** side by side, both registered in
   turn-end side-effect graph. Linear: `START → touchLastMessage →
 summarize → END`. Runs after every chat turn. Cheap to add a router
   between the two nodes later if `summarize` becomes a bottleneck.
+- `kbAgent` (`backend/agent/kb-agent.ts:graph`) — the standalone KB
+  ingestion graph. Triggered directly by `fireIngestionRun`
+  (`lib/kb/ingest.ts`) from the Settings → KB upload / reprocess routes
+  and as a subgraph inside `mainAgent` on the chat path (PDF mentions
+  → kbAgent without the router + renameThreadAgent LLM calls). See
+  [`docs/KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md) for the pipeline
+  shape; this doc only notes it exists alongside `agent` and
+  `background_agent` so the graph-id sync list in
+  [`CLAUDE.md`](../CLAUDE.md) doesn't drift.
 
-Memory is split across these two graphs in the same way: profile reads
+Memory is split across the chat + background graphs in the same way: profile reads
 happen on the chat path (recall middleware prepends `<memory>` + `<threads>`
 blocks to the SystemMessage); thread-compression writes happen on the
 background path (`summarize` node persists a `SummaryEntry` to the
-store, returns empty state).
+store, returns empty state). `kbAgent` is independent — it doesn't
+read or write the memory store, just persists chunk rows + KB
+observability spans.
 
 ```
                          mainAgent (backend/agent.ts)
@@ -43,6 +54,13 @@ START ─▶ routerAgent ─▶ subAgent ─▶ triggerBackgroundAgent ─▶ EN
 START ─▶ touchLastMessage ─▶ summarize ─▶ END
                                   │
                                   └─ persist SummaryEntry to store
+
+                         kbAgent (backend/agent/kb-agent.ts)
+                         ────────────────────────────────────────────
+START ─▶ prepareKBDataNode ─▶ ocrNode ─▶ pageToMarkdownNode
+            ─▶ generateChunkEmbedNode ─▶ rewriteMessagesNode ─▶ END
+                                       │
+                                       └─ persist kb_chunk / kb_document / kb_observability
 ```
 
 ## What the assistant sees on every turn

@@ -22,9 +22,12 @@ PDF picker. PDF (and other non-image types) is intentionally excluded:
   the model never gets the PDF bytes it expects.
 - The "correct" path is for the knowledge-base agent (issue #13) to
   own ALL attachment-derived representations (page images for vision
-  models, markdown for text models, embeddings for retrieval). The
-  chat composer rendering a PDF picker before #13 ships would let
-  users upload files the model can't actually read.
+  models, markdown for text models, embeddings for retrieval). KB v3
+  has now shipped — see [`docs/KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md)
+  for the PDF → kbAgent pipeline. The chat composer still does NOT
+  surface a PDF picker: PDFs land in the user's KB via Settings → KB
+  upload (or via the kbAgent subgraph on a chat-path PDF mention), not
+  inline in the chat composer.
 
 To re-enable a non-image flow in the meantime, set
 `R2_ALLOWED_CONTENT_TYPES` to a comma-separated list that

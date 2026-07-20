@@ -76,7 +76,7 @@ Non-negotiable. Every change.
 
 ## Things to know before editing
 
-- Graph id `agent` is in `langgraph.json`, `LANGGRAPH_ASSISTANT_ID` (`.env.example`, surfaced to client via `window.__CONFIG__` — see rule #12), and `unstable_createLangGraphStream({ assistantId })`. Keep aligned.
+- Graph id `agent` is in `langgraph.json`, `LANGGRAPH_ASSISTANT_ID` (`.env.example`, surfaced to client via `window.__CONFIG__` — see rule #12), and `unstable_createLangGraphStream({ assistantId })`. Keep aligned. The `kbAgent` assistant id (KB ingestion, `langgraph.json` + `lib/kb/ingest.ts:fireIngestionRun` dispatch) follows the same sync rule — there is no env-driven alias for it, but renaming it requires updating `langgraph.json` AND `fireIngestionRun` together.
 - `app/api/[..._path]/route.ts` proxy uses `runtime = "nodejs"` (was edge) — `withAuth` needs Node `net` for Postgres session reads.
 - `components.json` declares a `@assistant-ui` registry at `https://r.assistant-ui.com/{name}.json` for `shadcn`-style component adds.
 - `feat/*` branches: `git fetch origin main` and merge if main moved before committing — see [[feature-branch-tracks-main]].
