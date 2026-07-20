@@ -1039,14 +1039,16 @@ async function generateChunkEmbedNode(
   // the time the route returns, so a poll-then-fetch chunks sees the
   // final state on the first try.
   //
-  // `waitForChunks` wins over `source` so direct callers (tests, future
-  // background-only invokers) can force either mode without lying about
-  // the path they came from.
-  const sourceFromConfig = (config?.configurable as { source?: string } | undefined)?.source;
+  // Default: wait. Only the chat subgraph path fires kbAgent
+  // fire-and-forget so the reply flow isn't blocked. `source` defaults
+  // to "chat" when unset (matches line 176), which means direct
+  // callers (tests, future invokers) that don't stamp a source also
+  // get fire-and-forget — opt in by setting `source` to anything else,
+  // or override explicitly via `waitForChunks`.
+  const source = (config?.configurable as { source?: string } | undefined)?.source ?? "chat";
   const waitFromConfig = (config?.configurable as { waitForChunks?: boolean } | undefined)
     ?.waitForChunks;
-  const isStandalonePath = sourceFromConfig === "kb-upload" || sourceFromConfig === "kb-reprocess";
-  const waitForChunks = waitFromConfig ?? isStandalonePath;
+  const waitForChunks = waitFromConfig ?? source !== "chat";
 
   if (state.userId) {
     const pendingChunks: Array<Promise<void>> = [];

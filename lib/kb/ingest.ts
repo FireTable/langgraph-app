@@ -113,14 +113,14 @@ export async function fireIngestionRun({
   // can find the doc by id instead of doing an attachment/file-part
   // lookup chain.
   //
-  // ponytail: `waitForChunks: true` is the standalone-path signal
-  // for kbAgent.generateChunkEmbedNode to await the chunk + embed +
-  // entity-extract pass instead of fire-and-forget. Standalone
-  // callers poll kb_document.status, but awaiting here makes the
-  // route's 202 contract land with chunks already indexed — first
-  // poll sees the terminal state. Chat path (mainAgent → kbAgent)
-  // inherits no `waitForChunks` so the existing fire-and-forget
-  // behavior holds.
+  // ponytail: source is the only signal kbAgent needs to decide
+  // fire-and-forget (chat) vs awaited (standalone). The chat subgraph
+  // path inherits no source from mainAgent → defaults to "chat"
+  // inside the agent → generateChunkEmbedNode doesn't await. We stamp
+  // source='kb-upload' / 'kb-reprocess' here so the standalone path
+  // awaits the chunk + embed + entity-extract pass before returning,
+  // making the route's 202 contract land with chunks already indexed
+  // and the first kb_document.status poll seeing the terminal state.
   const resolvedMode = mode ?? (chunksOnly ? "chunksOnly" : "full");
   const config = {
     configurable: {
@@ -130,7 +130,6 @@ export async function fireIngestionRun({
       docId,
       source,
       forceRerun: source === "kb-reprocess",
-      waitForChunks: true,
     },
   };
 

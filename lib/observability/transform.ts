@@ -93,7 +93,38 @@ function collectRootChains(captured: CapturedSpan[]): RootChain[] {
     if (roots.has(parentSpanId)) continue;
     roots.set(parentSpanId, { span: s, id: s.span_id });
   }
-  return [...roots.values()].sort((a, b) => a.span.started_at - b.span.started_at);
+
+  if (roots.size > 0) {
+    return [...roots.values()].sort((a, b) => a.span.started_at - b.span.started_at);
+  }
+
+  // ponytail: fallback for top-level runs.create invokes (kbAgent from
+  // Settings upload / reprocess). The filter above only catches
+  // subgraph wrappers — CompiledStateGraph chain fired when LC wraps
+  // a subgraph call (span_id === run_id, langgraph_node undefined).
+  // Top-level invokes only fire a RunnableSequence wrapper with
+  // parent_span_id="__start__", span_id ≠ run_id, and node/step
+  // stamped to "__start__"/0. Without this fallback the capture would
+  // surface aggregates (LLM calls, tokens) but no waterfall root, and
+  // the panel renders "No traces captured" — a regression for any
+  // standalone assistant dispatched directly via runs.create.
+  // Dedup by run_id so multiple top-level invokes on the same thread
+  // (Settings → Reprocess → kbAgent fires one per click) each get a
+  // sibling root chain.
+  const fallback = new Map<string, RootChain>();
+  for (const s of captured) {
+    if (
+      s.kind !== "chain" ||
+      s.parent_span_id !== "__start__" ||
+      s.meta?.langgraph_node !== "__start__" ||
+      s.meta?.langgraph_step !== 0
+    )
+      continue;
+    const runId = typeof s.meta?.run_id === "string" ? s.meta.run_id : null;
+    if (!runId || fallback.has(runId)) continue;
+    fallback.set(runId, { span: s, id: s.span_id });
+  }
+  return [...fallback.values()].sort((a, b) => a.span.started_at - b.span.started_at);
 }
 
 function rootIdFromSpanId(spanId: string, roots: RootChain[]): string | null {
@@ -141,13 +172,16 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): WireSpanD
   const rootChains = collectRootChains(captured);
 
   // ponytail: every step's meta.run_id matches the run_id of its invoke's
-  // outermost chain — and collectRootChains keyed each root by that same
-  // span_id. Returns null when no root chain matches the step's invoke:
-  // partial / fixture captures without an outermost wrapper shouldn't
-  // synthesize a "graph.invoke" root and shouldn't fall back to the first
-  // root either (that flattened cross-invoke steps under main).
+  // outermost chain. Key the lookup map by run_id (not span_id) so both
+  // subgraph wrappers (CompiledStateGraph — span_id === run_id) and
+  // top-level RunnableSequence wrappers (span_id is LC's own UUID, ≠
+  // run_id) can be matched. Fall back to span_id for captures where
+  // meta.run_id is missing entirely (dev fixtures / partial captures).
   const rootIdByRunId = new Map<string, string>();
-  for (const r of rootChains) rootIdByRunId.set(r.span.span_id, r.id);
+  for (const r of rootChains) {
+    const runId = typeof r.span.meta?.run_id === "string" ? r.span.meta.run_id : r.span.span_id;
+    rootIdByRunId.set(runId, r.id);
+  }
   const rootForStep = (s: Step): string | null => rootIdByRunId.get(s.run_id) ?? null;
 
   // ponytail: build a lookup from span_id (raw) to its Step. The backend
