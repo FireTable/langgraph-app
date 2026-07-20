@@ -117,12 +117,12 @@ export async function getOcrModelFromDB(opts: GetModelOpts = {}): Promise<BaseCh
  */
 export async function getExtractModelFromDB(opts: GetModelOpts = {}): Promise<BaseChatModel> {
   try {
-    return getModelFromDB({ ...opts, kind: "extract" }) as Promise<BaseChatModel>;
+    return (await getModelFromDB({ ...opts, kind: "extract" })) as BaseChatModel;
   } catch (err) {
     // ponytail: no extract-tagged model registered yet → fall back to
     // chat pool. Same retry loop exists in the chat getter, so this
     // is the right pattern for "treat the pool as a soft contract".
-    return getModelFromDB({ ...opts, kind: "chat" }) as Promise<BaseChatModel>;
+    return (await getModelFromDB({ ...opts, kind: "chat" })) as BaseChatModel;
   }
 }
 

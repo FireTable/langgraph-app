@@ -189,6 +189,24 @@ export const POST = withAuth<Params>(async (req, { user, params }) => {
     return NextResponse.json({ docId: doc.id, mode }, { status: 202 });
   }
 
+  // ponytail: validate attachment BEFORE the destructive tx — a
+  // 409 ATTACHMENT_MISSING must be side-effect-free. Previously the
+  // order was delete-then-check; two clicks of "reprocess" against
+  // a doc whose R2 source was missing would wipe its chunks first
+  // and then surface the missing-attachment error, leaving the user
+  // with permanent data loss and no recovery path.
+  if (!doc.attachmentId) {
+    // ponytail: no attachment means no R2 file to re-OCR. The row
+    // stays at its terminal status — the user can re-upload or delete.
+    // Surface the gap rather than swallowing it.
+    return NextResponse.json({ code: "ATTACHMENT_MISSING" }, { status: 409 });
+  }
+
+  const attachment = await getAttachmentForUser(doc.attachmentId, user.id);
+  if (!attachment) {
+    return NextResponse.json({ code: "ATTACHMENT_MISSING" }, { status: 409 });
+  }
+
   // ponytail: full reprocess — clear stale chunks + flip the doc
   // row's status back to "pending" inside one tx so the Settings UI
   // sees a clean state if the deletion succeeds but the dispatch
@@ -197,18 +215,6 @@ export const POST = withAuth<Params>(async (req, { user, params }) => {
     await deleteKbChunksByDocumentId(tx, doc.id);
     await resetKbDocumentForReprocess(user.id, doc.id);
   });
-
-  if (!doc.attachmentId) {
-    // ponytail: no attachment means no R2 file to re-OCR. The row
-    // already shows pending — the user can re-upload or delete. Surface
-    // the gap rather than swallowing it.
-    return NextResponse.json({ code: "ATTACHMENT_MISSING" }, { status: 409 });
-  }
-
-  const attachment = await getAttachmentForUser(doc.attachmentId, user.id);
-  if (!attachment) {
-    return NextResponse.json({ code: "ATTACHMENT_MISSING" }, { status: 409 });
-  }
 
   try {
     await fireIngestionRun({

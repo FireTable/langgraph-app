@@ -205,8 +205,13 @@ describe("lib/kb/search — hybridSearch", () => {
     const first = out[0];
     expect(first.content).toMatch(/Acme was founded/);
     expect(first.legsHit).toContain("kw");
-    // vec leg is omitted from the SQL when qvec is null — never appears.
-    expect(first.legsHit).not.toContain("vec");
+    // hybridSearch now auto-embeds the query when qvec is absent
+    // (the search_kb tool handler relies on this — see
+    // lib/kb/search.ts:171-180). The mock embedder is deterministic
+    // for a given query length, so the auto-embedded vector hits
+    // the same chunk's cosine leg too. Expect all three legs.
+    expect(first.legsHit).toContain("vec");
+    expect(first.legsHit).toContain("tag");
   });
 
   it("vec-only query (qvec provided, query not keyword-matched) returns cosine hits", async () => {

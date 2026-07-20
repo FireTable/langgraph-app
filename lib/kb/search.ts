@@ -187,8 +187,11 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
 
   // ponytail: pgvector wire form is `[1.0,2.0,3.0]` — postgres.js lacks
   // automatic pgvector serialization, so bind as text and cast ::vector.
-  // Same trick used in queries.ts insertKbChunks.
-  const qvecLiteral = args.qvec != null ? vectorLiteral(args.qvec) : null;
+  // Same trick used in queries.ts insertKbChunks. Read the local `qvec`
+  // (which falls back to auto-embedded `args.qvec` above) — not
+  // `args.qvec` directly, otherwise every tool-driven search_kb call
+  // skips the vector leg because the tool handler never pre-embeds.
+  const qvecLiteral = qvec != null ? vectorLiteral(qvec) : null;
 
   const hasVec = qvecLiteral != null;
   const hasTag = qents.length > 0;
