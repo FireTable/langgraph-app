@@ -6,6 +6,7 @@ import type { FC } from "react";
 
 import { BackgroundSplitDemo } from "@/components/landing/motion/background-split-demo";
 import { HumanInTheLoopDemo } from "@/components/landing/motion/human-in-the-loop-demo";
+import { KbExplainerDemo } from "@/components/landing/motion/kb-explainer-demo";
 import { MemoryRecallDemo } from "@/components/landing/motion/memory-recall-demo";
 import { ObservabilityWaterfallDemo } from "@/components/landing/motion/observability-waterfall-demo";
 import { StreamingTokensDemo } from "@/components/landing/motion/streaming-tokens-demo";
@@ -63,6 +64,31 @@ export const HowItWorks: FC = () => (
         >
           <HumanInTheLoopDemo />
         </ExplainRow>
+
+        <ExplainRow
+          eyebrow="Knowledge base"
+          title="Drop a PDF, query the entity graph."
+          body={
+            <>
+              <p>
+                The KB agent renders each page, OCRs the markdown, splits and embeds the chunks,
+                then runs an LLM to extract entities and relationships.
+              </p>
+              <p>
+                <span className="text-foreground font-medium">Hybrid Search:</span> three legs run
+                in one round-trip — <span className="text-foreground font-medium">BM25</span> for
+                the exact term, <span className="text-foreground font-medium">pgvector</span> cosine
+                for semantic closeness, and an{" "}
+                <span className="text-foreground font-medium">entity-overlap</span> leg that walks
+                the graph from your query node. The three are fused with{" "}
+                <span className="text-foreground font-medium">RRF</span> (Reciprocal Rank Fusion).
+              </p>
+            </>
+          }
+          reverse
+        >
+          <KbExplainerDemo />
+        </ExplainRow>
       </div>
     </div>
   </section>
@@ -71,7 +97,10 @@ export const HowItWorks: FC = () => (
 type ExplainRowProps = {
   eyebrow: string;
   title: string;
-  body: string;
+  // ponytail: ReactNode so a row can pass multi-paragraph copy
+  // (e.g. the KB row splits ingest / search / rerank / scopes
+  // into separate <p> blocks). Plain-string bodies still work.
+  body: React.ReactNode;
   reverse?: boolean;
   children: React.ReactNode;
 };
@@ -86,7 +115,10 @@ const ExplainRow: FC<ExplainRowProps> = ({ eyebrow, title, body, reverse, childr
     <div className="flex flex-col gap-4">
       <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{eyebrow}</p>
       <h3 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h3>
-      <p className="text-muted-foreground text-base leading-relaxed">{body}</p>
+      {/* ponytail: a div (not <p>) so callers can pass a Fragment of
+          multiple <p> blocks for longer copy. Space-y-3 keeps the
+          rhythm consistent whether the body is a string or 4 paragraphs. */}
+      <div className="text-muted-foreground space-y-3 text-base leading-relaxed">{body}</div>
     </div>
     <div className="border-border/60 bg-card text-card-foreground flex items-start justify-center overflow-hidden rounded-2xl border p-6">
       {children}

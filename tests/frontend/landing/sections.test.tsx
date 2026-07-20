@@ -5,7 +5,6 @@ import { Hero } from "@/components/landing/hero";
 import { Features } from "@/components/landing/features";
 import { Footer } from "@/components/landing/footer";
 import { HowItWorks } from "@/components/landing/how-it-works";
-import { KnowledgeBase } from "@/components/landing/knowledge-base";
 
 // Marketing copy regression — the section components ship with copy
 // that names each headline feature (streaming, dual-graph, memory,
@@ -30,26 +29,22 @@ describe("Features", () => {
     // Each feature renders an h3 with the feature name.
     expect(screen.getByRole("heading", { name: /chat anything/i, level: 3 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /dual-graph/i, level: 3 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /memory/i, level: 3 })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /memory.*knowledge base/i, level: 3 }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /observability/i, level: 3 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /knowledge base/i, level: 3 })).toBeInTheDocument();
   });
 });
 
-describe("KnowledgeBase", () => {
+describe("KnowledgeBase row", () => {
   afterEach(cleanup);
 
-  it("renders the KB section heading + pipeline explainer h3", () => {
-    render(<KnowledgeBase />);
+  it("ships the GraphRAG explainer inside How-it-works", () => {
+    render(<HowItWorks />);
     expect(
-      screen.getByRole("heading", { name: /knowledge base, end to end/i, level: 2 }),
+      screen.getByRole("heading", { name: /drop a PDF, query the entity graph/i, level: 3 }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", {
-        name: /PDF . OCR . chunks . embeddings . entity graph/i,
-        level: 3,
-      }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/knowledge base/i)).toBeInTheDocument();
   });
 });
 

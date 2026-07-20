@@ -8,7 +8,6 @@
 import type { FC, ReactNode } from "react";
 import {
   ActivityIcon,
-  BookOpenTextIcon,
   BrainIcon,
   GitBranchIcon,
   MessagesSquareIcon,
@@ -111,9 +110,9 @@ const BENTO: BentoCard[] = [
     codePreview: ``,
   },
   {
-    title: "Cross-conversation memory",
+    title: "Memory + Knowledge Base",
     description:
-      "User facts and recent threads surface automatically. \nThe model sees them in a prepended system block; the Memory tab lets you review and delete.",
+      "User facts surface in the system block; PDFs go through a per-doc pipeline (OCR → chunk → embed → entity) and become a hybrid-searchable index. Both are reviewable and deletable from settings.",
     icon: <BrainIcon className="size-4" />,
     hue: "violet",
     span: "wide",
@@ -132,14 +131,6 @@ const BENTO: BentoCard[] = [
       "Every span, every tool — one tree. Redacted at write, indexed by turn, viewable alongside the reply.",
     icon: <ActivityIcon className="size-4" />,
     hue: "indigo",
-    span: "default",
-  },
-  {
-    title: "Knowledge base",
-    description:
-      "Drop a PDF, get a searchable index. Hybrid retrieval (BM25 + vector + entity), Rerank, @-mention in chat, four reprocess modes.",
-    icon: <BookOpenTextIcon className="size-4" />,
-    hue: "teal",
     span: "default",
   },
 ];

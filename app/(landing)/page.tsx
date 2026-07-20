@@ -4,7 +4,6 @@ import { getSessionFromHeaders } from "@/lib/auth/queries";
 import { Header } from "@/components/landing/header";
 import { Hero } from "@/components/landing/hero";
 import { Features } from "@/components/landing/features";
-import { KnowledgeBase } from "@/components/landing/knowledge-base";
 import { HowItWorks } from "@/components/landing/how-it-works";
 import { SelfHost } from "@/components/landing/self-host";
 import { Cta } from "@/components/landing/cta";
@@ -26,7 +25,6 @@ const MarketingHome: FC = async () => {
       <main className="bg-background text-foreground min-h-dvh">
         <Hero signedIn={signedIn} />
         <Features />
-        <KnowledgeBase />
         <HowItWorks />
         <SelfHost />
         <Cta signedIn={signedIn} />
