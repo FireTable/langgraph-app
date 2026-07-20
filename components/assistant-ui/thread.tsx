@@ -23,7 +23,7 @@ import {
 } from "@/components/assistant-ui/tool-group";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { ObservabilityButton } from "@/components/observability/button";
-import { ObservabilitySheet } from "@/components/observability/sheet";
+import { ChatObservabilitySheet } from "@/components/observability/sheet";
 import { ObservabilitySheetProvider } from "@/components/observability/sheet-context";
 import { WorkingIndicator } from "@/components/assistant-ui/working-indicator";
 import { Button } from "@/components/ui/button";
@@ -108,7 +108,7 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
     <ThreadComponentsContext.Provider value={components}>
       <ObservabilitySheetProvider>
         <ThreadRoot isEmpty={isEmpty} />
-        <ObservabilitySheet />
+        <ChatObservabilitySheet />
       </ObservabilitySheetProvider>
     </ThreadComponentsContext.Provider>
   );

@@ -31,7 +31,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k --kill-signal=SIGTERM -n frontend,backend -c cyan,magenta \"pnpm dev:frontend\" \"pnpm dev:backend\"",
-    "dev:stop": "(pkill -TERM -f 'langgraph-cli dev' 2>/dev/null || true); sleep 1; for p in 2024 3000 3001; do lsof -nP -iTCP:$p -sTCP:LISTEN -t 2>/dev/null | xargs -r kill -TERM; done; sleep 1; for p in 2024 3000 3001; do lsof -nP -iTCP:$p -sTCP:LISTEN -t 2>/dev/null | xargs -r kill -KILL; done; (pkill -KILL -f 'langgraph-cli dev' 2>/dev/null || true); true",
+    "dev:stop": "sh scripts/dev-stop.sh",
     "dev:frontend": "next dev --turbopack",
     "dev:backend": "langgraphjs dev",
     "build": "next build",

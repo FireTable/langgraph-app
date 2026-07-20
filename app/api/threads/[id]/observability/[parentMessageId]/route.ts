@@ -39,6 +39,7 @@ export const GET = withAuth<Params>(async (_req, { user, params }) => {
     // pending set is empty most of the time.
     fetchInFlightRuns(params.id, params.parentMessageId),
   ]);
+
   // ponytail: server-side transform. CapturedSpan → SpanData runs here
   // so the panel never has to import transformCapturedToSpanData and
   // the wire carries only what the waterfall needs.

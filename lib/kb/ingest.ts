@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { langGraphClient } from "@/lib/langgraph/client";
 import { stampKbRefOnFilename } from "@/lib/kb/extract";
+import { db } from "@/db/client";
+import { threads } from "@/lib/threads/schema";
 
 // ponytail: shared ingestion path for the KB Settings "+" and the
 // per-row reprocess button. Both call `fireIngestionRun` with a
@@ -27,15 +29,15 @@ export type FireIngestionOpts = {
   docId: string;
   title: string;
   // ponytail: caller-supplied source so observability + future per-source
-  // knobs (e.g. "kb-reprocess" vs "kb-settings") can diverge without a
-  // schema change. Defaults to "kb-settings" for the upload route.
-  source?: "kb-settings" | "kb-reprocess";
+  // knobs (e.g. "kb-reprocess" vs "kb-upload") can diverge without a
+  // schema change. Defaults to "kb-upload" for the upload route.
+  source?: "kb-upload" | "kb-reprocess";
   // ponytail: chunksOnly dispatch for
   // `POST /api/kb/documents/[id]/reprocess?chunksOnly=true`. Skips
   // the OCR stage — kbAgent reads `doc.pages[].markdown` directly
   // and only the chunk + embed + entity stage runs. kb_documents.row
   // stays at its terminal status (no reset). Ignored for fresh
-  // uploads (the route never sends it for kb-settings).
+  // uploads (the route never sends it for kb-upload).
   chunksOnly?: boolean;
   mode?: "full" | "chunksOnly" | "retryFailed" | "retryFailedChunks";
 };
@@ -45,25 +47,30 @@ export async function fireIngestionRun({
   attachment,
   docId,
   title,
-  source = "kb-settings",
+  source = "kb-upload",
   chunksOnly = false,
   mode,
 }: FireIngestionOpts): Promise<void> {
   const base = process.env.R2_PUBLIC_BASE_URL ?? "";
   const publicUrl = `${base}/${attachment.r2Key}`;
 
-  // ponytail: dev-server LangGraph API 1.4.1 validates every
-  // thread_id via `z.string().uuid()`. The bare `randomUUID()` is the
-  // minimum legal shape; the older `t-` prefix it carried triggered a
-  // 400 (Invalid uuid) and the run silently dropped — the kb_document
-  // row then sat at `pending` forever because no node ever updated it.
-  // The id is only used to register this synthetic ingest thread with
-  // the dev checkpointer; the docId in metadata.docId is the human-
-  // meaningful handle.
-  const threadId = randomUUID();
-  // ponytail: register the thread id with the dev server's in-process
-  // checkpointer (see lib/langgraph/client.ts). No-op in prod.
-  await langGraphClient.threads.create({ threadId, ifExists: "do_nothing" });
+  // ponytail: threadId is derived from docId (strip the `d-` namespace
+  // prefix) so every reprocess of the same doc lands on the same
+  // LangGraph thread — observability spans accumulate under a stable
+  // thread_id and the per-doc trace view shows run history.
+  // ponytail: bare UUID shape satisfies the dev server's z.string().uuid()
+  // validator; the older `d-` / `t-` prefixes both 400'd.
+  // ponytail: Postgres `threads` row is upserted in
+  // prepareKBDataNode (kb-agent.ts) where the graph first sees the
+  // thread_id — keeps thread lifecycle next to where it's actually
+  // used. No need to pre-create the LangGraph dev-server thread;
+  // runs.create + the standalone checkpointer materialize it lazily.
+  const threadId = docId.replace(/^d-/, "");
+  // ponytail: per-run traceId — stamped onto the synthetic HumanMessage.id
+  // so CapturingHandler picks it up via lastHumanMessageId and tags every
+  // span with meta.parent_message_id = traceId. Without it, pmid is null
+  // and the per-turn observability route 404s.
+  const messageId = randomUUID();
 
   // JSON-serializable message shape — the graph's MessagesValue reducer
   // reconstructs HumanMessage on the server. file_part matches the
@@ -79,8 +86,11 @@ export async function fireIngestionRun({
   // kbAgent stamps on the user's HumanMessage right after the pipeline
   // finishes.
   const input = {
+    userId: userId,
+    threadId: threadId,
     messages: [
       {
+        id: messageId,
         type: "human",
         content: [
           { type: "text", text: "ingest this file" },
@@ -109,17 +119,46 @@ export async function fireIngestionRun({
       thread_id: threadId,
       mode: resolvedMode,
       docId,
+      source,
       forceRerun: source === "kb-reprocess",
     },
   };
+
+  const metadata = {
+    source,
+    docId,
+    title,
+    parent_message_id: messageId,
+  };
+
+  if (threadId) {
+    await db
+      .insert(threads)
+      .values({ id: threadId, userId, kind: "kb" })
+      .onConflictDoNothing({ target: threads.id });
+  }
+
+  await langGraphClient.threads.create({
+    threadId,
+    ifExists: "do_nothing",
+  });
 
   // Fire-and-forget: kbAgent mutates the kb_document row's status as it
   // progresses. The two existing call sites (POST /api/kb/upload and
   // POST /api/kb/documents/[id]/reprocess) return 202 immediately so
   // their caller can poll the row.
-  void langGraphClient.runs.create(threadId, "kbAgent", {
+  //
+  // ponytail: multitaskStrategy:'interrupt' makes a fresh reprocess
+  // cancel any in-flight run on the same thread (same docId → same
+  // thread). Without this, the second reprocess queues behind the
+  // first and the user clicks "reprocess" again, sees nothing change
+  // until the prior run drains — latest wins is the right semantic
+  // here. Compare with triggerBackgroundAgentNode which uses 'enqueue'
+  // because bg work should chain behind chat, not abort it.
+  await langGraphClient.runs.create(threadId, "kbAgent", {
     input,
     config,
-    metadata: { source, docId, title },
+    metadata,
+    multitaskStrategy: "interrupt",
   });
 }

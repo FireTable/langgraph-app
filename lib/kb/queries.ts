@@ -4,20 +4,33 @@ import { randomUUID } from "node:crypto";
 
 import { db } from "@/db/client";
 import { attachments } from "@/lib/attachments/schema";
+import { threads } from "@/lib/threads/schema";
 import {
   kbChunk,
   kbDocument,
   kbFolder,
+  kbObservability,
   type KbChunk,
   type KbDocument,
   type KbFolder,
+  type KbObservability,
   type NewKbChunk,
   type NewKbDocument,
   type NewKbFolder,
+  type NewKbObservability,
 } from "./schema";
 
 // Re-export types so consumers don't need a second import line.
-export type { KbChunk, KbDocument, KbFolder, NewKbChunk, NewKbDocument, NewKbFolder };
+export type {
+  KbChunk,
+  KbDocument,
+  KbFolder,
+  KbObservability,
+  NewKbChunk,
+  NewKbDocument,
+  NewKbFolder,
+  NewKbObservability,
+};
 
 // ponytail: tx type alias keeps insertKbChunks + withKbTx in sync with
 // Drizzle's transaction shape.
@@ -35,6 +48,15 @@ export type PgTx = PgTransaction<
 
 export async function insertKbFolder(row: NewKbFolder): Promise<KbFolder> {
   const [out] = await db.insert(kbFolder).values(row).returning();
+  return out;
+}
+
+// ponytail: per-kbAgent-invocation observability event. Inserted from
+// prepareKBDataNode after the kb_document row lands (FK dependency).
+// One row per (doc, run); a chat upload of multiple PDFs creates N rows
+// sharing the same parent_message_id but distinct doc_ids.
+export async function insertKbObservability(row: NewKbObservability): Promise<KbObservability> {
+  const [out] = await db.insert(kbObservability).values(row).returning();
   return out;
 }
 
@@ -592,11 +614,25 @@ export async function deleteKbDocumentForUser(
   userId: string,
   docId: string,
 ): Promise<KbDocument | null> {
-  const [row] = await db
-    .delete(kbDocument)
-    .where(and(eq(kbDocument.id, docId), eq(kbDocument.userId, userId)))
-    .returning();
-  return row ?? null;
+  // ponytail: one transaction wraps the doc delete + its companion
+  // thread row cleanup. kb_chunk + kb_observability cascade off the
+  // doc row via ON DELETE CASCADE; the threads row has no FK so we
+  // remove it explicitly. Only the docId-derived `kind='kb'` thread
+  // is touched — chat threads (kind='chat') for the same user stay
+  // put even if their ids happen to match (defensive: docId-derived
+  // threadId is docId.strip('d-'), a UUID, so collision is implausible
+  // but the kind filter is the safety belt).
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .delete(kbDocument)
+      .where(and(eq(kbDocument.id, docId), eq(kbDocument.userId, userId)))
+      .returning();
+    if (row) {
+      const threadId = docId.replace(/^d-/, "");
+      await tx.delete(threads).where(and(eq(threads.id, threadId), eq(threads.kind, "kb")));
+    }
+    return row ?? null;
+  });
 }
 
 export async function deleteKbFolderForUser(

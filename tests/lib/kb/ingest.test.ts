@@ -1,19 +1,29 @@
 // Mock the shared SDK Client so we can assert what fireIngestionRun
-// dispatches without standing up a real langgraphjs dev server. Threads
-// create + runs create are the only surface the upload flow touches.
+// dispatches without standing up a real langgraphjs dev server.
 // ponytail: declare the mock procedure types up front so vi.fn preserves
 // the arg / return shapes — without the generics vi.fn() resolves to
 // `Mock<[], any>` and mock.calls[0] becomes a 0-length tuple, breaking
-// the indexed access below at typecheck. vitest 4's `fn<T>` takes one
-// type arg (a Procedure or Constructable), not a tuple.
-type ThreadsCreateFn = (args: {
-  threadId: string;
-  ifExists?: "raise" | "do_nothing";
-}) => Promise<{ thread_id: string }>;
+// the indexed access below at typecheck.
 type RunsCreatePayload = {
-  input: { messages: Array<{ type: string; content: Array<Record<string, unknown>> }> };
-  config: { configurable: { userId: string; thread_id: string } };
-  metadata: { source: string; docId: string; title: string };
+  input: {
+    messages: Array<{ id?: string; type: string; content: Array<Record<string, unknown>> }>;
+  };
+  config: {
+    configurable: {
+      userId: string;
+      thread_id: string;
+      docId: string;
+      mode: string;
+      forceRerun?: boolean;
+    };
+  };
+  metadata: {
+    source: string;
+    docId: string;
+    title: string;
+    parent_message_id: string;
+  };
+  multitaskStrategy?: "enqueue" | "interrupt" | "rollback" | "reject";
 };
 type RunsCreateFn = (
   threadId: string,
@@ -21,16 +31,27 @@ type RunsCreateFn = (
   payload: RunsCreatePayload,
 ) => Promise<{ run_id: string }>;
 
-const { mockThreadsCreate, mockRunsCreate } = vi.hoisted(() => ({
-  mockThreadsCreate: vi.fn<ThreadsCreateFn>(async (args) => ({
-    thread_id: args.threadId,
-  })),
+const { mockRunsCreate, mockThreadsCreate, mockDbThreadsInsert } = vi.hoisted(() => ({
   mockRunsCreate: vi.fn<RunsCreateFn>(async () => ({ run_id: "ignored" })),
+  mockThreadsCreate: vi.fn(async () => ({ thread_id: "ignored" })),
+  mockDbThreadsInsert: vi.fn(async () => []),
 }));
 vi.mock("@/lib/langgraph/client", () => ({
   langGraphClient: {
     threads: { create: mockThreadsCreate },
     runs: { create: mockRunsCreate },
+  },
+}));
+// ponytail: ingest.ts now owns the threads-row upsert (moved out of
+// prepareKBDataNode). Mock the DB call so the test stays an HTTP-layer
+// fixture — no real DB connection needed for ingest.run's payload shape.
+vi.mock("@/db/client", () => ({
+  db: {
+    insert: () => ({
+      values: () => ({
+        onConflictDoNothing: () => mockDbThreadsInsert(),
+      }),
+    }),
   },
 }));
 
@@ -45,7 +66,6 @@ const ATTACHMENT: IngestionAttachment = {
 };
 
 beforeEach(() => {
-  mockThreadsCreate.mockClear();
   mockRunsCreate.mockClear();
 });
 
@@ -65,20 +85,63 @@ describe("lib/kb/ingest", () => {
       void _threadId;
     });
 
-    it("registers a fresh thread id with the dev server before dispatching", async () => {
+    it("derives threadId from docId by stripping the d- prefix", async () => {
       await fireIngestionRun({
         userId: "user-1",
         attachment: ATTACHMENT,
         docId: "d-abc",
         title: "resume.pdf",
       });
-      expect(mockThreadsCreate).toHaveBeenCalledTimes(1);
-      // ponytail: helper passes the same threadId it minted to
-      // threads.create → runs.create so the LangGraph run lands on the
-      // just-registered thread. Mock setup echoes the id back so this
-      // equality is observable.
-      const registered = mockThreadsCreate.mock.calls[0][0].threadId;
-      expect(mockRunsCreate.mock.calls[0][0]).toBe(registered);
+      const [threadId] = mockRunsCreate.mock.calls[0];
+      // ponytail: stable threadId across reprocess → observability
+      // spans accumulate under the same thread; Settings page
+      // reuses docId's UUID to find observability.
+      expect(threadId).toBe("abc");
+      const payload = mockRunsCreate.mock.calls[0][2];
+      expect(payload.config.configurable.thread_id).toBe("abc");
+    });
+
+    it("passes multitaskStrategy 'interrupt' so a fresh reprocess aborts a prior in-flight run", async () => {
+      await fireIngestionRun({
+        userId: "user-1",
+        attachment: ATTACHMENT,
+        docId: "d-abc",
+        title: "resume.pdf",
+      });
+      const payload = mockRunsCreate.mock.calls[0][2];
+      expect(payload.multitaskStrategy).toBe("interrupt");
+    });
+
+    it("stamps the synthetic HumanMessage with a per-run id (CapturingHandler pmid)", async () => {
+      await fireIngestionRun({
+        userId: "user-1",
+        attachment: ATTACHMENT,
+        docId: "d-abc",
+        title: "resume.pdf",
+      });
+      const payload = mockRunsCreate.mock.calls[0][2];
+      expect(payload.input.messages).toHaveLength(1);
+      const msg = payload.input.messages[0];
+      // ponytail: lastHumanMessageId walks messages for the most recent
+      // human + reads m.id — without a non-empty id, handler leaves
+      // meta.parent_message_id null and the per-turn panel route 404s.
+      expect(msg.type).toBe("human");
+      expect(typeof msg.id).toBe("string");
+      expect(msg.id).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it("threads parent_message_id into run metadata so the per-turn panel can scope spans", async () => {
+      await fireIngestionRun({
+        userId: "user-1",
+        attachment: ATTACHMENT,
+        docId: "d-abc",
+        title: "resume.pdf",
+      });
+      const payload = mockRunsCreate.mock.calls[0][2];
+      expect(payload.metadata.parent_message_id).toBe(payload.input.messages[0].id);
+      expect(payload.metadata.docId).toBe("d-abc");
+      expect(payload.metadata.title).toBe("resume.pdf");
+      expect(payload.metadata.source).toBe("kb-upload");
     });
 
     it("sends a single HumanMessage with a text+file content array (kbAgent wire format)", async () => {
@@ -88,16 +151,11 @@ describe("lib/kb/ingest", () => {
         docId: "d-abc",
         title: "resume.pdf",
       });
-      const payload = mockRunsCreate.mock.calls[0][2] as {
-        input: { messages: Array<{ type: string; content: Array<Record<string, unknown>> }> };
-      };
+      const payload = mockRunsCreate.mock.calls[0][2];
       expect(payload.input.messages).toHaveLength(1);
       const msg = payload.input.messages[0];
-      expect(msg.type).toBe("human");
       expect(msg.content[0]).toMatchObject({ type: "text" });
-      // File part carries the public R2 URL + contentType + filename —
-      // screenshotNode uses data, ocrNode uses mime_type, the chunk
-      // stage uses filename as a fallback title.
+      // File part carries the public R2 URL + contentType + filename.
       expect(msg.content[1]).toMatchObject({
         type: "file",
         data: expect.stringContaining(ATTACHMENT.r2Key) as unknown as string,
@@ -107,21 +165,19 @@ describe("lib/kb/ingest", () => {
       });
     });
 
-    it("threads docId + title into run metadata for observability and the Settings UI refresh", async () => {
+    it("threads source='kb-reprocess' when dispatched from the reprocess route", async () => {
       await fireIngestionRun({
         userId: "user-1",
         attachment: ATTACHMENT,
         docId: "d-abc",
-        title: "Renamed.pdf",
+        title: "resume.pdf",
+        source: "kb-reprocess",
+        mode: "chunksOnly",
       });
-      const payload = mockRunsCreate.mock.calls[0][2] as {
-        metadata: { source: string; docId: string; title: string };
-      };
-      expect(payload.metadata).toEqual({
-        source: "kb-settings",
-        docId: "d-abc",
-        title: "Renamed.pdf",
-      });
+      const payload = mockRunsCreate.mock.calls[0][2];
+      expect(payload.metadata.source).toBe("kb-reprocess");
+      expect(payload.config.configurable.mode).toBe("chunksOnly");
+      expect(payload.config.configurable.forceRerun).toBe(true);
     });
 
     it("forwards userId + thread_id via config.configurable for kbAgent to read", async () => {
@@ -131,11 +187,9 @@ describe("lib/kb/ingest", () => {
         docId: "d-abc",
         title: "resume.pdf",
       });
-      const payload = mockRunsCreate.mock.calls[0][2] as {
-        config: { configurable: { userId: string; thread_id: string } };
-      };
+      const payload = mockRunsCreate.mock.calls[0][2];
       expect(payload.config.configurable.userId).toBe("user-1");
-      expect(payload.config.configurable.thread_id).toBeTruthy();
+      expect(payload.config.configurable.thread_id).toBe("abc");
     });
   });
 });

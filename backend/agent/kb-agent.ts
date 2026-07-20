@@ -12,7 +12,8 @@ import {
   KB_ENTITY_EXTRACTION_SYSTEM_PROMPT,
   KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT,
 } from "@/backend/prompt/system";
-import { creditTrackingHandler } from "@/backend/callbacks";
+import { creditTrackingHandler, capturingHandler } from "@/backend/callbacks";
+import { lastHumanMessageId } from "@/lib/langgraph/last-human-message-id";
 import { checkpointer, subgraphCheckpointerConfig } from "@/backend/checkpointer";
 import { store } from "@/backend/store";
 import {
@@ -31,6 +32,7 @@ import {
   findKbChunksByDocumentId,
   insertKbChunks,
   insertKbDocument,
+  insertKbObservability,
   markAllKbChunksParsingForDocInTx,
   markKbChunkFailed,
   markKbChunkSuccess,
@@ -137,6 +139,9 @@ async function prepareKBDataNode(
       mode?: "full" | "chunksOnly" | "retryFailed" | "retryFailedChunks";
       docId?: string;
       forceRerun?: boolean;
+      thread_id?: string;
+      source?: "kb-upload" | "kb-reprocess" | "chat";
+      run_id?: string;
     };
   },
 ): Promise<Partial<KbAgentStateShape>> {
@@ -158,7 +163,39 @@ async function prepareKBDataNode(
   const mode = config?.configurable?.mode ?? state.mode ?? "full";
 
   const userId = config?.configurable?.userId ?? state.userId;
+
   if (!userId) return makeError("user not provided");
+
+  // ponytail: source discriminator for kb_observability. Standalone
+  // callers (ingest.ts from Settings upload / reprocess) pass it
+  // explicitly via config.configurable. The chat subgraph path
+  // (mainAgent → kbAgent) inherits configurable from the parent
+  // graph, which doesn't set source — default to 'chat' in that
+  // case. Standalone path is locked to ingest.ts so the default
+  // won't mislabel an upload as chat; if a third caller shows up
+  // later without setting source, audit logs will surface it.
+  const source = config?.configurable?.source ?? "chat";
+
+  // ponytail: parent_message_id for kb_observability + spans link.
+  // Both paths converge on state.messages[-1] — synthetic in standalone,
+  // user chat msg in chat path. lastHumanMessageId walks backward so
+  // it survives any extra tool/AI messages the router injected.
+  const parentMessageId = lastHumanMessageId(state.messages);
+  if (!parentMessageId) {
+    return makeError("kbAgent prepareKBDataNode: no HumanMessage to anchor parent_message_id on");
+  }
+
+  const runId = config?.configurable?.run_id ?? null;
+
+  // ponytail: thread_id is required for kb_observability rows + span
+  // lookups, but the rest of prepareKBDataNode (kb_document insert,
+  // dedup, file processing) doesn't need it. Standalone path always
+  // sets it via ingest.ts; chat subgraph inherits it from the parent
+  // graph's configurable; direct unit-test invocations may omit it.
+  // When missing, skip the kb_observability inserts below rather than
+  // failing the whole graph run — observability is a side feature,
+  // not a precondition.
+  const threadId = config?.configurable?.thread_id ?? null;
 
   if (mode === "chunksOnly" || mode === "retryFailed" || mode === "retryFailedChunks") {
     // ponytail: chunksOnly / retryFailed requires an explicit docId either from
@@ -176,6 +213,19 @@ async function prepareKBDataNode(
       );
     }
     const pages = (doc.pages ?? []) as PageResult[];
+    // ponytail: record kb_observability for this re-run. Even though
+    // no new doc row is created, the invocation IS a kbAgent run and
+    // should appear in the Settings → KB observability popover history.
+    if (threadId) {
+      await insertKbObservability({
+        docId: doc.id,
+        threadId,
+        parentMessageId,
+        runId,
+        source,
+        mode,
+      });
+    }
     // ponytail: stub FilePart is required by ProcessedFile.shape but
     // rewriteMessagesNode skips the stamp pass under mode=
     // "chunksOnly" / "retryFailed" so the values are never read. url/data empty →
@@ -1300,10 +1350,6 @@ const standaloneCompiled = builder.compile({
 
 type WithConfigPregel = (config: Record<string, unknown>) => typeof standaloneCompiled;
 export const graph = (standaloneCompiled.withConfig as unknown as WithConfigPregel)({
-  callbacks: [
-    // capturing is related thread list, now is unavailable
-    // capturingHandler,
-    creditTrackingHandler,
-  ],
+  callbacks: [capturingHandler, creditTrackingHandler],
 });
 void END;

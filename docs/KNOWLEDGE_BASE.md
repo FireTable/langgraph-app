@@ -27,7 +27,8 @@ schemas and query APIs under `lib/kb/`; the user-facing settings under
   serializer/parser for the `kb-document` / `kb-folder` directive tokens
   used inside the chat composer.
 - **`components/settings/kb-view/`** — Settings UI dashboard (document
-  tables, folder sidebar, reprocess dialog, Folder Graph, doc detail).
+  tables, folder sidebar, reprocess dialog, Folder Graph, doc detail,
+  Observability popover).
 - **`components/tool-ui/kb/`** — Chat-side rendering for retrieval
   outputs (collapsible chunk list, score badges, retrieval source
   indicators).
@@ -387,6 +388,42 @@ table — see [`docs/ADMIN.md`](./ADMIN.md).
 - **Reranker streaming** — Rerank is a single batched call after the
   SQL round-trip. A streaming variant (return top-K as soon as the
   Reranker scores them) is a future optimisation.
+
+## 7. Per-Doc Observability (Observability List popover)
+
+Each `<DocRow>` exposes an Activity icon between RefreshCw and Search.
+Click → `<ObservabilityPopover>` lazy-fetches
+`GET /api/kb/documents/[id]/observability` (reads the `kb_observability`
+table directly — no SDK call) and lists every **kbAgent re-run** for
+the doc. The popover is a re-run history: chunksOnly / retryFailed /
+retryFailedChunks reprocesses land here. Initial `full`-mode uploads
+are NOT in the popover — the `kb_documents` row IS the event for those.
+
+Each row carries `source` / `mode` / `createdAt`. Source is the
+ingestion path: `kb-reprocess` for Settings reprocess (the only path
+that currently populates the popover). Mode is the dispatch mode
+(`chunksOnly` / `retryFailed` / `retryFailedChunks`); mode is shown
+as a badge when not `full`. Click a row →
+`openSheet({ threadId: run.threadId, parentMessageId: run.parentMessageId })`
+opens the same singleton `<ObservabilitySheet>` the chat Activity
+icon uses, scoped to that run's spans.
+
+`threadId` is per-row, not top-level: standalone reprocess runs land
+on `docId.replace(/^d-/, "")`; chat-path uploads (chat subgraph) land
+on the chat thread. Per-row `threadId` lets the popover open the
+sheet against the correct thread. `parentMessageId` is the synthetic
+HumanMessage `id` (minted as `messageId` by `fireIngestionRun`,
+standalone) or the user's chat msg `id` (chat path) — the same value
+`CapturingHandler` stamps onto every span via `meta.parent_message_id`,
+so the per-turn observability route scopes spans correctly.
+
+Reprocess dispatch uses `multitaskStrategy: "interrupt"` — a fresh
+reprocess cancels any in-flight run on the same thread (latest wins),
+not the default enqueue.
+
+See [`docs/OBSERVABILITY.md`](./OBSERVABILITY.md#kb-ingestion-runs-settings--kb)
+for the full wiring + rationale.
+
 - **Multi-doc `@folder` re-chunk** — When a folder's docs are
   collectively re-chunked, each doc is still re-processed independently.
   A true folder-level pipeline is a v4 design.

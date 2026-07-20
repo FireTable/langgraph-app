@@ -14,6 +14,24 @@ Each assistant message renders an icon-only `<ObservabilityButton>` inside its `
 - The Sheet receives `threadId` as a prop (not derived from `useAuiState`) — `useAuiState` for `mainThreadId.externalId` can lag on first render after the thread is registered, while the sheet-context already has the active id from the button click. The panel uses the prop for `detail` fetch URLs
 - The button passes `{ threadId, parentMessageId: message.parentId }` to the context. The Sheet fetches the per-turn filtered route (`/api/threads/<id>/observability/<parentMessageId>`) when `parentMessageId` is available, falling back to the unfiltered route for older messages without a captured id
 
+### KB ingestion runs (Settings → KB)
+
+KB standalone ingestions (`fireIngestionRun` from `/settings/knowledge-base` upload + `/api/kb/documents/[id]/reprocess`) also surface in the same panel. The wiring path differs from the chat thread entry:
+
+- **`threadId` convention**: `docId.replace(/^d-/, "")` — strip the namespace prefix so the UUID portion satisfies LangGraph's `z.string().uuid()` validator and stays stable across reprocess. Every reprocess of the same doc lands on the same LangGraph thread; spans accumulate.
+- **`parent_message_id` convention**: `fireIngestionRun` mints a fresh `messageId` per run and stamps it as `id` on the synthetic HumanMessage. `CapturingHandler.handleChainStart` reads it via `lastHumanMessageId` and tags every span in the run with `meta.parent_message_id = messageId`. The per-turn panel route (`/api/threads/<threadId>/observability/<messageId>`) thus returns only that run's spans.
+- **Entry point on the UI**: each DocRow in `/settings/knowledge-base` has an `<Activity>` icon (between RefreshCw and Search). Click opens a Popover ("Observability List") listing kbAgent re-runs for the doc — fetched from `GET /api/kb/documents/[id]/observability`, which reads the `kb_observability` table (no SDK call) and reshapes to `[{runId, threadId, parentMessageId, source, mode, createdAt}]` (newest first, limit 50). Initial `full`-mode uploads are NOT in the popover — the `kb_documents` row is the event for those; the popover shows chunksOnly / retryFailed / retryFailedChunks re-runs only. Each row is a button that calls `openSheet({ threadId: run.threadId, parentMessageId: run.parentMessageId })` against the same singleton `<ObservabilitySheet>` used by chat messages.
+- **Settings page wiring**: `KbView` (`components/settings/kb-view/kb-view.tsx`) wraps its content in `<ObservabilitySheetProvider>` + `<ObservabilitySheet />`, mirroring the chat thread tree. Without this provider, `useOpenObservabilitySheet()` throws "outside ObservabilitySheetProvider" on the KB page.
+- **Thread visibility in chat sidebar**: `threads.kind` (`'chat' | 'kb'`) is filtered at `lib/threads/queries.ts:listThreadsForUser` — `WHERE kind='chat'` keeps KB threads out of the user's chat sidebar. The settings page is the only UI entry into KB observability.
+
+### Where `capturingHandler` is wired
+
+The handler is a process-global singleton (`backend/callbacks.ts`). It must be attached to every compiled graph that should produce spans:
+
+- `backend/agent.ts` (`mainAgent`): wired via `.withConfig({ callbacks: [capturingHandler, ...] })` — also covers chat-path kbAgent subgraph (LC's callback propagation passes parent handlers to subgraph runs).
+- `backend/background-agent.ts`: wired the same way.
+- `backend/agent/kb-agent.ts` (standalone compile): wired via `.withConfig({ callbacks: [capturingHandler, ...] })` — needed for `fireIngestionRun` which dispatches the kbAgent graph directly over HTTP to the LangGraph dev server (no parent to inherit handlers from). The Postgres `threads` row is created lazily inside `kbAgent.prepareKBDataNode` so `observability_spans.thread_id` FK is satisfied.
+
 The Sheet header shows the `retention_days` config as a banner ("spans 保留 X 天, 超过 X 天的数据将在下次 retention 清理时删除"). The body is a waterfall: a Span column on the left, a 0ms → Nms axis on the right, kind tags (`llm / node / tool / chain / human`), and indented rows for parent/child relationships. Header strip shows totals — duration, tokens, LLM count.
 
 ### Wire shape (server-side transformed)

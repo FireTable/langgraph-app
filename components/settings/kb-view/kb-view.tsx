@@ -8,6 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { KB_POLL_INTERVAL_MS } from "@/lib/constants";
+import { ObservabilitySheet } from "@/components/observability/sheet";
+import { ObservabilitySheetProvider } from "@/components/observability/sheet-context";
 import { KbResponse } from "./types";
 import { FolderSidebar } from "./folder-sidebar";
 import { DocTable } from "./doc-table";
@@ -15,10 +17,17 @@ import { FolderNameDialog } from "./dialogs";
 import { handleAddDoc } from "./helpers";
 
 export function KbView({ className }: { className?: string }) {
+  // ponytail: KB doc rows open the singleton ObservabilitySheet via the
+  // same context the chat thread uses. Provider + sheet are mounted at
+  // the KbView root so any DocRow (or future descendants) can call
+  // useOpenObservabilitySheet() without each subtree wiring its own.
   return (
-    <Suspense fallback={<KbViewSkeleton className={className} />}>
-      <KbViewContent className={className} />
-    </Suspense>
+    <ObservabilitySheetProvider>
+      <Suspense fallback={<KbViewSkeleton className={className} />}>
+        <KbViewContent className={className} />
+      </Suspense>
+      <ObservabilitySheet />
+    </ObservabilitySheetProvider>
   );
 }
 

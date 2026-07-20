@@ -5,8 +5,9 @@ import { eq } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { attachments } from "@/lib/attachments/schema";
-import { kbChunk, kbDocument, kbFolder } from "@/lib/kb/schema";
+import { kbChunk, kbDocument, kbFolder, kbObservability } from "@/lib/kb/schema";
 import { user } from "@/lib/auth/schema";
+import { threads } from "@/lib/threads/schema";
 import {
   deleteKbDocumentForUser,
   ensureDefaultKbFolder,
@@ -19,6 +20,7 @@ import {
   insertKbChunks,
   insertKbDocument,
   insertKbFolder,
+  insertKbObservability,
   listKbDocumentsByFolder,
   listKbDocumentsGroupedByFolder,
   updateKbDocumentStatus,
@@ -90,6 +92,10 @@ beforeEach(async () => {
   await db.delete(kbChunk);
   await db.delete(kbDocument).where(eq(kbDocument.userId, TEST_USER.id));
   await db.delete(kbFolder).where(eq(kbFolder.userId, TEST_USER.id));
+  // kb_observability cascades off kb_document so the doc delete above
+  // already cleans it; threads has no FK to either, so it needs explicit
+  // removal or tests accumulate stale kind='kb' rows.
+  await db.delete(threads).where(eq(threads.userId, TEST_USER.id));
   vi.restoreAllMocks();
 });
 
@@ -418,6 +424,96 @@ describe("lib/kb/queries", () => {
       await deleteKbDocumentForUser(TEST_USER.id, docId);
       const remaining = await findKbChunksByDocumentId(TEST_USER.id, docId);
       expect(remaining).toEqual([]);
+    });
+
+    it("cascades to kb_observability rows on delete", async () => {
+      const folderId = await seedFolder(TEST_USER.id);
+      const docId = await seedDocument(TEST_USER.id, folderId);
+      // docId strip "d-" prefix becomes the threadId.
+      const threadId = docId.replace(/^d-/, "");
+      await db.insert(threads).values({ id: threadId, userId: TEST_USER.id, kind: "kb" });
+      await db.insert(kbObservability).values({
+        docId,
+        threadId,
+        parentMessageId: "msg-1",
+        source: "kb-upload",
+        mode: "full",
+      });
+      await db.insert(kbObservability).values({
+        docId,
+        threadId,
+        parentMessageId: "msg-2",
+        source: "kb-reprocess",
+        mode: "chunksOnly",
+      });
+      await deleteKbDocumentForUser(TEST_USER.id, docId);
+      const remaining = await db
+        .select()
+        .from(kbObservability)
+        .where(eq(kbObservability.docId, docId));
+      expect(remaining).toEqual([]);
+    });
+
+    it("removes the docId-derived `kind='kb'` thread row", async () => {
+      const folderId = await seedFolder(TEST_USER.id);
+      const docId = await seedDocument(TEST_USER.id, folderId);
+      const threadId = docId.replace(/^d-/, "");
+      await db.insert(threads).values({ id: threadId, userId: TEST_USER.id, kind: "kb" });
+      await deleteKbDocumentForUser(TEST_USER.id, docId);
+      const remaining = await db.select().from(threads).where(eq(threads.id, threadId));
+      expect(remaining).toEqual([]);
+    });
+
+    it("does NOT touch `kind='chat'` threads even when id collides with a doc-derived threadId", async () => {
+      // Defensive: docId-derived threadId is the UUID portion of docId,
+      // so collision with a chat thread is implausible, but the kind
+      // filter is the safety belt.
+      const folderId = await seedFolder(TEST_USER.id);
+      const docId = await seedDocument(TEST_USER.id, folderId);
+      const threadId = docId.replace(/^d-/, "");
+      await db.insert(threads).values({ id: threadId, userId: TEST_USER.id, kind: "chat" });
+      await deleteKbDocumentForUser(TEST_USER.id, docId);
+      const remaining = await db.select().from(threads).where(eq(threads.id, threadId));
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].kind).toBe("chat");
+    });
+  });
+
+  describe("insertKbObservability", () => {
+    it("inserts a row with all required fields", async () => {
+      const folderId = await seedFolder(TEST_USER.id);
+      const docId = await seedDocument(TEST_USER.id, folderId);
+      const threadId = docId.replace(/^d-/, "");
+      const row = await insertKbObservability({
+        docId,
+        threadId,
+        parentMessageId: "msg-1",
+        runId: null,
+        source: "kb-upload",
+        mode: "full",
+      });
+      expect(row.docId).toBe(docId);
+      expect(row.threadId).toBe(threadId);
+      expect(row.parentMessageId).toBe("msg-1");
+      expect(row.source).toBe("kb-upload");
+      expect(row.mode).toBe("full");
+    });
+
+    it("rejects invalid source values via pgEnum", async () => {
+      const folderId = await seedFolder(TEST_USER.id);
+      const docId = await seedDocument(TEST_USER.id, folderId);
+      await expect(
+        insertKbObservability({
+          docId,
+          threadId: docId.replace(/^d-/, ""),
+          parentMessageId: "msg-1",
+          runId: null,
+          // ponytail: pgEnum blocks typos at insert time, mirroring
+          // kbDocStatusEnum's fail-closed behavior (lib/kb/schema.ts:23).
+          source: "wrong-source" as never,
+          mode: "full",
+        }),
+      ).rejects.toThrow();
     });
   });
 

@@ -10,6 +10,7 @@ import {
   timestamp,
   uniqueIndex,
   jsonb,
+  uuid,
 } from "drizzle-orm/pg-core";
 
 import { user } from "@/lib/auth/schema";
@@ -194,6 +195,57 @@ export type KbDocument = typeof kbDocument.$inferSelect;
 export type NewKbDocument = typeof kbDocument.$inferInsert;
 export type KbChunk = typeof kbChunk.$inferSelect;
 export type NewKbChunk = typeof kbChunk.$inferInsert;
+
+// ponytail: per-kbAgent-invocation observability event. Every kbAgent run
+// (standalone via fireIngestionRun OR chat subgraph via mainAgent) inserts
+// a row here from prepareKBDataNode, giving the Settings → KB
+// observability popover a per-doc run history without depending on
+// LangGraph SDK runs.list
+// (which only sees runs on a single thread — chat uploads land on the chat
+// thread, not on the docId-derived thread the popover used to query).
+//
+// `source` captures the trigger path; `mode` is the dispatch mode. `run_id`
+// is nullable because chat-path subgraph invocations don't always expose
+// config.configurable.run_id reliably. `parent_message_id` is the synthetic
+// HumanMessage id (standalone) or the user's chat message id (chat path) —
+// same value CapturingHandler stamps onto every span via meta.parent_message_id,
+// so a JOIN against observability_spans is one indexed lookup.
+export const kbObservabilitySourceEnum = pgEnum("kb_observability_source", [
+  "kb-upload",
+  "kb-reprocess",
+  "chat",
+]);
+
+export const kbObservabilityModeEnum = pgEnum("kb_observability_mode", [
+  "full",
+  "chunksOnly",
+  "retryFailed",
+  "retryFailedChunks",
+]);
+
+export const kbObservability = pgTable(
+  "kb_observability",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    docId: text("doc_id")
+      .notNull()
+      .references(() => kbDocument.id, { onDelete: "cascade" }),
+    threadId: text("thread_id").notNull(),
+    parentMessageId: text("parent_message_id").notNull(),
+    runId: text("run_id"),
+    source: kbObservabilitySourceEnum("source").notNull(),
+    mode: kbObservabilityModeEnum("mode").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // popover query path: list runs for one docId, newest first.
+    index("kb_observability_doc_created_idx").on(t.docId, t.createdAt.desc()),
+  ],
+);
+
+export type KbObservability = typeof kbObservability.$inferSelect;
+export type NewKbObservability = typeof kbObservability.$inferInsert;
 
 // keep imports referenced (linter)
 void bigint;

@@ -2,6 +2,38 @@ import { toast } from "sonner";
 
 export const TOAST_DESCRIPTION_CLASS = "!text-foreground";
 
+// ponytail: shared reprocess mode vocabulary. The reprocess dialog
+// shows full {title, description} per option; the observability popover
+// shows just title alongside the source label. Keeping a single source
+// of truth means the two surfaces can never disagree on what a mode
+// means.
+export type ReprocessMode = "full" | "chunksOnly" | "retryFailed" | "retryFailedChunks";
+
+export type ModeInfo = { title: string; description: string };
+
+const MODE_INFO: Record<ReprocessMode, ModeInfo> = {
+  full: {
+    title: "Full run",
+    description: "Re-render the PDF, re-run OCR, then re-chunk and re-embed.",
+  },
+  chunksOnly: {
+    title: "Chunks only",
+    description: "Skip OCR — reuse the cached pages markdown to rebuild chunks + entities.",
+  },
+  retryFailed: {
+    title: "Retry failed OCR",
+    description: "Re-OCR failed pages only, keep successful pages, then rebuild chunks.",
+  },
+  retryFailedChunks: {
+    title: "Retry failed chunks",
+    description: "Keep successful chunks, only re-embed + re-extract entities for failed ones.",
+  },
+};
+
+export function getModeInfo(mode: ReprocessMode): ModeInfo {
+  return MODE_INFO[mode];
+}
+
 export async function sha256Hex(file: File): Promise<string | undefined> {
   try {
     const buf = await file.arrayBuffer();

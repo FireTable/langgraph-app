@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { TOAST_DESCRIPTION_CLASS } from "./helpers";
+import { TOAST_DESCRIPTION_CLASS, getModeInfo, type ReprocessMode } from "./helpers";
 import { KbDocument, KbFolder } from "./types";
 
 export function DocDeleteDialog({
@@ -68,8 +67,18 @@ export function DocDeleteDialog({
         <DialogHeader>
           <DialogTitle>Delete document?</DialogTitle>
           <DialogDescription>
-            This permanently removes <span className="font-medium">{doc.title}</span> and all of its
-            parsed chunks. The source file stays in R2 (v3 retention sweep will clean those up).
+            <p>
+              This permanently removes <span className="font-medium">{doc.title}</span> and:
+            </p>
+            <ol className="mt-2 list-decimal pl-5 space-y-1">
+              <li>The document row + all parsed chunks (embeddings, BM25 index, entity graph)</li>
+              <li>The observability run history for this doc</li>
+              <li>The standalone ingestion thread record (LangGraph metadata)</li>
+            </ol>
+            <p className="text-muted-foreground mt-2 text-xs">
+              Source PDF + rendered page PNGs stay in R2 until the v3 retention sweep. Raw
+              observability spans + LangGraph checkpoint state are kept by retention.
+            </p>
           </DialogDescription>
         </DialogHeader>
         {error && <p className="text-destructive text-xs">{error}</p>}
@@ -107,9 +116,7 @@ export function DocReprocessDialog({
   onOpenChange: (open: boolean) => void;
   onReprocessed: () => void;
 }) {
-  const [mode, setMode] = useState<"full" | "chunksOnly" | "retryFailed" | "retryFailedChunks">(
-    "full",
-  );
+  const [mode, setMode] = useState<ReprocessMode>("full");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -222,138 +229,67 @@ export function DocReprocessDialog({
         </DialogHeader>
 
         <fieldset disabled={submitting} className="space-y-2" aria-label="Reprocess mode">
-          {/* Option 1: Full re-run */}
-          <label
-            className={cn(
-              "flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
-              mode === "full" ? "border-primary bg-primary/5" : "border-border hover:bg-muted/40",
-            )}
-          >
-            <input
-              type="radio"
-              name="reprocess-mode"
-              value="full"
-              checked={mode === "full"}
-              onChange={() => setMode("full")}
-              className="mt-0.5 size-3.5 shrink-0 accent-foreground cursor-pointer"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium leading-tight">Full re-run</div>
-              <div className="text-muted-foreground text-[11px] leading-snug mt-0.5">
-                Re-render the PDF, re-run OCR, then re-chunk and re-embed. Uses OCR + embed API
-                tokens.
-              </div>
-            </div>
-          </label>
-
-          {/* Option 2: Rebuild chunks from cache */}
-          <label
-            className={cn(
-              "flex items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
-              isChunksOnlyDisabled ? "opacity-50 cursor-not-allowed bg-muted/10" : "cursor-pointer",
-              !isChunksOnlyDisabled && mode === "chunksOnly"
-                ? "border-primary bg-primary/5"
-                : "border-border hover:bg-muted/40",
-            )}
-          >
-            <input
-              type="radio"
-              name="reprocess-mode"
-              value="chunksOnly"
-              checked={mode === "chunksOnly"}
-              disabled={isChunksOnlyDisabled}
-              onChange={() => setMode("chunksOnly")}
-              className="mt-0.5 size-3.5 shrink-0 accent-foreground disabled:cursor-not-allowed"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium leading-tight flex items-center justify-between">
-                <span>Rebuild chunks from pages</span>
-                {isChunksOnlyDisabled && (
-                  <span className="text-[9px] font-medium text-muted-foreground border px-1 rounded bg-muted/30">
-                    No pages cache
-                  </span>
+          {(
+            [
+              {
+                value: "full",
+                disabled: false,
+                reason: "",
+              },
+              {
+                value: "chunksOnly",
+                disabled: isChunksOnlyDisabled,
+                reason: "No pages cache",
+              },
+              {
+                value: "retryFailed",
+                disabled: isRetryFailedDisabled,
+                reason: "No failed pages",
+              },
+              {
+                value: "retryFailedChunks",
+                disabled: isRetryFailedChunksDisabled,
+                reason: doc.status !== "success" ? "Doc not indexed yet" : "No failed chunks",
+              },
+            ] satisfies Array<{ value: ReprocessMode; disabled: boolean; reason: string }>
+          ).map(({ value, disabled, reason }) => {
+            const { title, description } = getModeInfo(value);
+            return (
+              <label
+                key={value}
+                className={cn(
+                  "flex items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
+                  disabled ? "opacity-50 cursor-not-allowed bg-muted/10" : "cursor-pointer",
+                  !disabled && mode === value
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:bg-muted/40",
                 )}
-              </div>
-              <div className="text-muted-foreground text-[11px] leading-snug mt-0.5">
-                Skip OCR — reuse the cached pages markdown to rebuild chunks + entities. Faster,
-                fewer tokens.
-              </div>
-            </div>
-          </label>
-
-          {/* Option 3: Retry failed pages & rebuild */}
-          <label
-            className={cn(
-              "flex items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
-              isRetryFailedDisabled
-                ? "opacity-50 cursor-not-allowed bg-muted/10"
-                : "cursor-pointer",
-              !isRetryFailedDisabled && mode === "retryFailed"
-                ? "border-primary bg-primary/5"
-                : "border-border hover:bg-muted/40",
-            )}
-          >
-            <input
-              type="radio"
-              name="reprocess-mode"
-              value="retryFailed"
-              checked={mode === "retryFailed"}
-              disabled={isRetryFailedDisabled}
-              onChange={() => setMode("retryFailed")}
-              className="mt-0.5 size-3.5 shrink-0 accent-foreground disabled:cursor-not-allowed"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium leading-tight flex items-center justify-between">
-                <span>Retry failed pages & rebuild chunks</span>
-                {isRetryFailedDisabled && (
-                  <span className="text-[9px] font-medium text-muted-foreground border px-1 rounded bg-muted/30">
-                    No failed pages
-                  </span>
-                )}
-              </div>
-              <div className="text-muted-foreground text-[11px] leading-snug mt-0.5">
-                Only retry OCR for failed pages, keep successful pages, then rebuild chunks. Ideal
-                for partial OCR errors.
-              </div>
-            </div>
-          </label>
-
-          {/* Option 4: Retry failed chunks (keep successful ones) */}
-          <label
-            className={cn(
-              "flex items-start gap-3 rounded-md border px-3 py-2.5 transition-colors",
-              isRetryFailedChunksDisabled
-                ? "opacity-50 cursor-not-allowed bg-muted/10"
-                : "cursor-pointer",
-              !isRetryFailedChunksDisabled && mode === "retryFailedChunks"
-                ? "border-primary bg-primary/5"
-                : "border-border hover:bg-muted/40",
-            )}
-          >
-            <input
-              type="radio"
-              name="reprocess-mode"
-              value="retryFailedChunks"
-              checked={mode === "retryFailedChunks"}
-              disabled={isRetryFailedChunksDisabled}
-              onChange={() => setMode("retryFailedChunks")}
-              className="mt-0.5 size-3.5 shrink-0 accent-foreground disabled:cursor-not-allowed"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium leading-tight flex items-center justify-between">
-                <span>Retry failed chunks</span>
-                {isRetryFailedChunksDisabled && (
-                  <span className="text-[9px] font-medium text-muted-foreground border px-1 rounded bg-muted/30">
-                    {doc.status !== "success" ? "Doc not indexed yet" : "No failed chunks"}
-                  </span>
-                )}
-              </div>
-              <div className="text-muted-foreground text-[11px] leading-snug mt-0.5">
-                Keep successful chunks, only re-embed + re-extract entities for the failed ones.
-                Faster than a full re-run — no OCR, no wasted tokens.
-              </div>
-            </div>
-          </label>
+              >
+                <input
+                  type="radio"
+                  name="reprocess-mode"
+                  value={value}
+                  checked={mode === value}
+                  disabled={disabled}
+                  onChange={() => setMode(value)}
+                  className="mt-0.5 size-3.5 shrink-0 accent-foreground disabled:cursor-not-allowed"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium leading-tight flex items-center justify-between">
+                    <span>{title}</span>
+                    {disabled && (
+                      <span className="text-[9px] font-medium text-muted-foreground border px-1 rounded bg-muted/30">
+                        {reason}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-muted-foreground text-[11px] leading-snug mt-0.5">
+                    {description}
+                  </div>
+                </div>
+              </label>
+            );
+          })}
         </fieldset>
 
         {error && <p className="text-destructive text-xs">{error}</p>}

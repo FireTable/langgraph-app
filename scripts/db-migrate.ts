@@ -57,9 +57,9 @@ function step(name: string, fn: () => Promise<void> | void) {
     process.stdout.write(`→ ${name} ... `);
     try {
       await fn();
-      process.stdout.write("ok\n");
+      process.stdout.write("\nok\n");
     } catch (err) {
-      process.stdout.write("FAILED\n");
+      process.stdout.write("\nFAILED\n");
       throw err;
     }
   })();

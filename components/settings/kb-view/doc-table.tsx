@@ -13,6 +13,7 @@ import { DocDetailDialog } from "./doc-detail-dialog";
 import { DocDeleteDialog, DocReprocessDialog } from "./dialogs";
 import { FolderGraphDialog } from "./folder-graph-dialog";
 import { LivePollIndicator } from "./live-poll-indicator";
+import { ObservabilityPopover } from "./observability-popover";
 
 export function DocTable({
   group,
@@ -163,6 +164,7 @@ export function DocRow({
           {isInflight ? "Already processing" : "Reprocess"}
         </TooltipContent>
       </Tooltip>
+      <ObservabilityPopover docId={doc.id} />
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -315,6 +317,7 @@ export function DocRow({
           onOpenChange={setDeleteOpen}
           onDeleted={() => {
             setDeleteOpen(false);
+            void onRefresh();
           }}
         />
       )}
