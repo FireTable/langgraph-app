@@ -323,7 +323,7 @@ export const KbExplainerDemo = () => {
             transition={{ duration: 0.35, ease: "easeOut" }}
             className="border-primary/30 bg-primary/5 flex items-start gap-2 rounded-lg border px-3 py-2"
           >
-            <SparklesIcon className="text-primary mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <SparklesIcon className="text-muted-foreground mt-0.5 size-3.5 shrink-0" aria-hidden />
             <p className="text-foreground/90 text-xs leading-snug">
               <span className="text-muted-foreground">[chunk 7 · vector + entity hit · 0.94]</span>{" "}
               The BM25 leg finds the exact term; the entity leg ties it to the canonical name.
@@ -466,7 +466,7 @@ export const KbExplainerDemo = () => {
         </div>
 
         <div className="text-muted-foreground flex items-start gap-2 text-[11px] leading-snug">
-          <SparklesIcon className="text-primary mt-0.5 size-3 shrink-0" aria-hidden />
+          <SparklesIcon className="text-muted-foreground mt-0.5 size-3 shrink-0" aria-hidden />
           <span>
             Query <span className="text-foreground font-medium">?</span> lights up its 2-hop
             neighborhood. The graph leg scores every entity it touches alongside BM25 + vector.
