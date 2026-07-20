@@ -4,23 +4,24 @@ Guidance for Claude Code in this repo. Features, layout, env vars, tech stack �
 
 ## Docs index
 
-| Topic                                           | File                    |
-| ----------------------------------------------- | ----------------------- |
-| Features, quick-start, layout, env vars, deps   | `README.md`             |
-| Marketing landing page sections + assets        | `docs/LANDING.md`       |
-| Every HTTP endpoint under `app/api/`            | `docs/APIS.md`          |
-| Memory + thread-summarize design                | `docs/MEMORY.md`        |
-| Observability panel design + retention          | `docs/OBSERVABILITY.md` |
-| LangGraph tool inventory + frontend card wiring | `docs/TOOLS.md`         |
-| Interrupt-driven tool flow contract             | `docs/INTERRUPT.md`     |
-| Attachments backing (R2 + presign) design       | `docs/ATTACHMENTS.md`   |
-| Auth setup, OAuth, troubleshooting              | `docs/AUTH.md`          |
-| DB schema, ownership, indexes                   | `docs/DB.md`            |
-| Provider registry (round-robin + withFallbacks) | `docs/PROVIDERS.md`     |
-| Credit / LLM-call quota system                  | `docs/CREDIT.md`        |
-| Admin UI + endpoints for providers/users/roles  | `docs/ADMIN.md`         |
-| Production deploys (Docker, env, Caddy)         | `docs/DEPLOY.md`        |
-| CI/CD, Docker, deploys                          | `docs/CI.md`            |
+| Topic                                            | File                     |
+| ------------------------------------------------ | ------------------------ |
+| Features, quick-start, layout, env vars, deps    | `README.md`              |
+| Marketing landing page sections + assets         | `docs/LANDING.md`        |
+| Every HTTP endpoint under `app/api/`             | `docs/APIS.md`           |
+| Memory + thread-summarize design                 | `docs/MEMORY.md`         |
+| Knowledge base, ingestion, hybrid search, Rerank | `docs/KNOWLEDGE_BASE.md` |
+| Observability panel design + retention           | `docs/OBSERVABILITY.md`  |
+| LangGraph tool inventory + frontend card wiring  | `docs/TOOLS.md`          |
+| Interrupt-driven tool flow contract              | `docs/INTERRUPT.md`      |
+| Attachments backing (R2 + presign) design        | `docs/ATTACHMENTS.md`    |
+| Auth setup, OAuth, troubleshooting               | `docs/AUTH.md`           |
+| DB schema, ownership, indexes                    | `docs/DB.md`             |
+| Provider registry (round-robin + withFallbacks)  | `docs/PROVIDERS.md`      |
+| Credit / LLM-call quota system                   | `docs/CREDIT.md`         |
+| Admin UI + endpoints for providers/users/roles   | `docs/ADMIN.md`          |
+| Production deploys (Docker, env, Caddy)          | `docs/DEPLOY.md`         |
+| CI/CD, Docker, deploys                           | `docs/CI.md`             |
 
 API changes update `docs/APIS.md` in the same commit (rule 1). Tool changes update `docs/TOOLS.md` (rule 10).
 
@@ -75,7 +76,7 @@ Non-negotiable. Every change.
 
 ## Things to know before editing
 
-- Graph id `agent` is in `langgraph.json`, `LANGGRAPH_ASSISTANT_ID` (`.env.example`, surfaced to client via `window.__CONFIG__` — see rule #12), and `unstable_createLangGraphStream({ assistantId })`. Keep aligned.
+- Graph id `agent` is in `langgraph.json`, `LANGGRAPH_ASSISTANT_ID` (`.env.example`, surfaced to client via `window.__CONFIG__` — see rule #12), and `unstable_createLangGraphStream({ assistantId })`. Keep aligned. The `kbAgent` assistant id (KB ingestion, `langgraph.json` + `lib/kb/ingest.ts:fireIngestionRun` dispatch) follows the same sync rule — there is no env-driven alias for it, but renaming it requires updating `langgraph.json` AND `fireIngestionRun` together.
 - `app/api/[..._path]/route.ts` proxy uses `runtime = "nodejs"` (was edge) — `withAuth` needs Node `net` for Postgres session reads.
 - `components.json` declares a `@assistant-ui` registry at `https://r.assistant-ui.com/{name}.json` for `shadcn`-style component adds.
 - `feat/*` branches: `git fetch origin main` and merge if main moved before committing — see [[feature-branch-tracks-main]].

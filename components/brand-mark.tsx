@@ -1,11 +1,10 @@
 import type { FC } from "react";
 import Link from "next/link";
-import { MessageSquareTextIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { APP_NAME } from "@/lib/constants";
 
-const TEXT_CLASS = "text-foreground/90 ml-2 text-sm font-medium whitespace-nowrap";
+const TEXT_CLASS = "text-foreground/90 text-sm font-medium whitespace-nowrap";
 
 // ponytail: app logo block — icon + APP_NAME in a single rounded row.
 // The collapse animation lives on the text node (opacity-0 when
@@ -19,7 +18,6 @@ export const BrandMark: FC<{ collapsed?: boolean; className?: string }> = ({
   className,
 }) => (
   <div className={cn("flex h-12 shrink-0 items-center", className)}>
-    <MessageSquareTextIcon className="text-foreground/90 size-5 shrink-0" />
     <span className={cn(TEXT_CLASS, "transition-opacity duration-200", collapsed && "opacity-0")}>
       {APP_NAME}
     </span>

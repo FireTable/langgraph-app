@@ -9,8 +9,9 @@ import { CommonAgentState } from "@/backend/state";
 import {
   buildSystemMessageWithMemory,
   loadThreadSummariesForPrompt,
-  trimMessagesForInvoke,
+  prepareMessagesForInvoke,
 } from "@/backend/memory/template";
+import { extractUserId } from "@/backend/memory/recall";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 
 // Code sub-agent: model ↔ tools loop. write_code proposes code that
@@ -30,7 +31,11 @@ async function codeModelNode({ messages }: { messages: BaseMessage[] }, config?:
   // and drop the original turns from the input array. state.messages
   // is NEVER touched.
   const threads = await loadThreadSummariesForPrompt(config);
-  const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
+  const history = await prepareMessagesForInvoke(
+    messages,
+    threads?.summaries ?? [],
+    extractUserId(config) ?? undefined,
+  );
   const sysMsg = await buildSystemMessageWithMemory(CODE_AGENT_PROMPT, config, threads);
   const response = await (
     await getChatModel()

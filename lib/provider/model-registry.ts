@@ -1,10 +1,15 @@
-import { ChatOpenAI } from "@langchain/openai";
+import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import type { Embeddings } from "@langchain/core/embeddings";
 import { asc, eq } from "drizzle-orm";
 import { LRUCache } from "lru-cache";
 
 import { db } from "@/db/client";
-import { provider as providerTable, type ProviderApiKey } from "@/lib/provider/schema";
+import {
+  provider as providerTable,
+  type ModelKind,
+  type ProviderApiKey,
+} from "@/lib/provider/schema";
 import { aesGcmDecrypt, loadKek } from "@/lib/auth/encryption";
 
 // ponytail: 60s TTL on the (provider, model, key) TUPLE list, not on
@@ -30,6 +35,7 @@ type ModelTuple = {
   baseUrl: string | undefined;
   modelName: string;
   key: ProviderApiKey;
+  kind: ModelKind;
 };
 
 const tupleCache = new LRUCache<OptsKey, ModelTuple[]>({
@@ -44,17 +50,33 @@ const tupleCache = new LRUCache<OptsKey, ModelTuple[]>({
 // bottleneck is rate-limit per key, not cluster-wide fair distribution.
 const nextTupleIndexByKey = new Map<OptsKey, number>();
 
-export type GetChatModelOpts = {
+export type GetModelOpts = {
   providerId?: string;
   modelName?: string;
 };
 
+// ponytail: type alias preserved so existing call sites keep working —
+// `getChatModelFromDB` historically took `GetChatModelOpts`; today it's
+// just `GetModelOpts` with kind="chat" hard-coded in the wrapper.
+export type GetChatModelOpts = GetModelOpts;
+
+/**
+ * ponytail: kind-aware cache key prefix. The first segment namespaces the
+ * round-robin pool by kind so chat traffic and ocr traffic don't advance
+ * each other's counters. Four prefixes exist today (chat/ocr/embed/extract);
+ * adding a fifth only touches this file and one wrapper.
+ */
+function kindPrefix(kind: ModelKind): string {
+  return `kind=${kind}`;
+}
+
 /**
  * Resolve a chat model from the DB, returning one round-robin-picked
  * (provider, model, key) tuple per call across all enabled tuples that
- * match the opts. With no opts, every enabled provider's enabled models
- * and keys are in the pool; with `providerId` set, only that provider's
- * tuples; with `modelName` set, only matching models.
+ * match the opts and whose `kind` includes "chat". With no opts, every
+ * enabled provider's enabled models and keys are in the pool; with
+ * `providerId` set, only that provider's tuples; with `modelName` set,
+ * only matching models.
  *
  * The picked ChatOpenAI is rebuilt on every call so the round-robin
  * can advance. The tuple list (DB rows + encrypted key blobs) is cached
@@ -65,8 +87,121 @@ export type GetChatModelOpts = {
  * propagates — cross-tuple fallback is intentionally NOT here (see the
  * `ModelTuple` comment for the why).
  */
-export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<BaseChatModel> {
-  const cacheKey = `${opts.providerId ?? "*"}:${opts.modelName ?? "*"}`;
+export async function getChatModelFromDB(opts: GetModelOpts = {}): Promise<BaseChatModel> {
+  return getModelFromDB({ ...opts, kind: "chat" }) as Promise<BaseChatModel>;
+}
+
+/**
+ * OCR = chat-capable model used to extract text from rendered PDF
+ * pages (image_url content → markdown). The kb agent's vlmNode/ocrNode
+ * is the only consumer today; the name matches the task rather than
+ * the underlying capability (it's still a vision-capable chat model).
+ * Filter on `kind.includes("ocr")` so a chat-only model is never
+ * picked for OCR work. Pool is round-robin-independent from chat
+ * traffic.
+ */
+export async function getOcrModelFromDB(opts: GetModelOpts = {}): Promise<BaseChatModel> {
+  return getModelFromDB({ ...opts, kind: "ocr" }) as Promise<BaseChatModel>;
+}
+
+/**
+ * ponytail: extract = chat-capable model used for structured-output
+ * extraction (entity / relationship / theme triples from KB chunks,
+ * per the LightRAG-style path in kbAgent.generateChunkEmbedNode).
+ * Filter on `kind.includes("extract")` so a model that admin hasn't
+ * flagged for extract work is never picked here. If no tuple has
+ * `extract` in its `kind` list, the function falls back to the chat
+ * pool — the wiring is non-breaking because every chat model is a
+ * valid structured-output caller. Backed by a separate round-robin
+ * counter so extract traffic doesn't advance chat counters.
+ */
+export async function getExtractModelFromDB(opts: GetModelOpts = {}): Promise<BaseChatModel> {
+  try {
+    return (await getModelFromDB({ ...opts, kind: "extract" })) as BaseChatModel;
+  } catch (err) {
+    // ponytail: no extract-tagged model registered yet → fall back to
+    // chat pool. Same retry loop exists in the chat getter, so this
+    // is the right pattern for "treat the pool as a soft contract".
+    return (await getModelFromDB({ ...opts, kind: "chat" })) as BaseChatModel;
+  }
+}
+
+/**
+ * Embeddings return type narrows — `embedDocuments` / `embedQuery`,
+ * not `.invoke`. Today every embed model is OpenAIEmbeddings (text-
+ * embedding-3-small etc.); the wrapper instantiates the right class
+ * from the picked tuple.
+ */
+export class RerankModel {
+  constructor(
+    public readonly config: {
+      providerId: string;
+      baseUrl: string | undefined;
+      modelName: string;
+      apiKey: string;
+    },
+  ) {}
+
+  async rerank(
+    query: string,
+    documents: string[],
+    topN?: number,
+  ): Promise<Array<{ index: number; score: number }>> {
+    const baseUrl =
+      this.config.baseUrl ||
+      (this.config.providerId === "jina" ? "https://api.jina.ai/v1" : "https://api.cohere.com/v1");
+    // Ensure we don't have trailing slash on baseURL, and append /rerank if not present
+    let url = baseUrl.replace(/\/$/, "");
+    if (!url.endsWith("/rerank")) {
+      url = `${url}/rerank`;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.config.modelName,
+        query,
+        documents,
+        top_n: topN,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      throw new Error(`Rerank API error (${response.status}): ${errText || response.statusText}`);
+    }
+
+    const data = (await response.json()) as {
+      results: Array<{ index: number; relevance_score: number }>;
+    };
+
+    if (!data.results || !Array.isArray(data.results)) {
+      throw new Error("Invalid response format from Rerank API: missing 'results' array");
+    }
+
+    return data.results.map((r) => ({
+      index: r.index,
+      score: r.relevance_score,
+    }));
+  }
+}
+
+export async function getRerankModelFromDB(opts: GetModelOpts = {}): Promise<RerankModel> {
+  return getModelFromDB({ ...opts, kind: "rerank" }) as Promise<RerankModel>;
+}
+
+export async function getEmbeddingModelFromDB(opts: GetModelOpts = {}): Promise<Embeddings> {
+  return getModelFromDB({ ...opts, kind: "embed" }) as Promise<Embeddings>;
+}
+
+async function getModelFromDB(
+  opts: GetModelOpts & { kind: ModelKind },
+): Promise<BaseChatModel | Embeddings | RerankModel> {
+  const cacheKey = `${kindPrefix(opts.kind)}|${opts.providerId ?? "*"}:${opts.modelName ?? "*"}`;
 
   let tuples = tupleCache.get(cacheKey);
   if (!tuples) {
@@ -75,11 +210,7 @@ export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<B
   }
 
   if (tuples.length === 0) {
-    throw new Error(
-      opts.providerId
-        ? `no enabled (provider, model, key) tuple for ${cacheKey}`
-        : `no enabled provider in DB (cacheKey=${cacheKey})`,
-    );
+    throw new Error(`no enabled ${opts.kind} (provider, model, key) tuple for ${cacheKey}`);
   }
 
   // Round-robin pick, scoped to the cacheKey so interleaving different
@@ -88,27 +219,36 @@ export async function getChatModelFromDB(opts: GetChatModelOpts = {}): Promise<B
   nextTupleIndexByKey.set(cacheKey, counter + 1);
   const start = counter % tuples.length;
 
-  // ponytail: build all N ChatOpenAIs, then return the round-robin
-  // pick. N decrypt + ctor is small and amortized over the 60s tuple
-  // TTL, so the "build only the picked one" optimization isn't worth
-  // the cache-tracker complexity.
-  const models = tuples.map(
-    (t) =>
-      new ChatOpenAI({
-        model: t.modelName,
-        apiKey: decryptApiKey(t.key),
-        configuration: t.baseUrl ? { baseURL: t.baseUrl } : undefined,
-        streaming: true,
-        // ponytail: only minimax reads this — keeping it hard-coded keeps
-        // the DB schema free of a one-off knob that no other provider honors.
-        modelKwargs: { reasoning_split: true },
-      }),
-  );
+  const picked = tuples[start];
 
-  // Return type stays BaseChatModel (not ChatOpenAI) so a non-OpenAI
-  // provider can land without touching the 6 call sites; today every
-  // registered model is ChatOpenAI.
-  return models[start] as BaseChatModel;
+  if (opts.kind === "rerank") {
+    return new RerankModel({
+      providerId: picked.providerId,
+      baseUrl: picked.baseUrl,
+      modelName: picked.modelName,
+      apiKey: decryptApiKey(picked.key),
+    });
+  }
+
+  if (opts.kind === "embed") {
+    return new OpenAIEmbeddings({
+      model: picked.modelName,
+      apiKey: decryptApiKey(picked.key),
+      configuration: picked.baseUrl ? { baseURL: picked.baseUrl } : undefined,
+    });
+  }
+
+  // chat or ocr → ChatOpenAI. Vision support is opt-in via the
+  // model name (gpt-4o*, gpt-4.1*, etc.); the class doesn't differ.
+  return new ChatOpenAI({
+    model: picked.modelName,
+    apiKey: decryptApiKey(picked.key),
+    configuration: picked.baseUrl ? { baseURL: picked.baseUrl } : undefined,
+    streaming: true,
+    // ponytail: only minimax reads this — keeping it hard-coded keeps
+    // the DB schema free of a one-off knob that no other provider honors.
+    modelKwargs: { reasoning_split: true },
+  });
 }
 
 /**
@@ -135,7 +275,7 @@ export function resetRoundRobinCounters(): void {
   nextTupleIndexByKey.clear();
 }
 
-async function collectTuples(opts: GetChatModelOpts): Promise<ModelTuple[]> {
+async function collectTuples(opts: GetModelOpts & { kind: ModelKind }): Promise<ModelTuple[]> {
   const providerRows = opts.providerId
     ? await db.select().from(providerTable).where(eq(providerTable.id, opts.providerId))
     : await db.select().from(providerTable).orderBy(asc(providerTable.id));
@@ -146,12 +286,19 @@ async function collectTuples(opts: GetChatModelOpts): Promise<ModelTuple[]> {
     for (const m of p.models) {
       if (!m.enabled) continue;
       if (opts.modelName && m.name !== opts.modelName) continue;
+      // ponytail: omit kind ⇒ default ["chat"] for back-compat with rows
+      // seeded before v1 KB. The match here is set-includes, so a model
+      // tagged ["chat","ocr"] is eligible for both pools; tagged ["chat"]
+      // only is excluded from ocr/embed pools.
+      const kinds = m.kind ?? ["chat"];
+      if (!kinds.includes(opts.kind)) continue;
       for (const k of p.apiKeys) {
         tuples.push({
           providerId: p.id,
           baseUrl: p.baseUrl,
           modelName: m.name,
           key: k,
+          kind: opts.kind,
         });
       }
     }

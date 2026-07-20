@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { StateSchema, MessagesValue } from "@langchain/langgraph";
+import type { BaseMessage } from "@langchain/core/messages";
+
+import type { FilePart } from "@/lib/kb/extract";
 
 // ponytail: userMessageCount is *not* on RouterAgentState because
 // deriving it from state.messages in the summarize node (one filter
@@ -10,10 +13,98 @@ import { StateSchema, MessagesValue } from "@langchain/langgraph";
 export const RouterAgentState = new StateSchema({
   messages: MessagesValue,
   routerDecision: z.object({
-    next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent"]),
+    next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent", "kbAgent"]),
   }),
 });
 
 export const CommonAgentState = new StateSchema({
   messages: MessagesValue,
 });
+
+// ---------------------------------------------------------------------------
+// KB ingest subgraph state
+// ---------------------------------------------------------------------------
+
+export type PageResult = {
+  pageIndex: number;
+  imageUrl: string;
+  markdown: string;
+  /** Native text extracted from the PDF text layer by mupdf. Empty for scanned/image-only pages. */
+  referenceText?: string;
+  errorMessage?: string;
+  // ponytail: per-page 4-stage status mirroring kbChunkStatusEnum.
+  // Written by pageToMarkdownNode when OCR succeeds/fails; pending
+  // is the default for a freshly-screenshot page whose markdown
+  // hasn't been produced yet. Legacy rows (no status field) read as
+  // "success" when markdown is non-empty, "failed" when errorMessage
+  // is set, "pending" when both are empty — preserves existing UI
+  // behaviour for docs ingested before this field existed.
+  status?: "pending" | "parsing" | "success" | "failed";
+};
+
+// Per-file record. One entry per PDF file part found across every
+// HumanMessage. Drives every node — prepareKBDataNode fills it,
+// splitFileToPageNode uploads images + extracts reference text,
+// pageToMarkdownNode updates page markdown, rewriteMessagesNode
+// uses it to rewrite HumanMessages. filePart.data is the join key
+// when matching back to the original HumanMessage content.
+export type ProcessedFile = {
+  messageIndex: number;
+  filePart: FilePart;
+  docId: string | null;
+  attachmentId: string | null;
+  r2Key: string | null;
+  title: string | null;
+  contentHash: string | null;
+  // "new" = docId freshly generated, needs OCR + chunk + insert.
+  // "dedup" = existing docId, skip the heavy pipeline.
+  // "failed" = OCR failed (or empty markdown); docId may or may not
+  //            exist in DB — resolve layer shows [Failed: ...] for
+  //            the file part's kb_ref prefix, or strips the file
+  //            part entirely if no docId was ever written.
+  // "unknown" = attachment row missing, no docId at all.
+  pipelineStatus: "new" | "dedup" | "failed" | "unknown";
+  errorMessage: string | null;
+  // ponytail: when pipelineStatus === "dedup", this is the row's
+  // CURRENT status read from the kb_documents table at dispatch time.
+  // kbAgent's terminal node (`rewriteMessagesNode`) writes this back
+  // to the row so a previous kbAgent run that landed `success` is
+  // visible to the user even when the dispatch path went through a
+  // re-upload dedup short-circuit. Optional for the `new` / `failed`
+  // / `unknown` branches that produce their own row status.
+  existingStatus?: "pending" | "parsing" | "success" | "failed";
+};
+
+export const KbAgentState = new StateSchema({
+  // From parent — populated by RouterNode at invoke time.
+  messages: z.array(z.custom<BaseMessage>()),
+  userId: z.string().nullable().default(null),
+  // ponytail: "full" = original OCR + chunk + embed pipeline.
+  // "chunksOnly" = skip the OCR chain (prepareKBData reads an
+  // existing doc row whose pages[].markdown is reused) — only the
+  // chunk + embed + entity stage lands. Populated by
+  // `fireIngestionRun` from `config.configurable` when invoked by
+  // `POST /api/kb/documents/[id]/reprocess?chunksOnly=true`. The
+  // kb_documents row stays at its terminal status (no reset).
+  mode: z.enum(["full", "chunksOnly", "retryFailed", "retryFailedChunks"]).default("full"),
+  // ponytail: for chunksOnly dispatch, this is the target docId
+  // (the row whose pages[].markdown will be re-chunked). Ignored in
+  // full mode (prepareKBData figures the docId out per file part).
+  docId: z.string().nullable().default(null),
+  // Internal.
+  pagesByDocId: z.record(z.string(), z.array(z.custom<PageResult>())).default({}),
+  processedFiles: z.array(z.custom<ProcessedFile>()).default([]),
+  status: z.enum(["pending", "parsing", "success", "failed"]).default("pending"),
+  errorMessage: z.string().nullable().default(null),
+});
+
+export type KbAgentStateShape = {
+  messages: BaseMessage[];
+  userId: string | null;
+  mode: "full" | "chunksOnly" | "retryFailed" | "retryFailedChunks";
+  docId: string | null;
+  pagesByDocId: Record<string, PageResult[]>;
+  processedFiles: ProcessedFile[];
+  status: "pending" | "parsing" | "success" | "failed";
+  errorMessage: string | null;
+};

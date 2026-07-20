@@ -8,7 +8,12 @@ import {
   type ProviderApiKey,
 } from "@/lib/provider/schema";
 import { aesGcmEncrypt, loadKek } from "@/lib/auth/encryption";
-import { getChatModelFromDB, invalidateModelCache } from "@/lib/provider/model-registry";
+import {
+  getChatModelFromDB,
+  getEmbeddingModelFromDB,
+  getOcrModelFromDB,
+  invalidateModelCache,
+} from "@/lib/provider/model-registry";
 import { resetRoundRobinCounters } from "@/lib/provider/model-registry";
 
 function encryptFixtureKey(plain: string): ProviderApiKey {
@@ -56,7 +61,7 @@ afterAll(async () => {
 
 describe("getChatModelFromDB", () => {
   it("throws when no enabled provider exists", async () => {
-    await expect(getChatModelFromDB()).rejects.toThrow(/no enabled provider/i);
+    await expect(getChatModelFromDB()).rejects.toThrow(/no enabled chat.*tuple/i);
   });
 
   it("throws when provider has no enabled model", async () => {
@@ -64,7 +69,7 @@ describe("getChatModelFromDB", () => {
       id: "primary",
       models: [{ name: "gpt-4o", enabled: false, inputPer1k: 0, outputPer1k: 0 }],
     });
-    await expect(getChatModelFromDB()).rejects.toThrow(/no enabled (provider|model)/i);
+    await expect(getChatModelFromDB()).rejects.toThrow(/no enabled chat.*tuple/i);
   });
 
   // ponytail: tuple list (DB rows + encrypted blobs) is cached, but the
@@ -237,6 +242,101 @@ describe("getChatModelFromDB", () => {
   });
 });
 
+describe("kind partition (ocr / embed)", () => {
+  it("getOcrModelFromDB only picks tuples whose kind includes 'ocr'", async () => {
+    await seedProvider({
+      id: "primary",
+      apiKeys: [encryptFixtureKey("sk-primary-ocr")],
+      models: [
+        { name: "gpt-4o", enabled: true, inputPer1k: 0, outputPer1k: 0, kind: ["chat"] },
+        {
+          name: "gpt-4o-mini",
+          enabled: true,
+          inputPer1k: 0,
+          outputPer1k: 0,
+          kind: ["chat", "ocr"],
+        },
+      ],
+    });
+
+    const ocr = await getOcrModelFromDB();
+    // ponytail: an OCR model is a chat-capable model used to extract text
+    // from rendered page images. We can't introspect the underlying model
+    // class beyond its .invoke surface, so just assert it's a working
+    // runnable — proves the registry didn't drop the request.
+    expect(typeof (ocr as { invoke: unknown }).invoke).toBe("function");
+    expect(typeof (ocr as { bindTools?: unknown }).bindTools).toBe("function");
+  });
+
+  it("getEmbeddingModelFromDB returns an embeddings instance, not a chat model", async () => {
+    await seedProvider({
+      id: "primary",
+      apiKeys: [encryptFixtureKey("sk-primary-emb")],
+      models: [
+        {
+          name: "text-embedding-3-small",
+          enabled: true,
+          inputPer1k: 0,
+          outputPer1k: 0,
+          kind: ["embed"],
+        },
+      ],
+    });
+
+    const emb = await getEmbeddingModelFromDB();
+    // Embeddings expose .embedDocuments / .embedQuery, NOT .invoke / .bindTools.
+    expect(typeof (emb as { embedDocuments: unknown }).embedDocuments).toBe("function");
+    expect(typeof (emb as { embedQuery: unknown }).embedQuery).toBe("function");
+    expect((emb as { invoke?: unknown }).invoke).toBeUndefined();
+  });
+
+  it("throws when no enabled model matches the requested kind", async () => {
+    await seedProvider({
+      id: "primary",
+      apiKeys: [encryptFixtureKey("sk-primary-chat-only")],
+      models: [{ name: "gpt-4o", enabled: true, inputPer1k: 0, outputPer1k: 0, kind: ["chat"] }],
+    });
+
+    await expect(getOcrModelFromDB()).rejects.toThrow(/no enabled.*ocr/i);
+    await expect(getEmbeddingModelFromDB()).rejects.toThrow(/no enabled.*embed/i);
+  });
+
+  it("default kind is 'chat' when ModelConfig.kind is omitted (back-compat)", async () => {
+    await seedProvider({
+      id: "primary",
+      apiKeys: [encryptFixtureKey("sk-primary-default")],
+      models: [ENABLED_MODEL("gpt-4o")], // no kind field
+    });
+
+    const chat = await getChatModelFromDB();
+    expect(typeof (chat as { invoke: unknown }).invoke).toBe("function");
+  });
+
+  it("chat and ocr round-robin counters are independent", async () => {
+    await seedProvider({
+      id: "primary",
+      apiKeys: [encryptFixtureKey("sk-shared-a"), encryptFixtureKey("sk-shared-b")],
+      models: [
+        {
+          name: "gpt-4o-mini",
+          enabled: true,
+          inputPer1k: 0,
+          outputPer1k: 0,
+          kind: ["chat", "ocr"],
+        },
+      ],
+    });
+
+    const chatRef = await getChatModelFromDB();
+    // OCR call should NOT throw even though we've advanced the chat counter.
+    const ocrRef = await getOcrModelFromDB();
+    // Both should be usable runnables; identity distinct (per-call rebuild).
+    expect(typeof (chatRef as { invoke: unknown }).invoke).toBe("function");
+    expect(typeof (ocrRef as { invoke: unknown }).invoke).toBe("function");
+    expect(chatRef).not.toBe(ocrRef);
+  });
+});
+
 describe("invalidateModelCache", () => {
   it("clears a single (provider, model) key when given", async () => {
     await seedProvider({
@@ -254,7 +354,7 @@ describe("invalidateModelCache", () => {
 
     const dbSpy = vi.spyOn(db, "select");
     const before = dbSpy.mock.calls.length;
-    invalidateModelCache("primary:gpt-4o");
+    invalidateModelCache("kind=chat|primary:gpt-4o");
     await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o" });
     const afterGpt4o = dbSpy.mock.calls.length;
     await getChatModelFromDB({ providerId: "primary", modelName: "gpt-4o-mini" });

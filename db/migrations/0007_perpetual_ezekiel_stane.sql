@@ -1,0 +1,1 @@
+ALTER TABLE "kb_document" ADD COLUMN "pages" jsonb;

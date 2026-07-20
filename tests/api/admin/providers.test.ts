@@ -371,6 +371,58 @@ describe("POST /api/admin/providers/[id]/models", () => {
     );
     expect(res.status).toBe(409);
   });
+
+  it("defaults kind to ['chat'] when omitted — backend fills, doesn't trust client", async () => {
+    await db
+      .insert(provider)
+      .values({ id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" })
+      .onConflictDoNothing();
+    const res = await AddModel(
+      jsonRequest({ name: "gpt-4o-mini", enabled: true, inputPer1k: 0, outputPer1k: 0 }),
+      ctxId("openai"),
+    );
+    expect(res.status).toBe(201);
+    const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
+    expect(row?.models[0].kind).toEqual(["chat"]);
+  });
+
+  it("persists an explicit multi-kind array (chat + ocr)", async () => {
+    await db
+      .insert(provider)
+      .values({ id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" })
+      .onConflictDoNothing();
+    const res = await AddModel(
+      jsonRequest({
+        name: "gpt-4o",
+        enabled: true,
+        inputPer1k: 0,
+        outputPer1k: 0,
+        kind: ["chat", "ocr"],
+      }),
+      ctxId("openai"),
+    );
+    expect(res.status).toBe(201);
+    const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
+    expect(row?.models[0].kind).toEqual(["chat", "ocr"]);
+  });
+
+  it("rejects an unknown kind value with 400", async () => {
+    await db
+      .insert(provider)
+      .values({ id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1" })
+      .onConflictDoNothing();
+    const res = await AddModel(
+      jsonRequest({
+        name: "m",
+        enabled: true,
+        inputPer1k: 0,
+        outputPer1k: 0,
+        kind: ["chat", "vision"],
+      }),
+      ctxId("openai"),
+    );
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("PATCH /api/admin/providers/[id]/models/[modelName] (rename + edit)", () => {
@@ -421,6 +473,48 @@ describe("PATCH /api/admin/providers/[id]/models/[modelName] (rename + edit)", (
   it("returns 400 on empty name", async () => {
     await seedTwoModels();
     const res = await EditModel(jsonRequest({ name: "" }), ctxModel("openai", "gpt-4o-mini"));
+    expect(res.status).toBe(400);
+  });
+
+  it("updates kind when explicitly provided (200, DB persists)", async () => {
+    await seedTwoModels();
+    const res = await EditModel(
+      jsonRequest({ kind: ["chat", "ocr"] }),
+      ctxModel("openai", "gpt-4o-mini"),
+    );
+    expect(res.status).toBe(200);
+    const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
+    expect(row?.models.find((m) => m.name === "gpt-4o-mini")?.kind).toEqual(["chat", "ocr"]);
+  });
+
+  it("leaves kind unchanged when omitted from PATCH body (idempotent on other fields)", async () => {
+    await db.insert(provider).values({
+      id: "openai",
+      name: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      models: [
+        {
+          name: "gpt-4o-mini",
+          enabled: true,
+          inputPer1k: 0.001,
+          outputPer1k: 0.002,
+          kind: ["chat", "ocr"],
+        },
+      ],
+    });
+    const res = await EditModel(jsonRequest({ enabled: false }), ctxModel("openai", "gpt-4o-mini"));
+    expect(res.status).toBe(200);
+    const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
+    expect(row?.models[0].kind).toEqual(["chat", "ocr"]);
+    expect(row?.models[0].enabled).toBe(false);
+  });
+
+  it("rejects an unknown kind value with 400", async () => {
+    await seedTwoModels();
+    const res = await EditModel(
+      jsonRequest({ kind: ["vision"] }),
+      ctxModel("openai", "gpt-4o-mini"),
+    );
     expect(res.status).toBe(400);
   });
 });

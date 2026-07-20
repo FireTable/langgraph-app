@@ -19,11 +19,39 @@ export type ProviderApiKey = {
  * — frozen into credit_usage_log.credits on success; rate changes after
  * the fact are not retroactively recomputed (correct billing semantics).
  */
+// ponytail: model kinds split by *capability domain*, not by task type.
+//   chat   — reasoning + tool use, the default pool.
+//   ocr    — vision-capable chat models used for PDF page → markdown.
+//   embed  — dense-vector models for KB chunk embeddings.
+//   extract — chat models earmarked for structured-output extraction
+//             (entity / relationship / theme triples from KB chunks).
+//             A model with `kind: ["extract", "chat"]` is eligible for
+//             both pools — the route is decided by the caller, not by
+//             `kind`. Today the kbAgent entity-LLM call site stays on
+//             the chat pool; "extract" exists so admin can flag a
+//             cheaper model (e.g. gpt-4o-mini) as the canonical
+//             extraction surface without forcing it to also be the
+//             chat default.
+export type ModelKind = "chat" | "ocr" | "embed" | "extract" | "rerank";
+
+/**
+ * Per-model rate config inside `provider.models`.
+ * Credits are computed at call time as
+ *   (inputTokens / 1000) * inputPer1k + (outputTokens / 1000) * outputPer1k
+ * — frozen into credit_usage_log.credits on success; rate changes after
+ * the fact are not retroactively recomputed (correct billing semantics).
+ */
 export type ModelConfig = {
   name: string; // "gpt-4o-mini"
   enabled: boolean;
   inputPer1k: number; // credits / 1k input tokens
   outputPer1k: number; // credits / 1k output tokens
+  // ponytail: which pool this model belongs to. A model can serve multiple
+  // kinds (gpt-4o-mini is both chat and ocr) so it's an array. Omitted ⇒
+  // ["chat"] for back-compat with seed rows created before v1 KB. The
+  // `extract` kind marks a chat-capable model as the preferred surface
+  // for structured-output extraction (see lib/credit/zod.ts modelKindSchema).
+  kind?: ModelKind[];
 };
 
 /**

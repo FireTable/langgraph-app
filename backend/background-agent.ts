@@ -44,7 +44,7 @@ export async function touchLastMessageNode(
   if (typeof threadId === "string" && threadId.length > 0) {
     await touchLastMessageAt(threadId);
   }
-  // Empty state update — the messages reducer on CommonAgentState would
+  // Empty state update — the messages reducer on BackgroundAgentState would
   // turn `[]` into a no-op (no replace, no add). Same side-effect-only
   // contract as the original afterAgentNode.
   return { messages: [] };

@@ -342,3 +342,85 @@
   margin-left: 0.25rem;
   margin-right: 0.25rem;
 }
+
+/* ponytail: hide tab label text on mobile so the settings tab strip
+   doesn't overflow. Uses Tailwind's `sr-only` technique (clip-path +
+   absolute position) so the text stays in the accessibility tree —
+   screen readers still announce the full tab label, sighted users see
+   only the icon. Above 768px the rule doesn't apply and the span
+   shows inline next to the icon. */
+@media (max-width: 767px) {
+  [role="tab"] > span:not(.sr-only) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+}
+
+/* Lexical editor styling overrides — remove default borders, outlines, and box shadows
+   to keep the input seamless and transparent inside the parent composer shell. */
+.aui-lexical-editor,
+.aui-lexical-editor:focus,
+.aui-lexical-editor:focus-visible,
+.aui-lexical-input,
+.aui-lexical-input:focus,
+.aui-lexical-input:focus-visible {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.aui-lexical-editor {
+  position: relative;
+}
+
+.aui-lexical-placeholder {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  padding: inherit;
+  pointer-events: none;
+  user-select: none;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.6;
+}
+
+.aui-lexical-editor span[contenteditable="false"],
+.aui-lexical-input span[contenteditable="false"] {
+  display: inline-flex !important;
+  vertical-align: middle;
+}
+
+.aui-lexical-input p,
+.aui-lexical-editor p,
+.aui-user-message-content {
+  margin: 0 !important;
+}
+
+.aui-lexical-input p > *,
+.aui-lexical-editor p > *,
+.aui-user-message-content > * {
+  vertical-align: middle;
+}
+
+.aui-user-message-content .aui-directive-chip:not(:first-child) {
+  margin-left: 0.25rem;
+}
+.aui-user-message-content .aui-directive-chip:not(:last-child) {
+  margin-right: 0.25rem;
+}
+
+/* ponytail: override react-force-graph default tooltip wrapper styling
+   so that our custom HTML card renders natively without double
+   backgrounds, paddings, or black boxes wrapping it. */
+.graph-tooltip {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}

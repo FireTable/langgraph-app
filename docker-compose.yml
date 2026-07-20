@@ -2,7 +2,19 @@ name: langgraph-app
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # ponytail: pgvector/pgvector is the official pgvector image
+    # (FROM postgres:16-bookworm + pgvector built from source). The
+    # upstream postgres:16-alpine does NOT bundle the vector extension
+    # and the KB migration (0005_*.sql) requires
+    # `CREATE EXTENSION IF NOT EXISTS vector` — without it, the first
+    # `pnpm db:migrate` dies with `extension "vector" is not available`.
+    # pg16 only ships bookworm/trixie Debian variants (no alpine tag),
+    # but `pgvector/pgvector:pg16` tracks whichever Debian base is
+    # current — wire-format (POSTGRES_*, PGDATA,
+    # /docker-entrypoint-initdb.d/) is inherited unchanged from the
+    # upstream image so no env / init scripts need to change.
+    # See docs/DB.md § KB retrieval.
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}

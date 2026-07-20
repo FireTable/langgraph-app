@@ -1,9 +1,9 @@
 "use client";
 
 import { type PropsWithChildren, useEffect, useMemo, useState, type FC } from "react";
-import { XIcon, PlusIcon, FileText, Loader2Icon } from "lucide-react";
+import { XIcon, PlusIcon, FileText, BookOpen, Loader2Icon } from "lucide-react";
 import { AttachmentPrimitive, ComposerPrimitive, useAuiState, useAui } from "@assistant-ui/react";
-import type { CompleteAttachment, ThreadUserMessagePart } from "@assistant-ui/react";
+import type { CompleteAttachment } from "@assistant-ui/react";
 import { useShallow } from "zustand/shallow";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogTitle, DialogContent, DialogTrigger } from "@/components/ui/dialog";
@@ -11,6 +11,9 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
 import { useUploadStore } from "@/lib/attachments/upload-store";
+import { extractKbRefFromFilename, stripKbRefFromFilename } from "@/lib/kb/extract";
+
+const KB_SETTINGS_PATH = "/settings/knowledge-base";
 
 // ponytail: client-side object URL for a pending File. Drops on unmount.
 const useFileSrc = (file: File | undefined) => {
@@ -147,7 +150,12 @@ const AttachmentPreviewDialogWithSdk: FC<PropsWithChildren> = ({ children }) => 
   return <AttachmentPreviewDialog src={src}>{children}</AttachmentPreviewDialog>;
 };
 
-const AttachmentThumb: FC<{ src?: string }> = ({ src }) => {
+type IconComponent = FC<{ className?: string }>;
+
+const AttachmentThumb: FC<{ src?: string; fallbackIcon?: IconComponent }> = ({
+  src,
+  fallbackIcon: FallbackIcon = FileText,
+}) => {
   return (
     <Avatar className="aui-attachment-tile-avatar h-full w-full rounded-none">
       <AvatarImage
@@ -156,7 +164,7 @@ const AttachmentThumb: FC<{ src?: string }> = ({ src }) => {
         className="aui-attachment-tile-image object-cover"
       />
       <AvatarFallback>
-        <FileText className="aui-attachment-tile-fallback-icon text-muted-foreground size-8" />
+        <FallbackIcon className="aui-attachment-tile-fallback-icon text-muted-foreground size-8" />
       </AvatarFallback>
     </Avatar>
   );
@@ -262,22 +270,6 @@ const AttachmentUI: FC = () => {
   );
 };
 
-// ponytail: image parts in message.content carry only the URL — the
-// SDK's `contentToParts` drops `filename` on the round trip through
-// `image_url`. R2 keys look like `u/<userId>/<uuid>-<filename>`, so
-// the last URL segment is the original filename with the uuid prefix
-// stripped.
-function filenameFromImageUrl(url: string): string {
-  try {
-    const last = new URL(url).pathname.split("/").pop() ?? "";
-    const decoded = decodeURIComponent(last);
-    const stripped = decoded.replace(/^[0-9a-f-]{36}-/, "");
-    return stripped || "image";
-  } catch {
-    return "image";
-  }
-}
-
 // ponytail: prop-based message-path card. Renders one attachment for
 // the message-list. No SDK attachment runtime here — the attachment
 // data is plain JS, sourced from message.content by the parent.
@@ -291,7 +283,23 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
     [attachment],
   );
   const isImage = attachment.type === "image";
+  // ponytail: kbAgent stamps a `[kb:<docId>]` prefix onto the file
+  // part's filename (both `filename` and `metadata.filename`). We
+  // parse it once and use it to (a) override the click target
+  // (deep-link into /settings/... rather than open the file preview
+  // dialog) and (b) rename the tile label from "File" to "KB
+  // document". The user-facing filename has the prefix stripped so
+  // the bracket is invisible — `attachment.name` is the SDK's view of
+  // the post-round-trip filename, so this is the only place we need
+  // to scrub.
+  const kbRefDocId = useMemo(() => {
+    const ref = extractKbRefFromFilename(attachment.name);
+    return ref?.docId ?? null;
+  }, [attachment.name]);
+  const isKbDoc = kbRefDocId !== null;
+  const displayName = useMemo(() => stripKbRefFromFilename(attachment.name), [attachment.name]);
   const typeLabel = useMemo(() => {
+    if (isKbDoc) return "KB document";
     switch (attachment.type) {
       case "image":
         return "Image";
@@ -302,7 +310,21 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
       default:
         return attachment.type;
     }
-  }, [attachment.type]);
+  }, [attachment.type, isKbDoc]);
+
+  const activate = () => {
+    if (kbRefDocId) {
+      // ponytail: open in a new tab so the chat stays put — users
+      // typically want to peek at the KB doc + come back without
+      // losing scroll/state. router.push would unmount the chat
+      // thread and force a re-fetch of all messages on return.
+      window.open(
+        `${KB_SETTINGS_PATH}?doc=${encodeURIComponent(kbRefDocId)}`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    }
+  };
 
   return (
     <Tooltip>
@@ -313,20 +335,40 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
           isImage && "aui-attachment-root-message only:*:first:size-24",
         )}
       >
-        <AttachmentPreviewDialog src={src}>
+        {isKbDoc ? (
           <TooltipTrigger asChild>
             <div
               className="aui-attachment-tile bg-muted size-14 cursor-pointer overflow-hidden rounded-[calc(var(--composer-radius)-var(--composer-padding))] border transition-opacity hover:opacity-75"
               role="button"
               tabIndex={0}
               aria-label={`${typeLabel} attachment`}
+              onClick={activate}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  activate();
+                }
+              }}
             >
-              <AttachmentThumb src={src} />
+              <AttachmentThumb src={undefined} fallbackIcon={BookOpen} />
             </div>
           </TooltipTrigger>
-        </AttachmentPreviewDialog>
+        ) : (
+          <AttachmentPreviewDialog src={src}>
+            <TooltipTrigger asChild>
+              <div
+                className="aui-attachment-tile bg-muted size-14 cursor-pointer overflow-hidden rounded-[calc(var(--composer-radius)-var(--composer-padding))] border transition-opacity hover:opacity-75"
+                role="button"
+                tabIndex={0}
+                aria-label={`${typeLabel} attachment`}
+              >
+                <AttachmentThumb src={src} />
+              </div>
+            </TooltipTrigger>
+          </AttachmentPreviewDialog>
+        )}
       </div>
-      <TooltipContent side="top">{attachment.name}</TooltipContent>
+      <TooltipContent side="top">{displayName}</TooltipContent>
     </Tooltip>
   );
 };
@@ -351,64 +393,102 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
 // and delete the message.content parser below. The visual is identical
 // (same `MessageAttachmentCard` shape), so no UX change is needed at
 // switchover.
+// ponytail: image parts in message.content carry only the URL — the
+// SDK's `contentToParts` drops `filename` on the round trip through
+// `image_url`. R2 keys look like `u/<userId>/<uuid>-<filename>`, so
+// the last URL segment is the original filename with the uuid prefix
+// stripped.
+function filenameFromImageUrl(url: string): string {
+  try {
+    const last = new URL(url).pathname.split("/").pop() ?? "";
+    const decoded = decodeURIComponent(last);
+    const stripped = decoded.replace(/^[0-9a-f-]{36}-/, "");
+    return stripped || "image";
+  } catch {
+    return "image";
+  }
+}
+
+function asRecord(part: unknown): Record<string, unknown> {
+  return part as Record<string, unknown>;
+}
+
+// ponytail: pure projection of message.content → CompleteAttachment[].
+// File tiles always come out as `type: "file"`; the KB marker rides
+// on the file part's filename as a `[kb:<docId>]` prefix (both
+// `filename` and `metadata.filename`) — the SDK's `contentToParts`
+// round-trip preserves that filename, so the projection just copies
+// it through. MessageAttachmentCard parses the prefix off
+// `attachment.name` to decide whether to deep-link into /settings/
+// knowledge-base and to strip the prefix before showing the filename
+// in the tooltip. Image parts never carry the prefix so they always
+// render plain.
+function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachment[] {
+  const seen = new Set<string>();
+  const out: CompleteAttachment[] = [];
+  for (const part of parts) {
+    const r = asRecord(part);
+    const type = r.type;
+
+    if (type === "image" && typeof r.image === "string") {
+      const url = r.image;
+      const name = filenameFromImageUrl(url);
+      if (seen.has(url)) continue;
+      seen.add(url);
+      out.push({
+        id: url,
+        type: "image",
+        name,
+        contentType: "image",
+        status: { type: "complete" },
+        content: [{ type: "image", image: url, filename: name }],
+      });
+    } else if (type === "file" && typeof r.data === "string") {
+      // ponytail: SDK's contentToParts defaults filename to "file"
+      // when the source part lacks `metadata.filename`, but the type
+      // still allows undefined. Fall back to "file" so we always
+      // have a non-empty id / name.
+      const fileName = (typeof r.filename === "string" && r.filename) || "file";
+      const mimeType = typeof r.mimeType === "string" ? r.mimeType : "";
+      const kbRef = extractKbRefFromFilename(fileName);
+      // ponytail: dedupe on docId when the file is KB-tagged, otherwise
+      // on filename. A retried / duplicate upload with the same name
+      // but a different docId would otherwise show two tiles; the same
+      // file uploaded twice with no docId change stays as one tile.
+      const key = kbRef ? `kb_ref:${kbRef.docId}` : fileName;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: key,
+        type: "file",
+        name: fileName,
+        contentType: mimeType,
+        status: { type: "complete" },
+        content: [
+          {
+            type: "file" as const,
+            data: r.data,
+            mimeType,
+            filename: fileName,
+          },
+        ],
+      });
+    }
+    // legacy standalone `{ type: "kb_ref", docId }` parts (older
+    // threads) are dropped here — the parent message still has the
+    // file part that produced the original upload, and that file
+    // part will carry the kb_ref prefix on any subsequent re-ingest.
+  }
+  return out;
+}
+
 export const UserMessageAttachments: FC = () => {
   const content = useAuiState((s) => s.message.content);
 
-  const attachments = useMemo<CompleteAttachment[]>(() => {
-    const seen = new Set<string>();
-    const result: CompleteAttachment[] = [];
-    for (const part of content) {
-      let key: string | undefined;
-      let complete: CompleteAttachment | undefined;
-      if (part.type === "image") {
-        const imagePart = part;
-        const name = filenameFromImageUrl(imagePart.image);
-        key = imagePart.image;
-        complete = {
-          id: imagePart.image,
-          type: "image",
-          name,
-          contentType: "image",
-          status: { type: "complete" },
-          content: [
-            {
-              type: "image",
-              image: imagePart.image,
-              filename: name,
-            },
-          ],
-        };
-      } else if (part.type === "file") {
-        const filePart = part as Extract<ThreadUserMessagePart, { type: "file" }>;
-        // ponytail: SDK's contentToParts defaults filename to "file"
-        // when the source part lacks `metadata.filename`, but the type
-        // still allows undefined. Fall back to "file" so we always
-        // have a non-empty id / name.
-        const fileName = filePart.filename || "file";
-        key = fileName;
-        complete = {
-          id: fileName,
-          type: "file",
-          name: fileName,
-          contentType: filePart.mimeType,
-          status: { type: "complete" },
-          content: [
-            {
-              type: "file",
-              data: filePart.data,
-              mimeType: filePart.mimeType,
-              filename: fileName,
-            },
-          ],
-        };
-      }
-      if (complete && key && !seen.has(key)) {
-        seen.add(key);
-        result.push(complete);
-      }
-    }
-    return result;
-  }, [content]);
+  const attachments = useMemo<CompleteAttachment[]>(
+    () => buildUserMessageAttachments(content),
+    [content],
+  );
 
   if (attachments.length === 0) return null;
 

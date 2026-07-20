@@ -27,7 +27,7 @@ export const MemoryRecallDemo = () => {
   const visible = reduced || inView;
 
   return (
-    <div ref={ref} className="bg-background flex w-full max-w flex-col gap-3 rounded-xl p-4">
+    <div ref={ref} className="bg-background flex  max-w flex-col gap-3 rounded-xl p-4">
       <Block label="system" delay={0} visible={visible}>
         <p className="text-foreground/90 mb-1.5 text-[11px] font-medium tracking-wide uppercase">
           Memory

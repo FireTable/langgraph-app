@@ -11,6 +11,7 @@ import {
 } from "@/backend/memory/recall";
 import { MEMORY_AUGMENTED_PROMPT_TEMPLATE } from "@/backend/prompt/system";
 import { formatSummaryText } from "@/lib/langgraph/format-summary";
+import { resolveKbRefs } from "@/lib/kb/resolve";
 
 // ponytail: the system prompt carries TWO dynamic blocks:
 //   <memory>    = the user's saved profile (keys + values), plus OAuth
@@ -106,11 +107,24 @@ export function formatThreadsForPrompt(threads: ThreadSummariesPayload): string 
 // Pure function — `template.test.ts` pins every branch (no summary,
 // no humans, single summary, multiple summaries, last human covered,
 // out-of-order store rows, tool interleaving preserved).
-export function trimMessagesForInvoke(
+//
+// v2 (issue #13): kb_ref resolution happens here too — the LLM only
+// ever sees resolved text. Async because resolveKbRefs awaits the
+// LRU-cached DB lookup.
+//
+// v3 (issue #13): resolveKbMentions leaves the `:kb-doc[…]{id=…}` /
+// `:kb-folder[…]{id=…}` directive tokens in the HumanMessage text
+// (the LLM reads them and calls `search_kb` itself with the right
+// filter). The resolver only injects a synthetic search_kb
+// ToolMessage for the rare 0-chunk-fallback case — see
+// `lib/kb/resolve-mentions.ts`.
+export async function prepareMessagesForInvoke(
   messages: BaseMessage[],
   summaries: ThreadSummariesPayload["summaries"],
-): BaseMessage[] {
-  const noSystem = messages.filter((m) => !(m instanceof SystemMessage));
+  userId?: string,
+): Promise<BaseMessage[]> {
+  const resolved = userId ? await resolveKbRefs(messages, userId) : messages;
+  const noSystem = resolved.filter((m) => !(m instanceof SystemMessage));
   const humanIndices: number[] = [];
   for (let i = 0; i < noSystem.length; i++) {
     if (noSystem[i] instanceof HumanMessage) humanIndices.push(i);
@@ -119,11 +133,13 @@ export function trimMessagesForInvoke(
   for (const s of summaries) {
     if (s.endMessageIndex > maxEnd) maxEnd = s.endMessageIndex;
   }
+
   // ponytail: no summary OR no human turns in the array → nothing to
   // trim. Returning noSystem (not messages) still drops a stray
   // SystemMessage if one slipped in — the strip pass is unconditional.
   if (maxEnd < 0 || humanIndices.length === 0) return noSystem;
   const trimTo = maxEnd + 1 < humanIndices.length ? humanIndices[maxEnd + 1] : noSystem.length;
+
   return noSystem.slice(trimTo);
 }
 

@@ -7,11 +7,18 @@ import { checkpointer } from "@/backend/checkpointer";
 import { deleteMemoryDoc, deleteThreadSummaries } from "@/lib/memory/queries";
 
 export async function listThreadsForUser(userId: string): Promise<Thread[]> {
-  return db
-    .select()
-    .from(threads)
-    .where(and(eq(threads.userId, userId), eq(threads.status, "regular")))
-    .orderBy(desc(threads.updatedAt));
+  return (
+    db
+      .select()
+      .from(threads)
+      // ponytail: kind='chat' keeps standalone kbAgent ingestion threads
+      // (kind='kb') out of the user's chat sidebar. status='regular' still
+      // filters user-archived chats. The two flags are orthogonal.
+      .where(
+        and(eq(threads.userId, userId), eq(threads.status, "regular"), eq(threads.kind, "chat")),
+      )
+      .orderBy(desc(threads.updatedAt))
+  );
 }
 
 export async function getThreadForUser(id: string, userId: string): Promise<Thread | undefined> {
@@ -28,7 +35,10 @@ export async function createThread(args: { userId: string; title?: string }): Pr
   // /threads/[id]/state and /threads/[id]/stream paths; using a short
   // nanoid breaks the "click thread to load history" path with a 400.
   const id = randomUUID();
-  const [row] = await db.insert(threads).values({ id, userId: args.userId, title }).returning();
+  const [row] = await db
+    .insert(threads)
+    .values({ id, userId: args.userId, title, kind: "chat" })
+    .returning();
   return row!;
 }
 

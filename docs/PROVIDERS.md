@@ -1,12 +1,31 @@
 # Providers
 
-The runtime chat model that powers every LangGraph node is resolved at **call time** from the `provider` table in Postgres, not from `process.env`. The DB-backed registry is the only thing the graph knows about; `OPENAI_API_KEY` / `OPENAI_MODEL` / `OPENAI_BASE_URL` are a graceful fallback when the table is empty (first-boot, before the seed migration runs, or if the operator wipes the registry).
+The runtime model that powers every LangGraph node is resolved at **call time** from the `provider` table in Postgres, not from `process.env`. The DB-backed registry is the only thing the graph knows about; `OPENAI_API_KEY` / `OPENAI_MODEL` / `OPENAI_BASE_URL` are a graceful fallback when the table is empty (first-boot, before the seed migration runs, or if the operator wipes the registry).
 
-Resolution path:
+Resolution paths:
 
-1. **`backend/model.ts:getChatModel(opts?)`** — canonical entry point. Every LangGraph node calls this. Tries the DB registry first; on miss / DB unreachable, falls back to a `ChatOpenAI` built from env vars so dev still works pre-seed.
-2. **`lib/provider/model-registry.ts:getChatModelFromDB(opts?)`** — the pure-DB path. Collects every enabled `(provider, model, key)` tuple matching the opts, decrypts each, picks one via round-robin, and returns the bare `ChatOpenAI`. **No fallback chain** — a previous version wrapped picks in `Runnable.withFallbacks(...)` but that returns a `RunnableWithFallbacks` (Runnable, not BaseChatModel) and dropped `.bindTools` / `.withStructuredOutput`, which crashed the 6 LangGraph node consumers. Cross-tuple retry on any thrown error is gone; add it back via a per-call-site `try/catch` loop when a per-key rate-limit becomes a real problem. The tuple list is cached in an in-process LRU keyed on `providerId:modelName` for 60s.
-3. **`lib/provider/model-registry.ts:invalidateModelCache(key?)`** — called by every admin CUD route (`POST/PATCH/DELETE` under `/api/admin/providers/**`). Without an arg, clears the entire LRU; with a key, drops just that entry.
+1. **`backend/model.ts:getChatModel(opts?)`** — canonical entry point for chat-class models. Every LangGraph node calls this. Tries the DB registry first; on miss / DB unreachable, falls back to a `ChatOpenAI` built from env vars so dev still works pre-seed.
+2. **`lib/provider/model-registry.ts:getChatModelFromDB(opts?)`** — the pure-DB chat path. Collects every enabled `(provider, model, key)` tuple matching the opts and whose `kind` includes `"chat"`, decrypts each, picks one via round-robin, and returns the bare `ChatOpenAI`. **No fallback chain** — a previous version wrapped picks in `Runnable.withFallbacks(...)` but that returns a `RunnableWithFallbacks` (Runnable, not BaseChatModel) and dropped `.bindTools` / `.withStructuredOutput`, which crashed the 6 LangGraph node consumers. Cross-tuple retry on any thrown error is gone; add it back via a per-call-site `try/catch` loop when a per-key rate-limit becomes a real problem. The tuple list is cached in an in-process LRU keyed on `kind=chat|providerId:modelName` for 60s.
+3. **`lib/provider/model-registry.ts:getOcrModelFromDB(opts?)` / `getExtractModelFromDB(opts?)` / `getEmbeddingModelFromDB(opts?)` / `getRerankModelFromDB(opts?)`** — kind-aware variants for the non-chat pools (KB v3). Each filters on `kind.includes("<kind>")` and is round-robin-independent from the chat pool, so a chat burst doesn't starve an OCR pick. `getExtractModelFromDB` falls back to the chat pool when no tuple has `"extract"` in its `kind` list — every chat model is a valid structured-output caller, so the wiring is non-breaking for fresh installs that haven't flagged a model for extract work yet.
+4. **`lib/provider/model-registry.ts:invalidateModelCache(key?)`** — called by every admin CUD route (`POST/PATCH/DELETE` under `/api/admin/providers/**`). Without an arg, clears the entire LRU; with a key, drops just that entry.
+
+## Model `kind` — five-way capability split
+
+Each row inside `provider.models[]` carries a `kind: ("chat" | "ocr" | "embed" | "extract" | "rerank")[]` array. A single model can serve multiple pools — `kind: ["chat","ocr"]` makes gpt-4o eligible for both. The route is decided by the caller, not by `kind`; `kind` is only a filter on the registry. Omitting `kind` on POST auto-fills `["chat"]` (back-compat with seed rows created before KB v3).
+
+| `kind`    | What runs                                                                   | Caller today                                                                       |
+| --------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `chat`    | Reasoning + tool use (the default pool)                                     | Every sub-agent + 5 LangGraph nodes (see [`docs/MEMORY.md`](./MEMORY.md) topology) |
+| `ocr`     | Vision-capable chat models used for PDF page → markdown (`kbAgent.ocrNode`) | `backend/agent/kb-agent.ts`                                                        |
+| `embed`   | Dense-vector models for KB chunk embeddings                                 | `backend/agent/kb-agent.ts` (`OpenAIEmbeddings` from `@langchain/openai`)          |
+| `extract` | Chat models earmarked for structured-output extraction                      | Optional — falls back to the `chat` pool when no tuple has `extract` in `kind`     |
+| `rerank`  | Cross-encoder / Reranker APIs (Cohere, Jina, …)                             | `lib/kb/search.ts` when registered; otherwise the search skips the second stage    |
+
+See [`docs/ADMIN.md`](./ADMIN.md) § Model registration for the admin UI surface and [`docs/APIS.md`](./APIS.md) § Admin for the request/response shape.
+
+## Reranker shape (`RerankModel`)
+
+`RerankModel` (same file, `lib/provider/model-registry.ts`) is a thin wrapper around the Cohere / Jina `/rerank` endpoint — picked the same way as a chat model, but returned as a class instead of a `BaseChatModel`. The constructor takes `{ providerId, baseUrl, modelName, apiKey }` from the DB tuple; `.rerank(query, documents, topN)` POSTs `{ model, query, documents, top_n }` to `${baseUrl}/rerank` and reshapes the response's `results[].relevance_score` into `{ index, score }[]`. When the provider id is `jina` and no explicit `baseUrl` is set, it falls back to `https://api.jina.ai/v1`; every other provider id defaults to `https://api.cohere.com/v1`. Operators wanting a non-default endpoint should set `baseUrl` on the provider row.
 
 The fallback exists so a fresh checkout can boot end-to-end before `pnpm db:migrate` lands the seeded `default` provider row.
 
@@ -32,7 +51,7 @@ const tupleCache = new LRUCache<OptsKey, ModelTuple[]>({
 });
 ```
 
-The cache key is `${providerId ?? "*"}:${modelName ?? "*"}` — derived purely from the caller-supplied opts, so a cache hit is a sync hash lookup with zero DB traffic. Different opt shapes land in different slots; admin invalidation drops them all.
+The cache key is `kind=<kind>|${providerId ?? "*"}:${modelName ?? "*"}` — the `kind=` prefix namespaces the LRU + the round-robin counter per pool so chat traffic and OCR traffic don't advance each other's pick positions. Different opt shapes (with or without `providerId` / `modelName`) land in different slots; admin invalidation drops them all. Five prefixes exist today (`chat / ocr / embed / extract / rerank`); adding a sixth only touches this file + one wrapper.
 
 ### The cross-process tradeoff
 
@@ -84,6 +103,15 @@ This is what lets `pnpm dev` work before the migration runs. In production, the 
 ## Callers
 
 Every LangGraph node that calls an LLM goes through `backend/model.ts:getChatModel()`. Today: `backend/agent/{chat,code,weather,crypto}-agent.ts` + `backend/node/{rename-thread-agent,thread-summarize,router-agent}-node.ts`. All call sites are `await getChatModel()` (async). Adding a new node: import the same getter, no further wiring.
+
+The non-chat pools are reached directly from `lib/provider/model-registry.ts`:
+
+- `getOcrModelFromDB` — `backend/agent/kb-agent.ts` (PDF page screenshots → markdown)
+- `getEmbeddingModelFromDB` — `backend/agent/kb-agent.ts` (chunk vectors, 1024-dim)
+- `getExtractModelFromDB` — `backend/agent/kb-agent.ts` (LightRAG-style entity / relationship / theme extraction)
+- `getRerankModelFromDB` — `lib/kb/search.ts` (only when an admin has flagged a model with `kind: ["rerank"]`)
+
+The chat path stays the env fallback (`backend/model.ts`) — the others throw if no matching tuple exists.
 
 `modelKwargs.reasoning_split: true` is hard-coded in the registry — only `minimax` honors it, but the DB schema is free of a one-off knob no other provider cares about. If a second provider ever needs a different kwarg, add a `metadata` jsonb column to `provider.models[]` and read it here.
 

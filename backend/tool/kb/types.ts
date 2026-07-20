@@ -1,0 +1,75 @@
+import type { HybridSearchResult } from "@/lib/kb/search";
+
+// ponytail: ToolMessage shape returned by every KB search tool. Both
+// fields describe the SAME payload from two perspectives:
+//   - `content`  — the LLM-facing string with `[1] [2] …` markers baked
+//                 in. The model emits inline citations by copying these.
+//                 Community consensus (LangChain / LlamaIndex / Haystack):
+//                 hide scores from the LLM, use them only for ranking.
+//   - `documents` — the UI-facing structured array for Sources cards.
+//                   Carries `rrfScore` + `legsHit` so the frontend can
+//                   show debug badges.
+export type KbSearchDocument = {
+  chunkId: string;
+  documentId: string;
+  docTitle: string;
+  pageNumbers: number[];
+  content: string;
+  rrfScore: number;
+  // ponytail: mirrors HybridSearchResult.legsHit in lib/kb/search.ts.
+  legsHit: Array<"kw" | "vec" | "tag" | "full">;
+};
+
+export type KbToolResult = {
+  content: string;
+  documents: KbSearchDocument[];
+  empty: boolean;
+};
+
+// ponytail: `list_documents` returns a folder-grouped shape so the
+// chat-side card can render each folder as a collapsible section and
+// the LLM can see the folder structure in `content`. `documents[]`
+// carries the same per-doc status counts (totalPages / successPages /
+// totalChunks / …) that the Settings → KB DocStatusBadge +
+// ChunksStatusBadge read — same source of truth for both surfaces.
+
+export type ListDocumentsArgs = {
+  folderId?: string;
+  status?: "success" | "failed" | "parsing" | "pending";
+  titleQuery?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+export type ListDocumentsDoc = {
+  id: string;
+  title: string;
+  status: "success" | "failed" | "parsing" | "pending";
+  errorMessage: string | null;
+  createdAt: string;
+  totalPages: number;
+  successPages: number;
+  failedPages: number;
+  parsingPages: number;
+  pendingPages: number;
+  totalChunks: number;
+  successChunks: number;
+  failedChunks: number;
+  pendingChunks: number;
+  parsingChunks: number;
+};
+
+export type ListDocumentsFolder = {
+  id: string;
+  name: string;
+  documents: ListDocumentsDoc[];
+};
+
+export type ListDocumentsResult = {
+  folders: ListDocumentsFolder[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type { HybridSearchResult };

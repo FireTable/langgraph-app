@@ -3,6 +3,12 @@
 // ponytail: singleton <Sheet/> mounted at ThreadRoot. Subscribes to the
 // sheet-context to know which thread to load; holds the fetch lifecycle
 // (was previously inlined in button.tsx → per-message N-fold duplication).
+//
+// Decoupled from @assistant-ui/react's useAuiState — callers that DO have
+// an AuiProvider pass `activeThreadId` so the sheet can show its
+// "thread has changed" warning; callers without (e.g.
+// /settings/knowledge-base) simply omit it and the warning never
+// renders. This keeps the sheet reusable outside the chat runtime.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FC } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -14,6 +20,15 @@ import { useObservabilitySheetState } from "@/components/observability/sheet-con
 import type { AggregateDTO, InFlightRun, SpanDataDTO } from "@/lib/observability/validators";
 
 const LOCAL_THREAD_PREFIX = "__LOCAL_";
+void LOCAL_THREAD_PREFIX;
+
+export type ObservabilitySheetProps = {
+  // ponytail: the chat runtime's currently-active thread id, when the
+  // caller is mounted under <AuiProvider>. Optional — when omitted, the
+  // "thread has changed" warning below is suppressed. Settings page
+  // passes nothing; the chat thread tree reads it via ChatObservabilitySheet.
+  activeThreadId?: string | null;
+};
 
 // ponytail: 10s poll while a bg agent is in flight. Once the API reports
 // in_flight_runs is empty, onRefresh resolves false and the polling +
@@ -90,7 +105,21 @@ const RefreshCountdown: FC<RefreshCountdownProps> = ({ enabled, refreshIntervalM
   );
 };
 
-export const ObservabilitySheet: FC = () => {
+// ponytail: chat-side wrapper. Pulls the active thread id from the
+// assistant-ui runtime via useAuiState and forwards it to the bare
+// ObservabilitySheet so the "thread has changed" warning fires only
+// inside the chat runtime. Settings page mounts <ObservabilitySheet />
+// directly (no provider) — no warning, no AuiProvider requirement.
+export const ChatObservabilitySheet: FC = () => {
+  const auiThreadId = useAuiState((s) => {
+    const item = s.threads.threadItems.find((t) => t.id === s.threads.mainThreadId);
+    const candidate = item?.externalId ?? s.threads.mainThreadId;
+    return candidate && !candidate.startsWith(LOCAL_THREAD_PREFIX) ? candidate : null;
+  });
+  return <ObservabilitySheet activeThreadId={auiThreadId} />;
+};
+
+export const ObservabilitySheet: FC<ObservabilitySheetProps> = ({ activeThreadId = null }) => {
   const { open, threadId, parentMessageId, setOpen } = useObservabilitySheetState();
   const [spans, setSpans] = useState<SpanDataDTO[]>([]);
   const [aggregate, setAggregate] = useState<AggregateDTO | null>(null);
@@ -100,15 +129,12 @@ export const ObservabilitySheet: FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ponytail: when the sheet is closed we still track the latest threadId
-  // the user clicked on (saved in sheet-context state) so a re-open on the
-  // same thread shows cached data without a round trip. Reset load flags
-  // when the active threadId changes.
-  const auiThreadId = useAuiState((s) => {
-    const item = s.threads.threadItems.find((t) => t.id === s.threads.mainThreadId);
-    const candidate = item?.externalId ?? s.threads.mainThreadId;
-    return candidate && !candidate.startsWith(LOCAL_THREAD_PREFIX) ? candidate : null;
-  });
+  // ponytail: `activeThreadId` is passed in by callers mounted under
+  // <AuiProvider> (ChatObservabilitySheet). Non-chat callers (settings
+  // page) omit it — the "thread has changed" warning below is
+  // suppressed, since there's no surrounding chat thread to compare
+  // against. The previous direct useAuiState call forced every mount
+  // site to live under AuiProvider, breaking settings usage.
 
   // ponytail: monotonic fetch id — every loadSpans() bumps it, and
   // older in-flight responses early-return when they no longer own
@@ -198,7 +224,7 @@ export const ObservabilitySheet: FC = () => {
           </SheetTitle>
         </SheetHeader>
 
-        {auiThreadId && threadId && auiThreadId !== threadId ? (
+        {activeThreadId && threadId && activeThreadId !== threadId ? (
           <div className="text-muted-foreground text-xs">
             Thread has changed — close and reopen to see the latest data.
           </div>

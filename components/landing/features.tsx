@@ -110,9 +110,9 @@ const BENTO: BentoCard[] = [
     codePreview: ``,
   },
   {
-    title: "Cross-conversation memory",
+    title: "Memory + Knowledge Base",
     description:
-      "User facts and recent threads surface automatically. \nThe model sees them in a prepended system block; the Memory tab lets you review and delete.",
+      "User facts surface in the system block; PDFs go through a per-doc pipeline (OCR → chunk → embed → entity) and become a hybrid-searchable index. Both are reviewable and deletable from settings.",
     icon: <BrainIcon className="size-4" />,
     hue: "violet",
     span: "wide",

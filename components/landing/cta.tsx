@@ -27,7 +27,7 @@ export const Cta: FC<CtaProps> = ({ signedIn }) => {
     // `from` angle rotates via `cta-marquee` (see globals.css) so
     // the warm overflow breathes instead of standing still. The
     // radial stays put to anchor the layout.
-    <section id="cta" className="border-b border-border/60 relative overflow-hidden">
+    <section id="cta" className=" relative overflow-hidden">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 z-0 blur-3xl"
@@ -39,7 +39,7 @@ export const Cta: FC<CtaProps> = ({ signedIn }) => {
         }}
       />
       <div className="relative z-10 mx-auto w-full max-w-6xl px-6 py-24">
-        <div className="bg-card/70 supports-[backdrop-filter]:bg-card/50 supports-[backdrop-filter]:backdrop-blur-md border-border/60 flex flex-col items-start gap-6 rounded-2xl border p-8 sm:p-10">
+        <div className="bg-card/70 supports-[backdrop-filter]:bg-card/50 supports-[backdrop-filter]:backdrop-blur-md flex flex-col items-start gap-6 rounded-2xl p-8 sm:p-10">
           <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Read the code. Run it. Skip the demo.
           </h2>

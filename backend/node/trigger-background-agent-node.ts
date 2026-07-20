@@ -19,6 +19,7 @@
 // spans land in the same observability row set as the chat invoke.
 import { langGraphClient } from "@/lib/langgraph/client";
 import { lastHumanMessageId } from "@/lib/langgraph/last-human-message-id";
+import type { BaseMessage } from "@langchain/core/messages";
 
 type ScheduleConfig = {
   configurable?: {
@@ -28,13 +29,13 @@ type ScheduleConfig = {
 };
 
 type ScheduleState = {
-  messages?: unknown[];
+  messages?: BaseMessage[];
 };
 
 type PreparedCall = {
   userId: string;
   threadId: string;
-  messages: unknown[];
+  messages: BaseMessage[];
   // ponytail: last HumanMessage id from the chat invoke — the same
   // id assistant-ui stamps on the user message. The observability
   // API uses it to scope in-flight runs to the current turn (the
@@ -42,7 +43,10 @@ type PreparedCall = {
   parentMessageId: string | null;
 };
 
-function readBackgroundCall(state: ScheduleState, config: ScheduleConfig): PreparedCall | null {
+async function readBackgroundCall(
+  state: ScheduleState,
+  config: ScheduleConfig,
+): Promise<PreparedCall | null> {
   const userId = config.configurable?.userId;
   const threadId = config.configurable?.thread_id;
   if (typeof userId !== "string" || userId.length === 0) return null;
@@ -51,7 +55,7 @@ function readBackgroundCall(state: ScheduleState, config: ScheduleConfig): Prepa
   return {
     userId,
     threadId,
-    messages: state.messages ?? [],
+    messages: state.messages as BaseMessage[],
     parentMessageId: lastHumanMessageId(state.messages),
   };
 }
@@ -83,7 +87,7 @@ export async function triggerBackgroundAgentNode(
   state: ScheduleState,
   config: ScheduleConfig,
 ): Promise<Record<string, never>> {
-  const prepared = readBackgroundCall(state, config);
+  const prepared = await readBackgroundCall(state, config);
   if (!prepared) return {};
 
   // ponytail: must await so SDK rejections propagate to the catch

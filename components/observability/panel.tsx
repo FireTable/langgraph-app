@@ -300,6 +300,26 @@ const TypedBadge: FC = () => {
   return <TypeChip type={type} />;
 };
 
+// ponytail: failed spans get a small AlertCircle next to the span name
+// in the waterfall list. The timeline bar already draws a red border
+// (WaterfallBar, lines 233-244), but a vertical list at-a-glance scan
+// needs an inline cue too — clicking still opens the detail panel
+// where the FAILED badge repeats.
+const FailedIndicator: FC = () => {
+  const status = useAuiState(
+    (s) => (s as unknown as { span: SpanItemState }).span.status,
+  ) as SpanItemState["status"];
+  if (status !== "failed") return null;
+  return (
+    <AlertCircleIcon
+      className="shrink-0"
+      style={{ color: STATUS_STYLE.failed.color, width: 13, height: 13 }}
+      aria-label="Failed"
+      role="img"
+    />
+  );
+};
+
 const STATUS_STYLE: Record<string, { color: string; bg: string; border: string }> = {
   completed: {
     color: "hsl(142 71% 45%)",
@@ -361,7 +381,7 @@ const WaterfallRow: FC = () => {
       <SpanPrimitive.Indent
         baseIndent={8}
         indentPerLevel={12}
-        className="border-border group-hover:bg-accent/50 sticky left-0 bg-background z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2 max-w-[50%] md:max-w-none"
+        className={`border-border group-hover:bg-accent/50 sticky left-0 ${isSelected ? "bg-accent/60" : "bg-background"} z-10 flex shrink-0 items-center gap-1 overflow-hidden border-r px-2 max-w-[50%] md:max-w-none`}
         style={{ width: LABEL_WIDTH, height: BAR_HEIGHT }}
       >
         <AuiIf
@@ -380,6 +400,7 @@ const WaterfallRow: FC = () => {
         </AuiIf>
         <TypedBadge />
         <SpanPrimitive.Name className="truncate text-sm" />
+        <FailedIndicator />
       </SpanPrimitive.Indent>
 
       <div

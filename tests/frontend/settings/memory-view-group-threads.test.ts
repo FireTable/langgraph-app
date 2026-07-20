@@ -18,7 +18,7 @@ function summary(threadId: string, sequence: number, createdAt: string): ThreadR
       endMessageIndex: 0,
       messageCount: 1,
       messageIds: ["m0"],
-      summary: { entries: [{ question: "q", answer: "a", refs: ["#1"] }] },
+      summary: { entries: [{ question: "q", answer: "a", refs: ["1"] }] },
       triggerReason: "turn_based" as const,
       tokenCountBefore: 0,
       tokenCountAfter: 0,

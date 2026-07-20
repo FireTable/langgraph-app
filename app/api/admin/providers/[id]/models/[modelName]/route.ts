@@ -1,32 +1,21 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
-import { z } from "zod";
 
 import { db } from "@/db/client";
 import { provider } from "@/lib/provider/schema";
 import { stripProviderSecrets } from "@/lib/provider/admin";
+import { modelPatchSchema } from "@/lib/credit/zod";
 import { invalidateModelCache } from "@/lib/provider/model-registry";
 import { withAuth } from "@/lib/auth/with-auth";
 
 type ModelParams = { id: string; modelName: string };
-
-// ponytail: the input side requires enabled / inputPer1k / outputPer1k, so
-// a partial PATCH has to lift those out of `.partial()` and re-require them
-// individually — otherwise a PATCH with `{}` would no-op and the caller has
-// no signal that "no fields were sent".
-const ModelPatchBody = z.object({
-  name: z.string().min(1).max(128).optional(),
-  enabled: z.boolean().optional(),
-  inputPer1k: z.number().min(0).optional(),
-  outputPer1k: z.number().min(0).optional(),
-});
 
 export const PATCH = withAuth<ModelParams>({ role: "admin" }, async (req, { params }) => {
   const [existing] = await db.select().from(provider).where(eq(provider.id, params.id));
   if (!existing) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
 
   const json = await req.json().catch(() => ({}));
-  const parsed = ModelPatchBody.safeParse(json);
+  const parsed = modelPatchSchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json({ code: "BAD_REQUEST", error: parsed.error.issues }, { status: 400 });
   }

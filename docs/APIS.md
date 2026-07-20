@@ -273,6 +273,118 @@ Collapses all summary docs whose key starts with `${threadId}:` under the user's
 | Status codes  | 200 / 401 / 404                                                                                   |
 | Failure modes | 404 when no summary doc exists for `threadId` for the current user (a no-op for an empty thread). |
 
+## Knowledge Base
+
+User-facing KB v2 (Settings → Knowledge Base tab). Per-user scoped at the query layer (every helper filters by `userId` from `withAuth`). Schema lives in `lib/kb/schema.ts`; the LangGraph ingestion graph that flips `kb_document.status` pending → parsing → success/failed is `backend/kb-agent.ts`. See [`docs/DB.md`](./DB.md) for table shapes and FK cascades.
+
+**Auth + isolation contract**: `withAuth` (rule #9), no role gate — any signed-in user reads + writes their OWN folders/docs. The `WHERE user_id = ?` predicate inside every query in `lib/kb/queries.ts` is the only thing keeping one user's KB from leaking to another.
+
+### `POST /api/kb/folders`
+
+Create a folder. Subject to the `UNIQUE (user_id, name)` constraint on `kb_folder` — duplicate names return 409 with the existing row so the UI can highlight the conflict.
+
+|               |                                                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ name: string /* 1..64, trimmed */ }`                                                                          |
+| 201 response  | `{ folder: { id, userId, name, createdAt, updatedAt } }`                                                         |
+| Failure codes | 400 `INVALID_NAME` (zod failure). 401 `UNAUTHORIZED`. 409 `DUPLICATE` (returns existing folder). 500 `INTERNAL`. |
+
+### `PATCH /api/kb/folders/[id]`
+
+Rename a folder. Race-safe against concurrent renames — if two tabs race to the same name, the loser's UPDATE fails with 23505 and the endpoint returns 409 instead of a 500. The `attachmentId` / `contentHash` linkage on the folder's child documents is preserved; only the folder's `name` changes.
+
+|               |                                                                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | `{ name: string /* 1..64, trimmed */ }`                                                                                                          |
+| 200 response  | `{ folder: { id, userId, name, createdAt, updatedAt } }`                                                                                         |
+| Failure codes | 400 `INVALID_NAME`. 401 `UNAUTHORIZED`. 404 `NOT_FOUND` (folder missing or owned by another user). 409 `DUPLICATE` (name taken). 500 `INTERNAL`. |
+
+### `DELETE /api/kb/folders/[id]`
+
+Delete an empty folder. Postgres refuses via `ON DELETE RESTRICT` on `kb_document.folder_id` if any docs still belong to the folder; we surface that as 409 `NON_EMPTY` with a `docCount` so the UI can prompt "delete its N docs first".
+
+|               |                                                                        |
+| ------------- | ---------------------------------------------------------------------- |
+| Request body  | (none)                                                                 |
+| 204 response  | (empty body)                                                           |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND`. 409 `NON_EMPTY` (`{ docCount }`). |
+
+### `GET /api/kb/documents`
+
+List all of the caller's folders + their docs in one round-trip. `attachmentUrl` is the public R2 URL for the source file (used by the "View source" button on each row). No pagination — KB volume per user is O(tens of docs).
+
+When `?mention=1` is set, returns a flat list of `status='success'` docs only — powers the `@`-mention composer popover (issue #13 v3). No folder grouping, no pagination, slim payload.
+
+When `?folderId=<id>` is set, the sidebar still lists every folder the user owns, but only the targeted folder's `documents` array is populated. The other folders return `documents: []` so the Settings UI's "Live poll indicator" + scoped `anyInflight` only sees the folder the user is looking at. The `?folderId=` scope is ignored when `?mention=1` is set (the composer popover is always cross-folder).
+
+|               |                                                                                                                                                                                                                                           |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Query params  | `?mention=1` → flat `success`-only list for composer popover (omit for the default grouped response used by Settings). `?folderId=<id>` → scope the doc payload to a single folder (Settings tab only).                                   |
+| 200 response  | default: `{ groups: Array<{ folder: { id, name }, documents: Array<{ id, title, status, errorMessage, contentType, attachmentId, attachmentUrl, createdAt, updatedAt }> }> }` <br/>`?mention=1`: `{ docs: Array<{ id, title, status }> }` |
+| Failure codes | 401 `UNAUTHORIZED`. 500 `INTERNAL`.                                                                                                                                                                                                       |
+
+### `GET /api/kb/documents/[id]`
+
+Single-doc detail + slim chunk preview (text content only — no 1024-dim embedding, no generated `tsv` column). The status field drives whether chunks are included: only `success` docs return their parsed content; other statuses return `chunks: []`.
+
+|               |                                                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200 response  | `{ doc: { id, title, status, errorMessage, contentType, attachmentId, folderId, contentHash, createdAt, updatedAt }, chunks: Array<{ index: number, content: string }> }` |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND`.                                                                                                                                      |
+
+### `DELETE /api/kb/documents/[id]`
+
+Delete a single doc. Cascades to `kb_chunk` via `ON DELETE CASCADE` on `kb_chunk.document_id`. R2 objects (`kb-tmp/*` page PNGs and the source PDF under `attachments/`) are NOT deleted — they live in R2 forever; v3 retention sweep can clean them up.
+
+|               |                                      |
+| ------------- | ------------------------------------ |
+| 204 response  | (empty body)                         |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND`. |
+
+### `POST /api/kb/upload`
+
+Add a doc to a folder. Frontend uploads the file via the existing `/api/attachments/presign` → PUT → `confirm` flow first, then POSTs `{ folderId, attachmentId, title? }` here. Backend creates a `kb_document` row (`status=pending`) and fires a LangGraph run on the kbAgent graph (fire-and-forget — the run mutates the row's status as it progresses; the UI polls `GET /api/kb/documents` and watches the row flip pending → parsing → success/failed). The kbAgent graph is registered as a top-level assistant in `langgraph.json` so this dispatch skips the mainAgent router + renameThreadAgent LLM calls.
+
+**Primary dedup**: if a doc with the same `contentHash` already exists for the user, the endpoint returns the existing row instead of creating a duplicate, and re-fires ingestion if the previous attempt failed/stalled.
+
+|               |                                                                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | `{ folderId: string, attachmentId: string, title?: string /* 1..256 */ }`                                                                        |
+| 200 response  | `{ doc: { ... kb_document row ... }, deduped: true }` (existing doc — re-firing ingestion)                                                       |
+| 202 response  | `{ doc: { ... kb_document row ... } }` (new doc, ingestion run dispatched)                                                                       |
+| Failure codes | 400 `INVALID` (zod failure). 401 `UNAUTHORIZED`. 404 `ATTACHMENT_NOT_FOUND` / `FOLDER_NOT_FOUND`. 409 `ATTACHMENT_NOT_UPLOADED`. 500 `INTERNAL`. |
+
+### `POST /api/kb/documents/[id]/reprocess`
+
+Re-runs the kbAgent pipeline for an existing `kb_document`. The Settings UI exposes this via the per-row "Reprocess" button (lucide `RefreshCw`), with a mode picker for four modes. The legacy `?chunksOnly=true` query string is honoured as an alias for `?mode=chunksOnly`.
+
+| Mode                      | What it does                                                                                                                                                                    | Doc status during                | When disabled (409 `NOT_READY`)                |
+| :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------- | :--------------------------------------------- |
+| `?mode=full` (default)    | Wipe chunks + flip doc to `pending`; re-run PDF render + OCR + chunk + embed + extract                                                                                          | `parsing` → `success` / `failed` | n/a                                            |
+| `?mode=chunksOnly`        | Wipe chunks; keep doc row + cached `pages[].markdown`; re-run chunk + embed + extract on the cached pages                                                                       | stays `success`                  | doc has no `pages[]` with non-empty `markdown` |
+| `?mode=retryFailed`       | Wipe chunks + flip doc to `parsing`; re-OCR the failed pages only, then re-chunk + re-embed the whole doc                                                                       | flips to `parsing`               | doc has no `pages[]` at all                    |
+| `?mode=retryFailedChunks` | In-place UPDATE failed chunks to `status='parsing'` (id / ordinal / embedding / content preserved); keep doc row + good chunks; re-run entity-extract on the failed chunks only | **stays `success`**              | doc `status !== 'success'` OR no failed chunks |
+
+`retryFailedChunks` updates in place rather than DELETE+INSERT: under `chunksOnly` / `retryFailed` modes `pageToMarkdownNode` skips, `fullMarkdown` is empty, and the IIFE inside `generateChunkEmbedNode` would throw AFTER the DELETE had already committed, leaving the doc with N−K chunks and no recovery path. In-place UPDATE keeps the row indestructible.
+
+|               |                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Query params  | `?mode=full` (default) \| `?mode=chunksOnly` \| `?mode=retryFailed` \| `?mode=retryFailedChunks`. `?chunksOnly=true` is a legacy alias for `?mode=chunksOnly`.                                                                                                                                                                                                                                                      |
+| Request body  | (none)                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 202 response  | `{ docId: string, mode: "full" \| "chunksOnly" \| "retryFailed" \| "retryFailedChunks" }` (`chunksOnly?: true` is also returned for the legacy alias)                                                                                                                                                                                                                                                               |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND` (no doc, or doc owned by a different user — no existence leak). 409 `PROCESSING` (doc is already `pending` / `parsing`). 409 `ATTACHMENT_MISSING` (full mode only — R2 source missing; re-upload instead). 409 `NOT_READY` (chunksOnly needs cached pages; retryFailedChunks needs `status='success'` + at least one failed chunk; run a full reprocess first). 500 `INTERNAL`. |
+
+### `GET /api/kb/documents/[id]/observability`
+
+List every kbAgent re-run for one doc. Powers the Settings → KB doc row Activity icon → Observability List popover. Reads the `kb_observability` table directly (no SDK call); `prepareKBDataNode` inserts one row per invocation with `(docId, threadId, parentMessageId, runId?, source, mode)`. Initial `full`-mode uploads don't write rows — the `kb_documents` row IS the event for those. Only chunksOnly / retryFailed / retryFailedChunks reprocesses land here, so the popover is a re-run history.
+
+`threadId` is per-row, not top-level: standalone reprocess runs land on `docId.replace(/^d-/, "")`; chat-path uploads (chat subgraph) land on the chat thread. Per-row `threadId` lets the popover click handler open the sheet against the correct thread. `parentMessageId` is the synthetic HumanMessage id (standalone) or the user's chat msg id (chat path) — the same value `CapturingHandler` stamps onto every span via `meta.parent_message_id`, so the per-turn sheet route (`/api/threads/<threadId>/observability/<parentMessageId>`) scopes spans correctly.
+
+|               |                                                                                                                                                                                                                                                                            |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200 response  | `{ doc_id: string, runs: Array<{ runId: string \| null, threadId: string, parentMessageId: string, source: "kb-upload" \| "kb-reprocess" \| "chat", mode: "full" \| "chunksOnly" \| "retryFailed" \| "retryFailedChunks", createdAt: string }> }` (newest first, limit 50) |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND` (no doc, or doc owned by a different user).                                                                                                                                                                                            |
+
 ## Admin
 
 Every endpoint is `withAuth({ role: "admin" }, ...)` (rule #9). The wire shape for providers strips `encryptedKey` + `iv` from `apiKeys[]` — see [`docs/ADMIN.md`](./ADMIN.md) § Secrets handling for the AES-256-GCM contract. Roles are returned in full (no secrets on that table). All providers endpoints live in `app/api/admin/providers/**`; all roles endpoints in `app/api/admin/roles/**`.
@@ -350,21 +462,25 @@ Rotate (new plaintext) and/or rename an existing key. Path is keyed on the **ori
 
 Append a new model + rate config. `inputPer1k` / `outputPer1k` are credits-per-1k-tokens — see [`docs/CREDIT.md`](./CREDIT.md).
 
-|               |                                                                                                   |
-| ------------- | ------------------------------------------------------------------------------------------------- |
-| Request body  | `{ name: string (1..128), enabled: boolean, inputPer1k: number (≥0), outputPer1k: number (≥0) }`. |
-| 201 response  | `PublicProvider`                                                                                  |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider missing), 409 `DUPLICATE_MODEL`.           |
+|               |                                                                                                                                                                |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ name: string (1..128), enabled: boolean, inputPer1k: number (≥0), outputPer1k: number (≥0), kind?: ("chat"\|"ocr"\|"embed")[] (min 1, default ["chat"]) }`. |
+| 201 response  | `PublicProvider`                                                                                                                                               |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider missing), 409 `DUPLICATE_MODEL`.                                                                        |
+
+`kind` is the set of pools this model serves — `chat` for general inference, `ocr` for vision-based PDF text extraction (kb-agent's `ocrNode`), `embed` for KB chunk vectors. A single upstream model can hold multiple (e.g. `["chat","ocr"]`). When omitted, the backend writes `["chat"]`. See [`docs/PROVIDERS.md`](./PROVIDERS.md) for how the registry routes traffic across `(provider, model, key, kind)` tuples.
 
 ### `PATCH /api/admin/providers/[id]/models/[modelName]`
 
 Partial update. Rate changes after a call are NOT retroactively applied to historical `credit_usage_log` rows — see [`docs/CREDIT.md`](./CREDIT.md).
 
-|               |                                                                                                |
-| ------------- | ---------------------------------------------------------------------------------------------- |
-| Request body  | Any subset of `{ enabled?, inputPer1k?, outputPer1k? }`. Empty body returns 400 `BAD_REQUEST`. |
-| 200 response  | `PublicProvider`                                                                               |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or model missing).                      |
+|               |                                                                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request body  | Any subset of `{ name?, enabled?, inputPer1k?, outputPer1k?, kind?: ("chat"\|"ocr"\|"embed")[] (min 1) }`. Empty body returns 400 `BAD_REQUEST`. |
+| 200 response  | `PublicProvider`                                                                                                                                 |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or model missing).                                                                        |
+
+When `kind` is omitted from the PATCH body, the existing model keeps whatever it had (no implicit default applied — only POST auto-fills `["chat"]`).
 
 ### `DELETE /api/admin/providers/[id]/models/[modelName]`
 

@@ -40,7 +40,7 @@ ask-location card isn't raced by a parallel tool call. See
 | `connect_wallet`     | `crypto/connect-wallet.ts`     | `crypto/connect-wallet-card.tsx`     | Interrupt-driven. Reads wallet from wagmi; resumes with `{ address }`.                     |
 | `place_crypto_order` | `crypto/place-crypto-order.ts` | `crypto/place-crypto-order-card.tsx` | Interrupt-driven. Simulated swap; resumes with `SimulatedOrder` or `cancelled`.            |
 | `get_order_status`   | `crypto/get-order-status.ts`   | `crypto/order-status-card.tsx`       | Interrupt-driven. Synthesizes a status (simulated-swap demo); resumes with status payload. |
-| `get_token_balances` | `crypto/get-token-balances.ts` | —                                    | Defined but not wired into `ALL_TOOLS` yet — dormant.                                      |
+| `get_token_balances` | `crypto/get-token-balances.ts` | —                                    | Defined but not wired into `CHAT_TOOLS` yet — dormant.                                     |
 | `get_NFT_holdings`   | `crypto/get-nft-holdings.ts`   | `crypto/nft-gallery-card.tsx`        | Read-only. Lists NFTs across 5 chains; filters spam by name regex. Renders a gallery grid. |
 
 Trade flow is split into three atomic interrupt tools (connect → place → check)
@@ -99,6 +99,51 @@ payload the `SaveMemoryCard` renders as a per-row diff.
 | ------------------ | ------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `show_credit_card` | —            | `credit/credit-card.tsx` | **Client-only render — no backend tool.** The `/api/[..._path]` proxy synthesizes a tiny SSE stream carrying an AI message with a single `show_credit_card` tool_call when `checkCredit()` rejects the turn (UTC-aligned rolling-window cap reached). The card renders inline in the thread, displays `used / limit / windowHours / resetAt`, and updates the user-button dropdown slot on next refresh. Args ride on the tool_call itself — no ToolMessage is emitted. See `docs/CREDIT.md` § Where the cap is enforced. |
 
+## Knowledge base (issue #13 v3)
+
+Two tools for the user's personal KB. `search_kb` is gated on the
+Postgres `vector` extension; `list_documents` is unconditional.
+
+| Tool             | Backend file | Frontend card                                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | ------------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `search_kb`      | `kb.ts`      | `components/tool-ui/kb/search-kb-card.tsx`      | Hybrid RRF (k=60) over three legs: BM25 (`tsv` GIN), pgvector cosine (`embedding` HNSW), and entity-tag overlap (`entities` GIN). Optional `folderId` / `documentId` filters add `WHERE` clauses inside the same SQL. Empty `query` falls back to ordinal-sorted chunks for the filtered scope (lets the LLM "summarize @doc.pdf" without a keyword). When a Reranker model is registered, the candidate pool is widened to `max(50, topK * 5)` and the Reranker rescores; results below `KB_RERANK_MIN_SCORE` are filtered out before the final `topK` trim. Returns structured JSON: `{ content, documents[], empty }`. `content` embeds `[1] [2] [3]` markers; `documents[]` carries `chunkId`/`docId`/`rrfScore`/`legsHit` for UI. |
+| `list_documents` | `kb.ts`      | `components/tool-ui/kb/list-documents-card.tsx` | Paginated list of the user's KB docs. Filters: `folderId`, `status` (default `success`), `titleQuery` (ILIKE), `page` (default 1), `pageSize` (default 20, max 100). Strict filtering — no soft warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+
+### ToolMessage shape
+
+`search_kb` returns a JSON string with two top-level keys:
+
+- `content` — the LLM-facing string with `[1]`, `[2]`, ... markers baked
+  in. The model emits inline citations by copying these markers. **No
+  numeric scores** appear in this string (community consensus: scores
+  are ranking metadata only).
+- `documents[]` — structured payload for the UI hover-cards:
+  `{ chunkId, documentId, docTitle, pageNumbers, content, rrfScore, legsHit }`.
+
+### Lazy registration
+
+`search_kb` is always registered with the agent so the tool surface is
+stable, but the implementation throws a clear error when `SELECT 1 FROM
+pg_extension WHERE extname='vector'` returns empty. This is a small
+departure from the `... (tool ? [tool] : [])` pattern used elsewhere
+— the alternative (null-spread) caused the tool to disappear when
+pgvector flipped states, which is worse for the LLM than a stable tool
+that errors on call.
+
+### Knobs
+
+See `lib/kb/env.ts`. Defaults match the community survey in `.claude/13-kb-v3.md`:
+
+- `KB_HYBRID_TOPK_DEFAULT=8` — fused topK for `search_kb`.
+- `KB_HYBRID_TOPK_MAX=20` — upper bound.
+- `KB_CHUNK_MAX_CHARS=2000` — per-chunk truncation before stuffing into the LLM prompt (~512 tokens).
+- `KB_RERANK_MIN_SCORE=0.4` — minimum Reranker relevance score for `search_kb` to keep a candidate. Candidates below this are dropped after Reranker scoring, before the final `topK` trim. Set to `0` to disable the threshold (always keep everything the Reranker ranked).
+- `KB_MENTION_TOPK_DEFAULT=5` — chunks per single `@`-mention (used by the resolver, not the tool).
+- `KB_MENTION_TOPK_MAX=20`.
+- `KB_MENTION_TOKEN_BUDGET=8192` — total token cap across multi-mention turns.
+
+The Reranker model itself (Cohere / Jina / etc.) is configured per-tenant in the Admin → Providers table — see [`docs/ADMIN.md`](./ADMIN.md). When no Reranker is registered, the tool skips the second-stage entirely and slices the RRF-sorted list directly.
+
 ## Frontend wiring
 
 `components/tool-ui/toolkit.tsx` is the only place that maps tool names to
@@ -108,7 +153,7 @@ tool:
 
 1. Drop the backend file under `backend/tool/` (or `backend/tool/crypto/`).
 2. Export the tool from `backend/tool/index.ts` and add it to the relevant
-   `*_TOOLS` array (and `ALL_TOOLS` if the graph should see it).
+   `*_TOOLS` array (and `CHAT_TOOLS` if the graph should see it).
 3. If the tool has a card, drop it under `components/tool-ui/<group>/` and
    register the name → component in `toolkit.tsx`.
 4. Add a row to the matching table above.
@@ -135,7 +180,7 @@ export const getNftHoldingsTool: StructuredTool | null = process.env.ALCHEMY_API
   ? tool(impl, { name: "get_NFT_holdings", ... })
   : null;
 
-// in ALL_TOOLS:
+// in CHAT_TOOLS:
 ...(getNftHoldingsTool ? [getNftHoldingsTool] : []),
 ```
 

@@ -29,8 +29,22 @@ describe("Features", () => {
     // Each feature renders an h3 with the feature name.
     expect(screen.getByRole("heading", { name: /chat anything/i, level: 3 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /dual-graph/i, level: 3 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /memory/i, level: 3 })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /memory.*knowledge base/i, level: 3 }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /observability/i, level: 3 })).toBeInTheDocument();
+  });
+});
+
+describe("KnowledgeBase row", () => {
+  afterEach(cleanup);
+
+  it("ships the GraphRAG explainer inside How-it-works", () => {
+    render(<HowItWorks />);
+    expect(
+      screen.getByRole("heading", { name: /drop a PDF, query the entity graph/i, level: 3 }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/knowledge base/i)).toBeInTheDocument();
   });
 });
 

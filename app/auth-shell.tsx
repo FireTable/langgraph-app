@@ -7,6 +7,7 @@ import { AuthProvider as BetterAuthUIProvider } from "@/components/auth/auth-pro
 import { authClient } from "@/lib/auth/client";
 import { memorySettingsPlugin } from "@/components/auth/settings/memory-tab";
 import { creditSettingsPlugin } from "@/components/auth/settings/credit-tab";
+import { kbSettingsPlugin } from "@/components/auth/settings/kb-tab";
 
 export function AuthShell({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -16,7 +17,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
       basePaths={{ auth: "/login", settings: "/settings" }}
       socialProviders={["github", "google"]}
       multipleAccountsPerProvider={false}
-      plugins={[memorySettingsPlugin, creditSettingsPlugin]}
+      plugins={[memorySettingsPlugin, creditSettingsPlugin, kbSettingsPlugin]}
       emailAndPassword={{
         minPasswordLength: 8,
         confirmPassword: true,

@@ -9,8 +9,9 @@ import { CommonAgentState } from "@/backend/state";
 import {
   buildSystemMessageWithMemory,
   loadThreadSummariesForPrompt,
-  trimMessagesForInvoke,
+  prepareMessagesForInvoke,
 } from "@/backend/memory/template";
+import { extractUserId } from "@/backend/memory/recall";
 import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 
 // Weather agent: a focused sub-agent that owns the RAG-style weather
@@ -32,7 +33,11 @@ async function weatherModelNode(
   // and drop the original turns from the input array. state.messages
   // is NEVER touched.
   const threads = await loadThreadSummariesForPrompt(config);
-  const history = trimMessagesForInvoke(messages, threads?.summaries ?? []);
+  const history = await prepareMessagesForInvoke(
+    messages,
+    threads?.summaries ?? [],
+    extractUserId(config) ?? undefined,
+  );
   const sysMsg = await buildSystemMessageWithMemory(WEATHER_AGENT_PROMPT, config, threads);
 
   const response = await (

@@ -1,4 +1,5 @@
 import {
+  GetObjectCommand,
   S3Client,
   DeleteObjectCommand,
   HeadObjectCommand,
@@ -89,6 +90,63 @@ export async function deleteObject(key: string): Promise<void> {
   await getS3Client().send(new DeleteObjectCommand({ Bucket: getR2Bucket(), Key: key }));
 }
 
+// ponytail: server-side fetch used by the KB ingest pipeline (issue #13).
+// Returns the raw object bytes as a Buffer; the caller is responsible for
+// any format detection / decoding. v1 callers are the attachment-kb-
+// injector node that pulls a PDF from R2 and feeds mupdf.
+//
+// We don't return a stream — the KB pipeline ingests the full PDF in
+// one pass (mupdf needs the whole document for the page tree). A
+// streaming variant would matter for >10 MiB docs; today the R2 cap
+// is 10 MiB so the buffer is fine.
+export async function getObject(key: string): Promise<Buffer> {
+  const res = await getS3Client().send(new GetObjectCommand({ Bucket: getR2Bucket(), Key: key }));
+  const body = res.Body;
+  if (!body) throw new Error(`getObject: empty body for key ${key}`);
+  // ponytail: Body is a Node Readable in Node runtime; collect chunks
+  // into a single Buffer. transformToByteArray is the typed-array
+  // equivalent but Buffer is what mupdf's openDocument takes.
+  const chunks: Buffer[] = [];
+  for await (const chunk of body as AsyncIterable<Buffer | Uint8Array>) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
 export function buildPublicUrl(key: string): string {
   return `${getR2PublicBaseUrl()}/${key}`;
+}
+
+// ponytail: KB helpers (issue #13 v2). url → r2Key strips the public
+// base so the kbAgent can recover the source key from the file part's
+// publicUrl. uploadKbImage is the one-shot PUT for OCR page renders;
+// PNGs are tiny so no multipart.
+export function r2KeyFromPublicUrl(url: string, base: string): string {
+  const trimmed = base.replace(/\/$/, "");
+  if (url.startsWith(trimmed + "/")) {
+    return url.slice(trimmed.length + 1);
+  }
+  // Fallback: caller passed a key already, or base is unset.
+  return url;
+}
+
+export async function uploadKbImage(args: {
+  key: string;
+  body: Buffer;
+  contentType?: string;
+}): Promise<string> {
+  await getS3Client().send(
+    new PutObjectCommand({
+      Bucket: getR2Bucket(),
+      Key: args.key,
+      Body: args.body,
+      ContentType: args.contentType ?? "image/png",
+      // ponytail: stored disposition is ignored when the GET URL also
+      // sets `?response-content-disposition=` — but storing "inline"
+      // here covers the case where someone hits the raw object URL
+      // (e.g. the chat composer's R2 publicUrl without a query).
+      ContentDisposition: "inline",
+    }),
+  );
+  return buildPublicUrl(args.key);
 }

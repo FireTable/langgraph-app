@@ -4,18 +4,23 @@ import { z } from "zod";
 
 import { getChatModel } from "@/backend/model";
 import { ROUTER_AGENT_PROMPT } from "@/backend/prompt/system";
+import { hasUnprocessedPdf, stripFileParts } from "@/lib/kb/extract";
+import { prepareMessagesForInvoke } from "@/backend/memory/template";
+import { extractUserId } from "@/backend/memory/recall";
 
-// Router agent: inspects the latest user message and decides which
-// sub-agent should handle the turn. Output is a zod-validated object
-// so the parser never has to handle malformed JSON — the schema is
-// the contract.
+// ponytail: v3 router. Two short-circuits and a fallback:
+//   1. ANY HumanMessage has an unprocessed PDF → route to kbAgent.
+//   2. Otherwise → resolve kb_refs + trim, ask the LLM.
 //
-// Method: `functionCalling` with the `nostream` invocation tag. The
-// schema is registered as a tool so the model emits a `tool_call` on
-// the AIMessage; we discard the AIMessage and return only the parsed
-// `routerDecision` to the state. `tags: ["nostream"]` keeps the run's
-// token stream free of the router's internal reasoning.
+// RouterNode is intentionally DB-free: kbAgent owns the contentHash
+// dedup probe. The router only inspects message shape.
+
 const RouteDecisionSchema = z.object({
+  next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent", "kbAgent"]),
+});
+
+// delete RouteDecisionSchema kbAgent
+const InvokeRouteDecisionSchema = z.object({
   next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent"]),
 });
 
@@ -25,21 +30,37 @@ export async function routerAgentNode(
   state: { messages: BaseMessage[] },
   config?: RunnableConfig,
 ): Promise<{ routerDecision: RouterDecision }> {
-  // ponytail: router is a yes/no classifier on the CURRENT turn. Full
-  // history is a token-cost move AND can distract the classifier into
-  // routing off a stale topic. The trailing HumanMessage is always the
-  // current turn — the router runs before any AI reply for this turn
-  // exists.
   const lastUserMessage = state.messages.findLast((m) => m instanceof HumanMessage);
-  const system = new SystemMessage(ROUTER_AGENT_PROMPT);
-  const invokeMessages = lastUserMessage ? [system, lastUserMessage] : [system];
 
+  // Short-circuit: any HumanMessage has an unprocessed PDF → kbAgent.
+  // kbAgent now processes every PDF across every HumanMessage in one
+  // invocation, so the router only needs to know "is there still
+  // work to do?" — not which turn owns it.
+  if (hasUnprocessedPdf(state.messages)) {
+    return { routerDecision: { next: "kbAgent" } };
+  }
+
+  const system = new SystemMessage(ROUTER_AGENT_PROMPT);
+  const userId = extractUserId(config);
+  const trimmed = await prepareMessagesForInvoke(state.messages, [], userId ?? undefined);
+
+  const trimmedClean = trimmed.map(stripFileParts);
+  const lastClean = lastUserMessage ? stripFileParts(lastUserMessage) : null;
+
+  const invokeMessages = lastClean
+    ? [system, lastClean, ...trimmedClean.filter((m) => m.id !== lastClean.id)]
+    : [system, ...trimmedClean];
+
+  // LLM route — schema now includes kbAgent for completeness, but
+  // the explicit short-circuit above means we never reach this with a
+  // new PDF.
   const decision = (await (
     await getChatModel()
   )
-    .withStructuredOutput(RouteDecisionSchema, {
+    .withStructuredOutput(InvokeRouteDecisionSchema, {
       name: "route_decision",
       method: "jsonSchema",
+      strict: true,
     })
     .invoke(invokeMessages, {
       ...config,

@@ -9,7 +9,7 @@ import {
 import {
   createSystemPromptWithMemoryTemplate,
   loadThreadSummariesForPrompt,
-  trimMessagesForInvoke,
+  prepareMessagesForInvoke,
   type ThreadSummariesPayload,
 } from "@/backend/memory/template";
 import * as queries from "@/lib/memory/queries";
@@ -38,7 +38,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
       summaries: [
         {
           sequence: 1,
-          summary: { entries: [{ question: "hello", answer: "world", refs: ["#1"] }] },
+          summary: { entries: [{ question: "hello", answer: "world", refs: ["1"] }] },
           startMessageIndex: 0,
           endMessageIndex: 9,
           triggerReason: "turn_based" as const,
@@ -68,8 +68,8 @@ describe("createSystemPromptWithMemoryTemplate", () => {
           sequence: 1,
           summary: {
             entries: [
-              { question: "hello", answer: "world", refs: ["#1"] },
-              { question: "follow-up", answer: "second", refs: ["#2"] },
+              { question: "hello", answer: "world", refs: ["1"] },
+              { question: "follow-up", answer: "second", refs: ["2"] },
             ],
           },
           startMessageIndex: 0,
@@ -81,7 +81,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
         },
         {
           sequence: 2,
-          summary: { entries: [{ question: "next", answer: "answer", refs: ["#10"] }] },
+          summary: { entries: [{ question: "next", answer: "answer", refs: ["10"] }] },
           startMessageIndex: 10,
           endMessageIndex: 19,
           triggerReason: "turn_based" as const,
@@ -248,38 +248,43 @@ function summary(
   };
 }
 
-describe("trimMessagesForInvoke", () => {
-  it("returns the (system-stripped) messages when there are no summaries", () => {
+describe("prepareMessagesForInvoke", () => {
+  it("returns the (system-stripped) messages when there are no summaries", async () => {
     const msgs = [new SystemMessage("base"), ...buildMessages(["u", "a", "u", "a"])];
-    expect(trimMessagesForInvoke(msgs, []).map((m) => m.content)).toEqual(["q0", "a0", "q1", "a1"]);
+    expect((await prepareMessagesForInvoke(msgs, [])).map((m) => m.content)).toEqual([
+      "q0",
+      "a0",
+      "q1",
+      "a1",
+    ]);
   });
 
-  it("strips SystemMessage instances regardless of summary state", () => {
+  it("strips SystemMessage instances regardless of summary state", async () => {
     const msgs = [
       new SystemMessage("base 1"),
       new HumanMessage("q0"),
       new SystemMessage("base 2 — stray"),
       new AIMessage("a0"),
     ];
-    const out = trimMessagesForInvoke(msgs, []);
+    const out = await prepareMessagesForInvoke(msgs, []);
     expect(out).toHaveLength(2);
     expect(out.every((m) => !(m instanceof SystemMessage))).toBe(true);
   });
 
-  it("returns messages as-is when there are no human messages", () => {
+  it("returns messages as-is when there are no human messages", async () => {
     // No humans → humanIndices is empty → maxEnd+1 < 0 is false →
     // trimTo = noSystem.length → slice(trimTo) = full noSystem.
     const msgs = [new SystemMessage("base"), new AIMessage("orphan reply")];
-    const out = trimMessagesForInvoke(msgs, [summary(0)]);
+    const out = await prepareMessagesForInvoke(msgs, [summary(0)]);
     expect(out.map((m) => m.content)).toEqual(["orphan reply"]);
   });
 
-  it("trims everything up to the next human past the last summary endIndex", () => {
+  it("trims everything up to the next human past the last summary endIndex", async () => {
     // humans at noSystem indices 0,2,4 (q0..a1..q2..a2..q3..a3)
     // summary endIndex = 1 → trimTo = humanIndices[2] = 4
     // expected: q2, a2, q3, a3
     const msgs = buildMessages(["u", "a", "u", "a", "u", "a", "u", "a"]);
-    expect(trimMessagesForInvoke(msgs, [summary(1)]).map((m) => m.content)).toEqual([
+    expect((await prepareMessagesForInvoke(msgs, [summary(1)])).map((m) => m.content)).toEqual([
       "q2",
       "a2",
       "q3",
@@ -287,22 +292,22 @@ describe("trimMessagesForInvoke", () => {
     ]);
   });
 
-  it("uses max endMessageIndex across multiple summaries", () => {
+  it("uses max endMessageIndex across multiple summaries", async () => {
     // Two summaries; max wins. The smaller one is ignored.
     const msgs = buildMessages(["u", "a", "u", "a", "u", "a", "u", "a", "u", "a"]);
-    const out = trimMessagesForInvoke(msgs, [summary(1, 1), summary(3, 2)]);
+    const out = await prepareMessagesForInvoke(msgs, [summary(1, 1), summary(3, 2)]);
     // humans at 0,2,4,6,8 → trimTo = humanIndices[4] = 8 → keep q4..a4
     expect(out.map((m) => m.content)).toEqual(["q4", "a4"]);
   });
 
-  it("keeps trailing messages beyond the summarized window (incl. tool calls)", () => {
+  it("keeps trailing messages beyond the summarized window (incl. tool calls)", async () => {
     // Humans at 0, 2, 5. Summary covers endIndex=0 → trimTo = 2.
     // slice(2) keeps every message from q1 onwards, INCLUDING the
     // tool message sitting between a1 and q2. Tool messages that
     // fall BEFORE the next human boundary are dropped with their
     // Q&A — the summary text captured them.
     const msgs = buildMessages(["u", "a", "u", "a", "t", "u", "a"]);
-    const out = trimMessagesForInvoke(msgs, [summary(0)]);
+    const out = await prepareMessagesForInvoke(msgs, [summary(0)]);
     expect(out).toHaveLength(5);
     expect(out[0]).toBeInstanceOf(HumanMessage);
     expect(out[1]).toBeInstanceOf(AIMessage);
@@ -311,37 +316,37 @@ describe("trimMessagesForInvoke", () => {
     expect(out[4]).toBeInstanceOf(AIMessage);
   });
 
-  it("returns [] when the last covered human is the final human (edge case)", () => {
+  it("returns [] when the last covered human is the final human (edge case)", async () => {
     // trimTo = noSystem.length → slice(noSystem.length) = []
     // state.messages still has the original — UI is unaffected. This
     // case shouldn't happen in practice (trigger leaves the most
     // recent K humans uncovered) but the trim must not crash.
     const msgs = buildMessages(["u", "a"]);
-    expect(trimMessagesForInvoke(msgs, [summary(0)])).toEqual([]);
+    expect(await prepareMessagesForInvoke(msgs, [summary(0)])).toEqual([]);
   });
 
-  it("does not mutate the input array", () => {
+  it("does not mutate the input array", async () => {
     const msgs = [new SystemMessage("base"), ...buildMessages(["u", "a", "u", "a"])];
     const before = msgs.map((m) => m.content);
-    trimMessagesForInvoke(msgs, [summary(1)]);
+    await prepareMessagesForInvoke(msgs, [summary(1)]);
     expect(msgs.map((m) => m.content)).toEqual(before);
   });
 
-  it("handles out-of-order summaries by trusting max endMessageIndex", () => {
+  it("handles out-of-order summaries by trusting max endMessageIndex", async () => {
     // Defensive: even if a store read returns rows in random order
     // (e.g. user deleted the middle one), max wins and the trim is
     // monotonic. With summaries covering 0..1 and 0..2, maxEnd=2 →
     // trimTo = humanIndices[3] = 6 → keep q3..a3.
     const msgs = buildMessages(["u", "a", "u", "a", "u", "a", "u", "a"]);
-    const out = trimMessagesForInvoke(msgs, [summary(2, 2), summary(1, 1)]);
+    const out = await prepareMessagesForInvoke(msgs, [summary(2, 2), summary(1, 1)]);
     expect(out.map((m) => m.content)).toEqual(["q3", "a3"]);
   });
 
-  it("returns [] when max endMessageIndex covers every human (gapped summaries)", () => {
+  it("returns [] when max endMessageIndex covers every human (gapped summaries)", async () => {
     // maxEnd = 3 covers all 4 humans → trimTo = noSystem.length → [].
     // state.messages still has the original — UI is unaffected.
     const msgs = buildMessages(["u", "a", "u", "a", "u", "a", "u", "a"]);
-    const out = trimMessagesForInvoke(msgs, [summary(3, 2), summary(1, 1)]);
+    const out = await prepareMessagesForInvoke(msgs, [summary(3, 2), summary(1, 1)]);
     expect(out).toEqual([]);
   });
 });
@@ -360,7 +365,7 @@ describe("loadThreadSummariesForPrompt", () => {
   const baseEntry = {
     threadId: "t1",
     sequence: 1,
-    summary: { entries: [{ question: "q", answer: "a", refs: ["#1"] }] },
+    summary: { entries: [{ question: "q", answer: "a", refs: ["1"] }] },
     startMessageIndex: 0,
     endMessageIndex: 9,
     messageCount: 10,

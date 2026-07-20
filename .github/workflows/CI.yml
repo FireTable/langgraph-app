@@ -74,7 +74,13 @@ jobs:
     # to bring the schema up — the build-time DB can be empty otherwise.
     services:
       postgres:
-        image: postgres:16-alpine
+        # pgvector/pgvector:pg16 (Debian-based, FROM postgres:16) ships
+        # the vector extension pre-installed — required by migration
+        # 0005_*.sql (CREATE EXTENSION vector). Stock postgres:16-alpine
+        # does not bundle it. Wire-format (POSTGRES_*, PGDATA, init
+        # scripts) is unchanged from upstream so all 6 build/test steps
+        # keep working without further edits.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -109,7 +115,13 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:16-alpine
+        # pgvector/pgvector:pg16 (Debian-based, FROM postgres:16) ships
+        # the vector extension pre-installed — required by migration
+        # 0005_*.sql (CREATE EXTENSION vector). Stock postgres:16-alpine
+        # does not bundle it. Wire-format (POSTGRES_*, PGDATA, init
+        # scripts) is unchanged from upstream so all 6 build/test steps
+        # keep working without further edits.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

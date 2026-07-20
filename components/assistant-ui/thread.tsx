@@ -3,7 +3,11 @@ import {
   ComposerAttachments,
   UserMessageAttachments,
 } from "@/components/assistant-ui/attachment";
+import { DirectiveText } from "@/components/assistant-ui/directive-text";
+import { LexicalComposerInput, DirectiveNode } from "@assistant-ui/react-lexical";
+import { LexicalDirectiveChip } from "@/components/assistant-ui/lexical-directive-chip";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
+import { KbMentionPopover } from "@/components/assistant-ui/kb-mention";
 import {
   Reasoning,
   ReasoningContent,
@@ -19,7 +23,7 @@ import {
 } from "@/components/assistant-ui/tool-group";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { ObservabilityButton } from "@/components/observability/button";
-import { ObservabilitySheet } from "@/components/observability/sheet";
+import { ChatObservabilitySheet } from "@/components/observability/sheet";
 import { ObservabilitySheetProvider } from "@/components/observability/sheet-context";
 import { WorkingIndicator } from "@/components/assistant-ui/working-indicator";
 import { Button } from "@/components/ui/button";
@@ -38,7 +42,10 @@ import {
   ThreadPrimitive,
   type ToolCallMessagePartComponent,
   useAuiState,
+  useAui,
 } from "@assistant-ui/react";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { COMMAND_PRIORITY_LOW, PASTE_COMMAND, $getNodeByKey, $createTextNode } from "lexical";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -57,6 +64,7 @@ import {
 import {
   createContext,
   useContext,
+  useEffect,
   type ComponentType,
   type FC,
   type PropsWithChildren,
@@ -100,7 +108,7 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
     <ThreadComponentsContext.Provider value={components}>
       <ObservabilitySheetProvider>
         <ThreadRoot isEmpty={isEmpty} />
-        <ObservabilitySheet />
+        <ChatObservabilitySheet />
       </ObservabilitySheetProvider>
     </ThreadComponentsContext.Provider>
   );
@@ -216,6 +224,62 @@ const ThreadSuggestionItem: FC = () => {
   );
 };
 
+const LexicalPasteFilesPlugin: FC = () => {
+  const [editor] = useLexicalComposerContext();
+  const aui = useAui();
+
+  useEffect(() => {
+    return editor.registerCommand(
+      PASTE_COMMAND,
+      (event: ClipboardEvent) => {
+        const files = event.clipboardData?.files;
+        if (files && files.length > 0) {
+          event.preventDefault();
+          Promise.all(Array.from(files).map((file) => aui.composer().addAttachment(file))).catch(
+            (err) => {
+              console.error("Failed to paste files:", err);
+            },
+          );
+          return true;
+        }
+        return false;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+  }, [editor, aui]);
+
+  return null;
+};
+
+const LexicalAutoSpacePlugin: FC = () => {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerMutationListener(DirectiveNode as any, (mutations) => {
+      mutations.forEach((mutation, key) => {
+        if (mutation === "created") {
+          editor.update(() => {
+            const node = $getNodeByKey(key);
+            if (node instanceof DirectiveNode) {
+              const nextSibling = node.getNextSibling();
+              if (
+                !nextSibling ||
+                (nextSibling.getType() === "text" && !nextSibling.getTextContent().startsWith(" "))
+              ) {
+                const spaceNode = $createTextNode(" ");
+                node.insertAfter(spaceNode);
+                (spaceNode as any).select();
+              }
+            }
+          });
+        }
+      });
+    });
+  }, [editor]);
+
+  return null;
+};
+
 const Composer: FC = () => {
   // ponytail: lock the textbox while r2-adapter.send() is in flight so
   // the user can't edit a message that's mid-upload. SDK keeps the
@@ -232,6 +296,8 @@ const Composer: FC = () => {
     typeof window !== "undefined" &&
     window.matchMedia("(pointer: fine)").matches &&
     navigator.maxTouchPoints === 0;
+  // ponytail: KbMentionPopover manages its own state via useKbMention
+  // internally — no need to call the hook here or thread props down.
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <ComposerPrimitive.AttachmentDropzone asChild>
@@ -240,15 +306,29 @@ const Composer: FC = () => {
           className="border-border/60 data-[dragging=true]:border-ring focus-within:border-border dark:border-muted-foreground/15 dark:focus-within:border-muted-foreground/30 flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))] dark:shadow-none"
         >
           <ComposerAttachments />
-          <ComposerPrimitive.Input
-            placeholder="Send a message..."
-            className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none disabled:opacity-60 disabled:cursor-not-allowed"
-            rows={1}
-            autoFocus={shouldAutoFocus}
-            aria-label="Message input"
-            disabled={isUploading}
-          />
-          <ComposerAction />
+          {/* ponytail: aUI's trigger popover contract (issue #13 v3):
+              TriggerPopoverRoot owns the registered trigger map + ARIA
+              context. The Input lives inside the root so the root's
+              composer state scope is shared. Unstable_TriggerPopover is
+              a SIBLING of the input — it renders the popover container
+              when `@` is typed. Its children are the directive +
+              categories/items render-prop components. Without those
+              children (and without `Directive`), the popover stays
+              closed (per the docstring on TriggerPopover). */}
+          <ComposerPrimitive.Unstable_TriggerPopoverRoot>
+            <LexicalComposerInput
+              placeholder="Send a message..."
+              className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full bg-transparent px-2.5 py-1 text-base outline-none disabled:opacity-60 disabled:cursor-not-allowed"
+              autoFocus={shouldAutoFocus}
+              aria-label="Message input"
+              directiveChip={LexicalDirectiveChip}
+            >
+              <LexicalPasteFilesPlugin />
+              <LexicalAutoSpacePlugin />
+              <KbMentionPopover />
+            </LexicalComposerInput>
+            <ComposerAction />
+          </ComposerPrimitive.Unstable_TriggerPopoverRoot>
         </div>
       </ComposerPrimitive.AttachmentDropzone>
     </ComposerPrimitive.Root>
@@ -533,6 +613,12 @@ const UserMessage: FC = () => {
         >
           <MessagePrimitive.Parts
             components={{
+              // ponytail: render `:kb-document[…]` and `:kb-folder[…]`
+              // directives as inline chips instead of raw text. Default
+              // formatter + our icon map matches the composer popover,
+              // so what the user sees in the bubble matches what they
+              // inserted from the trigger.
+              Text: DirectiveText,
               Image: () => null,
               File: () => null,
             }}
@@ -576,9 +662,10 @@ const EditComposer: FC = () => {
   return (
     <MessagePrimitive.Root data-slot="aui_edit-composer-wrapper" className="flex flex-col px-2">
       <ComposerPrimitive.Root className="aui-edit-composer-root border-border/60 dark:border-muted-foreground/15 ms-auto flex w-full max-w-[85%] flex-col rounded-(--composer-radius) border bg-(--composer-bg) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] dark:shadow-none">
-        <ComposerPrimitive.Input
-          className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none"
+        <LexicalComposerInput
+          className="aui-edit-composer-input text-foreground min-h-14 w-full bg-transparent px-4 pt-3 pb-1 text-base outline-none"
           autoFocus
+          directiveChip={LexicalDirectiveChip}
         />
         <div className="aui-edit-composer-footer mx-2.5 mb-2.5 flex items-center gap-1.5 self-end">
           <ComposerPrimitive.Cancel asChild>

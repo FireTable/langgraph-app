@@ -15,6 +15,7 @@ import {
 import { WriteCodeCard, ExecuteCodeResult } from "@/components/tool-ui/code";
 import { SaveMemoryCard } from "@/components/tool-ui/memory";
 import { CreditCard } from "@/components/tool-ui/credit";
+import { KbListDocumentsToolUI, KbSearchToolUI } from "@/components/tool-ui/kb";
 
 // Frontend-side tool registrations. `execute` lives on the LangGraph
 // backend (backend/tool/) and is dispatched via useLangGraphRuntime —
@@ -147,10 +148,44 @@ const creditToolkit = defineToolkit({
   },
 });
 
+const kbToolkit = defineToolkit({
+  // ponytail: KB tools (issue #13 v3). The server returns a structured
+  // JSON ToolMessage: { content, documents[], empty }. UI reads
+  // `documents[]` for Sources-style cards; `content` is the LLM's
+  // string and is not re-displayed (it's already in the assistant's
+  // prose). order locked to backend RRF ranking.
+  search_kb: {
+    description: "Render a KB search result card with [1] [2] numbered chunks.",
+    parameters: z.object({
+      query: z.string().optional(),
+      folderId: z.string().optional(),
+      documentId: z.string().optional(),
+    }),
+    render: KbSearchToolUI,
+  },
+  // ponytail: search_kb doubles as the @-mention synthetic tool —
+  // the mention resolver injects a pre-fetched ToolMessage with the
+  // same shape (so the LLM sees the @-doc chunks without a real
+  // tool call), and the toolkit renders both via KbSearchToolUI.
+  // No separate render entry needed.
+  list_documents: {
+    description: "Render a paginated list of the user's KB documents.",
+    parameters: z.object({
+      folderId: z.string().optional(),
+      status: z.enum(["success", "failed", "parsing", "pending"]).optional(),
+      titleQuery: z.string().optional(),
+      page: z.number().optional(),
+      pageSize: z.number().optional(),
+    }),
+    render: KbListDocumentsToolUI,
+  },
+});
+
 export default defineToolkit({
   ...weatherToolkit,
   ...cryptoToolkit,
   ...codeToolkit,
   ...memoryToolkit,
   ...creditToolkit,
+  ...kbToolkit,
 });

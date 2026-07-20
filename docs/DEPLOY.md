@@ -130,7 +130,12 @@ name: langgraph-app
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 — official pgvector image, inherits all
+    # upstream postgres:16 wire format (POSTGRES_*, PGDATA, init
+    # scripts). Required because the KB migration (0005_*.sql) runs
+    # `CREATE EXTENSION IF NOT EXISTS vector`; stock postgres:16-alpine
+    # has no vector extension available.
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}

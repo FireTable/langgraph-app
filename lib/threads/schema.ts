@@ -18,6 +18,13 @@ export const threads = pgTable(
     status: text("status", { enum: ["regular", "archived"] })
       .notNull()
       .default("regular"),
+    // ponytail: source discriminator. `chat` = user-visible conversation
+    // (sidebar shows these). `kb` = standalone kbAgent ingestion run from
+    // /settings/knowledge-base — same row shape, just hidden from sidebar.
+    // Set at creation; never changes for a given row.
+    kind: text("kind", { enum: ["chat", "kb"] })
+      .notNull()
+      .default("chat"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -36,6 +43,7 @@ export const threads = pgTable(
     index("threads_status_updated_idx").on(t.status, t.updatedAt.desc()),
     index("threads_status_last_message_idx").on(t.status, t.lastMessageAt.desc()),
     index("threads_user_id_idx").on(t.userId),
+    index("threads_kind_idx").on(t.kind),
   ],
 );
 

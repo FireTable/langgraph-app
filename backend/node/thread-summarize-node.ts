@@ -7,6 +7,7 @@ import { summaryOutputSchema } from "@/lib/langgraph/summary-schema";
 import { getChatModel } from "@/backend/model";
 import { THREAD_SUMMARIZE_PROMPT } from "@/backend/prompt/system";
 import { HumanMessage, BaseMessage } from "@langchain/core/messages";
+import { prepareMessagesForInvoke } from "@/backend/memory/template";
 
 function isHumanMessage(m: BaseMessage | ExcerptMessage): boolean {
   return m instanceof HumanMessage || m.type === "human";
@@ -20,6 +21,17 @@ type ExcerptMessage = {
 };
 
 type Config = { configurable?: { userId?: unknown; thread_id?: unknown } };
+
+type TranscriptMsg = {
+  role: "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: unknown;
+};
+
+type ThreadLine = {
+  ref: string;
+  messages: TranscriptMsg[];
+};
 
 // ponytail: the LLM produces ordered Q&A entries with refs to the
 // #N labels we generated in the prompt. ref strings are the labels
@@ -107,51 +119,55 @@ function normalizeRole(t: string | undefined): "user" | "assistant" | "tool" {
   }
 }
 
-// ponytail: JSONL output — one line per human turn in the THREAD, 1-indexed
-// globally. The LLM reads each line as a self-contained record and emits
-// OUTPUT entries whose `refs` map 1:1 back to these id strings (matches
-// SummaryEntry.startMessageIndex..endMessageIndex byte-for-byte in the new
-// 1-indexed world — Memory tab display "messages [3..5]" → humanIndex 2..4
-// under the cumulative formula, and the LLM's `refs: ["#3"..."#5"]` reuses
-// that exact id, so the read path stays structural). Replacing the prior
-// markdown "#N\nUser: ...\nAssistant: ..." format — role labels in plain
-// text collided with content containing ":" and tool_calls had to be
-// appended as ad-hoc "[tool_call X]" trailers that the model often
-// ignored, producing the meta-question paraphrase ("User said … what was
-// the assistant's response?"). Structured input ↔ structured output
-// eliminates the prose↔JSON translation step on the model side.
-function renderTranscript(excerpt: Array<ExcerptMessage>, startHumanIdx: number): string {
-  const lines: string[] = [];
+// ponytail: per-turn transcript — one ThreadLine per human turn in the
+// THREAD, 1-indexed globally. Each line is a self-contained record
+// (`{ref, messages[]}`) that the LLM reads as a separate user message
+// in the chat-conversation; the leading text part ("This turn ref is
+// #N") carries the byte-for-byte label the model must copy verbatim
+// into OUTPUT `refs`. Matches SummaryEntry.startMessageIndex..endMessageIndex
+// — Memory tab display "messages [3..5]" → humanIndex 2..4 under the
+// cumulative formula, and the LLM's `refs: ["#3"..."#5"]` reuses the
+// exact label, so the read path stays structural. Replacing the prior
+// markdown "#N\nUser: ...\nAssistant: ..." format — role labels in
+// plain text collided with content containing ":" and tool_calls had
+// to be appended as ad-hoc "[tool_call X]" trailers that the model
+// often ignored, producing the meta-question paraphrase ("User said
+// … what was the assistant's response?"). Splitting each line into
+// its own user message gives the model a clean per-turn boundary to
+// index against.
+function renderTranscript(excerpt: Array<ExcerptMessage>, startHumanIdx: number): ThreadLine[] {
+  const lines: ThreadLine[] = [];
   let humanCount = 0;
-  let current: { id: string; messages: unknown[] } | null = null;
+  let current: ThreadLine | null = null;
   const flush = () => {
-    if (current !== null) lines.push(JSON.stringify(current));
+    if (current !== null) lines.push(current);
     current = null;
   };
   for (const m of excerpt) {
     if (isHumanMessage(m)) {
       flush();
       humanCount++;
-      current = { id: `#${startHumanIdx + humanCount}`, messages: [] };
+      current = { ref: `#${startHumanIdx + humanCount}`, messages: [] };
     }
     if (!current) continue;
 
-    const msg: { role: string; content: unknown; tool_calls?: unknown } = {
+    const msg: TranscriptMsg = {
       role: normalizeRole(m.type),
       content: stringifyContent(m.content) || "",
     };
-    // ponytail: carry tool_calls as a first-class field. Models trained on
-    // log-style JSONL iterate it naturally and don't drop it like they
-    // drop trailing "[tool_call X]" prose — the prior format's missing
-    // tool_call lines were the root cause of the meta-question paraphrase
-    // failures in #3..#5 chunks (see issue notes 2026-07-04).
+    // ponytail: carry tool_calls as a first-class field on the line
+    // object so the LLM can attribute the matching tool message's data
+    // to the same turn (rather than narrating "called X" with no
+    // source). Model trained on log-style JSON iterates it naturally.
     if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
       msg.tool_calls = m.tool_calls;
     }
+
     current.messages.push(msg);
   }
   flush();
-  return lines.join("\n");
+
+  return lines;
 }
 
 // ponytail: STORE-ANCHORED trigger (replaces the prior stateless
@@ -232,7 +248,7 @@ export function computeCumulativeWindow(
 // These would have been END'd by the conditional edge, but a tick
 // can race — re-deriving here is the safety belt.
 export async function threadSummarizeNode(
-  state: { messages?: Array<ExcerptMessage> },
+  state: { messages?: BaseMessage[] },
   config: Config,
 ): Promise<{ messages: never[] }> {
   const userId = config.configurable?.userId;
@@ -240,7 +256,12 @@ export async function threadSummarizeNode(
   if (typeof userId !== "string" || userId.length === 0) return { messages: [] };
   if (typeof threadId !== "string" || threadId.length === 0) return { messages: [] };
 
-  const messages = (state.messages ?? []) as Array<ExcerptMessage>;
+  const messages = (await prepareMessagesForInvoke(
+    state.messages ?? [],
+    [],
+    userId ?? undefined,
+  )) as Array<ExcerptMessage>;
+
   const humanIndices: number[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
@@ -270,7 +291,7 @@ export async function threadSummarizeNode(
   // user question captures its assistant reply. Slicing on
   // humanIndices[endIdx] alone stops at the user message itself — the
   // AI/tool messages immediately following would be dropped, leaving the
-  // last JSONL entry as a Q with no A.
+  // last line as a Q with no A.
   //
   // Unknown / orphan roles are dropped from the LLM-facing transcript
   // (KEEPABLE_TYPES gate) — the original messages still live in
@@ -295,17 +316,13 @@ export async function threadSummarizeNode(
   const humanMessageIds = excerpt.filter((m) => isHumanMessage(m)).map((m) => m.id ?? "");
 
   // ponytail: token counts before/after compression. Recorded in the
-  // SummaryEntry for future analytics + UI stats.
-  // countTokensApproximately is the same heuristic LangChain's
-  // summarizationMiddleware uses for its token-budget gate (4 chars
-  // ≈ 1 token). We don't gate on a hard budget — turn-based trigger
-  // is primary — but the numbers let a future token-based second
-  // pass skip work and let the UI render "compressed 420 → 80 tokens"
-  // without a separate re-tokenize call.
-  // ponytail: token counts before/after compression. Recorded in the
   // SummaryEntry for future analytics + UI stats — local char-based
   // estimate (~4 chars/token) is good enough for analytics; the
-  // trigger itself is turn-count-based, not token-budget-gated.
+  // trigger itself is turn-count-based, not token-budget-gated. A
+  // future token-based secondary pass can swap in @langchain/core's
+  // real counting without changing the call sites, and the UI can
+  // render "compressed 420 → 80 tokens" without a separate
+  // re-tokenize call.
   const tokenCountBefore = estimateTokensFromExcerpt(excerpt);
 
   const transcript = renderTranscript(excerpt, startIdx);
@@ -319,11 +336,23 @@ export async function threadSummarizeNode(
     out = await (
       await getChatModel()
     )
-      .withStructuredOutput(summaryOutputSchema, { method: "jsonSchema" })
+      .withStructuredOutput(summaryOutputSchema, { method: "jsonSchema", strict: true })
       .invoke(
         [
           { role: "system", content: THREAD_SUMMARIZE_PROMPT },
-          { role: "user", content: transcript },
+          ...transcript.map((item) => ({
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `This turn ref is ${item.ref}`,
+              },
+              {
+                type: "text",
+                text: JSON.stringify(item),
+              },
+            ],
+          })),
         ] as never,
         {
           tags: ["nostream"],

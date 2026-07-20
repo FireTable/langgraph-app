@@ -30,7 +30,7 @@ export const GET = withAuth<IdParams>(async (_req, { user, params }) => {
   await markRunningAsFailed(params.id);
   const capturedSpans = await getSpansByThreadId(params.id);
   const spans = transformCapturedToSpanData(capturedSpans);
-  const aggregate = aggregateRoot(capturedSpans);
+  const aggregate = aggregateRoot(capturedSpans, spans);
   const stepIdToRawSpanId = buildStepIdToRawSpanId(capturedSpans);
   return NextResponse.json({
     thread_id: params.id,

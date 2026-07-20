@@ -8,3 +8,4 @@ export * from "@/lib/observability/schema";
 export * from "@/lib/attachments/schema";
 export * from "@/lib/provider/schema";
 export * from "@/lib/credit/schema";
+export * from "@/lib/kb/schema";

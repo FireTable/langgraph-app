@@ -7,14 +7,20 @@ import type { SummaryEntries } from "@/lib/langgraph/summary-schema";
 // would surface as a visual difference between the model's view and the
 // user's view of the same stored summary.
 //
-// Format: each entry is `${refs.join(", ")} Q: ${question}\n   A: ${answer}`,
-// entries separated by a blank line. Whitespace matches the
-// @assistant-ui markdown renderer (3-space indent on the A line so the
-// continuation lines up under Q).
+// Format: each entry is `#N, #M Q: ... \n   A: ...`, entries separated
+// by a blank line. Whitespace matches the @assistant-ui markdown
+// renderer (3-space indent on the A line so the continuation lines up
+// under Q).
+//
+// ponytail: refs are stored as raw integer/identifier strings (e.g.
+// "1", "1-3") — we add the leading `#` here so callers don't have to
+// remember to include it. The prompt's THREAD_SUMMARIZE_PROMPT
+// instructions say "use this #N verbatim in OUTPUT refs" — that's
+// the model-side contract; storage stays plain.
 export function formatSummaryText(entries: SummaryEntries): string {
   return entries
     .map((e) => {
-      const refs = e.refs.join(", ");
+      const refs = e.refs.map((r) => (r.startsWith("#") ? r : `#${r}`)).join(", ");
       return `${refs}
 Q: ${e.question}
 A: ${e.answer}`;
