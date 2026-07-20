@@ -79,7 +79,10 @@ Triggers: push + PR to `main` and `dev`. Four parallel jobs:
    reachable Postgres on `localhost:5432` — Better Auth runs DB
    migrations at module load, which Next.js triggers when it
    statically evaluates App Router routes. The job exposes a
-   `postgres:16-alpine` service for this.
+   `pgvector/pgvector:pg16` service for this (stock `postgres:16-alpine`
+   doesn't bundle the `vector` extension that KB migration `0005_*.sql`
+   needs; `pgvector/pgvector:pg16` is wire-compatible with upstream
+   postgres so no other step changes).
 4. **test** — `pnpm test` (Vitest, node + frontend projects). Postgres
    service container exposes `localhost:5432`; `globalSetup` applies
    Drizzle migrations from `db/migrations/*.sql` before tests run.
@@ -204,7 +207,7 @@ docker run -d --name build-pg \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=langgraph_app \
-  postgres:16-alpine
+  pgvector/pgvector:pg16
 docker compose build app
 docker rm -f build-pg
 ```

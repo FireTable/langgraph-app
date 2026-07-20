@@ -269,6 +269,8 @@ Indexes: `kb_document_user_contenthash_idx` `(user_id, content_hash)` UNIQUE, `k
 
 One row per text chunk emitted by `kbAgent.chunkEmbedStoreNode`. Embeddings stored as `pgvector` (`vector(1024)` for BAAI/bge-m3 via apimart). `tsv` is a generated English tsvector used by the BM25 leg. `entities` / `relationships` / `themes` are JSONB seeded by the LLM-driven entity-extract pass and read by the tag leg + Folder Graph.
 
+> **Image requirement** — the `vector` extension must be installed before migration `0005_past_grey_gargoyle.sql` runs. The repo's postgres service is `pgvector/pgvector:pg16` (not stock `postgres:16-alpine`); the official pgvector image bundles the extension and inherits all upstream postgres wire format. CI services (`build` + `test` jobs) and the docker-compose deploy service all use the same tag.
+
 | Column          | Type                                                                    | Notes                                                                                                                                                      |
 | --------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `id`            | text PK                                                                 | `c-<uuid>`                                                                                                                                                 |

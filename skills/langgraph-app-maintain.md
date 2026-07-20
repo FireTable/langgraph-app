@@ -378,6 +378,15 @@ Update the `packageManager` field in `package.json`.
 
 **Don't just swap the image tag** — `pg_dump` first, then move to a new container, then restore. Edit `image: postgres:17-alpine` in `docker-compose.yml` after backing up.
 
+> **KB v3 (issue #13) requires pgvector.** The repo's postgres service
+> image is `pgvector/pgvector:pg16`, NOT stock `postgres:16-alpine` —
+> the KB migration `0005_*.sql` runs `CREATE EXTENSION IF NOT EXISTS
+vector`, which the stock image doesn't bundle. When bumping the
+> Postgres major version, move to `pgvector/pgvector:pg17` (or
+> whichever pgvector image matches). The pgvector image inherits all
+> upstream postgres wire format (POSTGRES\_\*, PGDATA, init scripts) so
+> the only thing that changes is the image tag.
+
 ---
 
 ## 6. Backup + restore
