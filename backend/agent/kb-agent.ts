@@ -206,15 +206,6 @@ async function prepareKBDataNode(
     }
     const doc = await findKbDocumentById(userId, targetDocId);
     if (!doc) return makeError(`doc ${targetDocId} not found`);
-    if (doc.status !== "success" && doc.status !== "failed" && doc.status !== "parsing") {
-      return makeError(
-        `${mode} requires settled doc or parsing doc, got status='${doc.status}'. Run full reprocess first.`,
-      );
-    }
-    const pages = (doc.pages ?? []) as PageResult[];
-    // ponytail: record kb_observability for this re-run. Even though
-    // no new doc row is created, the invocation IS a kbAgent run and
-    // should appear in the Settings → KB observability popover history.
     if (threadId) {
       await insertKbObservability({
         docId: doc.id,
@@ -225,6 +216,13 @@ async function prepareKBDataNode(
         mode,
       });
     }
+    if (doc.status !== "success" && doc.status !== "failed" && doc.status !== "parsing") {
+      return makeError(
+        `${mode} requires settled doc or parsing doc, got status='${doc.status}'. Run full reprocess first.`,
+      );
+    }
+    const pages = (doc.pages ?? []) as PageResult[];
+
     // ponytail: stub FilePart is required by ProcessedFile.shape but
     // rewriteMessagesNode skips the stamp pass under mode=
     // "chunksOnly" / "retryFailed" so the values are never read. url/data empty →
@@ -372,6 +370,7 @@ async function prepareKBDataNode(
   const newDocs = processed.filter(
     (p) => p.pipelineStatus === "new" && p.docId !== null && p.attachmentId !== null,
   );
+
   await Promise.allSettled(
     newDocs.map(async (pf) => {
       try {
@@ -412,6 +411,17 @@ async function prepareKBDataNode(
           return;
         }
         console.error(`kbAgent prepareKBDataNode: insertKbDocument failed for ${pf.docId}`, err);
+      } finally {
+        if (threadId) {
+          await insertKbObservability({
+            docId: pf.docId!,
+            threadId,
+            parentMessageId,
+            runId,
+            source,
+            mode,
+          });
+        }
       }
     }),
   );

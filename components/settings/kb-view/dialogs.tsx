@@ -66,19 +66,26 @@ export function DocDeleteDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Delete document?</DialogTitle>
-          <DialogDescription>
-            <p>
-              This permanently removes <span className="font-medium">{doc.title}</span> and:
-            </p>
-            <ol className="mt-2 list-decimal pl-5 space-y-1">
-              <li>The document row + all parsed chunks (embeddings, BM25 index, entity graph)</li>
-              <li>The observability run history for this doc</li>
-              <li>The standalone ingestion thread record (LangGraph metadata)</li>
-            </ol>
-            <p className="text-muted-foreground mt-2 text-xs">
-              Source PDF + rendered page PNGs stay in R2 until the v3 retention sweep. Raw
-              observability spans + LangGraph checkpoint state are kept by retention.
-            </p>
+          <DialogDescription asChild>
+            {/* ponytail: asChild swaps the default <p> for a <div> so
+                block-level children (ol, multi-paragraph copy) don't
+                trigger <p>-inside-<p> / <div>-inside-<p> hydration
+                errors. Slot merges text-sm + text-muted-foreground
+                from DialogDescription onto the div. */}
+            <div className="space-y-2">
+              <p>
+                This permanently removes <span className="font-medium">{doc.title}</span> and:
+              </p>
+              <ol className="list-decimal pl-5 space-y-1">
+                <li>The document row + all parsed chunks (embeddings, BM25 index, entity graph)</li>
+                <li>The observability run history for this doc</li>
+                <li>The standalone ingestion thread record (LangGraph metadata)</li>
+              </ol>
+              <p className="text-xs">
+                Source PDF + rendered page PNGs stay in R2 until the v3 retention sweep. Raw
+                observability spans + LangGraph checkpoint state are kept by retention.
+              </p>
+            </div>
           </DialogDescription>
         </DialogHeader>
         {error && <p className="text-destructive text-xs">{error}</p>}
