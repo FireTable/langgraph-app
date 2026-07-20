@@ -1,7 +1,6 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
 import { MarkdownTextSplitter } from "@langchain/textsplitters";
-import { Document } from "@langchain/core/documents";
 import PQueue from "p-queue";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -1017,15 +1016,39 @@ async function generateChunkEmbedNode(
     `[kbAgent] Entering generateChunkEmbedNode, files=`,
     state.processedFiles.map((p) => ({ docId: p.docId, status: p.pipelineStatus })),
   );
+
+  // ponytail: the chunk + embed + entity-extract pass is the slow leg
+  // of the pipeline (per-row LLM calls). The chat path (mainAgent →
+  // kbAgent subgraph) wants it fire-and-forget so the graph node
+  // returns in milliseconds and the chat reply flow is unblocked.
+  // The Settings standalone path (source='kb-upload' / 'kb-reprocess')
+  // wants it awaited — the caller (`POST /api/kb/upload`,
+  // `POST /api/kb/documents/[id]/reprocess`) already polls the row's
+  // status, but awaiting here makes the route's 202 contract more
+  // honest: the entity-extract pass has either landed or thrown by
+  // the time the route returns, so a poll-then-fetch chunks sees the
+  // final state on the first try.
+  //
+  // `waitForChunks` wins over `source` so direct callers (tests, future
+  // background-only invokers) can force either mode without lying about
+  // the path they came from.
+  const sourceFromConfig = (config?.configurable as { source?: string } | undefined)?.source;
+  const waitFromConfig = (config?.configurable as { waitForChunks?: boolean } | undefined)
+    ?.waitForChunks;
+  const isStandalonePath = sourceFromConfig === "kb-upload" || sourceFromConfig === "kb-reprocess";
+  const waitForChunks = waitFromConfig ?? isStandalonePath;
+
   if (state.userId) {
+    const pendingChunks: Array<Promise<void>> = [];
     for (const pf of state.processedFiles) {
       if (pf.pipelineStatus === "new" && pf.docId) {
         const docId = pf.docId;
         const userId = state.userId;
 
-        console.log(`[kbAgent] Starting background chunking task for docId=${docId}`);
-        // ponytail: fire-and-forget so the graph node completes instantly.
-        void (async () => {
+        console.log(
+          `[kbAgent] Starting ${waitForChunks ? "blocking" : "background"} chunking task for docId=${docId}`,
+        );
+        const work = (async () => {
           try {
             // ponytail: retryFailedChunks is an input-source branch,
             // not a parallel pipeline. The route handler has marked
@@ -1282,7 +1305,16 @@ async function generateChunkEmbedNode(
             );
           }
         })();
+        pendingChunks.push(work);
       }
+    }
+    if (waitForChunks && pendingChunks.length > 0) {
+      // ponytail: await the whole-doc IIFEs in parallel — each one is
+      // already independent (per-row entity-extract queue is internal
+      // to that doc). Waiting lets the route's 202 contract land with
+      // chunks indexed; one doc's failure doesn't fail its siblings
+      // because the IIFE catches its own errors.
+      await Promise.allSettled(pendingChunks);
     }
   }
   return {};

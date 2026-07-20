@@ -624,6 +624,27 @@ describe("backend/kb-agent", () => {
       );
     });
 
+    // ponytail: standalone Settings path (source='kb-upload' /
+    // 'kb-reprocess' OR explicit waitForChunks:true) awaits the
+    // chunk + embed IIFE before returning — the route's 202 contract
+    // lands with chunks already inserted, so the next poll sees the
+    // terminal state. Chat path (no waitForChunks) keeps the
+    // existing fire-and-forget semantics so the chat reply isn't
+    // blocked on entity extraction.
+    it("waitForChunks:true awaits chunk+embed before returning (standalone path)", async () => {
+      mocks.ocrStructuredInvoke.mockReset();
+      mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "doc text ".repeat(40) });
+      const out = await kbAgent.invoke(
+        { messages: [humanWithOnePdf()], userId: USER },
+        { configurable: { userId: USER, source: "kb-upload", waitForChunks: true } },
+      );
+      expect(out.status).toBe("success");
+      // insertChunks ran synchronously before the node returned —
+      // otherwise the route's 202 contract couldn't land with chunks
+      // already indexed.
+      expect(mocks.insertChunks).toHaveBeenCalledTimes(1);
+    });
+
     // ponytail: fan-out isolation. One doc's chunkEmbedStore failure
     // (here, embedDocuments rejects for beta) must not block alpha's
     // chunks from being inserted and indexed. Each per-doc closure runs
