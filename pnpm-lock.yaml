@@ -121,6 +121,9 @@ importers:
       drizzle-zod:
         specifier: ^0.8.3
         version: 0.8.3(drizzle-orm@0.45.2(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.22.0)(postgres@3.4.9))(zod@4.4.3)
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       immutable-json-patch:
         specifier: ^6.0.3
         version: 6.0.3

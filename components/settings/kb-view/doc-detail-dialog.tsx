@@ -36,6 +36,7 @@ import {
   hasPageImages,
   hasReferenceText,
   mainContentTabLabel,
+  mimeShortLabel,
 } from "@/lib/kb/source-kind";
 import { KbDocDetail } from "./types";
 
@@ -362,7 +363,7 @@ export function DocDetailDialog({
                 variant="outline"
                 className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
               >
-                <span>{d.doc.contentType}</span>
+                <span>{mimeShortLabel(d.doc.contentType)}</span>
               </Badge>
 
               {d.doc.pages &&
@@ -374,11 +375,14 @@ export function DocDetailDialog({
                     ? 0
                     : d.doc.pages.filter((p) => !!p.errorMessage || !(p.markdown ?? "").trim())
                         .length;
-                  // ponytail: text/markdown + text/plain are pre-baked
-                  // single-page docs — saying "1 page" reads weird when
-                  // there's no actual page render. PDF / image keep
-                  // "pages" (real per-page renders).
-                  const unit = showPageImages ? "pages" : "section";
+                  // ponytail: every kind carries `pages[]` in the data
+                  // model (text/markdown + Office pre-bake a single
+                  // page, PDF renders one per sheet) — label the count
+                  // in `page`/`pages` regardless so the meta strip and
+                  // the Pages tab agree. Failed-page count stays gated
+                  // on `showPageImages` because pre-baked kinds fail at
+                  // the doc level (the doc status badge already shows it).
+                  const unit = totalPages === 1 ? "page" : "pages";
                   return (
                     <>
                       <span
@@ -433,7 +437,7 @@ export function DocDetailDialog({
             <FileText className="size-3.5 sm:mr-1.5 shrink-0" />
             <span className="hidden sm:inline">{mainContentTabLabel(ingestKind)}</span>
           </button>
-          {showPageImages ? (
+          {d.doc.pages && d.doc.pages.length > 0 ? (
             <button
               onClick={() => setActiveTab("pages")}
               className={cn(

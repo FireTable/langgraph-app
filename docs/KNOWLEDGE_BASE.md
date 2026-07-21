@@ -123,9 +123,11 @@ they diverge only in the `splitFileToPageNode` factory dispatch:
 Upload ─▶ parse ────┤
                     ├─── image ────► bytes → R2 PNG/JPEG/WebP upload → single imageUrl page
                     │
-                    └─── office ───► officeparser → single markdown page (text stripped)
-                    (docx/xlsx/      + one imageUrl page per embedded image (vision OCR)
-                     pptx)
+                    └─── office ───► officeparser → N markdown pages (1 per PPTX slide / XLSX sheet,
+                    (docx/xlsx/      1 page for DOCX); images are inlined as R2 ![](url) refs in
+                     pptx)           page markdown (no separate vision OCR pass). Layout / group-
+                                    shape images not surfaced by officeparser's AST walker are
+                                    recovered via a self-extracted PPTX rels scan and inline-inserted.
                                                                                  │
                                                                                  ▼
                                           MarkdownTextSplitter → Embed (BAAI/bge-m3) → Entity extract
@@ -142,12 +144,25 @@ Upload ─▶ parse ────┤
    `kb-tmp/<userId>/<docId>/image.<ext>` and produces a single page
    with `imageUrl` set + `status='pending'`; **Office Open XML
    (DOCX/XLSX/PPTX)** goes through a single `officeHandler` that uses
-   `officeparser` to produce one markdown page (text stripped of
-   inline base64 image data via `includeImages: false`) plus one
-   `imageUrl` page per embedded image attachment (charts skipped —
-   their structured `chartData` isn't surfaced in markdown and we have
-   no code path to use it). Each page carries a `status` mirror
-   written by `pageToMarkdownNode`.
+   `officeparser` and paginates by kind — PPTX splits by `slide`, XLSX
+   by `sheet`, DOCX stays a single page (Word pagination is dynamic so
+   there's no top-level page node to slice on). Each page's markdown
+   is generated from a sub-AST with `includeImages: true`, so embedded
+   images land inline as `![](kb-tmp/...url)` refs (R2 URLs are
+   resolved by walking the AST and rewriting `metadata.url` per image
+   node — same images shared across pages are PUT once via a
+   `Promise<string>` dedup cache). officeparser's AST walker misses
+   two image classes that the handler recovers itself: layout images
+   (PPTX `ppt/slideLayouts/`) and images inside group shapes
+   (`<p:grpSp>`) — both visible in the doc zip's `.rels` files but not
+   in the walker output. The recovery pass unzips the PPTX (via
+   `fflate`), parses each slide's rels to find its layout + its
+   direct image refs, then appends `![](r2-url)` to every page that
+   inherits the orphan. PPTX-only for now — XLSX/DOCX have no
+   equivalent "page inheritance" concept. Charts are skipped
+   (`officeparser` doesn't surface `chartData` and there's no code
+   path to use it). Each page carries a `status` mirror written by
+   `pageToMarkdownNode`.
 3. **Text Chunking** — `MarkdownTextSplitter` (from `@langchain/textsplitters`)
    over the joined page markdown. Chunk size is `KB_CHUNK_MAX_CHARS`
    (default 2000).

@@ -87,6 +87,7 @@
     "decimal.js": "^10.6.0",
     "drizzle-orm": "^0.45.2",
     "drizzle-zod": "^0.8.3",
+    "fflate": "^0.8.3",
     "immutable-json-patch": "^6.0.3",
     "lexical": "^0.47.0",
     "lru-cache": "^11.5.1",
