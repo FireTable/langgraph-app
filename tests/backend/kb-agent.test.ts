@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
 
   const screenshot = vi.fn();
   const extractText = vi.fn();
+  const extractImages = vi.fn();
   const getAttachment = vi.fn();
   const r2KeyFromPublic = vi.fn();
   const uploadKbImage = vi.fn();
@@ -50,6 +51,7 @@ const mocks = vi.hoisted(() => {
     ocrFactory,
     screenshot,
     extractText,
+    extractImages,
     getAttachment,
     r2KeyFromPublic,
     uploadKbImage,
@@ -75,6 +77,7 @@ vi.mock("@/backend/model", () => ({
 }));
 vi.mock("@/lib/kb/screenshot", () => ({ screenshotPdf: mocks.screenshot }));
 vi.mock("@/lib/kb/text", () => ({ extractPdfText: mocks.extractText }));
+vi.mock("@/lib/kb/pdf-images", () => ({ extractPdfImages: mocks.extractImages }));
 vi.mock("@/lib/attachments/queries", () => ({ findAttachmentByR2Key: mocks.getAttachment }));
 vi.mock("@/lib/r2/client", () => ({
   r2KeyFromPublicUrl: mocks.r2KeyFromPublic,
@@ -210,11 +213,13 @@ beforeEach(() => {
     { pageIndex: 0, png: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
     { pageIndex: 1, png: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
   ]);
-  // ponytail: splitFilePageNode now runs screenshot + extractPdfText in
-  // parallel. Default to empty text (vision-only OCR path) so existing
-  // vision-flow tests don't need to provide text. Per-test mocks for
-  // tests that want to exercise the reference-text branch.
+  // ponytail: splitFilePageNode now runs screenshot + extractPdfText +
+  // extractPdfImages in parallel. Default to empty text + no images
+  // (vision-only OCR path) so existing vision-flow tests don't need to
+  // provide fixtures. Per-test mocks for tests that want to exercise
+  // the reference-text or image-inventory branches.
   mocks.extractText.mockResolvedValue([]);
+  mocks.extractImages.mockResolvedValue([]);
   mocks.getObject.mockResolvedValue(Buffer.from("%PDF-1.4\n"));
   mocks.uploadKbImage.mockImplementation(async ({ key }: { key: string }) => `${BASE_URL}/${key}`);
   // ponytail: kbAgent now sanity-checks dim === 1024 (matches pgvector

@@ -5,6 +5,7 @@ import { strToU8, zipSync } from "fflate";
 const mocks = vi.hoisted(() => ({
   screenshot: vi.fn(),
   extractText: vi.fn(),
+  extractImages: vi.fn(),
   getObject: vi.fn(),
   uploadKbImage: vi.fn(),
   // ponytail: the officeparser module is mocked at the module boundary
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/kb/screenshot", () => ({ screenshotPdf: mocks.screenshot }));
 vi.mock("@/lib/kb/text", () => ({ extractPdfText: mocks.extractText }));
+vi.mock("@/lib/kb/pdf-images", () => ({ extractPdfImages: mocks.extractImages }));
 vi.mock("@/lib/r2/client", () => ({
   getObject: mocks.getObject,
   uploadKbImage: mocks.uploadKbImage,
@@ -37,10 +39,14 @@ const ARGS = { r2Key: "u/x/y.pdf", userId: "u-1", docId: "d-1", name: "doc.pdf",
 beforeEach(() => {
   mocks.screenshot.mockReset();
   mocks.extractText.mockReset();
+  mocks.extractImages.mockReset();
   mocks.getObject.mockReset();
   mocks.uploadKbImage.mockReset();
   mocks.parseOffice.mockReset();
   mocks.uploadKbImage.mockImplementation(async ({ key }: { key: string }) => `https://r2/${key}`);
+  // ponytail: default to no embedded images so existing tests don't
+  // need to mock extractImages unless they're explicitly testing it.
+  mocks.extractImages.mockResolvedValue([]);
 });
 
 describe("getIngestHandler", () => {
@@ -93,8 +99,8 @@ describe("pdfHandler", () => {
       { pageIndex: 1, png: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
     ]);
     mocks.extractText.mockResolvedValue([
-      { pageIndex: 0, text: "page zero" },
-      { pageIndex: 1, text: "page one" },
+      { pageIndex: 0, text: "page zero", blocks: [] },
+      { pageIndex: 1, text: "page one", blocks: [] },
     ]);
 
     const pages = await pdfHandler.buildPages({ ...ARGS, contentType: "application/pdf" });
@@ -108,6 +114,111 @@ describe("pdfHandler", () => {
     });
     expect(pages[1].referenceText).toBe("page one");
     expect(mocks.uploadKbImage).toHaveBeenCalledTimes(2);
+  });
+
+  // ponytail: per-page text blocks + image inventory get attached to
+  // each PageResult so pageToMarkdownNode can pass them as structured
+  // hints to the OCR prompt. Without these the LLM has to guess where
+  // each image goes (or invent URLs entirely).
+  it("forwards textBlocks + imageRefs per page", async () => {
+    mocks.getObject.mockResolvedValue(Buffer.from("%PDF-1.4\n"));
+    mocks.screenshot.mockResolvedValue([
+      { pageIndex: 0, png: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
+    ]);
+    mocks.extractText.mockResolvedValue([
+      {
+        pageIndex: 0,
+        text: "Figure 1 caption.\n\nBody paragraph.",
+        blocks: [
+          { text: "Figure 1 caption.", bbox: [10, 10, 200, 30] },
+          { text: "Body paragraph.", bbox: [10, 200, 300, 230] },
+        ],
+      },
+    ]);
+    mocks.extractImages.mockResolvedValue([
+      {
+        pageIndex: 0,
+        name: "img-p0-0",
+        png: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+        bbox: [50, 50, 250, 180],
+        width: 200,
+        height: 130,
+      },
+    ]);
+
+    const pages = await pdfHandler.buildPages({ ...ARGS, contentType: "application/pdf" });
+
+    expect(pages[0].textBlocks).toEqual([
+      { text: "Figure 1 caption.", bbox: [10, 10, 200, 30] },
+      { text: "Body paragraph.", bbox: [10, 200, 300, 230] },
+    ]);
+    expect(pages[0].imageRefs).toHaveLength(1);
+    expect(pages[0].imageRefs![0]).toEqual({
+      name: "img-p0-0",
+      url: "https://r2/kb-tmp/u-1/d-1/img-p0-0.png",
+      bbox: [50, 50, 250, 180],
+      width: 200,
+      height: 130,
+    });
+    // 2 uploads: page screenshot + extracted image
+    expect(mocks.uploadKbImage).toHaveBeenCalledTimes(2);
+  });
+
+  it("produces empty textBlocks + imageRefs when page has no text or images", async () => {
+    mocks.getObject.mockResolvedValue(Buffer.from("%PDF-1.4\n"));
+    mocks.screenshot.mockResolvedValue([{ pageIndex: 0, png: Buffer.from([0]) }]);
+    mocks.extractText.mockResolvedValue([{ pageIndex: 0, text: "", blocks: [] }]);
+    mocks.extractImages.mockResolvedValue([]);
+
+    const pages = await pdfHandler.buildPages({ ...ARGS, contentType: "application/pdf" });
+
+    expect(pages[0].textBlocks).toEqual([]);
+    expect(pages[0].imageRefs).toEqual([]);
+  });
+
+  it("groups imageRefs by page when multiple pages have multiple images", async () => {
+    mocks.getObject.mockResolvedValue(Buffer.from("%PDF-1.4\n"));
+    mocks.screenshot.mockResolvedValue([
+      { pageIndex: 0, png: Buffer.from([0]) },
+      { pageIndex: 1, png: Buffer.from([0]) },
+    ]);
+    mocks.extractText.mockResolvedValue([
+      { pageIndex: 0, text: "", blocks: [] },
+      { pageIndex: 1, text: "", blocks: [] },
+    ]);
+    mocks.extractImages.mockResolvedValue([
+      {
+        pageIndex: 0,
+        name: "img-p0-0",
+        png: Buffer.from([0]),
+        bbox: [0, 0, 100, 100],
+        width: 50,
+        height: 50,
+      },
+      {
+        pageIndex: 0,
+        name: "img-p0-1",
+        png: Buffer.from([0]),
+        bbox: [0, 100, 100, 200],
+        width: 50,
+        height: 50,
+      },
+      {
+        pageIndex: 1,
+        name: "img-p1-0",
+        png: Buffer.from([0]),
+        bbox: [0, 0, 100, 100],
+        width: 50,
+        height: 50,
+      },
+    ]);
+
+    const pages = await pdfHandler.buildPages({ ...ARGS, contentType: "application/pdf" });
+
+    expect(pages[0].imageRefs!.map((r) => r.name)).toEqual(["img-p0-0", "img-p0-1"]);
+    expect(pages[1].imageRefs!.map((r) => r.name)).toEqual(["img-p1-0"]);
+    expect(pages[0].imageRefs![0].url).toBe("https://r2/kb-tmp/u-1/d-1/img-p0-0.png");
+    expect(pages[1].imageRefs![0].url).toBe("https://r2/kb-tmp/u-1/d-1/img-p1-0.png");
   });
 });
 

@@ -87,9 +87,9 @@ const ocrPageSchema = z.object({
     .string()
     .describe(
       "Clean markdown extraction of this PDF page. " +
-        "Preserve headings, lists, code blocks, tables, and inline formatting. " +
-        "Return an empty string if the page is blank or contains only decorative images. " +
-        "Output ONLY the markdown — no preamble, no commentary, no code fences.",
+      "Preserve headings, lists, code blocks, tables, and inline formatting. " +
+      "Return an empty string if the page is blank or contains only decorative images. " +
+      "Output ONLY the markdown — no preamble, no commentary, no code fences.",
     ),
 });
 
@@ -577,9 +577,36 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
               };
             }
 
-            const contentParts: Array<{ type: string; [key: string]: unknown }> = [
+            const contentParts: Array<{ type: string;[key: string]: unknown }> = [
               { type: "image_url", image_url: { url: p.imageUrl } },
             ];
+            // ponytail: structured hints for the OCR LLM. Text blocks
+            // give position-aware context for layout correlation (e.g.
+            // which paragraph a figure caption belongs to). Image
+            // inventory hands the LLM real CDN URLs so its inline
+            // ![](url) refs aren't hallucinated. Both blocks are
+            // skipped when empty so image-only / text-only docs don't
+            // pay for unused prompt tokens.
+            if (p.textBlocks && p.textBlocks.length > 0) {
+              const lines = p.textBlocks.map(
+                (b) =>
+                  `  y=${b.bbox[1].toFixed(0)}-${b.bbox[3].toFixed(0)}  ${JSON.stringify(b.text.slice(0, 200))}`,
+              );
+              contentParts.push({
+                type: "text",
+                text: `Text Blocks (in source order, y = vertical position in PDF points):\n${lines.join("\n")}`,
+              });
+            }
+            if (p.imageRefs && p.imageRefs.length > 0) {
+              const lines = p.imageRefs.map(
+                (img) =>
+                  `  ${img.name}  bbox=[${img.bbox[0].toFixed(0)},${img.bbox[1].toFixed(0)},${img.bbox[2].toFixed(0)},${img.bbox[3].toFixed(0)}]  ${img.width}×${img.height}px  ${img.url}`,
+              );
+              contentParts.push({
+                type: "text",
+                text: `Image Inventory (use these exact URLs verbatim in inline image refs):\n${lines.join("\n")}`,
+              });
+            }
             if (p.referenceText?.trim()) {
               contentParts.push({
                 type: "text",
@@ -939,15 +966,15 @@ export async function resolveEntityAliasesForDoc(args: {
     const systemMsg = new SystemMessage(KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT);
     const humanMsg = new HumanMessage(
       `Document Title: ${documentTitle || "Unknown Document"}\n` +
-        `Extracted Entities List:\n${JSON.stringify(entityList, null, 2)}`,
+      `Extracted Entities List:\n${JSON.stringify(entityList, null, 2)}`,
     );
 
     // 4. Call LLM to find alignments
     const alignmentResult = (await extractModel
       .withStructuredOutput(alignmentSchema, { method: "jsonSchema", strict: true })
       .invoke([systemMsg, humanMsg], { ...config, tags: ["nostream"] })) as z.infer<
-      typeof alignmentSchema
-    >;
+        typeof alignmentSchema
+      >;
 
     // 5. Create mapping dictionary
     const nameMap = new Map<string, string>();
@@ -1230,8 +1257,8 @@ async function generateChunkEmbedNode(
                   const systemMessage = new SystemMessage(KB_ENTITY_EXTRACTION_SYSTEM_PROMPT);
                   const humanMessage = new HumanMessage(
                     `Context Document Title: [${docTitle}]\n` +
-                      `Chunk: [${ordinal + 1} / ${totalChunksForPrompt}]\n\n` +
-                      `Text to extract:\n${text}`,
+                    `Chunk: [${ordinal + 1} / ${totalChunksForPrompt}]\n\n` +
+                    `Text to extract:\n${text}`,
                   );
 
                   try {

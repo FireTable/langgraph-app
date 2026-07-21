@@ -1,6 +1,7 @@
 import type { PageResult } from "@/backend/state";
 import { screenshotPdf } from "@/lib/kb/screenshot";
 import { extractPdfText } from "@/lib/kb/text";
+import { extractPdfImages } from "@/lib/kb/pdf-images";
 import { getObject, uploadKbImage } from "@/lib/r2/client";
 import { OfficeParser } from "officeparser";
 import { strFromU8, unzipSync } from "fflate";
@@ -31,24 +32,64 @@ export interface IngestHandler {
 }
 
 // PDF: render each page to a PNG screenshot + extract the native text
-// layer as reference text. pageToMarkdownNode OCRs each page later.
+// layer as reference text + extract every embedded raster image with
+// its placement bbox. pageToMarkdownNode OCRs each page later using
+// the page PNG + a structured inventory of text blocks + image URLs
+// so the vision LLM can reference real images in its output.
 export const pdfHandler: IngestHandler = {
   async buildPages({ r2Key, userId, docId }) {
     const pdfBytes = await getObject(r2Key);
-    const [rendered, extracted] = await Promise.all([
+    const [rendered, extracted, images] = await Promise.all([
       screenshotPdf({ pdfBytes, dpi: 250 }),
       extractPdfText({ pdfBytes }),
+      extractPdfImages({ pdfBytes }),
     ]);
-    const textByPage = Object.fromEntries(extracted.map((e) => [e.pageIndex, e.text]));
+    const textByPage = new Map(
+      extracted.map((e) => [e.pageIndex, { text: e.text, blocks: e.blocks }]),
+    );
+    // ponytail: pre-upload every embedded image so the OCR pass only
+    // awaits URLs (no extra R2 roundtrip mid-loop). Per-page-instance
+    // upload — same logo embedded N times produces N R2 objects, one
+    // per page position. Cross-page dedup is a future optimization
+    // if storage costs become a concern.
+    const uploadedImageRefs = await Promise.all(
+      images.map(async (img) => {
+        const key = `kb-tmp/${userId}/${docId}/${img.name}.png`;
+        const url = await uploadKbImage({ key, body: img.png, contentType: "image/png" });
+        return {
+          pageIndex: img.pageIndex,
+          name: img.name,
+          url,
+          bbox: img.bbox,
+          width: img.width,
+          height: img.height,
+        };
+      }),
+    );
+    // ponytail: refs are 1:1 with images, so group by pageIndex in
+    // one pass. Drop the `pageIndex` field from each ref before
+    // stuffing into PageResult — the array order on a single page
+    // is already the spatial reading order we want.
+    const refsByPage = new Map<number, Array<Omit<(typeof uploadedImageRefs)[number], "pageIndex">>>();
+    for (const ref of uploadedImageRefs) {
+      const { pageIndex, ...rest } = ref;
+      const arr = refsByPage.get(pageIndex) ?? [];
+      arr.push(rest);
+      refsByPage.set(pageIndex, arr);
+    }
+
     return Promise.all(
       rendered.map(async (p) => {
         const key = `kb-tmp/${userId}/${docId}/page-${p.pageIndex}.png`;
         const imageUrl = await uploadKbImage({ key, body: p.png });
+        const text = textByPage.get(p.pageIndex);
         return {
           pageIndex: p.pageIndex,
           imageUrl,
           markdown: "",
-          referenceText: textByPage[p.pageIndex] ?? "",
+          referenceText: text?.text ?? "",
+          textBlocks: text?.blocks ?? [],
+          imageRefs: refsByPage.get(p.pageIndex) ?? [],
           status: "pending" as const,
         };
       }),

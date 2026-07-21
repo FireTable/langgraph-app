@@ -31,6 +31,25 @@ export type PageResult = {
   markdown: string;
   /** Native text extracted from the PDF text layer by mupdf. Empty for scanned/image-only pages. */
   referenceText?: string;
+  // ponytail: structured text blocks with bboxes, populated by the PDF
+  // handler from mupdf's structured-text walk. The OCR prompt uses
+  // these to tell the LLM where each paragraph sits on the page so it
+  // can correlate inline images with captions / surrounding context.
+  // Empty when the page has no text layer (scanned PDFs).
+  textBlocks?: Array<{ text: string; bbox: [number, number, number, number] }>;
+  // ponytail: pre-uploaded R2 URLs for every embedded raster image on
+  // this page, plus its placement bbox. The OCR prompt lists these so
+  // the vision LLM can reference real image URLs in its markdown
+  // output instead of hallucinating them. Same page-indexed naming
+  // convention as Office (`img-p{N}-{idx}`) so the keys are stable
+  // across re-ingests of the same source.
+  imageRefs?: Array<{
+    name: string;
+    url: string;
+    bbox: [number, number, number, number];
+    width: number;
+    height: number;
+  }>;
   errorMessage?: string;
   // ponytail: per-page 4-stage status mirroring kbChunkStatusEnum.
   // Written by pageToMarkdownNode when OCR succeeds/fails; pending
