@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { getChatModel } from "@/backend/model";
 import { ROUTER_AGENT_PROMPT } from "@/backend/prompt/system";
-import { hasUnprocessedPdf, stripFileParts } from "@/lib/kb/extract";
+import { hasUnprocessedFile, stripFileParts } from "@/lib/kb/extract";
 import { prepareMessagesForInvoke } from "@/backend/memory/template";
 import { extractUserId } from "@/backend/memory/recall";
 
@@ -36,7 +36,7 @@ export async function routerAgentNode(
   // kbAgent now processes every PDF across every HumanMessage in one
   // invocation, so the router only needs to know "is there still
   // work to do?" — not which turn owns it.
-  if (hasUnprocessedPdf(state.messages)) {
+  if (hasUnprocessedFile(state.messages)) {
     return { routerDecision: { next: "kbAgent" } };
   }
 

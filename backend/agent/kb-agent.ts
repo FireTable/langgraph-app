@@ -71,7 +71,7 @@ const KB_CHUNK_OVERLAP = 200;
 //
 // After one kbAgent invocation there are zero UNSTAMPED PDF file
 // parts left in state.messages — every PDF either carries a kb_ref
-// sibling or has been stripped. extractAllPdfParts / hasUnprocessedPdf
+// sibling or has been stripped. extractAllPdfParts / hasUnprocessedFile
 // filter on `!p.kb_ref` so the second router pass won't re-dispatch
 // kbAgent.
 

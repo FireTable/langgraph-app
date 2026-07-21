@@ -122,7 +122,7 @@ function isKbIngestibleMime(mime: string | undefined): boolean {
 // ponytail: router signal. True when ANY HumanMessage has a kb-ingestible
 // file part without a kb_ref sibling. Once kbAgent stamps the sibling, a
 // second router pass won't re-dispatch kbAgent.
-export function hasUnprocessedPdf(messages: BaseMessage[]): boolean {
+export function hasUnprocessedFile(messages: BaseMessage[]): boolean {
   for (const m of messages) {
     const content = humanContent(m);
     if (!isHumanLike(m) || !Array.isArray(content)) continue;

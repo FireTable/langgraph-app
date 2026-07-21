@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   collectKbRefs,
   extractAllPdfParts,
-  hasUnprocessedPdf,
+  hasUnprocessedFile,
   isFilePart,
   isPdfAttachment,
 } from "@/lib/kb/extract";
@@ -64,12 +64,12 @@ describe("lib/kb/extract", () => {
     });
   });
 
-  describe("hasUnprocessedPdf", () => {
+  describe("hasUnprocessedFile", () => {
     const pdf = { type: "file" as const, data: "u/A", mime_type: "application/pdf" };
 
     it("returns true when a HumanMessage has a PDF file part", () => {
       const h = new HumanMessage({ content: [pdf], id: "h-1" });
-      expect(hasUnprocessedPdf([h])).toBe(true);
+      expect(hasUnprocessedFile([h])).toBe(true);
     });
 
     it("returns false once kbAgent has replaced every PDF file part with a kb_ref", () => {
@@ -77,7 +77,7 @@ describe("lib/kb/extract", () => {
         content: [{ type: "kb_ref", docId: "d-1" }] as never,
         id: "h-1",
       });
-      expect(hasUnprocessedPdf([h])).toBe(false);
+      expect(hasUnprocessedFile([h])).toBe(false);
     });
 
     it("returns true if any HumanMessage across the array still has a PDF file part", () => {
@@ -87,7 +87,7 @@ describe("lib/kb/extract", () => {
       });
       const ai = new AIMessage("ok");
       const unprocessed = new HumanMessage({ content: [pdf], id: "h-2" });
-      expect(hasUnprocessedPdf([processed, ai, unprocessed])).toBe(true);
+      expect(hasUnprocessedFile([processed, ai, unprocessed])).toBe(true);
     });
 
     it("returns false when a HumanMessage has only text or non-KB-ingestible files", () => {
@@ -96,17 +96,17 @@ describe("lib/kb/extract", () => {
         content: [{ type: "file", data: "u/clip", mime_type: "audio/mp3" }],
         id: "h-2",
       } as never);
-      expect(hasUnprocessedPdf([h1, h2])).toBe(false);
+      expect(hasUnprocessedFile([h1, h2])).toBe(false);
     });
 
     it("returns false on empty input", () => {
-      expect(hasUnprocessedPdf([])).toBe(false);
+      expect(hasUnprocessedFile([])).toBe(false);
     });
 
     it("returns false when there is no HumanMessage", () => {
       const sys = new SystemMessage("x");
       const ai = new AIMessage("y");
-      expect(hasUnprocessedPdf([sys, ai])).toBe(false);
+      expect(hasUnprocessedFile([sys, ai])).toBe(false);
     });
 
     it("returns true when a HumanMessage carries 2 PDFs (still unprocessed)", () => {
@@ -117,7 +117,7 @@ describe("lib/kb/extract", () => {
         ] as never,
         id: "h-1",
       });
-      expect(hasUnprocessedPdf([h])).toBe(true);
+      expect(hasUnprocessedFile([h])).toBe(true);
     });
   });
 
