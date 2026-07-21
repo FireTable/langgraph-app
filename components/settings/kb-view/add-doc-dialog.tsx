@@ -97,8 +97,11 @@ export function AddDocDialog({
       if (!file || !folderId) return;
       setFileSubmitting(true);
       try {
-        await handleAddDoc(file, folderId, () => onSuccess?.());
-        onOpenChange(false);
+        // ponytail: only close the dialog when handleAddDoc actually
+        // succeeded — on failure it has already toasted the error and
+        // the user needs to retry without losing context.
+        const ok = await handleAddDoc(file, folderId, () => onSuccess?.());
+        if (ok) onOpenChange(false);
       } finally {
         setFileSubmitting(false);
       }
