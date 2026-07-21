@@ -21,8 +21,7 @@ import {
   type PageResult,
   type ProcessedFile,
 } from "@/backend/state";
-import { screenshotPdf } from "@/lib/kb/screenshot";
-import { extractPdfText } from "@/lib/kb/text";
+import { getIngestHandler } from "@/lib/kb/ingest-handlers";
 import {
   ensureDefaultKbFolder,
   findKbDocumentByContentHash,
@@ -45,7 +44,7 @@ import { findAttachmentByR2Key } from "@/lib/attachments/queries";
 import { extractAllPdfParts, isFilePart, stampKbRefOnFilename } from "@/lib/kb/extract";
 import { invalidateKbDoc } from "@/lib/kb/cache";
 import { EMBEDDING_DIM } from "@/lib/kb/schema";
-import { r2KeyFromPublicUrl, uploadKbImage, getR2PublicBaseUrl, getObject } from "@/lib/r2/client";
+import { r2KeyFromPublicUrl, getR2PublicBaseUrl } from "@/lib/r2/client";
 import { KB_OCR_CONCURRENCY, KB_ENTITY_CONCURRENCY } from "@/lib/constants";
 
 const KB_CHUNK_SIZE = 1024;
@@ -246,6 +245,7 @@ async function prepareKBDataNode(
           r2Key: null,
           title: doc.title,
           contentHash: doc.contentHash,
+          contentType: doc.contentType,
           // pipelineStatus="new" drives both routeAfterRewrite (pushes
           // generateChunkEmbed) AND generateChunkEmbedNode's own filter
           // (only acts on "new" entries).
@@ -284,6 +284,7 @@ async function prepareKBDataNode(
             r2Key,
             title: null,
             contentHash: null,
+            contentType: null,
             pipelineStatus: "unknown",
             errorMessage: "attachment not found",
           };
@@ -313,6 +314,7 @@ async function prepareKBDataNode(
               r2Key: attachment.r2Key,
               title: attachment.name,
               contentHash,
+              contentType: attachment.contentType,
               pipelineStatus: "dedup",
               errorMessage: existing.errorMessage,
               existingStatus: existing.status,
@@ -327,6 +329,7 @@ async function prepareKBDataNode(
             r2Key: attachment.r2Key,
             title: attachment.name,
             contentHash,
+            contentType: attachment.contentType,
             pipelineStatus: "new",
             errorMessage: null,
             existingStatus: existing.status,
@@ -342,6 +345,7 @@ async function prepareKBDataNode(
           r2Key: attachment.r2Key,
           title: attachment.name,
           contentHash,
+          contentType: attachment.contentType,
           pipelineStatus: "new",
           errorMessage: null,
         };
@@ -354,6 +358,7 @@ async function prepareKBDataNode(
           r2Key,
           title: null,
           contentHash: null,
+          contentType: null,
           pipelineStatus: "failed",
           errorMessage: (err as Error).message,
         };
@@ -380,7 +385,7 @@ async function prepareKBDataNode(
           folderId: folder.id,
           attachmentId: pf.attachmentId!,
           title: pf.title ?? "untitled",
-          contentType: "application/pdf",
+          contentType: pf.contentType ?? "application/pdf",
           contentHash: pf.contentHash!,
           status: "parsing",
           errorMessage: null,
@@ -446,26 +451,22 @@ async function splitFileToPageNode(state: KbAgentStateShape): Promise<Partial<Kb
   const updatedProcessed = state.processedFiles.map((p) => ({ ...p }));
 
   for (const pf of newDocs) {
+    // ponytail: extractAllPdfParts already filters to the kb-ingestible
+    // mime set (PDF + text/markdown + text/plain + image/*) so a null
+    // handler here would be a programming error, not a runtime one.
+    // Fail closed to surface the bug rather than silently no-op.
+    const handler = pf.contentType ? getIngestHandler(pf.contentType) : null;
+    if (!handler) {
+      throw new Error(`kbAgent splitFileToPageNode: no handler for mime ${pf.contentType}`);
+    }
     try {
-      const pdfBytes = await getObject(pf.r2Key!);
-      const [rendered, extracted] = await Promise.all([
-        screenshotPdf({ pdfBytes, dpi: 250 }),
-        extractPdfText({ pdfBytes }),
-      ]);
-      const textByPage = Object.fromEntries(extracted.map((e) => [e.pageIndex, e.text]));
-      const pages: PageResult[] = await Promise.all(
-        rendered.map(async (p) => {
-          const key = `kb-tmp/${state.userId}/${pf.docId}/page-${p.pageIndex}.png`;
-          const imageUrl = await uploadKbImage({ key, body: p.png });
-          return {
-            pageIndex: p.pageIndex,
-            imageUrl,
-            markdown: "",
-            referenceText: textByPage[p.pageIndex] ?? "",
-            status: "pending",
-          };
-        }),
-      );
+      const pages = await handler.buildPages({
+        r2Key: pf.r2Key!,
+        userId: state.userId!,
+        docId: pf.docId!,
+        name: pf.title ?? "untitled",
+        contentType: pf.contentType!,
+      });
       pagesByDocId[pf.docId!] = pages;
       if (state.userId && pf.docId) {
         await updateKbDocumentStatus(state.userId, pf.docId, {
@@ -474,8 +475,8 @@ async function splitFileToPageNode(state: KbAgentStateShape): Promise<Partial<Kb
         });
       }
     } catch (err) {
-      // ponytail: render failure flips this PDF to "failed" — keep the
-      // docId so the rewritten HumanMessage still carries a kb_ref
+      // ponytail: handler failure flips this doc to "failed" — keep
+      // the docId so the rewritten HumanMessage still carries a kb_ref
       // sibling, and persist the failure on the row so the [Failed: ...]
       // placeholder resolves correctly in resolveKbRefs.
       const idx = state.processedFiles.indexOf(pf);
@@ -556,11 +557,13 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
 
         const ocrResults = await Promise.all(
           pages.map(async (p) => {
-            if (
-              state.mode === "retryFailed" &&
-              (p.markdown ?? "").trim().length > 0 &&
-              !p.errorMessage
-            ) {
+            // ponytail: md-already-set short-circuit. PDF pages start
+            // with empty markdown and need OCR; text/markdown/plain
+            // pre-bake a single page with status='success' and full
+            // markdown, which we forward as-is. Image pages have
+            // markdown='' + imageUrl set + status='pending' so they
+            // fall through to the vision OCR branch below.
+            if ((p.markdown ?? "").trim().length > 0 && !p.errorMessage) {
               return p;
             }
 
@@ -577,6 +580,33 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
             const contentParts: Array<{ type: string; [key: string]: unknown }> = [
               { type: "image_url", image_url: { url: p.imageUrl } },
             ];
+            // ponytail: structured hints for the OCR LLM. Text blocks
+            // give position-aware context for layout correlation (e.g.
+            // which paragraph a figure caption belongs to). Image
+            // inventory hands the LLM real CDN URLs so its inline
+            // ![](url) refs aren't hallucinated. Both blocks are
+            // skipped when empty so image-only / text-only docs don't
+            // pay for unused prompt tokens.
+            if (p.textBlocks && p.textBlocks.length > 0) {
+              const lines = p.textBlocks.map(
+                (b) =>
+                  `  y=${b.bbox[1].toFixed(0)}-${b.bbox[3].toFixed(0)}  ${JSON.stringify(b.text.slice(0, 200))}`,
+              );
+              contentParts.push({
+                type: "text",
+                text: `Text Blocks (in source order, y = vertical position in PDF points):\n${lines.join("\n")}`,
+              });
+            }
+            if (p.imageRefs && p.imageRefs.length > 0) {
+              const lines = p.imageRefs.map(
+                (img) =>
+                  `  ${img.name}  bbox=[${img.bbox[0].toFixed(0)},${img.bbox[1].toFixed(0)},${img.bbox[2].toFixed(0)},${img.bbox[3].toFixed(0)}]  ${img.width}×${img.height}px  ${img.url}`,
+              );
+              contentParts.push({
+                type: "text",
+                text: `Image Inventory (use these exact URLs verbatim in inline image refs):\n${lines.join("\n")}`,
+              });
+            }
             if (p.referenceText?.trim()) {
               contentParts.push({
                 type: "text",

@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { R2NotConfiguredError, deleteObject, getR2PublicBaseUrl } from "@/lib/r2/client";
+import { r2Keys } from "@/lib/r2/keys";
 import { withAuth } from "@/lib/auth/with-auth";
 
 // ponytail: avatars have no DB row, so nothing sweeps the old R2 object when
 // the user deletes or replaces their avatar — it would leak forever at its
 // public URL. This route deletes the object behind an avatar URL, owner-
-// scoped: the key must live under u/<user.id>/avatar/. External avatar URLs
+// scoped: the key must be the user's own avatar slot. External avatar URLs
 // (a github/google-hosted image) aren't ours → 204 no-op. Idempotent: an
 // already-gone object is a success.
 
@@ -45,8 +46,11 @@ export const DELETE = withAuth(async (req, { user }) => {
   if (!url.startsWith(`${base}/`)) return new NextResponse(null, { status: 204 });
 
   const key = url.slice(base.length + 1);
-  const prefix = `u/${user.id}/avatar/`;
-  if (!key.startsWith(prefix)) {
+  // ponytail: avatar key is fixed-slot `u/<userId>/avatar.png`.
+  // Owner-scoped: key must equal the user's slot. Any other key
+  // (including other users' avatar slots) → 403.
+  const avatarKey = r2Keys().avatar({ userId: user.id });
+  if (key !== avatarKey) {
     return NextResponse.json({ code: "FORBIDDEN" }, { status: 403 });
   }
 

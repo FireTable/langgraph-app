@@ -1,9 +1,15 @@
 // R2 key construction for chat attachments (issue #12).
-// Format: `u/<userId>/<nanoid>-<safe-filename>`.
 //
-// Key conventions documented at docs/ATTACHMENTS.md; the community pattern
-// (Vercel guide / AWS blog) keeps userId bare — R2 list ops require IAM
-// regardless of bucket public-read policy, so the leak risk is bounded.
+// Key construction moved to lib/r2/keys.ts factory (r2Keys().upload).
+// Chat attachment keys are content-addressed — sha256 of the bytes is
+// the key component, so a second upload of the same file collapses to
+// one R2 object. The row id in the attachments table is still a 12-char
+// random id (used for confirmation routing + DB dedup), but it's no
+// longer part of the R2 key.
+//
+// safeFilename is still exported because the avatar route uses it to
+// sanitize the displayed filename sent on the Content-Disposition header
+// (no longer embedded in the URL itself).
 
 const MAX_NAME_LEN = 200;
 
@@ -14,8 +20,4 @@ export function safeFilename(name: string): string {
   const cleaned = base.replace(/[\x00-\x1f\x7f]/g, "_");
   // Clamp length, then collapse trailing dots (Windows refuses them).
   return cleaned.slice(0, MAX_NAME_LEN).replace(/\.+$/, "") || "file";
-}
-
-export function buildKey(userId: string, id: string, name: string): string {
-  return `u/${userId}/${id}-${safeFilename(name)}`;
 }

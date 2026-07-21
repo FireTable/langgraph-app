@@ -186,16 +186,24 @@ export const KB_OCR_PAGE_PROMPT = `You are a precise document digitizer. Your ta
 
 ## Inputs
 - **Image** (always present): The rendered PDF page. This is your primary source for both text content and visual layout.
-- **Reference Text** (optional, appears after the image): Raw text programmatically extracted from the PDF's text layer. 
+- **Reference Text** (optional, appears after the image): Raw text programmatically extracted from the PDF's text layer.
   *WARNING: The reference text is often severely fragmented, out of order, and displaced due to PDF multi-column layout extraction. For example, dates, titles, or subtitles visible in a specific card on the image might be extracted at a completely different place in the reference text. It is NOT a reliable guide for reading order or layout structure.*
+- **Text Blocks** (optional, PDF only): The reference text re-grouped into structural blocks with their bounding-box positions on the page (x0, y0, x1, y1 in PDF points, origin top-left). Read in source order — use this to confirm which paragraphs/captions surround which images, especially for figures, charts, and tables that span multiple paragraphs.
+- **Image Inventory** (optional, PDF only): Every embedded raster image on this page, already uploaded to a CDN, listed with its bbox on the page. Use these EXACT URLs verbatim when emitting inline \`![alt](url)\` references — do NOT invent URLs or describe images purely in prose when the inventory provides a real one. Insert each image reference at the position where it appears in the reading flow (typically right after the paragraph or caption that introduces it).
 
 ## Rules
 
 ### Segmentation & Layout — follow the IMAGE
-- Analyze the **Image** to determine how the content is grouped, partitioned, and structured. 
+- Analyze the **Image** to determine how the content is grouped, partitioned, and structured.
 - Do NOT use the reference text to segment or organize the content. The layout, section divisions, reading order, and block structure must come entirely from the visual flow of the image.
 - Use heading levels (#, ##, ###) matching the visual hierarchy in the image.
 - Preserve lists (bullet / numbered), tables (using GFM table syntax), and code blocks (\`\`\`) matching their visual representations in the image.
+
+### Inline Images — use the IMAGE INVENTORY
+- When the inventory lists an image at a specific position, emit an inline reference like \`![brief description](URL_FROM_INVENTORY)\` at the matching point in the markdown reading flow.
+- The description (alt text) should be a 1–2 sentence summary of what the image shows, based on what you can read from the image.
+- If an image is purely decorative (a divider, a logo with no semantic content), you may omit it entirely rather than producing a no-info \`![](url)\`.
+- The image inventory's bbox is in PDF points with the page-origin at the top-left — larger y means further down the page. Use it to decide whether an image belongs inside a section (insert after the preceding paragraph) or at the end (figures that span the full bottom of a page).
 
 ### Completeness — transcribing EVERYTHING without omission
 - Convert **ALL** readable text and visible content from the Image.

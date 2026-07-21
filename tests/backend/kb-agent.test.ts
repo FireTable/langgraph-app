@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
 
   const screenshot = vi.fn();
   const extractText = vi.fn();
+  const extractImages = vi.fn();
   const getAttachment = vi.fn();
   const r2KeyFromPublic = vi.fn();
   const uploadKbImage = vi.fn();
@@ -50,6 +51,7 @@ const mocks = vi.hoisted(() => {
     ocrFactory,
     screenshot,
     extractText,
+    extractImages,
     getAttachment,
     r2KeyFromPublic,
     uploadKbImage,
@@ -75,12 +77,14 @@ vi.mock("@/backend/model", () => ({
 }));
 vi.mock("@/lib/kb/screenshot", () => ({ screenshotPdf: mocks.screenshot }));
 vi.mock("@/lib/kb/text", () => ({ extractPdfText: mocks.extractText }));
+vi.mock("@/lib/kb/pdf-images", () => ({ extractPdfImages: mocks.extractImages }));
 vi.mock("@/lib/attachments/queries", () => ({ findAttachmentByR2Key: mocks.getAttachment }));
 vi.mock("@/lib/r2/client", () => ({
   r2KeyFromPublicUrl: mocks.r2KeyFromPublic,
   uploadKbImage: mocks.uploadKbImage,
   getR2PublicBaseUrl: mocks.getR2PublicBase,
   getObject: mocks.getObject,
+  getR2FolderUser: vi.fn(() => "u"),
 }));
 vi.mock("@/lib/kb/queries", () => ({
   ensureDefaultKbFolder: mocks.ensureFolder,
@@ -117,12 +121,25 @@ function urlFor(slug: string) {
 
 function attachmentFor(url: string) {
   const r2Key = url.replace(`${BASE_URL}/`, "");
+  // ponytail: derive contentType from URL suffix so non-PDF test
+  // attachments (text/markdown, image/png, ...) carry the right mime
+  // through kbAgent's mime routing.
+  const last = r2Key.split("/").pop() ?? "doc.pdf";
+  const ext = last.split(".").pop()?.toLowerCase();
+  const contentType =
+    ext === "md"
+      ? "text/markdown"
+      : ext === "txt"
+        ? "text/plain"
+        : ext === "png" || ext === "jpg" || ext === "jpeg" || ext === "webp"
+          ? `image/${ext === "jpg" ? "jpeg" : ext}`
+          : "application/pdf";
   return {
     id: `att-${r2Key}`,
     userId: USER,
     r2Key,
-    name: `${r2Key.split("/").pop() ?? "doc"}.pdf`,
-    contentType: "application/pdf",
+    name: last,
+    contentType,
     sizeBytes: 1024,
     status: "uploaded" as const,
     sha256: `sha-${r2Key}`,
@@ -197,11 +214,13 @@ beforeEach(() => {
     { pageIndex: 0, png: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
     { pageIndex: 1, png: Buffer.from([0x89, 0x50, 0x4e, 0x47]) },
   ]);
-  // ponytail: splitFilePageNode now runs screenshot + extractPdfText in
-  // parallel. Default to empty text (vision-only OCR path) so existing
-  // vision-flow tests don't need to provide text. Per-test mocks for
-  // tests that want to exercise the reference-text branch.
+  // ponytail: splitFilePageNode now runs screenshot + extractPdfText +
+  // extractPdfImages in parallel. Default to empty text + no images
+  // (vision-only OCR path) so existing vision-flow tests don't need to
+  // provide fixtures. Per-test mocks for tests that want to exercise
+  // the reference-text or image-inventory branches.
   mocks.extractText.mockResolvedValue([]);
+  mocks.extractImages.mockResolvedValue([]);
   mocks.getObject.mockResolvedValue(Buffer.from("%PDF-1.4\n"));
   mocks.uploadKbImage.mockImplementation(async ({ key }: { key: string }) => `${BASE_URL}/${key}`);
   // ponytail: kbAgent now sanity-checks dim === 1024 (matches pgvector
@@ -898,7 +917,7 @@ describe("backend/kb-agent", () => {
       expect(content.filter((p) => p.type === "file" && p.kb_ref)).toHaveLength(2);
     });
 
-    it("strips non-PDF file parts while keeping PDF-derived kb_refs", async () => {
+    it("strips non-KB-ingestible file parts while keeping PDF-derived kb_refs", async () => {
       mocks.ocrStructuredInvoke.mockReset();
       mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "doc text ".repeat(40) });
       const messages = [
@@ -906,7 +925,9 @@ describe("backend/kb-agent", () => {
           content: [
             { type: "text", text: "see both" },
             pdfFilePart(urlFor("alpha")),
-            pdfFilePart(urlFor("img"), "image/png"), // non-PDF
+            // non-KB-ingestible (json) — should be stripped, image/markdown/plain
+            // are now KB-ingestible (factory handles them) and would be preserved
+            pdfFilePart(urlFor("other"), "application/json"),
           ] as never,
           id: "m-1",
         }),
@@ -917,7 +938,7 @@ describe("backend/kb-agent", () => {
       );
       expect(out.status).toBe("success");
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
-      // ponytail: file part preserved with kb_ref sibling, text preserved, image dropped.
+      // ponytail: PDF preserved with kb_ref sibling, text preserved, json dropped.
       expect(content.filter((p) => p.type === "file" && p.kb_ref)).toHaveLength(1);
       expect(content.filter((p) => p.type === "file")).toHaveLength(1);
       expect(content.filter((p) => p.type === "text")).toHaveLength(1);
@@ -1027,6 +1048,95 @@ describe("backend/kb-agent", () => {
       const betaPart = c2.find((p) => p.type === "file") as Record<string, unknown>;
       expect(betaPart.kb_ref).toMatchObject({ docId: expect.stringMatching(/^d-/) });
       expect(betaPart.filename as string).toMatch(/^\[kb:d-/);
+    });
+  });
+
+  // ponytail: non-PDF ingestion — markdown / plain text pre-bake a
+  // single page with status=success (no OCR); images get a single
+  // page with imageUrl=kb-tmp URL and status=pending (vision OCR
+  // runs in pageToMarkdownNode). Both routes land through the
+  // factory, not the legacy PDF-specific path.
+  describe("non-PDF ingestion", () => {
+    it("text/markdown file → single pre-baked page, no OCR", async () => {
+      mocks.getObject.mockResolvedValueOnce(Buffer.from("# Title\n\nBody text", "utf-8"));
+      const messages = [
+        new HumanMessage({
+          content: [
+            { type: "text", text: "ingest" },
+            { type: "file", data: `${BASE_URL}/u/${USER}/notes.md`, mime_type: "text/markdown" },
+          ] as never,
+          id: "m-md",
+        }),
+      ];
+      const out = await kbAgent.invoke(
+        { messages, userId: USER },
+        { configurable: { userId: USER } },
+      );
+      expect(out.status).toBe("success");
+      const processed = out.processedFiles as Array<Record<string, unknown>>;
+      expect(processed).toHaveLength(1);
+      expect(processed[0].contentType).toBe("text/markdown");
+      // Pre-baked page lands in pagesByDocId directly — no screenshot
+      // or vision OCR invoked.
+      const pages = (out.pagesByDocId as Record<string, Array<Record<string, unknown>>>)[
+        processed[0].docId as string
+      ];
+      expect(pages).toHaveLength(1);
+      expect(pages[0]).toMatchObject({
+        pageIndex: 0,
+        markdown: "# Title\n\nBody text",
+        status: "success",
+      });
+      expect(mocks.screenshot).not.toHaveBeenCalled();
+    });
+
+    it("text/plain file → single pre-baked page", async () => {
+      mocks.getObject.mockResolvedValueOnce(Buffer.from("plain text body", "utf-8"));
+      const messages = [
+        new HumanMessage({
+          content: [
+            { type: "file", data: `${BASE_URL}/u/${USER}/notes.txt`, mime_type: "text/plain" },
+          ] as never,
+          id: "m-txt",
+        }),
+      ];
+      const out = await kbAgent.invoke(
+        { messages, userId: USER },
+        { configurable: { userId: USER } },
+      );
+      expect(out.status).toBe("success");
+      const pages = (out.pagesByDocId as Record<string, Array<Record<string, unknown>>>)[
+        (out.processedFiles as Array<Record<string, unknown>>)[0].docId as string
+      ];
+      expect(pages[0].markdown).toBe("plain text body");
+    });
+
+    it("image/png file → single page with imageUrl, vision OCR runs", async () => {
+      mocks.uploadKbImage.mockResolvedValueOnce(`${BASE_URL}/kb-tmp/u-1/d-img/image.png`);
+      mocks.ocrStructuredInvoke.mockReset();
+      mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "vision result" });
+      const messages = [
+        new HumanMessage({
+          content: [
+            { type: "file", data: `${BASE_URL}/u/${USER}/pic.png`, mime_type: "image/png" },
+          ] as never,
+          id: "m-img",
+        }),
+      ];
+      const out = await kbAgent.invoke(
+        { messages, userId: USER },
+        { configurable: { userId: USER } },
+      );
+      expect(out.status).toBe("success");
+      const pages = (out.pagesByDocId as Record<string, Array<Record<string, unknown>>>)[
+        (out.processedFiles as Array<Record<string, unknown>>)[0].docId as string
+      ];
+      expect(pages).toHaveLength(1);
+      expect(pages[0].imageUrl).toMatch(/^https:\/\/r2\.example\.com\/kb-tmp\//);
+      // OCR did run for the image (existing pageToMarkdownNode path).
+      await vi.waitFor(() => {
+        expect(mocks.ocrStructuredInvoke).toHaveBeenCalled();
+      });
     });
   });
 });

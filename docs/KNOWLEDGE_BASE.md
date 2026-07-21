@@ -19,9 +19,11 @@ schemas and query APIs under `lib/kb/`; the user-facing settings under
   generation, and entity/relationship extraction.
 - **`lib/kb/`** — Database schema (`schema.ts`), queries (`queries.ts`),
   environment loader (`env.ts`), resolve (`resolve.ts`),
-  ingest dispatch (`ingest.ts`), screenshot helpers (`screenshot.ts`),
-  text utilities (`text.ts`), entity color map (`entityColor.ts`),
-  LRU cache (`cache.ts`), and hybrid search + Reranker (`search.ts`).
+  ingest dispatch (`ingest.ts`), ingest handler factory
+  (`ingest-handlers.ts`), URL fetcher (`url.ts`), screenshot helpers
+  (`screenshot.ts`), text utilities (`text.ts`), entity color map
+  (`entityColor.ts`), LRU cache (`cache.ts`), and hybrid search +
+  Reranker (`search.ts`).
 - **`lib/kb/resolve.ts`** — Server-side middleware that runs at
   LLM-invoke time (`prepareMessagesForInvoke`): replaces every
   `kb_ref`-bearing part on every `HumanMessage` with a text part
@@ -64,11 +66,17 @@ section is the design rationale.
 - **`kb_folder`** — per-user grouping. `(user_id, name)` is unique so the
   default "Attachments" folder auto-creates idempotently on first upload.
   Cascade-delete from `user`.
-- **`kb_document`** — one row per ingested PDF. `attachment_id` is the
-  source FK (chat upload → KB). `pages` is a `jsonb` array carrying
-  `{ pageNumber, markdown, errorMessage }` per page; the chunk pipeline
-  reads from here without re-OCR-ing. `content_hash` is sha256 (or
-  `r2key:<key>` fallback) and is the primary dedup key.
+- **`kb_document`** — one row per ingested document. `attachment_id` is
+  the source FK (chat upload → KB OR URL flow's synthesized R2 object).
+  `pages` is a `jsonb` array carrying
+  `{ pageIndex, imageUrl, markdown, referenceText, status }`; the chunk
+  pipeline reads from here without re-processing the source. PDFs and
+  images produce one page per source page/screenshot; markdown / plain
+  text / URL flows produce a single page with `markdown` pre-baked and
+  `status='success'`; Office (DOCX/XLSX/PPTX) produces one text page
+  plus one imageUrl page per embedded image (vision OCR). `content_hash`
+  is sha256 (or `r2key:<key>` fallback) and is the primary dedup key
+  across all seven source kinds.
 - **`kb_chunk`** — one row per text chunk. Holds the `vector(1024)`
   embedding (BAAI/bge-m3 dim, served by apimart under
   `OPENAI_EMBEDDING_MODEL`), a generated `tsvector` (English,
@@ -100,24 +108,63 @@ presigned-URL rules live in one place.
 
 ## 3. Ingestion Pipeline
 
-When a document is uploaded (chat composer or Settings → KB), it is
-routed to the background `kbAgent` graph for ingestion:
+When a document is uploaded (chat composer, Settings → KB Add dialog,
+or URL paste), it is routed to the background `kbAgent` graph for
+ingestion. Four source kinds share the same downstream pipeline —
+they diverge only in the `splitFileToPageNode` factory dispatch:
 
 ```
-Upload ─▶ Status='parsing' ─▶ Parse PDF Pages ─▶ Text Split (LangChain)
-                                                    │
-  ┌─────────────────────────────────────────────────┘
-  ▼
-Generate Embeddings (Vector) ─▶ Extract Entities (JSONB) ─▶ Status='success'
+                    ┌─── pdf ──────► mupdf render + native text extract + R2 PNG upload
+                    │
+                    ├─── markdown ─► bytes → utf-8 → single pre-baked markdown page
+                    │
+                    ├─── plain ────► same as markdown
+                    │
+Upload ─▶ parse ────┤
+                    ├─── image ────► bytes → R2 PNG/JPEG/WebP upload → single imageUrl page
+                    │
+                    └─── office ───► officeparser → N markdown pages (1 per PPTX slide / XLSX sheet,
+                    (docx/xlsx/      1 page for DOCX); images are inlined as R2 ![](url) refs in
+                     pptx)           page markdown (no separate vision OCR pass). Layout / group-
+                                    shape images not surfaced by officeparser's AST walker are
+                                    recovered via a self-extracted PPTX rels scan and inline-inserted.
+                                                                                 │
+                                                                                 ▼
+                                          MarkdownTextSplitter → Embed (BAAI/bge-m3) → Entity extract
 ```
 
 1. **Placeholder Creation** — Immediately inserts a document row with
    `status = 'parsing'` so the Settings table shows a row before any
    work has been done.
-2. **Page Processing** — Parses PDF bytes, renders high-resolution page
-   screenshots (saved to R2 via the attachments store), and extracts
-   markdown text page by page. Each page carries a `status` mirror
-   (`pending | parsing | success | failed`) written by `pageToMarkdownNode`.
+2. **Source-specific page construction** — `splitFileToPageNode`
+   dispatches via `getIngestHandler(mimeType)` from
+   `lib/kb/ingest-handlers.ts`. PDF keeps the mupdf render + extract
+   pipeline; markdown / plain text read the bytes as utf-8 and produce
+   a single pre-baked page (`status='success'`); image uploads to
+   `u/<userId>/kb/<sha256>.<ext>` (content-addressed via the R2 keys
+   factory — same image bytes across N docs share one R2 object) and
+   produces a single page with `imageUrl` set + `status='pending'`;
+   **Office Open XML (DOCX/XLSX/PPTX)** goes through a single
+   `officeHandler` that uses `officeparser` and paginates by kind —
+   PPTX splits by `slide`, XLSX by `sheet`, DOCX stays a single page
+   (Word pagination is dynamic so there's no top-level page node to
+   slice on). Each page's markdown is generated from a sub-AST with
+   `includeImages: true`, so embedded images land inline as
+   `![](kb/<sha>.png)` refs (R2 URLs are resolved by walking the AST
+   and rewriting `metadata.url` per image node — same images shared
+   across pages are PUT once via a `Promise<string>` dedup cache
+   layered on top of the sha-keyed R2 dedup). officeparser's AST walker
+   misses two image classes that the handler recovers itself: layout
+   images (PPTX `ppt/slideLayouts/`) and images inside group shapes
+   (`<p:grpSp>`) — both visible in the doc zip's `.rels` files but not
+   in the walker output. The recovery pass unzips the PPTX (via
+   `fflate`), parses each slide's rels to find its layout + its
+   direct image refs, then appends `![](r2-url)` to every page that
+   inherits the orphan. PPTX-only for now — XLSX/DOCX have no
+   equivalent "page inheritance" concept. Charts are skipped
+   (`officeparser` doesn't surface `chartData` and there's no code
+   path to use it). Each page carries a `status` mirror written by
+   `pageToMarkdownNode`.
 3. **Text Chunking** — `MarkdownTextSplitter` (from `@langchain/textsplitters`)
    over the joined page markdown. Chunk size is `KB_CHUNK_MAX_CHARS`
    (default 2000).
@@ -141,6 +188,28 @@ Concurrency: OCR and entity-extract share a `p-queue` of width
 `KB_OCR_CONCURRENCY` / `KB_ENTITY_CONCURRENCY` (default 5 each, see
 `lib/constants.ts`). Bump both together if the upstream rate-limit
 tier changes.
+
+### Per-kind reference — what each source type does at every stage
+
+The table pins the full pipeline behaviour for every supported content type. Use it as a quick lookup when adding a new kind or debugging a missing artifact.
+
+| Kind         | Per-page shape (`PageResult`)                                                                                                                                                                                             | R2 uploads                                                                                                                        | LLM calls                             | Pages tab UI                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
+| **pdf**      | `{ imageUrl: full-page PNG, referenceText: native text layer, textBlocks: [{text, bbox}], imageRefs: [{name, url, bbox, w, h}], markdown: "" (pending), status: "pending" }` → OCR fills `markdown`, flips to `"success"` | full-page screenshot (`page-{N}.png`) + every embedded raster image (`img-p{N}-{idx}.png`)                                        | OCR (vision) + Embed + Entity Extract | N pages · left column: page image + reference text · right column: markdown |
+| **markdown** | `{ imageUrl: "", markdown: file bytes as utf-8, status: "success" }` — no further work                                                                                                                                    | —                                                                                                                                 | Embed + Entity Extract                | 1 page · markdown only                                                      |
+| **plain**    | `{ imageUrl: "", markdown: file bytes as utf-8, status: "success" }` — no further work                                                                                                                                    | —                                                                                                                                 | Embed + Entity Extract                | 1 page · markdown only (tab label reads "Text")                             |
+| **image**    | `{ imageUrl: original bytes uploaded to R2, markdown: "" (pending), status: "pending" }` → OCR fills `markdown`, flips to `"success"`                                                                                     | original image (`image.{ext}`)                                                                                                    | OCR (vision) + Embed + Entity Extract | 1 page · left: original image · right: markdown                             |
+| **docx**     | `{ imageUrl: "", markdown: officeparser output for the whole AST + inline `![](r2-url)` refs, status: "success" }` — single page (Word pagination is dynamic, no top-level page node)                                     | every embedded image (`{baseName}.{ext}`, cross-page dedup)                                                                       | Embed + Entity Extract                | 1 page · markdown only                                                      |
+| **xlsx**     | one page per `sheet` node: `{ imageUrl: "", markdown: that sheet's officeparser output + inline image refs, status: "success" }`                                                                                          | every embedded image (cross-page dedup)                                                                                           | Embed + Entity Extract                | N pages (one per sheet) · markdown only                                     |
+| **pptx**     | one page per `slide` node: `{ imageUrl: "", markdown: that slide's officeparser output + inline image refs + layout/group-shape orphan backfill, status: "success" }`                                                     | every embedded image + every layout / group-shape orphan image recovered via `fflate` self-extracted rels scan (cross-page dedup) | Embed + Entity Extract                | N pages (one per slide) · markdown only                                     |
+
+Key takeaways:
+
+- **Office docs and PDF produce structured hints for the OCR LLM.** PDF pages ship `textBlocks` (paragraphs with y-position) and `imageRefs` (pre-uploaded R2 URLs with bbox) so `pageToMarkdownNode` can hand the vision LLM real image URLs to reference instead of letting it hallucinate them.
+- **Office docs do NOT call OCR.** officeparser reads the OOXML structure directly and emits markdown; calling OCR on a page screenshot would lose the structural information (tables, list nesting, headings) that the parser already extracted.
+- **PDF and image MUST call OCR.** PDFs have no structural markdown mapping (only positioning info); images have no text at all. The vision LLM is the only path to clean markdown.
+- **Vector graphics are not extracted.** `extractPdfImages` walks `page.run(device, ...)` and only catches `fillImage` calls. Logos composed of `fillPath` / `strokePath` (e.g. Binance PDF's BINANCE wordmark) are NOT surfaced — they remain visible only inside the page PNG that OCR sees.
+- **Cross-page image dedup happens at the R2 layer.** Both office handlers (Promise<string> cache by attachment name) and the PDF handler (sha-keyed R2 keys) collapse same bytes to one R2 object. A logo embedded N times across N pages of one doc, or across N docs, references one R2 object regardless of bbox.
 
 ---
 
@@ -389,9 +458,11 @@ table — see [`docs/ADMIN.md`](./ADMIN.md).
 
 ## 10. Open Items / Out of Scope Today
 
-- **Source URL ingestion** — `kb_document` has no `source_url` column;
-  URL ingestion is deferred to v3. Today everything goes through the
-  `attachments` table (R2).
+- **Source URL ingestion** — done. Settings → KB → Add dialog
+  accepts a URL; `lib/kb/url.ts` fetches via `r.jina.ai` (handles HTML
+  - SPA + content negotiation server-side), the server uploads the
+    result to R2 as `text/markdown`, and the rest of the pipeline
+    picks it up via the same file-part path the chat composer uses.
 - **Folder-level permissions** — All folders under a user are owned
   exclusively by that user. Sharing a folder across users is not yet
   modelled.

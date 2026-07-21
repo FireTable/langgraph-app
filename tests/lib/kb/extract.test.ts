@@ -90,10 +90,10 @@ describe("lib/kb/extract", () => {
       expect(hasUnprocessedPdf([processed, ai, unprocessed])).toBe(true);
     });
 
-    it("returns false when a HumanMessage has only text or non-PDF files", () => {
+    it("returns false when a HumanMessage has only text or non-KB-ingestible files", () => {
       const h1 = new HumanMessage("plain text");
       const h2 = new HumanMessage({
-        content: [{ type: "file", data: "u/img", mime_type: "image/png" }],
+        content: [{ type: "file", data: "u/clip", mime_type: "audio/mp3" }],
         id: "h-2",
       } as never);
       expect(hasUnprocessedPdf([h1, h2])).toBe(false);
@@ -153,14 +153,49 @@ describe("lib/kb/extract", () => {
       expect(out[1]).toEqual({ messageIndex: 0, filePart: pdf2 });
     });
 
-    it("filters out non-PDF file parts (images, audio, etc.)", () => {
+    it("filters out non-KB-ingestible file parts (audio, video, etc.)", () => {
       const pdf = { type: "file" as const, data: "u/A", mime_type: "application/pdf" };
-      const img = { type: "file" as const, data: "u/img", mime_type: "image/png" };
+      const audio = { type: "file" as const, data: "u/clip", mime_type: "audio/mp3" };
       const h = new HumanMessage({
-        content: [pdf, img, { type: "text", text: "x" }] as never,
+        content: [pdf, audio, { type: "text", text: "x" }] as never,
         id: "h-1",
       });
       expect(extractAllPdfParts([h])).toEqual([{ messageIndex: 0, filePart: pdf }]);
+    });
+
+    it("includes image/* and text/markdown/plain parts (all KB-ingestible kinds)", () => {
+      const pdf = { type: "file" as const, data: "u/A", mime_type: "application/pdf" };
+      const img = { type: "file" as const, data: "u/img", mime_type: "image/png" };
+      const md = { type: "file" as const, data: "u/notes", mime_type: "text/markdown" };
+      const txt = { type: "file" as const, data: "u/dump", mime_type: "text/plain" };
+      const h = new HumanMessage({
+        content: [pdf, img, md, txt] as never,
+        id: "h-1",
+      });
+      expect(extractAllPdfParts([h])).toHaveLength(4);
+    });
+
+    it("includes Office Open XML parts (DOCX/XLSX/PPTX)", () => {
+      const docx = {
+        type: "file" as const,
+        data: "u/A",
+        mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      };
+      const xlsx = {
+        type: "file" as const,
+        data: "u/B",
+        mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      };
+      const pptx = {
+        type: "file" as const,
+        data: "u/C",
+        mime_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      };
+      const h = new HumanMessage({
+        content: [docx, xlsx, pptx] as never,
+        id: "h-1",
+      });
+      expect(extractAllPdfParts([h])).toHaveLength(3);
     });
 
     it("returns an empty array when no HumanMessage has a PDF", () => {

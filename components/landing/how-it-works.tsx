@@ -67,12 +67,18 @@ export const HowItWorks: FC = () => (
 
         <ExplainRow
           eyebrow="Knowledge base"
-          title="Drop a PDF, query the entity graph."
+          title="Drop a file (or paste a URL), query the entity graph."
           body={
             <>
               <p>
-                The KB agent renders each page, OCRs the markdown, splits and embeds the chunks,
-                then runs an LLM to extract entities and relationships.
+                Seven source kinds plus pasted URLs land in one pipeline — PDF, images, plain text,
+                markdown, and the three Office Open XML formats (DOCX, XLSX, PPTX). PDFs and images
+                go through vision OCR; Office formats are parsed structurally by{" "}
+                <code>officeparser</code> (one page per slide / sheet, with embedded images
+                extracted to R2); text and markdown skip straight to chunking; pasted URLs are
+                fetched server-side via Jina Reader and land as a markdown attachment. Every chunk
+                is embedded and run through an entity-extraction pass — relationships, themes, and
+                entity names all become structured columns the retrieval legs can score on.
               </p>
               <p>
                 <span className="text-foreground font-medium">Hybrid Search:</span> three legs run

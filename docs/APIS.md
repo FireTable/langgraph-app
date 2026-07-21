@@ -67,13 +67,13 @@ Chat attachments backed by Cloudflare R2 (issue #12). The browser uploads direct
 
 ### `POST /api/attachments/presign`
 
-Reserve an attachment row and a 5-minute presigned PUT URL. Browser immediately PUTs the file to R2 with the returned `uploadHeaders` (Content-Type is baked into the signature — a mismatch is a 403 from R2).
+Reserve an attachment row and a 5-minute presigned PUT URL. Browser immediately PUTs the file to R2 with the returned `uploadHeaders`. Only `key` + `Content-Length` are part of the signature; `Content-Type` and `Content-Disposition` ride as plain headers (a browser `fetch(file)` doesn't set Content-Disposition, so signing it would surface as an opaque CORS failure). The R2 key is `u/<userId>/upload/<sha256>.<ext>` (content-addressed — same bytes → same key → automatic dedup).
 
-|               |                                                                                                                                                                                                       |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0), threadId?: string (1..128) }`. `contentType` must appear in `R2_ALLOWED_CONTENT_TYPES`; `sizeBytes` ≤ `R2_MAX_BYTES`. |
-| 201 response  | `{ id, key, uploadUrl, publicUrl, contentType, sizeBytes, uploadHeaders: { "Content-Type": contentType } }`. The presigned URL expires in 300s. `publicUrl` is `${R2_PUBLIC_BASE_URL}/${key}`.        |
-| Failure codes | 400 `BAD_REQUEST` (invalid JSON / schema). 400 `CONTENT_TYPE_NOT_ALLOWED`. 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `ATTACHMENTS_NOT_CONFIGURED`.                    |
+|               |                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0), sha256: string (64-char hex) }`. `contentType` must appear in `R2_ALLOWED_CONTENT_TYPES`; `sizeBytes` ≤ `R2_MAX_BYTES`. `sha256` is REQUIRED — clients compute it via `crypto.subtle.digest("SHA-256")` before sending; the adapter throws if `crypto.subtle` isn't available (modern browser, secure context).                           |
+| 201 response  | `{ id, key, uploadUrl, publicUrl, contentType, sizeBytes, uploadHeaders: { "Content-Type": contentType, "Content-Disposition": "inline" \| "attachment" }, skipUpload?: true }`. The presigned URL expires in 300s. `publicUrl` is `${R2_PUBLIC_BASE_URL}/${key}`. When a matching `(user_id, sha256, status='uploaded')` row exists, `skipUpload: true` is set and the adapter jumps straight to confirm (no PUT to R2). |
+| Failure codes | 400 `BAD_REQUEST` (invalid JSON / schema, or missing `sha256`). 400 `CONTENT_TYPE_NOT_ALLOWED`. 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `ATTACHMENTS_NOT_CONFIGURED`.                                                                                                                                                                                                                   |
 
 ### `POST /api/attachments/[id]/confirm`
 
@@ -96,7 +96,7 @@ Best-effort cleanup of a composer chip. Removes the row + the R2 object. Idempot
 
 ### `POST /api/avatar/presign`
 
-Presign a 5-minute PUT for a user avatar (issue #28). Same R2 backing as attachments (`withAuth`, 503 when `R2_*` unset), but **no DB row** — avatars aren't chat attachments. Key is `u/<userId>/avatar/<id>-<safe-name>`. The browser PUTs the file, then calls Better Auth `updateUser({ image: publicUrl })` — we store only the URL, never base64 (a base64 data URL in `user.image` flowed through the memory auth-overlay into every `<memory>` block uncapped; that was the 372K-token blow-up). Client gate: the Settings avatar upload is disabled unless `window.__CONFIG__.ATTACHMENTS_ENABLED === "true"`.
+Presign a 5-minute PUT for a user avatar (issue #28). Same R2 backing as attachments (`withAuth`, 503 when `R2_*` unset), but **no DB row** — avatars aren't chat attachments. Key is a fixed slot per user: `u/<userId>/avatar.png` (better-auth-ui's client `resize` hook transcodes any input format to PNG via canvas before upload, so the extension is constant — the server never sees jpg/webp). Re-upload overwrites the same slot in place. The browser PUTs the file, then calls Better Auth `updateUser({ image: publicUrl })` — we store only the URL, never base64 (a base64 data URL in `user.image` flowed through the memory auth-overlay into every `<memory>` block uncapped; that was the 372K-token blow-up). Client gate: the Settings avatar upload is disabled unless `window.__CONFIG__.ATTACHMENTS_ENABLED === "true"`.
 
 `contentType` must start with `image/` **and is not `image/svg+xml`** — unlike attachments (which uses `R2_ALLOWED_CONTENT_TYPES`), this route hardcodes the image check, and SVG is rejected because it can carry inline script and renders `inline` from a public bucket (XSS in the bucket origin).
 
@@ -108,7 +108,7 @@ Presign a 5-minute PUT for a user avatar (issue #28). Same R2 backing as attachm
 
 ### `DELETE /api/avatar`
 
-Delete the R2 object behind a previous avatar URL — avatars have no DB row, so nothing else sweeps the old object when the user deletes or replaces one. Called by the Settings UI on delete and after a successful replace. Owner-scoped: the key must live under `u/<user.id>/avatar/`.
+Delete the R2 object behind a previous avatar URL — avatars have no DB row, so nothing else sweeps the old object when the user deletes or replaces one. Called by the Settings UI on delete and after a successful replace. Owner-scoped: the key must equal the user's own avatar slot (`u/<userId>/avatar.png`, see `lib/r2/keys.ts` → `r2Keys().avatar`).
 
 |               |                                                                                                                                                                  |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -334,7 +334,7 @@ Single-doc detail + slim chunk preview (text content only — no 1024-dim embedd
 
 ### `DELETE /api/kb/documents/[id]`
 
-Delete a single doc. Cascades to `kb_chunk` via `ON DELETE CASCADE` on `kb_chunk.document_id`. R2 objects (`kb-tmp/*` page PNGs and the source PDF under `attachments/`) are NOT deleted — they live in R2 forever; v3 retention sweep can clean them up.
+Delete a single doc. Cascades to `kb_chunk` via `ON DELETE CASCADE` on `kb_chunk.document_id`. R2 objects (`u/<userId>/kb/<sha>.<ext>` derived images + `u/<userId>/upload/<sha>.<ext>` source uploads) are NOT deleted — they live in R2 forever; same-content future ingests dedup at the storage layer (sha-keyed), so orphans are reference-counted rather than wasted bytes. A future retention sweep can prune by sha-refcount == 0.
 
 |               |                                      |
 | ------------- | ------------------------------------ |
@@ -343,16 +343,21 @@ Delete a single doc. Cascades to `kb_chunk` via `ON DELETE CASCADE` on `kb_chunk
 
 ### `POST /api/kb/upload`
 
-Add a doc to a folder. Frontend uploads the file via the existing `/api/attachments/presign` → PUT → `confirm` flow first, then POSTs `{ folderId, attachmentId, title? }` here. Backend creates a `kb_document` row (`status=pending`) and fires a LangGraph run on the kbAgent graph (fire-and-forget — the run mutates the row's status as it progresses; the UI polls `GET /api/kb/documents` and watches the row flip pending → parsing → success/failed). The kbAgent graph is registered as a top-level assistant in `langgraph.json` so this dispatch skips the mainAgent router + renameThreadAgent LLM calls.
+Add a doc to a folder. Two entry shapes — file OR URL — both end up at the same kbAgent dispatch:
+
+- **File path** — frontend uploads via `/api/attachments/presign` → PUT → `confirm` first, then POSTs `{ folderId, attachmentId, title? }`. The `attachment.contentType` carries the routing decision: `application/pdf`, `text/markdown`, `text/plain`, `image/png`, `image/jpeg`, `image/webp`, **plus Office Open XML** — `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (DOCX), `...spreadsheetml.sheet` (XLSX), `...presentationml.presentation` (PPTX) — all per `R2_ALLOWED_CONTENT_TYPES`. PDFs render every page to PNG and extract the native text layer + every embedded raster image with its bbox; markdown / plain text pass through as-is; images upload to R2 and wait for vision OCR; Office formats go through `officeparser` to produce one markdown page per slide (PPTX) / sheet (XLSX), or a single page for DOCX — images land inline as R2 `![](url)` refs (no separate vision OCR pass), and PPTX layout / group-shape images missed by officeparser's AST walker are recovered via a self-extracted rels scan.
+- **URL path** — frontend POSTs `{ folderId, url, title? }`. Server fetches via `lib/kb/url.ts` (thin wrapper around `r.jina.ai`), uploads the resulting markdown as a `text/markdown` attachments row, and dispatches the same kbAgent run.
+
+Backend creates a `kb_document` row (`status=pending`) and fires a LangGraph run on the kbAgent graph (fire-and-forget — the run mutates the row's status as it progresses; the UI polls `GET /api/kb/documents` and watches the row flip pending → parsing → success/failed). The kbAgent graph is registered as a top-level assistant in `langgraph.json` so this dispatch skips the mainAgent router + renameThreadAgent LLM calls. `splitFileToPageNode` dispatches via `getIngestHandler(mimeType)` from `lib/kb/ingest-handlers.ts` (PDF keeps the mupdf render + text + image-extract pipeline and produces `textBlocks` + `imageRefs` hints for the OCR prompt; markdown / plain text pre-bake a single markdown page; images upload to R2 and wait for vision OCR; Office formats flow through `officeparser` and skip OCR entirely because the parser already extracts structural markdown).
 
 **Primary dedup**: if a doc with the same `contentHash` already exists for the user, the endpoint returns the existing row instead of creating a duplicate, and re-fires ingestion if the previous attempt failed/stalled.
 
-|               |                                                                                                                                                  |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Request body  | `{ folderId: string, attachmentId: string, title?: string /* 1..256 */ }`                                                                        |
-| 200 response  | `{ doc: { ... kb_document row ... }, deduped: true }` (existing doc — re-firing ingestion)                                                       |
-| 202 response  | `{ doc: { ... kb_document row ... } }` (new doc, ingestion run dispatched)                                                                       |
-| Failure codes | 400 `INVALID` (zod failure). 401 `UNAUTHORIZED`. 404 `ATTACHMENT_NOT_FOUND` / `FOLDER_NOT_FOUND`. 409 `ATTACHMENT_NOT_UPLOADED`. 500 `INTERNAL`. |
+|               |                                                                                                                                                                                                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ folderId: string, attachmentId?: string, url?: string /* absolute http(s) URL */, title?: string /* 1..256 */ }` — exactly one of `attachmentId` / `url` is required                                                                                           |
+| 200 response  | `{ doc: { ... kb_document row ... }, deduped: true }` (existing doc — re-firing ingestion)                                                                                                                                                                        |
+| 202 response  | `{ doc: { ... kb_document row ... } }` (new doc, ingestion run dispatched)                                                                                                                                                                                        |
+| Failure codes | 400 `INVALID` (zod failure — including missing both `attachmentId` and `url`). 401 `UNAUTHORIZED`. 404 `ATTACHMENT_NOT_FOUND` / `FOLDER_NOT_FOUND`. 409 `ATTACHMENT_NOT_UPLOADED`. 500 `INTERNAL` (URL fetch failed, R2 put failed, jina upstream failure, etc.). |
 
 ### `POST /api/kb/documents/[id]/reprocess`
 

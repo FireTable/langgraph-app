@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { KB_POLL_INTERVAL_MS } from "@/lib/constants";
+import { mimeShortLabel } from "@/lib/kb/source-kind";
 import { KbResponse, KbDocument } from "./types";
-import { HeaderBar } from "./folder-sidebar";
+import { HeaderBar, DocTableSkeleton } from "./folder-sidebar";
 import { DocStatusBadge, ChunksStatusBadge, formatTimestamp } from "./status-badge";
 import { DocDetailDialog } from "./doc-detail-dialog";
 import { DocDeleteDialog, DocReprocessDialog } from "./dialogs";
@@ -21,14 +22,22 @@ export function DocTable({
   onAddDoc,
   onRefresh,
   isLivePolling,
+  loading = false,
 }: {
   group: KbResponse["groups"][number] | null;
   focusDocId: string | null;
   onAddDoc: () => void;
   onRefresh: () => Promise<void> | void;
   isLivePolling: boolean;
+  loading?: boolean;
 }) {
   const [folderGraphOpen, setFolderGraphOpen] = useState(false);
+
+  if (loading) {
+    // ponytail: reuse the shared table skeleton from kb-view so the
+    // cold-load and folder-switch paths render the same row shape.
+    return <DocTableSkeleton />;
+  }
 
   if (!group) {
     return (
@@ -133,7 +142,15 @@ export function DocRow({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [reprocessOpen, setReprocessOpen] = useState(false);
-  const type = doc.contentType.replace("application/", "");
+  // ponytail: route through the shared source-kind helper so the table
+  // badge and the AddDoc dialog "Supports" hint agree on labels
+  // (DOCX/XLSX/PPTX included). Local TYPE_LABEL used to drift and fall
+  // through to the raw mime for any unmapped subtype — a freshly
+  // uploaded Word file rendered as the full
+  // "vnd.openxmlformats-officedocument.wordprocessingml.document"
+  // string in the row. Lowercased here to match the existing badge
+  // casing (md, txt, png); the AddDoc dialog lowercases its own copy.
+  const type = mimeShortLabel(doc.contentType).toLowerCase();
   const rowRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {

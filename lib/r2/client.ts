@@ -55,6 +55,15 @@ export const getR2PublicBaseUrl = (): string => {
   return process.env.R2_PUBLIC_BASE_URL.replace(/\/$/, "");
 };
 
+// ponytail: folder getters follow the "missing → default" contract
+// (different from getR2Bucket/getR2PublicBaseUrl, which throw). The
+// rationale: bucket + public URL are *required* for the bucket to be
+// reachable at all, while folder names are pure layout conventions
+// with a sensible default baked into lib/r2/keys.ts. Overriding them
+// at deploy time is optional — we never want a missing R2_FOLDER_USER
+// to 503 the whole app.
+export const getR2FolderUser = (): string => process.env.R2_FOLDER_USER || "u";
+
 // ponytail: keep all four helpers in one file — the S3 client is the
 // only thing that needs to change for a future Backblaze B2 / MinIO
 // migration, and bundling the per-call wrappers next to the connection
@@ -119,8 +128,10 @@ export function buildPublicUrl(key: string): string {
 
 // ponytail: KB helpers (issue #13 v2). url → r2Key strips the public
 // base so the kbAgent can recover the source key from the file part's
-// publicUrl. uploadKbImage is the one-shot PUT for OCR page renders;
-// PNGs are tiny so no multipart.
+// publicUrl. Used by both the chat-upload prefix (`u/<userId>/upload/<sha>.<ext>`)
+// and the KB derived prefix (`u/<userId>/kb/<sha>.<ext>`) — this helper
+// is prefix-agnostic, it just strips the bucket base. uploadKbImage is
+// the one-shot PUT for OCR page renders; PNGs are tiny so no multipart.
 export function r2KeyFromPublicUrl(url: string, base: string): string {
   const trimmed = base.replace(/\/$/, "");
   if (url.startsWith(trimmed + "/")) {
@@ -146,6 +157,28 @@ export async function uploadKbImage(args: {
       // here covers the case where someone hits the raw object URL
       // (e.g. the chat composer's R2 publicUrl without a query).
       ContentDisposition: "inline",
+    }),
+  );
+  return buildPublicUrl(args.key);
+}
+
+// ponytail: server-side raw PUT for the URL-ingest flow. The browser
+// can't presign itself for a URL we fetched server-side, so we PUT
+// directly with the bucket creds. Used only for small KB payloads
+// (markdown bytes from a fetched URL) — not a general-purpose upload.
+export async function putObject(args: {
+  key: string;
+  body: Buffer;
+  contentType: string;
+  contentDisposition?: "inline" | "attachment";
+}): Promise<string> {
+  await getS3Client().send(
+    new PutObjectCommand({
+      Bucket: getR2Bucket(),
+      Key: args.key,
+      Body: args.body,
+      ContentType: args.contentType,
+      ContentDisposition: args.contentDisposition ?? "inline",
     }),
   );
   return buildPublicUrl(args.key);

@@ -112,7 +112,7 @@ const BENTO: BentoCard[] = [
   {
     title: "Memory + Knowledge Base",
     description:
-      "User facts surface in the system block; PDFs go through a per-doc pipeline (OCR → chunk → embed → entity) and become a hybrid-searchable index. Both are reviewable and deletable from settings.",
+      "User facts surface in the system block; PDFs, images, plain text, markdown, and Office Open XML (DOCX / XLSX / PPTX) — plus pasted URLs fetched server-side — all go through a per-doc pipeline (OCR or structured parse → chunk → embed → entity) and become a hybrid-searchable index. Both are reviewable and deletable from settings.",
     icon: <BrainIcon className="size-4" />,
     hue: "violet",
     span: "wide",

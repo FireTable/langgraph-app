@@ -39,6 +39,7 @@ vi.mock("@/lib/r2/client", async () => {
     getS3Client: vi.fn(),
     getR2Bucket: vi.fn(() => "test-bucket"),
     getR2PublicBaseUrl: vi.fn(() => "https://file.example"),
+    getR2FolderUser: vi.fn(() => "u"),
   };
 });
 
@@ -73,6 +74,11 @@ function presignBody(
     name: "test.png",
     contentType: "image/png",
     sizeBytes: 1024,
+    // ponytail: sha256 is required by the validator (R2 key is
+    // content-addressed). Tests override with a custom sha for
+    // dedup scenarios, or with `sha256: undefined` to assert the
+    // 400 path.
+    sha256: "a".repeat(64),
     ...overrides,
   };
 }
@@ -153,13 +159,16 @@ describe("POST /api/attachments/presign — happy path", () => {
   it("returns 201 with id, key, uploadUrl, publicUrl and ride-along Content-Type + Content-Disposition in uploadHeaders", async () => {
     process.env.R2_ALLOWED_CONTENT_TYPES = "image/png";
     process.env.R2_MAX_BYTES = "10485760";
-    const res = await POSTPresign(jsonRequest(presignBody({ name: "pic.png" })), ctx);
+    const sha = "a".repeat(64);
+    const res = await POSTPresign(jsonRequest(presignBody({ name: "pic.png", sha256: sha })), ctx);
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.id).toMatch(/^[0-9a-z]{12}$/);
-    expect(body.key).toBe(`u/${owner}/${body.id}-pic.png`);
+    // ponytail: R2 key is content-addressed — sha + ext, not nanoid + name.
+    // The row id (body.id) is still 12-char random; the key uses sha + png.
+    expect(body.key).toBe(`u/${owner}/upload/${sha}.png`);
     expect(body.uploadUrl).toBe("https://r2.example/presigned");
-    expect(body.publicUrl).toBe(`https://file.example/u/${owner}/${body.id}-pic.png`);
+    expect(body.publicUrl).toBe(`https://file.example/u/${owner}/upload/${sha}.png`);
     expect(body.uploadHeaders).toEqual({
       "Content-Type": "image/png",
       "Content-Disposition": "inline",
@@ -265,12 +274,11 @@ describe("POST /api/attachments/presign — dedup (Q2)", () => {
     expect(body.id).not.toBe("theirs");
   });
 
-  it("skips sha lookup when no sha is provided (back-compat / disabled clients)", async () => {
-    const res = await POSTPresign(jsonRequest(presignBody()), ctx);
-    expect(res.status).toBe(201);
-    const body = await res.json();
-    expect(body.skipUpload).toBeUndefined();
-  });
+  // ponytail: sha256 is REQUIRED now — R2 key is content-addressed,
+  // so the server can't construct the key without it. A client
+  // without crypto.subtle (very old browser / non-secure context)
+  // must surface the failure locally rather than hitting the server.
+  // The adapter throws "sha256 unavailable" in that case.
 });
 
 // ---------- POST /api/attachments/[id]/confirm ----------

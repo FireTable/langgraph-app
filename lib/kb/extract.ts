@@ -96,23 +96,48 @@ export function stripKbRefFromFilename(filename: string | undefined): string {
   return filename.replace(KB_REF_PREFIX_REGEX, "");
 }
 
-// ponytail: router signal. True when ANY HumanMessage has a PDF file
-// part without a kb_ref sibling. Once kbAgent stamps the sibling, a
+// ponytail: KB ingestible mime types — PDFs go through the OCR
+// pipeline, markdown / plain text pass through as pre-baked markdown,
+// images go through vision OCR. Single source of truth so the router
+// signal and the extractor agree on "what kbAgent should eat".
+const KB_INGESTIBLE_MIME = new Set([
+  "application/pdf",
+  "text/markdown",
+  "text/plain",
+  // ponytail: Office Open XML — one officeparser call handles all
+  // three. Exact-match set (not startsWith) so unrelated
+  // application/vnd.* payloads don't accidentally get tagged.
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+]);
+
+function isKbIngestibleMime(mime: string | undefined): boolean {
+  if (!mime) return false;
+  const lower = mime.toLowerCase();
+  if (KB_INGESTIBLE_MIME.has(lower)) return true;
+  return lower.startsWith("image/");
+}
+
+// ponytail: router signal. True when ANY HumanMessage has a kb-ingestible
+// file part without a kb_ref sibling. Once kbAgent stamps the sibling, a
 // second router pass won't re-dispatch kbAgent.
 export function hasUnprocessedPdf(messages: BaseMessage[]): boolean {
   for (const m of messages) {
     const content = humanContent(m);
     if (!isHumanLike(m) || !Array.isArray(content)) continue;
-    if (content.some((p) => isFilePart(p) && p.mime_type === "application/pdf" && !p.kb_ref)) {
+    if (content.some((p) => isFilePart(p) && isKbIngestibleMime(p.mime_type) && !p.kb_ref)) {
       return true;
     }
   }
   return false;
 }
 
-// ponytail: returns every unprocessed PDF file part from every
-// HumanMessage in message order. A kb_ref-stamped PDF is already
-// processed — re-processing would double the chunks.
+// ponytail: returns every unprocessed kb-ingestible file part from
+// every HumanMessage in message order. A kb_ref-stamped part is already
+// processed — re-processing would double the chunks. Name kept for
+// back-compat (router-agent-node.ts + kb-agent.ts already import it);
+// the underlying set widened from PDF-only to all 4 ingestible kinds.
 export function extractAllPdfParts(
   messages: BaseMessage[],
 ): Array<{ messageIndex: number; filePart: FilePart }> {
@@ -121,7 +146,7 @@ export function extractAllPdfParts(
     const content = humanContent(m);
     if (!isHumanLike(m) || !Array.isArray(content)) return;
     for (const part of content) {
-      if (isFilePart(part) && part.mime_type === "application/pdf" && !part.kb_ref) {
+      if (isFilePart(part) && isKbIngestibleMime(part.mime_type) && !part.kb_ref) {
         out.push({ messageIndex: i, filePart: part });
       }
     }

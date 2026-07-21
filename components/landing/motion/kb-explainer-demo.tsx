@@ -1,22 +1,28 @@
 "use client";
 
 // ponytail: KB explainer — two stacked panels in one card.
-//   Top: PDF → OCR → chunk → embed pipeline. Plays once on scroll
-//        into view (stages light up + arrows draw in sequence).
+//   Top: Source → OCR → chunk → embed → entity pipeline. Plays once
+//        on scroll into view (stages light up + arrows draw in
+//        sequence). "Source" is the seven supported kinds (PDF,
+//        image, plain text, markdown, DOCX, XLSX, PPTX) plus
+//        pasted URLs (server-fetches via Jina and lands as a
+//        markdown attachment). OCR only runs for PDF and image —
+//        the officeparser handles Office formats structurally and
+//        produces markdown directly.
 //   Bottom: entity graph traversal. Same scroll trigger; plays
 //        after the pipeline settles.
 //
-// Why both: the pipeline shows the WRITE path (how a PDF becomes a
+// Why both: the pipeline shows the WRITE path (how a document becomes a
 // searchable index); the graph shows the READ path (how a query
 // traverses entities + relationships). Together they cover the
 // round trip — that's the story the How-it-works row tells.
 
 import { m, useInView, useReducedMotion } from "motion/react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { ComponentType, Fragment, useEffect, useRef, useState } from "react";
 import {
   ArrowRightIcon,
   BlocksIcon,
-  FileTextIcon,
+  CircleHelpIcon,
   LayersIcon,
   ScanTextIcon,
   SearchIcon,
@@ -29,7 +35,7 @@ import { cn } from "@/lib/utils";
 type Stage = {
   id: string;
   label: string;
-  icon: typeof FileTextIcon;
+  icon: ComponentType<{ className?: string }>;
   // ponytail: literal Tailwind colors so JIT picks them up — dynamic
   // text-${color}-500 / bg-${color}-500 would silently no-op.
   lit: string;
@@ -37,9 +43,9 @@ type Stage = {
 
 const STAGES: Stage[] = [
   {
-    id: "pdf",
-    label: "PDF",
-    icon: FileTextIcon,
+    id: "source",
+    label: "Source",
+    icon: CircleHelpIcon,
     lit: "text-rose-500 border-rose-500/40 bg-rose-500/10",
   },
   {
@@ -275,7 +281,7 @@ export const KbExplainerDemo = () => {
         <div className="text-muted-foreground flex flex-col gap-0.5 text-[11px] font-medium tracking-wide uppercase">
           <span>KB ingest pipeline</span>
           <span className="text-muted-foreground/70 text-[10px] font-normal normal-case tracking-normal">
-            per document
+            per source · PDF · image · md · txt · docx · xlsx · pptx · URL
           </span>
         </div>
 

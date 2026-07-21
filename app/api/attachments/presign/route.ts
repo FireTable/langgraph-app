@@ -1,23 +1,18 @@
 import { NextResponse } from "next/server";
-import { randomBytes } from "node:crypto";
 
 import { R2NotConfiguredError, buildPublicUrl, presignPut } from "@/lib/r2/client";
+import { r2Keys } from "@/lib/r2/keys";
+import { generateId } from "@/lib/ids/nanoid";
 import { PresignBody } from "@/lib/attachments/validators";
 import { findUploadedBySha, insertAttachment } from "@/lib/attachments/queries";
-import { buildKey } from "@/lib/attachments/keys";
 import { withAuth } from "@/lib/auth/with-auth";
 
-const ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
-const ID_LEN = 12;
-
-// ponytail: crypto-strong URL-safe id (~71 bits). Modulo bias is
-// negligible at this alphabet length — no need for rejection sampling.
-function generateId(): string {
-  const bytes = randomBytes(ID_LEN);
-  let out = "";
-  for (let i = 0; i < ID_LEN; i++) out += ID_ALPHABET[bytes[i] % ID_ALPHABET.length];
-  return out;
-}
+// ponytail: row id stays 12-char random (via lib/ids/nanoid) — it's
+// the attachments table PK and the dedup-confirmation token, but it's
+// NO LONGER part of the R2 key. The R2 key is content-addressed
+// (sha256 of bytes) via r2Keys().upload, so a second upload of the same
+// file collapses to one R2 object regardless of how many `attachments`
+// rows reference it.
 
 function parseAllowList(): Set<string> {
   const raw = process.env.R2_ALLOWED_CONTENT_TYPES ?? "";
@@ -76,6 +71,13 @@ export const POST = withAuth(async (req, { user }) => {
   // an uploaded row for this (user, sha), skip the PUT entirely and hand
   // back the existing publicUrl. Adapter detects skipUpload:true and
   // jumps straight to confirm.
+  //
+  // ponytail: returns `existing.r2Key` straight from the DB row. Rows
+  // written before the CAS refactor (issue #76 era) store nanoid-shaped
+  // keys here — these are dev-only historical artifacts (see
+  // docs/ATTACHMENTS.md § Pre-CAS legacy rows). Production deploys
+  // start clean, so this returns the canonical sha-keyed URL the rest
+  // of the app expects.
   if (parsed.data.sha256) {
     const existing = await findUploadedBySha(user.id, parsed.data.sha256);
     if (existing) {
@@ -94,7 +96,11 @@ export const POST = withAuth(async (req, { user }) => {
   }
 
   const id = generateId();
-  const key = buildKey(user.id, id, parsed.data.name);
+  // ponytail: ext from contentType — same MIME → same ext → same sha-keyed URL.
+  // Stored row's `name` field keeps the user's original filename; only the
+  // R2 key uses sha + ext.
+  const ext = contentType.split("/")[1] ?? "bin";
+  const key = r2Keys().upload({ userId: user.id, sha256: parsed.data.sha256, ext });
 
   // ponytail: images inline so <img> renders, everything else attachment
   // so PDF/HTML/SVG never execute inline. Server-decided — clients can't

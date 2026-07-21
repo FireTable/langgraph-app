@@ -42,7 +42,10 @@ describe("KnowledgeBase row", () => {
   it("ships the GraphRAG explainer inside How-it-works", () => {
     render(<HowItWorks />);
     expect(
-      screen.getByRole("heading", { name: /drop a PDF, query the entity graph/i, level: 3 }),
+      screen.getByRole("heading", {
+        name: /drop a file \(or paste a URL\), query the entity graph/i,
+        level: 3,
+      }),
     ).toBeInTheDocument();
     expect(screen.getByText(/knowledge base/i)).toBeInTheDocument();
   });

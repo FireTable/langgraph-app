@@ -41,9 +41,12 @@ export const GET = withAuth<{ id: string }>(async (_req, { user, params }) => {
 });
 
 // ponytail: Settings → KB → doc delete. Cascades to kb_chunk via
-// `document_id ... ON DELETE cascade`. R2 objects (kb-tmp/* page PNGs
-// and the source PDF in attachments/) are NOT deleted — they live in
-// R2 forever; v3 retention sweep can clean them up.
+// `document_id ... ON DELETE cascade`. R2 objects (`u/<userId>/kb/<sha>.<ext>`
+// derived images + `u/<userId>/upload/<sha>.<ext>` source uploads) are
+// NOT deleted — they live in R2 forever; same-content future ingests
+// dedup at the storage layer (sha-keyed), so orphans are reference-
+// counted rather than wasted bytes. A future retention sweep can
+// prune by sha-refcount == 0.
 export const DELETE = withAuth<{ id: string }>(async (_req, { user, params }) => {
   const deleted = await deleteKbDocumentForUser(user.id, params.id);
   if (!deleted) {

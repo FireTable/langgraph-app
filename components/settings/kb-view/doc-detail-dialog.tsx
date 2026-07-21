@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowDown,
   ArrowRight,
   Blocks,
   Check,
+  ChevronRight,
   Copy,
   ExternalLink,
   FileImage,
@@ -22,6 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -29,6 +31,13 @@ import { KB_POLL_INTERVAL_MS } from "@/lib/constants";
 import { KnowledgeGraph } from "./knowledge-graph";
 import { ChunkStatusBadge, DocStatusBadge, ChunksStatusBadge } from "./status-badge";
 import { entityColor, type EntityColor } from "@/lib/kb/entityColor";
+import {
+  getIngestKind,
+  hasPageImages,
+  hasReferenceText,
+  mainContentTabLabel,
+  mimeShortLabel,
+} from "@/lib/kb/source-kind";
 import { KbDocDetail } from "./types";
 
 export function DocDetailDialog({
@@ -46,6 +55,13 @@ export function DocDetailDialog({
     "full_markdown",
   );
   const [copied, setCopied] = useState(false);
+  // ponytail: per-chunk UI state for the Chunks tab. `collapsedChunks`
+  // holds the ordinals of chunks the user has folded. `highlightChunk`
+  // is set transiently when a user clicks a failed-chunk anchor in
+  // the header popover — drives the bg ring + scroll-into-view.
+  const [collapsedChunks, setCollapsedChunks] = useState<Set<number>>(() => new Set());
+  const [highlightChunk, setHighlightChunk] = useState<number | null>(null);
+  const chunkRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   useEffect(() => {
     if (!open) return;
@@ -64,6 +80,14 @@ export function DocDetailDialog({
       });
     return () => controller.abort();
   }, [open, docId]);
+
+  // ponytail: reset per-chunk UI state when the user navigates to a
+  // different doc — otherwise the collapsed set from doc A bleeds
+  // into doc B on the next open.
+  useEffect(() => {
+    setCollapsedChunks(new Set());
+    setHighlightChunk(null);
+  }, [docId]);
 
   useEffect(() => {
     if (!open) return;
@@ -262,6 +286,13 @@ export function DocDetailDialog({
   // does. When pages carry an explicit `status` mirror it; legacy rows
   // (status absent) fall back to the markdown/errorMessage heuristic.
   const pagesTotal = d.doc.pages?.length ?? 0;
+  // ponytail: per-page image + reference text columns only render
+  // for sources that actually produce them (PDF has both, image has
+  // rendered image but no text layer, text/markdown + text/plain are
+  // pre-baked single-page docs with neither).
+  const ingestKind = getIngestKind(d.doc.contentType);
+  const showPageImages = hasPageImages(ingestKind);
+  const showReferenceText = hasReferenceText(ingestKind);
   const inferPageStatus = (
     p: NonNullable<KbDocDetail["doc"]["pages"]>[number],
   ): "pending" | "parsing" | "success" | "failed" => {
@@ -332,7 +363,7 @@ export function DocDetailDialog({
                 variant="outline"
                 className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
               >
-                <span>{d.doc.contentType}</span>
+                <span>{mimeShortLabel(d.doc.contentType)}</span>
               </Badge>
 
               {d.doc.pages &&
@@ -344,6 +375,14 @@ export function DocDetailDialog({
                     ? 0
                     : d.doc.pages.filter((p) => !!p.errorMessage || !(p.markdown ?? "").trim())
                         .length;
+                  // ponytail: every kind carries `pages[]` in the data
+                  // model (text/markdown + Office pre-bake a single
+                  // page, PDF renders one per sheet) — label the count
+                  // in `page`/`pages` regardless so the meta strip and
+                  // the Pages tab agree. Failed-page count stays gated
+                  // on `showPageImages` because pre-baked kinds fail at
+                  // the doc level (the doc status badge already shows it).
+                  const unit = totalPages === 1 ? "page" : "pages";
                   return (
                     <>
                       <span
@@ -355,8 +394,8 @@ export function DocDetailDialog({
                         className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
                       >
                         <span>
-                          {totalPages} pages
-                          {failedPagesCount > 0 && (
+                          {totalPages} {unit}
+                          {failedPagesCount > 0 && showPageImages && (
                             <span className="text-destructive font-medium ml-1">
                               ({failedPagesCount} failed)
                             </span>
@@ -396,20 +435,22 @@ export function DocDetailDialog({
             )}
           >
             <FileText className="size-3.5 sm:mr-1.5 shrink-0" />
-            <span className="hidden sm:inline">Markdown</span>
+            <span className="hidden sm:inline">{mainContentTabLabel(ingestKind)}</span>
           </button>
-          <button
-            onClick={() => setActiveTab("pages")}
-            className={cn(
-              "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7 flex-1 sm:flex-initial",
-              activeTab === "pages"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <ScanText className="size-3.5 sm:mr-1.5 shrink-0" />
-            <span className="hidden sm:inline">Pages ({d.doc.pages?.length ?? 0})</span>
-          </button>
+          {d.doc.pages && d.doc.pages.length > 0 ? (
+            <button
+              onClick={() => setActiveTab("pages")}
+              className={cn(
+                "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-xs font-semibold transition-all duration-200 h-7 flex-1 sm:flex-initial",
+                activeTab === "pages"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <ScanText className="size-3.5 sm:mr-1.5 shrink-0" />
+              <span className="hidden sm:inline">Pages ({d.doc.pages?.length ?? 0})</span>
+            </button>
+          ) : null}
           <button
             onClick={() => setActiveTab("chunks")}
             className={cn(
@@ -547,65 +588,84 @@ export function DocDetailDialog({
                         })()}
                       </div>
 
-                      {/* Body: [Image + Ref] → [Markdown] */}
-                      <div className="flex flex-col gap-4 p-4 md:grid md:grid-cols-[1fr_auto_2fr] md:items-stretch md:gap-0">
-                        {/* Left 1/3: Image stacked above "+" and Reference Text */}
-                        <div className="flex h-full min-h-0 flex-col justify-between gap-2 w-full md:w-auto">
-                          {/* Page Image */}
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1">
-                              <FileImage className="size-3" />
-                              Page Image
-                            </span>
-                            <a
-                              href={page.imageUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex h-full min-h-[180px] max-h-[180px] items-center justify-center group overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow hover:shadow-md cursor-zoom-in"
-                              title="Click to view full size"
-                            >
-                              <img
-                                src={page.imageUrl}
-                                alt={`Page ${page.pageIndex + 1}`}
-                                className="max-h-full max-w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
-                                loading="lazy"
-                              />
-                            </a>
-                          </div>
-
-                          {/* + connector — matches ArrowRight size */}
-                          <div className="flex items-center justify-center">
-                            <span className="text-base font-light text-muted-foreground/35 select-none leading-none">
-                              +
-                            </span>
-                          </div>
-
-                          {/* Reference Text */}
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1">
-                              <ScanText className="size-3" />
-                              Reference Text
-                            </span>
-                            {hasRef ? (
-                              <div className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-foreground/80 bg-blue-500/5 border border-blue-500/20 p-2.5 rounded-lg min-h-[80px] max-h-[180px] overflow-y-auto">
-                                {page.referenceText}
+                      {/* Body: [Image + Ref] → [Markdown] (or just [Markdown] for text/markdown + text/plain) */}
+                      <div
+                        className={cn(
+                          "flex flex-col gap-4 p-4 md:grid md:items-stretch md:gap-0",
+                          // PDF (image + ref text): 1fr | auto | 2fr → image gets a third, markdown is the result
+                          // Image only (no ref text): 1fr | auto | 1fr → image fills more space since there's no reference column
+                          showPageImages
+                            ? showReferenceText
+                              ? "md:grid-cols-[1fr_auto_2fr]"
+                              : "md:grid-cols-[1fr_auto_1fr]"
+                            : "md:grid-cols-1",
+                        )}
+                      >
+                        {/* Left 1/3: Image stacked above "+" and Reference Text (PDF + image only) */}
+                        {showPageImages ? (
+                          <>
+                            <div className="flex h-full min-h-0 flex-col justify-between gap-2 w-full md:w-auto">
+                              {/* Page Image */}
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1">
+                                  <FileImage className="size-3" />
+                                  Page Image
+                                </span>
+                                <a
+                                  href={page.imageUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex h-full min-h-[180px] max-h-[180px] items-center justify-center group overflow-hidden rounded-lg border bg-muted shadow-sm transition-shadow hover:shadow-md cursor-zoom-in"
+                                  title="Click to view full size"
+                                >
+                                  <img
+                                    src={page.imageUrl}
+                                    alt={`Page ${page.pageIndex + 1}`}
+                                    className="max-h-full max-w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+                                    loading="lazy"
+                                  />
+                                </a>
                               </div>
-                            ) : (
-                              <div className="flex flex-col items-center justify-center h-[180px] bg-muted/10 rounded-lg border border-dashed text-muted-foreground/40 text-[11px] italic gap-1">
-                                <ScanText className="size-4 opacity-30" />
-                                <span>No text layer</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
 
-                        {/* Center arrow (horizontal on desktop, vertical on mobile) */}
-                        <div className="hidden md:flex items-center justify-center px-3 self-center">
-                          <ArrowRight className="size-4 text-muted-foreground/35" />
-                        </div>
-                        <div className="flex md:hidden items-center justify-center py-1 shrink-0">
-                          <ArrowDown className="size-4 text-muted-foreground/35" />
-                        </div>
+                              {/* + connector — matches ArrowRight size */}
+                              {showReferenceText ? (
+                                <div className="flex items-center justify-center">
+                                  <span className="text-base font-light text-muted-foreground/35 select-none leading-none">
+                                    +
+                                  </span>
+                                </div>
+                              ) : null}
+
+                              {/* Reference Text (PDF only) */}
+                              {showReferenceText ? (
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1">
+                                    <ScanText className="size-3" />
+                                    Reference Text
+                                  </span>
+                                  {hasRef ? (
+                                    <div className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-foreground/80 bg-blue-500/5 border border-blue-500/20 p-2.5 rounded-lg min-h-[80px] max-h-[180px] overflow-y-auto">
+                                      {page.referenceText}
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-col items-center justify-center h-[180px] bg-muted/10 rounded-lg border border-dashed text-muted-foreground/40 text-[11px] italic gap-1">
+                                      <ScanText className="size-4 opacity-30" />
+                                      <span>No text layer</span>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+
+                            {/* Center arrow (horizontal on desktop, vertical on mobile) */}
+                            <div className="hidden md:flex items-center justify-center px-3 self-center">
+                              <ArrowRight className="size-4 text-muted-foreground/35" />
+                            </div>
+                            <div className="flex md:hidden items-center justify-center py-1 shrink-0">
+                              <ArrowDown className="size-4 text-muted-foreground/35" />
+                            </div>
+                          </>
+                        ) : null}
 
                         {/* Right 2/3: Markdown */}
                         <div className="flex flex-col gap-1 w-full md:w-auto">
@@ -684,8 +744,32 @@ export function DocDetailDialog({
                       (c) => c.status === "pending" || c.status === "parsing",
                     );
                     const showSpinner = docInflight || chunksInflight;
+                    const failedChunks = d.chunks
+                      .map((c, i) => ({
+                        ordinal: c.ordinal,
+                        content: c.content,
+                        error: c.errorMessage,
+                        idx: i,
+                      }))
+                      .filter((c) => c.error || d.chunks[c.ordinal]?.status === "failed");
+                    const focusFailed = (ordinal: number) => {
+                      setCollapsedChunks((prev) => {
+                        const next = new Set(prev);
+                        next.delete(ordinal);
+                        return next;
+                      });
+                      setHighlightChunk(ordinal);
+                      const el = chunkRefs.current.get(ordinal);
+                      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                      // Clear highlight ring after a short pause so the
+                      // animation is visible but doesn't linger forever.
+                      window.setTimeout(() => setHighlightChunk(null), 1800);
+                    };
                     return (
-                      <div className="flex items-center justify-between px-1 text-[11px]">
+                      // ponytail: sticky header inside the scroll container
+                      // — backdrop-blur + bottom border so chunks underneath
+                      // fade behind the bar instead of overlapping.
+                      <div className="sticky top-0 z-10 -mx-1 px-1 py-2 bg-background/90 backdrop-blur-sm border-b flex items-center justify-between text-[11px]">
                         <span className="text-muted-foreground inline-flex items-center gap-1.5">
                           <span>Indexed</span>{" "}
                           <span className="text-foreground font-semibold tabular-nums">
@@ -699,153 +783,220 @@ export function DocDetailDialog({
                             />
                           )}
                         </span>
-                        {d.chunks.some((c) => c.status === "failed") && (
-                          <span className="text-destructive font-semibold tabular-nums">
-                            {d.chunks.filter((c) => c.status === "failed").length} failed
-                          </span>
+                        {failedChunks.length > 0 && (
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                className="text-destructive font-semibold tabular-nums inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-destructive/10 transition-colors cursor-pointer"
+                                aria-label={`${failedChunks.length} failed chunks — click to locate`}
+                              >
+                                {failedChunks.length} failed
+                                <ChevronRight className="size-3" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent align="end" className="w-64 p-1">
+                              <div className="text-[10px] text-muted-foreground px-2 py-1.5 uppercase tracking-wider">
+                                Failed chunks
+                              </div>
+                              {failedChunks.map((fc) => (
+                                <button
+                                  key={fc.ordinal}
+                                  type="button"
+                                  onClick={() => focusFailed(fc.ordinal)}
+                                  className="w-full text-left px-2 py-1.5 rounded text-xs hover:bg-muted/60 transition-colors flex items-center gap-2"
+                                >
+                                  <span className="text-destructive font-semibold tabular-nums w-12 shrink-0">
+                                    #{fc.ordinal + 1}
+                                  </span>
+                                  <span className="truncate text-foreground/70 flex-1">
+                                    {fc.error || "(no error message)"}
+                                  </span>
+                                </button>
+                              ))}
+                            </PopoverContent>
+                          </Popover>
                         )}
                       </div>
                     );
                   })()}
-                  {d.chunks.map((c) => (
-                    <div
-                      key={c.ordinal}
-                      className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md"
-                    >
-                      {/* Card Header */}
-                      <div className="flex items-center justify-between border-b px-4 py-2.5 bg-muted/40">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
-                            Chunk #{c.ordinal + 1}
-                          </span>
-                        </div>
-                        <ChunkStatusBadge status={c.status} errorMessage={c.errorMessage} />
-                      </div>
-                      {/* Card Body */}
-                      <div className="p-4">
-                        <p className="text-xs text-foreground/90 whitespace-pre-wrap break-all leading-relaxed">
-                          {c.content}
-                        </p>
-                        {c.status === "failed" && c.errorMessage && (
-                          <p
-                            className="text-[10px] text-destructive/90 mt-2 italic"
-                            title={c.errorMessage}
+                  <div className="space-y-3 max-h-[60vh] overflow-y-auto px-1 -mx-1">
+                    {d.chunks.map((c) => {
+                      const collapsed = collapsedChunks.has(c.ordinal);
+                      const isHighlighted = highlightChunk === c.ordinal;
+                      const toggle = () =>
+                        setCollapsedChunks((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(c.ordinal)) next.delete(c.ordinal);
+                          else next.add(c.ordinal);
+                          return next;
+                        });
+                      return (
+                        <div
+                          key={c.ordinal}
+                          ref={(el) => {
+                            if (el) chunkRefs.current.set(c.ordinal, el);
+                            else chunkRefs.current.delete(c.ordinal);
+                          }}
+                          className={cn(
+                            "overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm transition-all duration-200 hover:shadow-md",
+                            isHighlighted &&
+                              "ring-2 ring-primary/60 ring-offset-2 ring-offset-background",
+                          )}
+                        >
+                          {/* Card Header — clickable to collapse/expand */}
+                          <button
+                            type="button"
+                            onClick={toggle}
+                            aria-expanded={!collapsed}
+                            aria-label={`Toggle chunk ${c.ordinal + 1}`}
+                            className="w-full flex items-center justify-between border-b px-4 py-2.5 bg-muted/40 hover:bg-muted/60 transition-colors text-left"
                           >
-                            {c.errorMessage}
-                          </p>
-                        )}
+                            <div className="flex items-center gap-2">
+                              <ChevronRight
+                                className={cn(
+                                  "size-3.5 text-muted-foreground transition-transform duration-200",
+                                  !collapsed && "rotate-90",
+                                )}
+                              />
+                              <span className="text-[11px] font-semibold capitalize tracking-wider text-muted-foreground">
+                                Chunk #{c.ordinal + 1}
+                              </span>
+                            </div>
+                            <ChunkStatusBadge status={c.status} errorMessage={c.errorMessage} />
+                          </button>
+                          {/* Card Body — hidden when collapsed */}
+                          {!collapsed && (
+                            <div className="p-4">
+                              <p className="text-xs text-foreground/90 whitespace-pre-wrap break-all leading-relaxed">
+                                {c.content}
+                              </p>
+                              {c.status === "failed" && c.errorMessage && (
+                                <p
+                                  className="text-[10px] text-destructive/90 mt-2 italic"
+                                  title={c.errorMessage}
+                                >
+                                  {c.errorMessage}
+                                </p>
+                              )}
 
-                        {/* Metadata Box: Entities + Themes + Relationships */}
-                        {((c.entities && c.entities.length > 0) ||
-                          (c.themes && c.themes.length > 0) ||
-                          (c.relationships && c.relationships.length > 0)) && (
-                          <div className="mt-4 rounded-xl border border-muted-foreground/10 bg-slate-50/50 dark:bg-muted/10 p-3.5 space-y-3">
-                            {/* Entities in chunk */}
-                            {c.entities && c.entities.length > 0 && (
-                              <div className="flex flex-col gap-1.5">
-                                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1 select-none">
-                                  Entities
-                                </span>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {c.entities.map((e, idx) => {
-                                    // ponytail: chunk-level entity badge
-                                    // color — graphRAG-native
-                                    // entityColor (hue = neighbor
-                                    // signature, sat/light = degree),
-                                    // single source of truth shared
-                                    // with knowledge-graph canvas +
-                                    // hover tooltip + uniqueEntities
-                                    // list. No string-type whitelist.
-                                    const entityColorFor =
-                                      entityColorMap.get(e.name) ?? entityColor(e.name, [], 0);
-                                    return (
-                                      <Badge
-                                        key={idx}
-                                        className="text-[9px] font-medium py-0.5 px-1.5 rounded border shadow-none"
-                                        style={{
-                                          backgroundColor: entityColorFor.bg,
-                                          color: entityColorFor.fg,
-                                          borderColor: entityColorFor.border,
-                                        }}
-                                        title={`${e.name} (${e.type}): ${e.description}`}
-                                      >
-                                        {e.name}
-                                      </Badge>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Separator if there are both entities and themes/relationships */}
-                            {c.entities &&
-                              c.entities.length > 0 &&
-                              ((c.themes && c.themes.length > 0) ||
+                              {/* Metadata Box: Entities + Themes + Relationships */}
+                              {((c.entities && c.entities.length > 0) ||
+                                (c.themes && c.themes.length > 0) ||
                                 (c.relationships && c.relationships.length > 0)) && (
-                                <Separator className="bg-muted-foreground/10" />
-                              )}
-
-                            {/* Themes in chunk */}
-                            {c.themes && c.themes.length > 0 && (
-                              <div className="flex flex-col gap-1.5">
-                                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1 select-none">
-                                  Themes
-                                </span>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {c.themes.map((t, idx) => (
-                                    <Badge
-                                      key={idx}
-                                      variant="secondary"
-                                      className="bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary text-[10px] font-medium py-0.5 px-2 rounded-md shadow-none"
-                                    >
-                                      #{t}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Separator if there are relationships and themes */}
-                            {c.themes &&
-                              c.themes.length > 0 &&
-                              c.relationships &&
-                              c.relationships.length > 0 && (
-                                <Separator className="bg-muted-foreground/10" />
-                              )}
-
-                            {/* Relationships in chunk */}
-                            {c.relationships && c.relationships.length > 0 && (
-                              <div className="flex flex-col gap-1.5">
-                                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1 select-none">
-                                  Relationships
-                                </span>
-                                <div className="space-y-1.5">
-                                  {c.relationships.map((r, idx) => (
-                                    <div
-                                      key={idx}
-                                      className="text-[10px] text-muted-foreground leading-relaxed"
-                                    >
-                                      <span className="font-semibold text-foreground">
-                                        {r.source}
+                                <div className="mt-4 rounded-xl border border-muted-foreground/10 bg-slate-50/50 dark:bg-muted/10 p-3.5 space-y-3">
+                                  {/* Entities in chunk */}
+                                  {c.entities && c.entities.length > 0 && (
+                                    <div className="flex flex-col gap-1.5">
+                                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1 select-none">
+                                        Entities
                                       </span>
-                                      <span className="italic mx-1 text-primary">
-                                        ({r.relation})
-                                      </span>
-                                      <span className="font-semibold text-foreground">
-                                        {r.target}
-                                      </span>
-                                      <span className="mx-1">•</span>
-                                      <span className="text-foreground/85">{r.description}</span>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {c.entities.map((e, idx) => {
+                                          // ponytail: chunk-level entity badge
+                                          // color — graphRAG-native
+                                          // entityColor (hue = neighbor
+                                          // signature, sat/light = degree),
+                                          // single source of truth shared
+                                          // with knowledge-graph canvas +
+                                          // hover tooltip + uniqueEntities
+                                          // list. No string-type whitelist.
+                                          const entityColorFor =
+                                            entityColorMap.get(e.name) ??
+                                            entityColor(e.name, [], 0);
+                                          return (
+                                            <Badge
+                                              key={idx}
+                                              className="text-[9px] font-medium py-0.5 px-1.5 rounded border shadow-none"
+                                              style={{
+                                                backgroundColor: entityColorFor.bg,
+                                                color: entityColorFor.fg,
+                                                borderColor: entityColorFor.border,
+                                              }}
+                                              title={`${e.name} (${e.type}): ${e.description}`}
+                                            >
+                                              {e.name}
+                                            </Badge>
+                                          );
+                                        })}
+                                      </div>
                                     </div>
-                                  ))}
+                                  )}
+
+                                  {/* Separator if there are both entities and themes/relationships */}
+                                  {c.entities &&
+                                    c.entities.length > 0 &&
+                                    ((c.themes && c.themes.length > 0) ||
+                                      (c.relationships && c.relationships.length > 0)) && (
+                                      <Separator className="bg-muted-foreground/10" />
+                                    )}
+
+                                  {/* Themes in chunk */}
+                                  {c.themes && c.themes.length > 0 && (
+                                    <div className="flex flex-col gap-1.5">
+                                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1 select-none">
+                                        Themes
+                                      </span>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {c.themes.map((t, idx) => (
+                                          <Badge
+                                            key={idx}
+                                            variant="secondary"
+                                            className="bg-primary/5 hover:bg-primary/10 border-primary/20 text-primary text-[10px] font-medium py-0.5 px-2 rounded-md shadow-none"
+                                          >
+                                            #{t}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Separator if there are relationships and themes */}
+                                  {c.themes &&
+                                    c.themes.length > 0 &&
+                                    c.relationships &&
+                                    c.relationships.length > 0 && (
+                                      <Separator className="bg-muted-foreground/10" />
+                                    )}
+
+                                  {/* Relationships in chunk */}
+                                  {c.relationships && c.relationships.length > 0 && (
+                                    <div className="flex flex-col gap-1.5">
+                                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 flex items-center gap-1 select-none">
+                                        Relationships
+                                      </span>
+                                      <div className="space-y-1.5">
+                                        {c.relationships.map((r, idx) => (
+                                          <div
+                                            key={idx}
+                                            className="text-[10px] text-muted-foreground leading-relaxed"
+                                          >
+                                            <span className="font-semibold text-foreground">
+                                              {r.source}
+                                            </span>
+                                            <span className="italic mx-1 text-primary">
+                                              ({r.relation})
+                                            </span>
+                                            <span className="font-semibold text-foreground">
+                                              {r.target}
+                                            </span>
+                                            <span className="mx-1">•</span>
+                                            <span className="text-foreground/85">
+                                              {r.description}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </>
               )}
             </div>
