@@ -130,7 +130,13 @@ export function walkStructuredText(stext: mupdf.StructuredText): {
   });
 
   flushBlock();
-  return { text: blocks.map((b) => b.text).join("\n\n").trim(), blocks };
+  return {
+    text: blocks
+      .map((b) => b.text)
+      .join("\n\n")
+      .trim(),
+    blocks,
+  };
 }
 
 function expandBbox(

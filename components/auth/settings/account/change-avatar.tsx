@@ -96,7 +96,10 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
       return;
     }
 
-    const previousImage = session?.user.image;
+    // ponytail: previously read `previousImage` here to delete it on
+    // success — but avatars are a fixed R2 slot, so old URL == new URL
+    // after upload and the delete clobbered the just-uploaded bytes.
+    // Race-loser cleanup lives further down (pendingUploadRef).
     setIsUploading(true);
 
     try {
@@ -109,14 +112,18 @@ export function ChangeAvatar({ className }: ChangeAvatarProps) {
         { image },
         {
           onSuccess: () => {
-            // ponytail: clean up whatever was the avatar BEFORE this upload
-            // succeeded. If a second upload raced us, that's the one
-            // pendingUploadRef now points to — we delete it instead of
-            // the user's actual current avatar.
-            const toDelete =
-              pendingUploadRef.current === image ? previousImage : pendingUploadRef.current;
+            // ponytail: avatars live at a fixed R2 slot (u/<id>/avatar.png),
+            // so re-upload OVERWRITES the old bytes in place. There is no
+            // separate "old object" to clean up — deleting the previous URL
+            // here would delete the just-uploaded avatar (greptile P1).
+            // Race-loser cleanup stays: if a 2nd upload raced us, that one
+            // is the loser and still needs to be cleaned (its R2 bytes will
+            // be the user's current avatar, NOT the one we want). The DB
+            // owns the truth via user.image, so we keep the loser delete
+            // and drop the previousImage delete.
+            const toDelete = pendingUploadRef.current === image ? null : pendingUploadRef.current;
             pendingUploadRef.current = null;
-            void deleteAvatarFromR2(toDelete);
+            if (toDelete) void deleteAvatarFromR2(toDelete);
             toast.success(localization.settings.avatarChangedSuccess);
           },
           onError: () => {

@@ -8,7 +8,11 @@ import { describe, expect, it, vi } from "vitest";
 // the test pinpoints: bbox derivation from ctm, png export, name
 // scheme, multi-image grouping by page.
 
-type FakeImage = { getWidth: () => number; getHeight: () => number; toPixmap: () => { asPNG: () => Uint8Array } };
+type FakeImage = {
+  getWidth: () => number;
+  getHeight: () => number;
+  toPixmap: () => { asPNG: () => Uint8Array };
+};
 type FakeMatrix = [number, number, number, number, number, number];
 type FillImageFn = (image: FakeImage, ctm: FakeMatrix, alpha: number) => void;
 type FakeDevice = { fillImage?: FillImageFn; callbacks?: FakeDevice };
@@ -37,9 +41,11 @@ vi.mock("mupdf", () => {
 
 import { extractPdfImages } from "@/lib/kb/pdf-images";
 
-function setupDoc(pages: Array<{
-  images: Array<{ width: number; height: number; ctm: FakeMatrix }>;
-}>): void {
+function setupDoc(
+  pages: Array<{
+    images: Array<{ width: number; height: number; ctm: FakeMatrix }>;
+  }>,
+): void {
   docRef.current = {
     countPages: () => pages.length,
     loadPage: (i: number) => ({

@@ -87,9 +87,9 @@ const ocrPageSchema = z.object({
     .string()
     .describe(
       "Clean markdown extraction of this PDF page. " +
-      "Preserve headings, lists, code blocks, tables, and inline formatting. " +
-      "Return an empty string if the page is blank or contains only decorative images. " +
-      "Output ONLY the markdown — no preamble, no commentary, no code fences.",
+        "Preserve headings, lists, code blocks, tables, and inline formatting. " +
+        "Return an empty string if the page is blank or contains only decorative images. " +
+        "Output ONLY the markdown — no preamble, no commentary, no code fences.",
     ),
 });
 
@@ -577,7 +577,7 @@ async function pageToMarkdownNode(state: KbAgentStateShape) {
               };
             }
 
-            const contentParts: Array<{ type: string;[key: string]: unknown }> = [
+            const contentParts: Array<{ type: string; [key: string]: unknown }> = [
               { type: "image_url", image_url: { url: p.imageUrl } },
             ];
             // ponytail: structured hints for the OCR LLM. Text blocks
@@ -966,15 +966,15 @@ export async function resolveEntityAliasesForDoc(args: {
     const systemMsg = new SystemMessage(KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT);
     const humanMsg = new HumanMessage(
       `Document Title: ${documentTitle || "Unknown Document"}\n` +
-      `Extracted Entities List:\n${JSON.stringify(entityList, null, 2)}`,
+        `Extracted Entities List:\n${JSON.stringify(entityList, null, 2)}`,
     );
 
     // 4. Call LLM to find alignments
     const alignmentResult = (await extractModel
       .withStructuredOutput(alignmentSchema, { method: "jsonSchema", strict: true })
       .invoke([systemMsg, humanMsg], { ...config, tags: ["nostream"] })) as z.infer<
-        typeof alignmentSchema
-      >;
+      typeof alignmentSchema
+    >;
 
     // 5. Create mapping dictionary
     const nameMap = new Map<string, string>();
@@ -1257,8 +1257,8 @@ async function generateChunkEmbedNode(
                   const systemMessage = new SystemMessage(KB_ENTITY_EXTRACTION_SYSTEM_PROMPT);
                   const humanMessage = new HumanMessage(
                     `Context Document Title: [${docTitle}]\n` +
-                    `Chunk: [${ordinal + 1} / ${totalChunksForPrompt}]\n\n` +
-                    `Text to extract:\n${text}`,
+                      `Chunk: [${ordinal + 1} / ${totalChunksForPrompt}]\n\n` +
+                      `Text to extract:\n${text}`,
                   );
 
                   try {

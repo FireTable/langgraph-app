@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   insertKbDocument: vi.fn(),
   fireIngestionRun: vi.fn(),
   fetchUrlToMarkdown: vi.fn(),
+  validateIngestUrl: vi.fn(),
   putObject: vi.fn(),
   getR2FolderUser: vi.fn(() => "u"),
 }));
@@ -28,6 +29,9 @@ vi.mock("@/lib/kb/queries", () => ({
 }));
 vi.mock("@/lib/kb/ingest", () => ({ fireIngestionRun: mocks.fireIngestionRun }));
 vi.mock("@/lib/kb/url", () => ({ fetchUrlToMarkdown: mocks.fetchUrlToMarkdown }));
+vi.mock("@/lib/kb/url-validate", () => ({
+  validateIngestUrl: mocks.validateIngestUrl,
+}));
 vi.mock("@/lib/r2/client", () => ({
   putObject: mocks.putObject,
   getR2FolderUser: mocks.getR2FolderUser,
@@ -51,6 +55,12 @@ beforeEach(() => {
   setCurrentUser(USER);
   mocks.findKbFolderById.mockResolvedValue({ id: "f-1", userId: "u-1", name: "Attachments" });
   mocks.findKbDocumentByContentHash.mockResolvedValue(null);
+  // ponytail: validateIngestUrl passes by default; URL-deny tests override.
+  mocks.validateIngestUrl.mockImplementation(async (rawUrl: string) => ({
+    ok: true as const,
+    url: new URL(rawUrl),
+    addresses: ["1.1.1.1"],
+  }));
   mocks.insertKbDocument.mockImplementation(
     async (row: { id: string; userId: string; folderId: string }) => ({
       id: row.id,
@@ -220,5 +230,38 @@ describe("POST /api/kb/upload — URL path", () => {
     expect(mocks.insertKbDocument).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Custom" }),
     );
+  });
+
+  it("rejects URL flow when validateIngestUrl denies (greptile P1)", async () => {
+    mocks.validateIngestUrl.mockResolvedValueOnce({ ok: false, code: "URL_DENIED_HOST" });
+
+    const res = await POST(makeRequest({ folderId: "f-1", url: "http://169.254.169.254/" }), CTX);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: "URL_DENIED_HOST" });
+    expect(mocks.fetchUrlToMarkdown).not.toHaveBeenCalled();
+  });
+
+  it("returns URL_FETCH_FAILED when fetchUrlToMarkdown throws (greptile P1)", async () => {
+    mocks.fetchUrlToMarkdown.mockRejectedValueOnce(new Error("503 from jina"));
+
+    const res = await POST(makeRequest({ folderId: "f-1", url: "https://example.com/x" }), CTX);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: "URL_FETCH_FAILED" });
+    expect(mocks.insertKbDocument).not.toHaveBeenCalled();
+  });
+
+  it("returns URL_EMPTY_CONTENT when reader returns no markdown (greptile P1)", async () => {
+    mocks.fetchUrlToMarkdown.mockResolvedValueOnce({
+      title: "",
+      markdown: "   \n\n  ",
+      sourceUrl: "https://example.com/x",
+    });
+
+    const res = await POST(makeRequest({ folderId: "f-1", url: "https://example.com/x" }), CTX);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: "URL_EMPTY_CONTENT" });
   });
 });

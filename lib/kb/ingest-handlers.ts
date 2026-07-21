@@ -582,7 +582,11 @@ export function getIngestHandler(mimeType: string): IngestHandler | null {
   if (mt === "application/pdf") return handlers.pdf;
   if (mt === "text/markdown") return handlers.markdown;
   if (mt === "text/plain") return handlers.plain;
-  if (mt.startsWith("image/")) return handlers.image;
+  // ponytail: explicit vision-safe MIME set, not startsWith("image/").
+  // SVG would render inline from a public bucket (XSS) and TIFF/BMP
+  // reach a vision path that doesn't support them — same allowlist
+  // the Office attachment filter uses (greptile P2).
+  if (VISION_OK_MIME.has(mt)) return handlers.image;
   if (
     mt === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     mt === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||

@@ -35,9 +35,7 @@ export type ExtractPdfImagesOpts = {
   pdfBytes: Buffer;
 };
 
-export async function extractPdfImages(
-  opts: ExtractPdfImagesOpts,
-): Promise<ExtractedPdfImage[]> {
+export async function extractPdfImages(opts: ExtractPdfImagesOpts): Promise<ExtractedPdfImage[]> {
   const doc = mupdf.Document.openDocument(opts.pdfBytes, "application/pdf");
   const out: ExtractedPdfImage[] = [];
   const pageCount = doc.countPages();
@@ -87,10 +85,18 @@ function ctmToBbox(
   height: number,
 ): [number, number, number, number] {
   const [a, b, c, d, e, f] = ctm;
+  // ponytail: 2×3 CTM matrix multiplied by (0,0), (w,0), (w,h), (0,h)
+  // to find the transformed bbox corners. oxlint flags `m * 0` as an
+  // erasing op but the form is intentional — matrix math reads cleaner
+  // than the equivalent `e`, `c * height + e`, etc.
   const corners: Array<[number, number]> = [
+    // oxlint-disable-next-line erasing-op -- intentional matrix transform
     [a * 0 + c * 0 + e, b * 0 + d * 0 + f],
+    // oxlint-disable-next-line erasing-op -- intentional matrix transform
     [a * width + c * 0 + e, b * width + d * 0 + f],
+    // oxlint-disable-next-line erasing-op -- intentional matrix transform
     [a * width + c * height + e, b * width + d * height + f],
+    // oxlint-disable-next-line erasing-op -- intentional matrix transform
     [a * 0 + c * height + e, b * 0 + d * height + f],
   ];
   const xs = corners.map((p) => p[0]);

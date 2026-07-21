@@ -5,6 +5,7 @@ import { z } from "zod";
 import { withAuth } from "@/lib/auth/with-auth";
 import { fireIngestionRun } from "@/lib/kb/ingest";
 import { fetchUrlToMarkdown } from "@/lib/kb/url";
+import { validateIngestUrl } from "@/lib/kb/url-validate";
 import { getAttachmentForUser, findUploadedBySha } from "@/lib/attachments/queries";
 import { insertAttachment } from "@/lib/attachments/queries";
 import { findKbDocumentByContentHash, findKbFolderById, insertKbDocument } from "@/lib/kb/queries";
@@ -51,7 +52,11 @@ export const POST = withAuth(async (req, { user }) => {
     : await resolveAttachment({ userId: user.id, attachmentId: attachmentId! });
 
   if ("error" in resolved) {
-    return NextResponse.json({ code: resolved.code }, { status: resolved.status });
+    // ponytail: validateIngestUrl + fetchUrlToMarkdown failures use 400
+    // (caller-fixable: wrong URL); everything else (folder missing,
+    // attachment missing, etc.) keeps its existing status.
+    const status = resolved.code.startsWith("URL_") ? 400 : resolved.status;
+    return NextResponse.json({ code: resolved.code }, { status });
   }
 
   const { attachment, contentHash, displayTitle } = resolved;
@@ -165,12 +170,42 @@ async function ingestFromUrl({
   userId: string;
   url: string;
   title?: string;
-}): Promise<{
-  attachment: { id: string; r2Key: string; contentType: string; name: string; sha256: string };
-  contentHash: string;
-  displayTitle: string;
-}> {
-  const page = await fetchUrlToMarkdown(url);
+}): Promise<
+  | {
+      attachment: { id: string; r2Key: string; contentType: string; name: string; sha256: string };
+      contentHash: string;
+      displayTitle: string;
+    }
+  | { error: true; code: string; status: number }
+> {
+  // ponytail: default-deny URL policy. Validate scheme/host/private
+  // ranges BEFORE calling Jina — otherwise a hostile URL pointing at
+  // 169.254.169.254 or 10.0.0.0/8 could exfiltrate via Jina's outbound
+  // and the response gets persisted to the user's KB (greptile P1).
+  const validated = await validateIngestUrl(url);
+  if (!validated.ok) {
+    return { error: true, code: validated.code, status: 400 };
+  }
+
+  // ponytail: wrap fetchUrlToMarkdown in structured error handling so a
+  // 5xx / network / non-JSON response surfaces as URL_FETCH_FAILED (400)
+  // instead of an opaque 500 (greptile P1: Fetch Failures Escape As 500).
+  let page: Awaited<ReturnType<typeof fetchUrlToMarkdown>>;
+  try {
+    page = await fetchUrlToMarkdown(url);
+  } catch {
+    return { error: true, code: "URL_FETCH_FAILED", status: 400 };
+  }
+
+  // ponytail: reader can return a successful response with empty content
+  // (JS-rendered SPAs, auth walls). Reject before hashing — otherwise
+  // all empty URLs collapse to the same sha and we end up with KB docs
+  // that have nothing to search (greptile P1: Empty Pages Become Valid).
+  const markdown = page.markdown.trim();
+  if (markdown.length === 0) {
+    return { error: true, code: "URL_EMPTY_CONTENT", status: 400 };
+  }
+
   const bytes = Buffer.from(page.markdown, "utf-8");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
 
