@@ -8,18 +8,16 @@ import { z } from "zod";
 // reads content parts directly off the message; this row only tracks upload
 // metadata for dedup + retention sweeps.
 //
-// sha256: optional 64-char hex. When set, the route short-circuits to the
-// existing uploaded row's publicUrl if a (user_id, sha256) match is found.
-// Clients that don't compute a hash (e.g. older browsers, server-side
-// flows) leave it undefined — dedup just doesn't run for them.
+// sha256: REQUIRED 64-char hex. The route uses sha256 as the R2 key
+// (content-addressed — same bytes → same key → automatic dedup at the
+// storage layer). Clients must compute sha256 via `crypto.subtle.digest`
+// before sending; the adapter throws if `crypto.subtle` isn't available,
+// forcing the user to a modern browser (secure context required).
 export const PresignBody = z.object({
   name: z.string().min(1).max(256),
   contentType: z.string().min(1).max(127),
   sizeBytes: z.number().int().positive(),
-  sha256: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/i, "sha256 must be 64-char hex")
-    .optional(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/i, "sha256 must be 64-char hex"),
 });
 
 // POST /api/attachments/[id]/confirm — currently empty; HEAD reads R2.
@@ -27,5 +25,15 @@ export const ConfirmBody = z.object({}).strict();
 
 // URL params shared across the [id] subroutes.
 export const AttachmentIdParam = z.object({ id: z.string().min(1).max(64) });
+
+// POST /api/avatar/presign — body the client sends when picking a new
+// avatar. Mirrors PresignBody but WITHOUT sha256: the avatar R2 key
+// is a fixed per-user slot (u/<userId>/avatar.png), so the server
+// never needs to know the file's bytes to construct it.
+export const AvatarPresignBody = z.object({
+  name: z.string().min(1).max(256),
+  contentType: z.string().min(1).max(127),
+  sizeBytes: z.number().int().positive(),
+});
 
 export type PresignInput = z.infer<typeof PresignBody>;

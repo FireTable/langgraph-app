@@ -23,6 +23,7 @@ vi.mock("@/lib/r2/client", async () => {
     buildPublicUrl: mockState.buildPublicUrl,
     deleteObject: mockState.deleteObject,
     getR2PublicBaseUrl: mockState.getR2PublicBaseUrl,
+    getR2FolderUser: vi.fn(() => "u"),
   };
 });
 
@@ -104,8 +105,10 @@ describe("POST /api/avatar/presign", () => {
     expect(res.status).toBe(201);
     const json = await res.json();
     expect(json.uploadUrl).toBe("https://r2.example/presigned");
-    expect(json.key).toMatch(new RegExp(`^u/${TEST_USER.id}/avatar/[0-9a-z]{12}-me\\.png$`));
-    expect(json.publicUrl).toBe(`https://file.example/${json.key}`);
+    // ponytail: avatar key is fixed-slot per user — always PNG, no
+    // nanoid, no original filename. Re-upload overwrites in place.
+    expect(json.key).toBe(`u/${TEST_USER.id}/avatar.png`);
+    expect(json.publicUrl).toBe(`https://file.example/u/${TEST_USER.id}/avatar.png`);
     expect(json.uploadHeaders).toEqual({
       "Content-Type": "image/png",
       "Content-Disposition": "inline",
@@ -141,7 +144,8 @@ describe("DELETE /api/avatar", () => {
   });
 
   it("deletes an owned avatar object and returns 204", async () => {
-    const key = `u/${TEST_USER.id}/avatar/abc123def456-me.png`;
+    // ponytail: avatar key is the fixed slot `u/<userId>/avatar.png`.
+    const key = `u/${TEST_USER.id}/avatar.png`;
     const res = await del({ url: `https://file.example/${key}` });
     expect(res.status).toBe(204);
     expect(mockState.deleteObject).toHaveBeenCalledWith(key);

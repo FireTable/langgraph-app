@@ -84,6 +84,7 @@ vi.mock("@/lib/r2/client", () => ({
   uploadKbImage: mocks.uploadKbImage,
   getR2PublicBaseUrl: mocks.getR2PublicBase,
   getObject: mocks.getObject,
+  getR2FolderUser: vi.fn(() => "u"),
 }));
 vi.mock("@/lib/kb/queries", () => ({
   ensureDefaultKbFolder: mocks.ensureFolder,

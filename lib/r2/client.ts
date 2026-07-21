@@ -55,6 +55,15 @@ export const getR2PublicBaseUrl = (): string => {
   return process.env.R2_PUBLIC_BASE_URL.replace(/\/$/, "");
 };
 
+// ponytail: folder getters follow the "missing → default" contract
+// (different from getR2Bucket/getR2PublicBaseUrl, which throw). The
+// rationale: bucket + public URL are *required* for the bucket to be
+// reachable at all, while folder names are pure layout conventions
+// with a sensible default baked into lib/r2/keys.ts. Overriding them
+// at deploy time is optional — we never want a missing R2_FOLDER_USER
+// to 503 the whole app.
+export const getR2FolderUser = (): string => process.env.R2_FOLDER_USER || "u";
+
 // ponytail: keep all four helpers in one file — the S3 client is the
 // only thing that needs to change for a future Backblaze B2 / MinIO
 // migration, and bundling the per-call wrappers next to the connection
@@ -119,8 +128,10 @@ export function buildPublicUrl(key: string): string {
 
 // ponytail: KB helpers (issue #13 v2). url → r2Key strips the public
 // base so the kbAgent can recover the source key from the file part's
-// publicUrl. uploadKbImage is the one-shot PUT for OCR page renders;
-// PNGs are tiny so no multipart.
+// publicUrl. Used by both the chat-upload prefix (`u/<userId>/upload/<sha>.<ext>`)
+// and the KB derived prefix (`u/<userId>/kb/<sha>.<ext>`) — this helper
+// is prefix-agnostic, it just strips the bucket base. uploadKbImage is
+// the one-shot PUT for OCR page renders; PNGs are tiny so no multipart.
 export function r2KeyFromPublicUrl(url: string, base: string): string {
   const trimmed = base.replace(/\/$/, "");
   if (url.startsWith(trimmed + "/")) {

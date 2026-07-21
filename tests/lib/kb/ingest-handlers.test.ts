@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { strToU8, zipSync } from "fflate";
@@ -8,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   extractImages: vi.fn(),
   getObject: vi.fn(),
   uploadKbImage: vi.fn(),
+  getR2FolderUser: vi.fn(() => "u"),
   // ponytail: the officeparser module is mocked at the module boundary
   // so the heavy pdfjs-dist / tesseract.js deps don't load during tests.
   // The mock returns the same shape as the real API so the handler's
@@ -21,6 +23,7 @@ vi.mock("@/lib/kb/pdf-images", () => ({ extractPdfImages: mocks.extractImages })
 vi.mock("@/lib/r2/client", () => ({
   getObject: mocks.getObject,
   uploadKbImage: mocks.uploadKbImage,
+  getR2FolderUser: mocks.getR2FolderUser,
 }));
 vi.mock("officeparser", () => ({
   OfficeParser: { parseOffice: mocks.parseOffice },
@@ -33,6 +36,13 @@ import {
   pdfHandler,
   textHandler,
 } from "@/lib/kb/ingest-handlers";
+
+// ponytail: KB ingest derives R2 keys from sha256 of the bytes (CAS).
+// Tests need the deterministic sha256 of whatever Buffer the fixture
+// produces — compute it once with the same Node API the handler uses.
+function sha256Hex(buf: Buffer): string {
+  return createHash("sha256").update(buf).digest("hex");
+}
 
 const ARGS = { r2Key: "u/x/y.pdf", userId: "u-1", docId: "d-1", name: "doc.pdf", contentType: "" };
 
@@ -105,10 +115,15 @@ describe("pdfHandler", () => {
 
     const pages = await pdfHandler.buildPages({ ...ARGS, contentType: "application/pdf" });
 
+    // ponytail: same Buffer for both pages → same sha256 → same R2 key
+    // (CAS). Both imageUrls collapse to the same publicUrl.
+    const pngSha = sha256Hex(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const pngUrl = `https://r2/u/u-1/kb/${pngSha}.png`;
+
     expect(pages).toHaveLength(2);
     expect(pages[0]).toMatchObject({
       pageIndex: 0,
-      imageUrl: "https://r2/kb-tmp/u-1/d-1/page-0.png",
+      imageUrl: pngUrl,
       referenceText: "page zero",
       status: "pending",
     });
@@ -153,14 +168,22 @@ describe("pdfHandler", () => {
       { text: "Body paragraph.", bbox: [10, 200, 300, 230] },
     ]);
     expect(pages[0].imageRefs).toHaveLength(1);
+    // ponytail: same Buffer for page PNG and extracted image → CAS
+    // collapses both R2 uploads to one key. The `name` field stays the
+    // original AST name (preserves display in tile UI), but the URL
+    // matches the page screenshot's URL.
+    const sharedSha = sha256Hex(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const sharedUrl = `https://r2/u/u-1/kb/${sharedSha}.png`;
     expect(pages[0].imageRefs![0]).toEqual({
       name: "img-p0-0",
-      url: "https://r2/kb-tmp/u-1/d-1/img-p0-0.png",
+      url: sharedUrl,
       bbox: [50, 50, 250, 180],
       width: 200,
       height: 130,
     });
-    // 2 uploads: page screenshot + extracted image
+    // 2 uploads: page screenshot + extracted image (CAS → same key,
+    // but both PutObject calls still happen — R2 PUT is idempotent,
+    // the second is a no-op overwrite).
     expect(mocks.uploadKbImage).toHaveBeenCalledTimes(2);
   });
 
@@ -217,8 +240,13 @@ describe("pdfHandler", () => {
 
     expect(pages[0].imageRefs!.map((r) => r.name)).toEqual(["img-p0-0", "img-p0-1"]);
     expect(pages[1].imageRefs!.map((r) => r.name)).toEqual(["img-p1-0"]);
-    expect(pages[0].imageRefs![0].url).toBe("https://r2/kb-tmp/u-1/d-1/img-p0-0.png");
-    expect(pages[1].imageRefs![0].url).toBe("https://r2/kb-tmp/u-1/d-1/img-p1-0.png");
+    // ponytail: all three image PNGs are the same Buffer.from([0]) →
+    // all three collapse to one R2 object (CAS). The `name` field
+    // still distinguishes them in the UI; only the URL is shared.
+    const sameSha = sha256Hex(Buffer.from([0]));
+    const sameUrl = `https://r2/u/u-1/kb/${sameSha}.png`;
+    expect(pages[0].imageRefs![0].url).toBe(sameUrl);
+    expect(pages[1].imageRefs![0].url).toBe(sameUrl);
   });
 });
 
@@ -243,7 +271,7 @@ describe("textHandler", () => {
 });
 
 describe("imageHandler", () => {
-  it("uploads image to kb-tmp with the right extension and returns imageUrl page", async () => {
+  it("uploads image to kb/<sha>.<ext> and returns imageUrl page", async () => {
     mocks.getObject.mockResolvedValue(Buffer.from([0xff, 0xd8, 0xff]));
 
     const pages = await imageHandler.buildPages({
@@ -258,9 +286,12 @@ describe("imageHandler", () => {
       markdown: "",
       status: "pending",
     });
-    expect(pages[0].imageUrl).toMatch(/^https:\/\/r2\/kb-tmp\/u-1\/d-1\/image\.jpeg$/);
+    // ponytail: key is content-addressed (sha of bytes). Same bytes
+    // uploaded twice → same key → R2 dedupes at the storage layer.
+    const jpegSha = sha256Hex(Buffer.from([0xff, 0xd8, 0xff]));
+    expect(pages[0].imageUrl).toBe(`https://r2/u/u-1/kb/${jpegSha}.jpeg`);
     expect(mocks.uploadKbImage).toHaveBeenCalledWith({
-      key: expect.stringMatching(/^kb-tmp\/u-1\/d-1\/image\.jpeg$/),
+      key: `u/u-1/kb/${jpegSha}.jpeg`,
       body: expect.any(Buffer),
       contentType: "image/jpeg",
     });
@@ -275,7 +306,13 @@ describe("imageHandler", () => {
       contentType: "image/weird",
     });
 
-    expect(pages[0].imageUrl).toMatch(/\/image\.weird$/);
+    // ponytail: ext is contentType.split("/")[1] ?? "png". The
+    // "weird" subtype hits the `??` fallthrough since the split
+    // yields "weird" (truthy). Real-world image/* mimes always
+    // have a slash, so the "png" fallback never fires today —
+    // sha-keyed URL ends in `.weird`.
+    const weirdSha = sha256Hex(Buffer.from([0]));
+    expect(pages[0].imageUrl).toBe(`https://r2/u/u-1/kb/${weirdSha}.weird`);
   });
 });
 
@@ -398,8 +435,11 @@ describe("officeHandler", () => {
     const images = (
       ast.content as Array<{ children: Array<{ metadata: { url?: string } }> }>
     ).flatMap((p) => p.children);
-    expect(images[0].metadata.url).toMatch(/^https:\/\/r2\/kb-tmp\/u-1\/d-1\/chart\.png$/);
-    expect(images[1].metadata.url).toMatch(/^https:\/\/r2\/kb-tmp\/u-1\/d-1\/photo\.jpg$/);
+    // ponytail: image keys are content-addressed (sha of bytes).
+    const chartSha = sha256Hex(realPng);
+    const photoSha = sha256Hex(realJpg);
+    expect(images[0].metadata.url).toBe(`https://r2/u/u-1/kb/${chartSha}.png`);
+    expect(images[1].metadata.url).toBe(`https://r2/u/u-1/kb/${photoSha}.jpg`);
     expect(mocks.uploadKbImage).toHaveBeenCalledTimes(2);
   });
 
@@ -567,9 +607,14 @@ describe("officeHandler", () => {
 
     // Only the real PNG makes it to R2.
     expect(mocks.uploadKbImage).toHaveBeenCalledTimes(1);
+    // ponytail: key is sha-keyed (CAS). Same real bytes uploaded twice
+    // would collapse to one R2 object — we just assert the sha-derived
+    // shape rather than computing the literal hex here.
+    const realPngBytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(500)]);
+    const realPngSha = sha256Hex(realPngBytes);
     expect(mocks.uploadKbImage).toHaveBeenCalledWith(
       expect.objectContaining({
-        key: "kb-tmp/u-1/d-1/real.png",
+        key: `u/u-1/kb/${realPngSha}.png`,
         contentType: "image/png",
       }),
     );
@@ -701,8 +746,12 @@ describe("officeHandler", () => {
     });
 
     expect(mocks.uploadKbImage).toHaveBeenCalledTimes(1);
+    // ponytail: dedup now happens at two layers — same attachment name
+    // dedupes via the in-process uploadedUrls cache, AND same bytes
+    // dedupe via the sha-keyed R2 key. Both reinforce each other.
+    const logoSha = sha256Hex(realPng);
     expect(mocks.uploadKbImage).toHaveBeenCalledWith(
-      expect.objectContaining({ key: "kb-tmp/u-1/d-1/logo.png" }),
+      expect.objectContaining({ key: `u/u-1/kb/${logoSha}.png` }),
     );
   });
 
@@ -844,9 +893,12 @@ ${imageNames
     });
 
     expect(pages).toHaveLength(2);
-    // ponytail: bg.png appended to both slides (shared layout).
-    expect(pages[0].markdown).toContain("![bg.png](https://r2/kb-tmp/u-1/d-1/bg.png)");
-    expect(pages[1].markdown).toContain("![bg.png](https://r2/kb-tmp/u-1/d-1/bg.png)");
+    // ponytail: bg.png appended to both slides (shared layout). The
+    // sha-keyed R2 URL replaces the legacy /u-1/d-1/bg.png form.
+    const bgSha = sha256Hex(realPng);
+    const bgUrl = `https://r2/u/u-1/kb/${bgSha}.png`;
+    expect(pages[0].markdown).toContain(`![bg.png](${bgUrl})`);
+    expect(pages[1].markdown).toContain(`![bg.png](${bgUrl})`);
     // ponytail: dedup — same orphan referenced from both slides'
     // shared layout → only one R2 PUT.
     expect(mocks.uploadKbImage).toHaveBeenCalledTimes(1);
@@ -892,7 +944,8 @@ ${imageNames
 
     expect(pages).toHaveLength(2);
     expect(pages[0].markdown).not.toContain("bg.png");
-    expect(pages[1].markdown).toContain("![bg.png](https://r2/kb-tmp/u-1/d-1/bg.png)");
+    const bgSha = sha256Hex(realPng);
+    expect(pages[1].markdown).toContain(`![bg.png](https://r2/u/u-1/kb/${bgSha}.png)`);
   });
 
   // ponytail: orphan backfill is a no-op for non-PPTX. DOCX has
@@ -1038,7 +1091,8 @@ ${
 
     expect(pages).toHaveLength(3);
     expect(pages[0].markdown).not.toContain("image1.png");
-    expect(pages[1].markdown).toContain("![image1.png](https://r2/kb-tmp/u-1/d-1/image1.png)");
+    const image1Sha = sha256Hex(realPng);
+    expect(pages[1].markdown).toContain(`![image1.png](https://r2/u/u-1/kb/${image1Sha}.png)`);
     expect(pages[2].markdown).not.toContain("image1.png");
     expect(mocks.uploadKbImage).toHaveBeenCalledTimes(1);
   });
@@ -1051,6 +1105,8 @@ ${
   // earlier in the zip renders earlier in the markdown.
   it("inserts orphan BEFORE content image when orphan's attachmentIndex is lower", async () => {
     const realPng = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(500)]);
+    const realPngSha = sha256Hex(realPng);
+    const realPngUrl = `https://r2/u/u-1/kb/${realPngSha}.png`;
     // zip order: bg.png first (index 0, orphan), fg.png second
     // (index 1, content). Slide1's rels reference bg.png; AST
     // only references fg.png. Expected: bg inserts before fg.
@@ -1069,9 +1125,11 @@ ${
       // ponytail: ast.to("md") returns a string with a content
       // image ref. The walker has set `metadata.url` on fg.png
       // before the generator runs, so the rendered markdown
-      // includes the R2 URL inline.
+      // includes the R2 URL inline. The URL must match the
+      // sha-keyed form the walker actually produces (otherwise
+      // urlToName lookup misses and orphan insertion breaks).
       to: vi.fn().mockResolvedValue({
-        value: "intro\n\n![fg alt](https://r2/kb-tmp/u-1/d-1/fg.png)\n\nmore text",
+        value: `intro\n\n![fg alt](${realPngUrl})\n\nmore text`,
       }),
       attachments: [
         // Order matters: bg.png is index 0, fg.png is index 1.
@@ -1105,11 +1163,12 @@ ${
 
     expect(pages).toHaveLength(1);
     // ponytail: bg.png's ref appears BEFORE fg.png's ref in the
-    // final markdown. The exact URLs come from uploadKbImage's
-    // mock (which returns `https://r2/${key}` for the asked key).
+    // final markdown. Both images share a sha-keyed R2 URL (CAS),
+    // so the assertion scans for the alt text rather than the
+    // filename (which only appears in the alt, not the URL).
     const md = pages[0].markdown;
     const bgPos = md.indexOf("bg.png");
-    const fgPos = md.indexOf("fg.png");
+    const fgPos = md.indexOf("fg alt");
     expect(bgPos).toBeGreaterThan(-1);
     expect(fgPos).toBeGreaterThan(-1);
     expect(bgPos).toBeLessThan(fgPos);
@@ -1121,6 +1180,8 @@ ${
   // end (the legacy fallback).
   it("appends orphan at end when no content image has a higher attachmentIndex", async () => {
     const realPng = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(500)]);
+    const realPngSha = sha256Hex(realPng);
+    const realPngUrl = `https://r2/u/u-1/kb/${realPngSha}.png`;
     // fg.png is index 0 (content), bg.png is index 1 (orphan).
     // bg's index (1) > fg's (0), so bg appends at end.
     const entries: Record<string, Uint8Array> = {
@@ -1136,7 +1197,7 @@ ${
     mocks.getObject.mockResolvedValue(zipBytes);
     mocks.parseOffice.mockResolvedValue({
       to: vi.fn().mockResolvedValue({
-        value: "intro\n\n![fg alt](https://r2/kb-tmp/u-1/d-1/fg.png)",
+        value: `intro\n\n![fg alt](${realPngUrl})`,
       }),
       attachments: [
         // fg.png FIRST in zip (index 0)
@@ -1172,9 +1233,12 @@ ${
     expect(pages).toHaveLength(1);
     const md = pages[0].markdown;
     const bgPos = md.indexOf("bg.png");
-    const fgPos = md.indexOf("fg.png");
+    const fgPos = md.indexOf("fg alt");
     expect(bgPos).toBeGreaterThan(fgPos);
-    expect(md.endsWith("bg.png)")).toBe(true);
+    // ponytail: orphan ref ends the markdown. The trailing URL no
+    // longer contains "bg.png" (sha-keyed), so assert on the sha
+    // suffix instead.
+    expect(md.endsWith(".png)")).toBe(true);
   });
 
   // ponytail: a page with NO content image refs. The orphan has
@@ -1183,6 +1247,7 @@ ${
   // covers slides that are pure text.
   it("appends orphan at end when page has no content image refs", async () => {
     const realPng = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(500)]);
+    const orphanSha = sha256Hex(realPng);
     const entries: Record<string, Uint8Array> = {
       "ppt/slides/_rels/slide1.xml.rels": strToU8(
         `<?xml version="1.0"?>
@@ -1217,7 +1282,7 @@ ${
     expect(pages).toHaveLength(1);
     expect(pages[0].markdown).toContain("just text, no images");
     expect(pages[0].markdown).toContain("![orphan.png]");
-    expect(pages[0].markdown.endsWith("![orphan.png](https://r2/kb-tmp/u-1/d-1/orphan.png)")).toBe(
+    expect(pages[0].markdown.endsWith(`![orphan.png](https://r2/u/u-1/kb/${orphanSha}.png)`)).toBe(
       true,
     );
   });

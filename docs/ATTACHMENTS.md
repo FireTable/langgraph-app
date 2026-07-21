@@ -51,7 +51,7 @@ experimentation, not production.
       │      b. PUT uploadUrl                   (browser → R2)
       │      c. POST /api/attachments/[id]/confirm  (Next.js → row status='uploaded')
       ▼
-[ Cloudflare R2 ]   u/<userId>/<nanoid>-<safe-name>  + Content-Disposition
+[ Cloudflare R2 ]   u/<userId>/upload/<sha256>.<ext>  + Content-Disposition
       │
       │ 3. assistant-ui embed the publicUrl into the message content part
       │    (`{ type: "image", image: publicUrl }`)
@@ -87,14 +87,22 @@ The R2 `PUT` is a single round trip; `fetch(file)` carries the bytes
 straight to the bucket. Network drops mid-flight mean the user re-picks
 the file. For files >100 MiB, swap to multipart PUT.
 
-## SHA-256 dedup (Q2)
+## SHA-256 dedup + content-addressed storage
 
-`send()` hashes the file bytes with `crypto.subtle.digest("SHA-256", ...)`
-and sends the 64-char hex in the presign body. The route checks for an
-existing uploaded row with the same `(user_id, sha256)` and short-circuits
-when one exists — response carries `skipUpload: true` and the existing
-row's `publicUrl`. The adapter jumps straight to confirm; the PUT to R2
-never happens.
+Two layers of dedup, both keyed on sha256 of the file bytes:
+
+1. **R2 layer (content-addressed).** The R2 key IS the sha. Same bytes
+   uploaded twice → same key → R2 dedupes at the storage layer (a second
+   PUT overwrites the first; no extra bytes stored). The presign route
+   still creates a fresh `attachments` row per upload (the row is the
+   dedup-confirmation token, not part of the R2 key).
+2. **Database layer (Q2 short-circuit).** `send()` hashes the file bytes
+   with `crypto.subtle.digest("SHA-256", ...)` and sends the 64-char
+   hex in the presign body. The route checks for an existing uploaded
+   row with the same `(user_id, sha256)` and short-circuits when one
+   exists — response carries `skipUpload: true` and the existing
+   row's `publicUrl`. The adapter jumps straight to confirm; the PUT to R2
+   never happens.
 
 What this saves:
 
@@ -108,19 +116,29 @@ get separate rows in R2 with separate publicUrls — storage quotas and
 deletion rights are user-scoped, so cross-user dedup would create a
 shared object that the other user could read but not delete.
 
-Dedup is **best-effort**, not strict. The only index on `(user_id, sha256)`
-is non-unique (`attachments_user_sha_idx`); a partial unique index
-("at most one uploaded row per (user, sha)") was considered but not
-landed because the real-world race (two parallel uploads of the same
-file from different tabs) is rare and the worst-case outcome is two
-copies of the bytes in R2. `findUploadedBySha` returns the first
-matching row, so the second upload gets the first's publicUrl on a
-re-attempt — the second PUT just creates an extra R2 object. The
-retention sweep (Watch-outs) cleans up stragglers.
+Dedup runs at two layers:
 
-Clients without `crypto.subtle` (very old browsers, server-side flows)
-just omit `sha256` from the presign body — the validator accepts it as
-optional, dedup simply doesn't run for them.
+- **R2 layer (storage)** — the key IS the sha, so the same bytes
+  uploaded twice produce the same key. The second PUT overwrites the
+  first; no extra bytes stored.
+- **Database layer (Q2 short-circuit)** — `findUploadedBySha` returns
+  the first matching `(user_id, sha256, status='uploaded')` row, and
+  the presign response carries `skipUpload: true`. The adapter jumps
+  straight to confirm; the PUT to R2 never happens.
+
+The DB short-circuit is **best-effort**, not strict. The only index on
+`(user_id, sha256)` is non-unique (`attachments_user_sha_idx`); a
+partial unique index was considered but not landed because the
+real-world race (two parallel uploads from different tabs) is rare and
+the worst-case outcome is two DB rows for the same sha — both rows
+point at the same R2 object, so storage cost is zero. The retention
+sweep (Watch-outs) cleans up orphan DB rows.
+
+Clients without `crypto.subtle` (very old browsers, non-secure contexts)
+cannot produce a sha256 and the adapter throws before the presign fetch
+— there's no way to upload without one because the server uses it as
+the R2 key. Users on such clients need a modern browser (secure context
+required).
 
 ## No thread binding
 
@@ -150,18 +168,52 @@ Lifecycle:
 
 ## R2 key convention
 
-```
-u/<userId>/<nanoid>-<safe-filename>
-```
+All R2 keys in the app route through `lib/r2/keys.ts` → `r2Keys()`. Three
+prefixes share the user-scoped root (`R2_FOLDER_USER`, default `u`):
+
+| Kind   | Key shape                               | Naming rule       |
+| ------ | --------------------------------------- | ----------------- |
+| upload | `<root>/<userId>/upload/<sha256>.<ext>` | content-addressed |
+| kb     | `<root>/<userId>/kb/<sha256>.<ext>`     | content-addressed |
+| avatar | `<root>/<userId>/avatar.png`            | fixed slot        |
+
+- **upload** — chat attachment R2 keys (browser presigned PUT) AND
+  server-side URL-ingest fetched markdown. Both share the same prefix
+  because they're "raw user-uploaded bytes that may surface in chat".
+- **kb** — KB ingest derived objects: page screenshots, embedded
+  images, office attachments. A second ingest of the same doc (or the
+  same logo embedded across N docs) reuses one R2 object.
+- **avatar** — one avatar per user, always PNG. better-auth-ui's
+  client-side `resize` hook transcodes any input format to PNG via
+  canvas, so the server never sees jpg/webp. Re-upload overwrites the
+  same slot in place; the change-avatar component deletes the OLD
+  URL via `DELETE /api/avatar` to clean up race losers.
+
+The `sha256` is the hex digest of the bytes (`createHash("sha256")` on
+the server, `crypto.subtle.digest("SHA-256")` on the client — both
+yield 64-char lowercase hex). The `ext` comes from the content type
+for chat attachments (e.g. `image/png` → `png`), from
+`att.extension` for office parser attachments, or is hardcoded
+(`md` for URL-ingested markdown, `png` for KB screenshots).
+
+### `R2_FOLDER_USER` env override
+
+`getR2FolderUser()` (`lib/r2/client.ts`) defaults to `"u"` and can be
+overridden via `R2_FOLDER_USER`. Every key in the app reads this
+getter, so a single env change renames the root. **No migration
+ships** — existing objects in R2 become unreachable when the prefix
+changes.
 
 - `userId` — bare Better Auth user id. The "exposes user activity via
   bucket list" concern is bounded: R2 list operations require IAM
   regardless of the bucket's public-read policy.
-- 12-char nanoid — URL-safe alphabet, ~71 bits of entropy. Generated from
-  `crypto.randomBytes` (no nanoid dep). The id is also the row PK so the
-  public URL never carries a guessable id.
-- `safe-filename` — strips path separators, control chars, trailing dots;
-  clamps to 200 chars (`lib/attachments/keys.ts`).
+- `sha256` — 64-char lowercase hex. Powers dedup at both the R2 layer
+  (same key for same bytes) and the DB layer (`(user_id, sha256)`
+  short-circuit at presign). Generated client-side via
+  `crypto.subtle.digest("SHA-256")`, server-side via `createHash("sha256")`.
+- `ext` — file extension from the content type. The attachment row's
+  `name` field still carries the user's original filename; only the
+  R2 key uses sha + ext.
 
 ## Bucket setup
 

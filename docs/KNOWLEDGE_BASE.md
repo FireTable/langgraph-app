@@ -141,19 +141,21 @@ Upload ─▶ parse ────┤
    `lib/kb/ingest-handlers.ts`. PDF keeps the mupdf render + extract
    pipeline; markdown / plain text read the bytes as utf-8 and produce
    a single pre-baked page (`status='success'`); image uploads to
-   `kb-tmp/<userId>/<docId>/image.<ext>` and produces a single page
-   with `imageUrl` set + `status='pending'`; **Office Open XML
-   (DOCX/XLSX/PPTX)** goes through a single `officeHandler` that uses
-   `officeparser` and paginates by kind — PPTX splits by `slide`, XLSX
-   by `sheet`, DOCX stays a single page (Word pagination is dynamic so
-   there's no top-level page node to slice on). Each page's markdown
-   is generated from a sub-AST with `includeImages: true`, so embedded
-   images land inline as `![](kb-tmp/...url)` refs (R2 URLs are
-   resolved by walking the AST and rewriting `metadata.url` per image
-   node — same images shared across pages are PUT once via a
-   `Promise<string>` dedup cache). officeparser's AST walker misses
-   two image classes that the handler recovers itself: layout images
-   (PPTX `ppt/slideLayouts/`) and images inside group shapes
+   `u/<userId>/kb/<sha256>.<ext>` (content-addressed via the R2 keys
+   factory — same image bytes across N docs share one R2 object) and
+   produces a single page with `imageUrl` set + `status='pending'`;
+   **Office Open XML (DOCX/XLSX/PPTX)** goes through a single
+   `officeHandler` that uses `officeparser` and paginates by kind —
+   PPTX splits by `slide`, XLSX by `sheet`, DOCX stays a single page
+   (Word pagination is dynamic so there's no top-level page node to
+   slice on). Each page's markdown is generated from a sub-AST with
+   `includeImages: true`, so embedded images land inline as
+   `![](kb/<sha>.png)` refs (R2 URLs are resolved by walking the AST
+   and rewriting `metadata.url` per image node — same images shared
+   across pages are PUT once via a `Promise<string>` dedup cache
+   layered on top of the sha-keyed R2 dedup). officeparser's AST walker
+   misses two image classes that the handler recovers itself: layout
+   images (PPTX `ppt/slideLayouts/`) and images inside group shapes
    (`<p:grpSp>`) — both visible in the doc zip's `.rels` files but not
    in the walker output. The recovery pass unzips the PPTX (via
    `fflate`), parses each slide's rels to find its layout + its

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   fireIngestionRun: vi.fn(),
   fetchUrlToMarkdown: vi.fn(),
   putObject: vi.fn(),
+  getR2FolderUser: vi.fn(() => "u"),
 }));
 
 vi.mock("@/lib/attachments/queries", () => ({
@@ -27,7 +28,10 @@ vi.mock("@/lib/kb/queries", () => ({
 }));
 vi.mock("@/lib/kb/ingest", () => ({ fireIngestionRun: mocks.fireIngestionRun }));
 vi.mock("@/lib/kb/url", () => ({ fetchUrlToMarkdown: mocks.fetchUrlToMarkdown }));
-vi.mock("@/lib/r2/client", () => ({ putObject: mocks.putObject }));
+vi.mock("@/lib/r2/client", () => ({
+  putObject: mocks.putObject,
+  getR2FolderUser: mocks.getR2FolderUser,
+}));
 
 import { POST } from "@/app/api/kb/upload/route";
 

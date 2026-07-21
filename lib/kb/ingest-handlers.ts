@@ -1,11 +1,36 @@
+import { createHash } from "node:crypto";
+
 import type { PageResult } from "@/backend/state";
 import { screenshotPdf } from "@/lib/kb/screenshot";
 import { extractPdfText } from "@/lib/kb/text";
 import { extractPdfImages } from "@/lib/kb/pdf-images";
 import { getObject, uploadKbImage } from "@/lib/r2/client";
+import { r2Keys } from "@/lib/r2/keys";
 import { OfficeParser } from "officeparser";
 import { strFromU8, unzipSync } from "fflate";
 import { getIngestKind, type IngestKind } from "@/lib/kb/source-kind";
+
+// ponytail: SHA-256 (hex) of a Buffer. Used to derive R2 keys via the
+// content-addressed kb() factory — same bytes → same key → a second
+// ingest of the same doc (or the same logo embedded across N docs)
+// reuses one R2 object instead of producing duplicates. Node's
+// createHash returns 64-char lowercase hex, matching the sha256 we
+// already store on the attachments table for chat uploads.
+//
+// Cross-module dedup note: this helper uses the same algorithm and
+// encoding as the chat-upload path (`lib/attachments/r2-adapter.ts`
+// sha256Hex on the client, which is `crypto.subtle.digest("SHA-256")`
+// → lowercase hex via `b.toString(16).padStart(2, "0")`). Same bytes
+// uploaded as a chat attachment AND processed by KB ingest → same
+// sha256 → same R2 key. The CAS key shape (u/<userId>/kb/<sha>.<ext>
+// for KB, u/<userId>/upload/<sha>.<ext> for chat) is what makes this
+// match work — both put the userId at position 1 and the sha in the
+// filename. Today the two prefixes (kb/ vs upload/) keep them
+// logically distinct even when the sha matches; the shared sha still
+// makes lifecycle / retention sweeps easier to reason about.
+function sha256Hex(buf: Buffer): string {
+  return createHash("sha256").update(buf).digest("hex");
+}
 
 // ponytail: per-source-type ingest strategy. Each handler turns R2
 // bytes into the PageResult[] shape the rest of kbAgent consumes.
@@ -37,7 +62,9 @@ export interface IngestHandler {
 // the page PNG + a structured inventory of text blocks + image URLs
 // so the vision LLM can reference real images in its output.
 export const pdfHandler: IngestHandler = {
-  async buildPages({ r2Key, userId, docId }) {
+  // ponytail: docId is in IngestBuildArgs but unused — KB page keys
+  // are content-addressed by sha256, no docId in path.
+  async buildPages({ r2Key, userId }) {
     const pdfBytes = await getObject(r2Key);
     const [rendered, extracted, images] = await Promise.all([
       screenshotPdf({ pdfBytes, dpi: 250 }),
@@ -48,13 +75,12 @@ export const pdfHandler: IngestHandler = {
       extracted.map((e) => [e.pageIndex, { text: e.text, blocks: e.blocks }]),
     );
     // ponytail: pre-upload every embedded image so the OCR pass only
-    // awaits URLs (no extra R2 roundtrip mid-loop). Per-page-instance
-    // upload — same logo embedded N times produces N R2 objects, one
-    // per page position. Cross-page dedup is a future optimization
-    // if storage costs become a concern.
+    // awaits URLs (no extra R2 roundtrip mid-loop). Keys are
+    // content-addressed via sha256 — same logo on N pages or in N
+    // PDFs → one R2 object.
     const uploadedImageRefs = await Promise.all(
       images.map(async (img) => {
-        const key = `kb-tmp/${userId}/${docId}/${img.name}.png`;
+        const key = r2Keys().kb({ userId, sha256: sha256Hex(img.png), ext: "png" });
         const url = await uploadKbImage({ key, body: img.png, contentType: "image/png" });
         return {
           pageIndex: img.pageIndex,
@@ -70,7 +96,10 @@ export const pdfHandler: IngestHandler = {
     // one pass. Drop the `pageIndex` field from each ref before
     // stuffing into PageResult — the array order on a single page
     // is already the spatial reading order we want.
-    const refsByPage = new Map<number, Array<Omit<(typeof uploadedImageRefs)[number], "pageIndex">>>();
+    const refsByPage = new Map<
+      number,
+      Array<Omit<(typeof uploadedImageRefs)[number], "pageIndex">>
+    >();
     for (const ref of uploadedImageRefs) {
       const { pageIndex, ...rest } = ref;
       const arr = refsByPage.get(pageIndex) ?? [];
@@ -80,7 +109,7 @@ export const pdfHandler: IngestHandler = {
 
     return Promise.all(
       rendered.map(async (p) => {
-        const key = `kb-tmp/${userId}/${docId}/page-${p.pageIndex}.png`;
+        const key = r2Keys().kb({ userId, sha256: sha256Hex(p.png), ext: "png" });
         const imageUrl = await uploadKbImage({ key, body: p.png });
         const text = textByPage.get(p.pageIndex);
         return {
@@ -115,13 +144,16 @@ export const textHandler: IngestHandler = {
   },
 };
 
-// Image: upload as a KB-tmp PNG/JPEG, set imageUrl on a single page.
+// Image: upload as a KB PNG/JPEG, set imageUrl on a single page.
 // pageToMarkdownNode's vision OCR runs over it.
 export const imageHandler: IngestHandler = {
-  async buildPages({ r2Key, userId, docId, contentType }) {
+  // ponytail: docId is in IngestBuildArgs for the page-returning
+  // handlers that need it (pdf, office). imageHandler returns a
+  // single page keyed by sha256 — no docId in path.
+  async buildPages({ r2Key, userId, contentType }) {
     const bytes = await getObject(r2Key);
     const ext = contentType.split("/")[1] ?? "png";
-    const key = `kb-tmp/${userId}/${docId}/image.${ext}`;
+    const key = r2Keys().kb({ userId, sha256: sha256Hex(bytes), ext });
     const imageUrl = await uploadKbImage({ key, body: bytes, contentType });
     return [
       {
@@ -157,7 +189,9 @@ export const imageHandler: IngestHandler = {
 // markdown. Skipping officeparser's OCR also avoids the 30MB+
 // tesseract trained-data download on first use.
 export const officeHandler: IngestHandler = {
-  async buildPages({ r2Key, userId, docId, contentType }) {
+  // ponytail: docId is in IngestBuildArgs but unused — KB page keys
+  // are content-addressed by sha256, no docId in path.
+  async buildPages({ r2Key, userId, contentType }) {
     const bytes = await getObject(r2Key);
     const ast = await OfficeParser.parseOffice(bytes, {
       extractAttachments: true,
@@ -234,10 +268,7 @@ export const officeHandler: IngestHandler = {
         if (uploadedUrls.has(att.name)) continue;
         const buf = Buffer.from(att.data, "base64");
         const ext = att.extension || "png";
-        const baseName = att.name.toLowerCase().endsWith(`.${ext.toLowerCase()}`)
-          ? att.name.slice(0, -(ext.length + 1))
-          : att.name;
-        const key = `kb-tmp/${userId}/${docId}/${baseName}.${ext}`;
+        const key = r2Keys().kb({ userId, sha256: sha256Hex(buf), ext });
         // ponytail: register the in-flight Promise before awaiting so
         // concurrent pages reading the same orphan (shared layout) hit
         // the same upload instead of starting a second one. Attach a
@@ -277,7 +308,7 @@ export const officeHandler: IngestHandler = {
           attachmentByName,
           uploadedUrls,
           urlToName,
-          { userId, docId },
+          { userId },
         );
 
         // ponytail: includeImages: true keeps the `![](...)` refs
@@ -416,7 +447,7 @@ async function injectAttachmentUrls(
   attachmentByName: Map<string, AstAttachmentShape>,
   uploadedUrls: Map<string, Promise<string>>,
   urlToName: Map<string, string>,
-  ctx: { userId: string; docId: string },
+  ctx: { userId: string },
 ): Promise<void> {
   for (const node of nodes) {
     await walkNode(node, attachmentByName, uploadedUrls, urlToName, ctx);
@@ -428,7 +459,7 @@ async function walkNode(
   attachmentByName: Map<string, AstAttachmentShape>,
   uploadedUrls: Map<string, Promise<string>>,
   urlToName: Map<string, string>,
-  ctx: { userId: string; docId: string },
+  ctx: { userId: string },
 ): Promise<void> {
   if (node.type === "image" && node.metadata?.attachmentName && !node.metadata.url) {
     const name = node.metadata.attachmentName;
@@ -437,15 +468,8 @@ async function walkNode(
       const att = attachmentByName.get(name);
       if (att) {
         const buf = Buffer.from(att.data, "base64");
-        // ponytail: `att.name` often already includes an extension
-        // ("image1.png"), so re-appending `att.extension` produces
-        // "image1.png.png". Strip the trailing ext from the name
-        // and re-attach the canonical one — or skip if identical.
         const ext = att.extension || "png";
-        const baseName = att.name.toLowerCase().endsWith(`.${ext.toLowerCase()}`)
-          ? att.name.slice(0, -(ext.length + 1))
-          : att.name;
-        const key = `kb-tmp/${ctx.userId}/${ctx.docId}/${baseName}.${ext}`;
+        const key = r2Keys().kb({ userId: ctx.userId, sha256: sha256Hex(buf), ext });
         // ponytail: set the Promise in the cache BEFORE awaiting
         // so concurrent pages pick up the same in-flight upload
         // (the awaited Promise resolves once for everyone). Populate

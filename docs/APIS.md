@@ -334,7 +334,7 @@ Single-doc detail + slim chunk preview (text content only — no 1024-dim embedd
 
 ### `DELETE /api/kb/documents/[id]`
 
-Delete a single doc. Cascades to `kb_chunk` via `ON DELETE CASCADE` on `kb_chunk.document_id`. R2 objects (`kb-tmp/*` page PNGs and the source PDF under `attachments/`) are NOT deleted — they live in R2 forever; v3 retention sweep can clean them up.
+Delete a single doc. Cascades to `kb_chunk` via `ON DELETE CASCADE` on `kb_chunk.document_id`. R2 objects (`u/<userId>/kb/<sha>.<ext>` derived images + `u/<userId>/upload/<sha>.<ext>` source uploads) are NOT deleted — they live in R2 forever; same-content future ingests dedup at the storage layer (sha-keyed), so orphans are reference-counted rather than wasted bytes. A future retention sweep can prune by sha-refcount == 0.
 
 |               |                                      |
 | ------------- | ------------------------------------ |

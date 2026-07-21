@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { withAuth } from "@/lib/auth/with-auth";
 import { fireIngestionRun } from "@/lib/kb/ingest";
 import { fetchUrlToMarkdown } from "@/lib/kb/url";
 import { getAttachmentForUser, findUploadedBySha } from "@/lib/attachments/queries";
-import { buildKey } from "@/lib/attachments/keys";
 import { insertAttachment } from "@/lib/attachments/queries";
 import { findKbDocumentByContentHash, findKbFolderById, insertKbDocument } from "@/lib/kb/queries";
 import { putObject } from "@/lib/r2/client";
+import { r2Keys } from "@/lib/r2/keys";
+import { generateId } from "@/lib/ids/nanoid";
 
 // ponytail: Settings → KB → "Add Doc" + URL flow. The frontend uploads
 // the file via /api/attachments/presign → PUT → confirm first, then
@@ -17,19 +18,6 @@ import { putObject } from "@/lib/r2/client";
 // server fetches → PUTs bytes → inserts attachments row → fires
 // fireIngestionRun just like the file path. One route, two entry
 // shapes, same downstream pipeline.
-
-const ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
-const ID_LEN = 12;
-
-// ponytail: 12-char nanoid-style id (~71 bits), matches the existing
-// attachments presign route's id scheme. Modulo bias is negligible at
-// this alphabet length.
-function generateId(): string {
-  const bytes = randomBytes(ID_LEN);
-  let out = "";
-  for (let i = 0; i < ID_LEN; i++) out += ID_ALPHABET[bytes[i] % ID_ALPHABET.length];
-  return out;
-}
 
 const Schema = z
   .object({
@@ -210,7 +198,10 @@ async function ingestFromUrl({
   // then URL path. Empty-string from page.title would render as a
   // blank row in the UI — coerce to undefined so the URL fallback kicks in.
   const displayTitle = title ?? (page.title?.trim() || url);
-  const r2Key = buildKey(userId, id, `${displayTitle}.md`);
+  // ponytail: R2 key is content-addressed (sha256 of bytes) — same
+  // URL fetched twice → same R2 key → second ingest skips the upload.
+  // The row's `name` field still carries the user-visible title.
+  const r2Key = r2Keys().upload({ userId, sha256, ext: "md" });
   await putObject({ key: r2Key, body: bytes, contentType: "text/markdown" });
 
   const row = await insertAttachment({
