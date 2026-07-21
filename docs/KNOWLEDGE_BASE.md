@@ -209,7 +209,7 @@ Key takeaways:
 - **Office docs do NOT call OCR.** officeparser reads the OOXML structure directly and emits markdown; calling OCR on a page screenshot would lose the structural information (tables, list nesting, headings) that the parser already extracted.
 - **PDF and image MUST call OCR.** PDFs have no structural markdown mapping (only positioning info); images have no text at all. The vision LLM is the only path to clean markdown.
 - **Vector graphics are not extracted.** `extractPdfImages` walks `page.run(device, ...)` and only catches `fillImage` calls. Logos composed of `fillPath` / `strokePath` (e.g. Binance PDF's BINANCE wordmark) are NOT surfaced — they remain visible only inside the page PNG that OCR sees.
-- **Cross-page image dedup lives in the handler.** Office handlers cache `Promise<string>` by attachment name; PDF uploads one R2 object per page-instance (same logo on N pages produces N objects with different bbox keys).
+- **Cross-page image dedup happens at the R2 layer.** Both office handlers (Promise<string> cache by attachment name) and the PDF handler (sha-keyed R2 keys) collapse same bytes to one R2 object. A logo embedded N times across N pages of one doc, or across N docs, references one R2 object regardless of bbox.
 
 ---
 

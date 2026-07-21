@@ -67,13 +67,13 @@ Chat attachments backed by Cloudflare R2 (issue #12). The browser uploads direct
 
 ### `POST /api/attachments/presign`
 
-Reserve an attachment row and a 5-minute presigned PUT URL. Browser immediately PUTs the file to R2 with the returned `uploadHeaders` (Content-Type is baked into the signature — a mismatch is a 403 from R2).
+Reserve an attachment row and a 5-minute presigned PUT URL. Browser immediately PUTs the file to R2 with the returned `uploadHeaders`. Only `key` + `Content-Length` are part of the signature; `Content-Type` and `Content-Disposition` ride as plain headers (a browser `fetch(file)` doesn't set Content-Disposition, so signing it would surface as an opaque CORS failure). The R2 key is `u/<userId>/upload/<sha256>.<ext>` (content-addressed — same bytes → same key → automatic dedup).
 
-|               |                                                                                                                                                                                                       |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0), threadId?: string (1..128) }`. `contentType` must appear in `R2_ALLOWED_CONTENT_TYPES`; `sizeBytes` ≤ `R2_MAX_BYTES`. |
-| 201 response  | `{ id, key, uploadUrl, publicUrl, contentType, sizeBytes, uploadHeaders: { "Content-Type": contentType } }`. The presigned URL expires in 300s. `publicUrl` is `${R2_PUBLIC_BASE_URL}/${key}`.        |
-| Failure codes | 400 `BAD_REQUEST` (invalid JSON / schema). 400 `CONTENT_TYPE_NOT_ALLOWED`. 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `ATTACHMENTS_NOT_CONFIGURED`.                    |
+|               |                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ name: string (1..256), contentType: string (1..127), sizeBytes: number (>0), sha256: string (64-char hex) }`. `contentType` must appear in `R2_ALLOWED_CONTENT_TYPES`; `sizeBytes` ≤ `R2_MAX_BYTES`. `sha256` is REQUIRED — clients compute it via `crypto.subtle.digest("SHA-256")` before sending; the adapter throws if `crypto.subtle` isn't available (modern browser, secure context).                           |
+| 201 response  | `{ id, key, uploadUrl, publicUrl, contentType, sizeBytes, uploadHeaders: { "Content-Type": contentType, "Content-Disposition": "inline" \| "attachment" }, skipUpload?: true }`. The presigned URL expires in 300s. `publicUrl` is `${R2_PUBLIC_BASE_URL}/${key}`. When a matching `(user_id, sha256, status='uploaded')` row exists, `skipUpload: true` is set and the adapter jumps straight to confirm (no PUT to R2). |
+| Failure codes | 400 `BAD_REQUEST` (invalid JSON / schema, or missing `sha256`). 400 `CONTENT_TYPE_NOT_ALLOWED`. 400 `FILE_TOO_LARGE` (`{ maxBytes, sizeBytes }`). 401 `UNAUTHORIZED`. 503 `ATTACHMENTS_NOT_CONFIGURED`.                                                                                                                                                                                                                   |
 
 ### `POST /api/attachments/[id]/confirm`
 
@@ -96,7 +96,7 @@ Best-effort cleanup of a composer chip. Removes the row + the R2 object. Idempot
 
 ### `POST /api/avatar/presign`
 
-Presign a 5-minute PUT for a user avatar (issue #28). Same R2 backing as attachments (`withAuth`, 503 when `R2_*` unset), but **no DB row** — avatars aren't chat attachments. Key is `u/<userId>/avatar/<id>-<safe-name>`. The browser PUTs the file, then calls Better Auth `updateUser({ image: publicUrl })` — we store only the URL, never base64 (a base64 data URL in `user.image` flowed through the memory auth-overlay into every `<memory>` block uncapped; that was the 372K-token blow-up). Client gate: the Settings avatar upload is disabled unless `window.__CONFIG__.ATTACHMENTS_ENABLED === "true"`.
+Presign a 5-minute PUT for a user avatar (issue #28). Same R2 backing as attachments (`withAuth`, 503 when `R2_*` unset), but **no DB row** — avatars aren't chat attachments. Key is a fixed slot per user: `u/<userId>/avatar.png` (better-auth-ui's client `resize` hook transcodes any input format to PNG via canvas before upload, so the extension is constant — the server never sees jpg/webp). Re-upload overwrites the same slot in place. The browser PUTs the file, then calls Better Auth `updateUser({ image: publicUrl })` — we store only the URL, never base64 (a base64 data URL in `user.image` flowed through the memory auth-overlay into every `<memory>` block uncapped; that was the 372K-token blow-up). Client gate: the Settings avatar upload is disabled unless `window.__CONFIG__.ATTACHMENTS_ENABLED === "true"`.
 
 `contentType` must start with `image/` **and is not `image/svg+xml`** — unlike attachments (which uses `R2_ALLOWED_CONTENT_TYPES`), this route hardcodes the image check, and SVG is rejected because it can carry inline script and renders `inline` from a public bucket (XSS in the bucket origin).
 
@@ -108,7 +108,7 @@ Presign a 5-minute PUT for a user avatar (issue #28). Same R2 backing as attachm
 
 ### `DELETE /api/avatar`
 
-Delete the R2 object behind a previous avatar URL — avatars have no DB row, so nothing else sweeps the old object when the user deletes or replaces one. Called by the Settings UI on delete and after a successful replace. Owner-scoped: the key must live under `u/<user.id>/avatar/`.
+Delete the R2 object behind a previous avatar URL — avatars have no DB row, so nothing else sweeps the old object when the user deletes or replaces one. Called by the Settings UI on delete and after a successful replace. Owner-scoped: the key must equal the user's own avatar slot (`u/<userId>/avatar.png`, see `lib/r2/keys.ts` → `r2Keys().avatar`).
 
 |               |                                                                                                                                                                  |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |

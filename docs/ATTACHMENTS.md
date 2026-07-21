@@ -259,8 +259,8 @@ changes.
    The filename is intentionally omitted from the header value:
    `fetch()` rejects header values with non-ISO-8859-1 code points (e.g.
    CJK characters), and RFC 6266 `filename*` encoding adds noise for no
-   gain — the browser falls back to the URL's last segment (already
-   nanoid-prefixed + sanitized).
+   gain — the browser falls back to the URL's last segment (the
+   canonical sha-keyed filename, e.g. `<sha256>.png`).
 
    R2 has no bucket-level "default Content-Disposition" override — the
    per-object metadata is authoritative and is served back unchanged on
