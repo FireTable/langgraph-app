@@ -83,8 +83,8 @@ export const GET = withAuth(async (req: Request, { user }) => {
       folderIdParam && folderIdParam.length > 0 ? folderIdParam : null,
     );
     return NextResponse.json({
-      groups: groups.map(({ folder, documents }) => ({
-        folder: { id: folder.id, name: folder.name },
+      groups: groups.map(({ folder, documents, docCount }) => ({
+        folder: { id: folder.id, name: folder.name, docCount },
         documents: documents.map(
           (d): GroupedDoc => ({
             id: d.id,

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 
@@ -381,21 +381,42 @@ export async function listKbDocumentsByFolderWithAttachment(
 export async function listKbDocumentsGroupedWithAttachment(
   userId: string,
   scopeFolderId?: string | null,
-): Promise<Array<{ folder: KbFolder; documents: KbDocumentWithAttachment[] }>> {
+): Promise<
+  Array<{
+    folder: KbFolder;
+    documents: KbDocumentWithAttachment[];
+    docCount: number;
+  }>
+> {
   const folders = await db.query.kbFolder.findMany({
     where: eq(kbFolder.userId, userId),
     orderBy: [asc(kbFolder.name)],
   });
   if (folders.length === 0) return [];
-  const out: Array<{ folder: KbFolder; documents: KbDocumentWithAttachment[] }> = [];
+  const out: Array<{
+    folder: KbFolder;
+    documents: KbDocumentWithAttachment[];
+    docCount: number;
+  }> = [];
   for (const folder of folders) {
-    const documents =
-      scopeFolderId && folder.id !== scopeFolderId
-        ? []
-        : await listKbDocumentsByFolderWithAttachment(userId, folder.id);
-    out.push({ folder, documents });
+    const scoped = scopeFolderId && folder.id !== scopeFolderId;
+    const documents = scoped ? [] : await listKbDocumentsByFolderWithAttachment(userId, folder.id);
+    // ponytail: every folder ships a `docCount` so the sidebar can
+    // show "ArcBlock · 3" even for non-selected folders. We still skip
+    // the heavy docs JOIN for scoped-out folders — count is cheap, the
+    // per-doc projection is not.
+    const docCount = scoped ? await countKbDocumentsInFolder(userId, folder.id) : documents.length;
+    out.push({ folder, documents, docCount });
   }
   return out;
+}
+
+async function countKbDocumentsInFolder(userId: string, folderId: string): Promise<number> {
+  const rows = await db
+    .select({ n: count() })
+    .from(kbDocument)
+    .where(and(eq(kbDocument.userId, userId), eq(kbDocument.folderId, folderId)));
+  return rows[0]?.n ?? 0;
 }
 
 // Settings → KB tab — group docs by folder in one shot.

@@ -11,10 +11,10 @@ import { KB_POLL_INTERVAL_MS } from "@/lib/constants";
 import { ObservabilitySheet } from "@/components/observability/sheet";
 import { ObservabilitySheetProvider } from "@/components/observability/sheet-context";
 import { KbResponse } from "./types";
-import { FolderSidebar } from "./folder-sidebar";
+import { DocTableSkeleton, FolderSidebar } from "./folder-sidebar";
 import { DocTable } from "./doc-table";
 import { FolderNameDialog } from "./dialogs";
-import { handleAddDoc } from "./helpers";
+import { AddDocDialog } from "./add-doc-dialog";
 
 export function KbView({ className }: { className?: string }) {
   // ponytail: KB doc rows open the singleton ObservabilitySheet via the
@@ -39,10 +39,16 @@ function KbViewContent({ className }: { className?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(initialFolderId);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [addDocOpen, setAddDocOpen] = useState(false);
   const [isLivePolling, setIsLivePolling] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // ponytail: distinct from `data` being null on cold-load — this
+  // tracks the in-flight fetch for the *currently selected* folder.
+  // DocTable shows a spinner when true so folder-switch doesn't
+  // flash an empty "Select a folder" state.
+  const [folderLoading, setFolderLoading] = useState(false);
 
   const load = useCallback(async () => {
+    setFolderLoading(true);
     try {
       // ponytail: scope the payload to the currently-selected folder —
       // the sidebar still gets the full folder list, but only the
@@ -77,6 +83,8 @@ function KbViewContent({ className }: { className?: string }) {
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFolderLoading(false);
     }
   }, [focusDocId, initialFolderId, selectedFolderId]);
 
@@ -188,24 +196,18 @@ function KbViewContent({ className }: { className?: string }) {
           <DocTable
             group={selectedGroup}
             focusDocId={focusDocId}
-            onAddDoc={() => fileInputRef.current?.click()}
+            onAddDoc={() => setAddDocOpen(true)}
             onRefresh={loadWithHeartbeat}
             isLivePolling={isLivePolling}
+            loading={folderLoading}
           />
         </div>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          accept="application/pdf"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file && selectedGroup) {
-              void handleAddDoc(file, selectedGroup.folder.id, loadWithHeartbeat);
-            }
-            e.target.value = ""; // allow re-pick same file
-          }}
+        <AddDocDialog
+          open={addDocOpen}
+          onOpenChange={setAddDocOpen}
+          folderId={selectedGroup?.folder.id ?? null}
+          onSuccess={loadWithHeartbeat}
         />
 
         <FolderNameDialog
@@ -245,41 +247,16 @@ function KbViewSkeleton({ className }: { className?: string }) {
             </div>
           </CardContent>
         </Card>
-        <Card className="p-0">
-          <CardContent className="p-0">
-            <div className="flex h-9 items-center justify-between px-4">
-              <Skeleton className="h-3 w-32" />
-              <Skeleton className="size-6 rounded-md" />
-            </div>
-            <Separator />
-            {[0, 1, 2].map((i) => (
-              <div key={i}>
-                {i > 0 && <Separator />}
-                <div className="space-y-2 px-4 py-3 md:hidden">
-                  <div className="flex items-start gap-2">
-                    <Skeleton className="h-4 flex-1" />
-                    <Skeleton className="size-7 rounded-md" />
-                    <Skeleton className="size-7 rounded-md" />
-                    <Skeleton className="size-7 rounded-md" />
-                  </div>
-                  <Skeleton className="h-3 w-3/4" />
-                </div>
-                <div className="hidden md:grid md:grid-cols-[minmax(0,1fr)_auto_120px_auto_84px] md:items-center md:gap-x-3 md:px-4 md:py-3">
-                  <Skeleton className="h-4" />
-                  <Skeleton className="h-3 w-8" />
-                  <Skeleton className="h-3 w-24" />
-                  <Skeleton className="h-5 w-16 rounded-full" />
-                  <div className="flex justify-end gap-0.5">
-                    <Skeleton className="size-7 rounded-md" />
-                    <Skeleton className="size-7 rounded-md" />
-                    <Skeleton className="size-7 rounded-md" />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+        <DocTableSkeleton />
       </div>
     </div>
   );
 }
+
+// ponytail: shared table skeleton — used by KbViewSkeleton for
+// cold-load and by DocTable for in-flight folder-switch reloads,
+// so the two paths render the same row shape. Single source of
+// truth keeps the visual consistent.
+// (DocTableSkeleton itself lives in folder-sidebar.tsx — shared
+// between KbViewSkeleton here and DocTable's loading branch
+// without creating a doc-table ↔ kb-view cycle.)

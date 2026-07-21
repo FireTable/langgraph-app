@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 import { KB_POLL_INTERVAL_MS } from "@/lib/constants";
 import { KbResponse, KbDocument } from "./types";
-import { HeaderBar } from "./folder-sidebar";
+import { HeaderBar, DocTableSkeleton } from "./folder-sidebar";
 import { DocStatusBadge, ChunksStatusBadge, formatTimestamp } from "./status-badge";
 import { DocDetailDialog } from "./doc-detail-dialog";
 import { DocDeleteDialog, DocReprocessDialog } from "./dialogs";
@@ -21,14 +21,22 @@ export function DocTable({
   onAddDoc,
   onRefresh,
   isLivePolling,
+  loading = false,
 }: {
   group: KbResponse["groups"][number] | null;
   focusDocId: string | null;
   onAddDoc: () => void;
   onRefresh: () => Promise<void> | void;
   isLivePolling: boolean;
+  loading?: boolean;
 }) {
   const [folderGraphOpen, setFolderGraphOpen] = useState(false);
+
+  if (loading) {
+    // ponytail: reuse the shared table skeleton from kb-view so the
+    // cold-load and folder-switch paths render the same row shape.
+    return <DocTableSkeleton />;
+  }
 
   if (!group) {
     return (
@@ -133,7 +141,19 @@ export function DocRow({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [reprocessOpen, setReprocessOpen] = useState(false);
-  const type = doc.contentType.replace("application/", "");
+  // ponytail: show a short, consistent file-type badge — strip the
+  // mime prefix and map long subtypes to compact labels (md, txt, jpg)
+  // so the table row doesn't get cluttered with "text/markdown".
+  const TYPE_LABEL: Record<string, string> = {
+    pdf: "pdf",
+    markdown: "md",
+    plain: "txt",
+    png: "png",
+    jpeg: "jpg",
+    webp: "webp",
+  };
+  const subtype = doc.contentType.split("/")[1] ?? "";
+  const type = TYPE_LABEL[subtype] ?? (subtype || doc.contentType);
   const rowRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {

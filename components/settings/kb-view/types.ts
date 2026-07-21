@@ -29,7 +29,7 @@ export type KbDocument = {
   parsingPages?: number;
 };
 
-export type KbFolder = { id: string; name: string };
+export type KbFolder = { id: string; name: string; docCount?: number };
 
 export type KbResponse = {
   groups: Array<{ folder: KbFolder; documents: KbDocument[] }>;

@@ -343,16 +343,21 @@ Delete a single doc. Cascades to `kb_chunk` via `ON DELETE CASCADE` on `kb_chunk
 
 ### `POST /api/kb/upload`
 
-Add a doc to a folder. Frontend uploads the file via the existing `/api/attachments/presign` → PUT → `confirm` flow first, then POSTs `{ folderId, attachmentId, title? }` here. Backend creates a `kb_document` row (`status=pending`) and fires a LangGraph run on the kbAgent graph (fire-and-forget — the run mutates the row's status as it progresses; the UI polls `GET /api/kb/documents` and watches the row flip pending → parsing → success/failed). The kbAgent graph is registered as a top-level assistant in `langgraph.json` so this dispatch skips the mainAgent router + renameThreadAgent LLM calls.
+Add a doc to a folder. Two entry shapes — file OR URL — both end up at the same kbAgent dispatch:
+
+- **File path** — frontend uploads via `/api/attachments/presign` → PUT → `confirm` first, then POSTs `{ folderId, attachmentId, title? }`. The `attachment.contentType` carries the routing decision: `application/pdf`, `text/markdown`, `text/plain`, `image/png`, `image/jpeg`, `image/webp` (per `R2_ALLOWED_CONTENT_TYPES`). PDFs render + OCR; markdown / plain text pass through; images go through vision OCR.
+- **URL path** — frontend POSTs `{ folderId, url, title? }`. Server fetches via `lib/kb/url.ts` (thin wrapper around `r.jina.ai`), uploads the resulting markdown as a `text/markdown` attachments row, and dispatches the same kbAgent run.
+
+Backend creates a `kb_document` row (`status=pending`) and fires a LangGraph run on the kbAgent graph (fire-and-forget — the run mutates the row's status as it progresses; the UI polls `GET /api/kb/documents` and watches the row flip pending → parsing → success/failed). The kbAgent graph is registered as a top-level assistant in `langgraph.json` so this dispatch skips the mainAgent router + renameThreadAgent LLM calls. `splitFileToPageNode` dispatches via `getIngestHandler(mimeType)` from `lib/kb/ingest-handlers.ts` (PDF keeps the mupdf pipeline; the other three pre-bake markdown or pass through to vision OCR).
 
 **Primary dedup**: if a doc with the same `contentHash` already exists for the user, the endpoint returns the existing row instead of creating a duplicate, and re-fires ingestion if the previous attempt failed/stalled.
 
-|               |                                                                                                                                                  |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Request body  | `{ folderId: string, attachmentId: string, title?: string /* 1..256 */ }`                                                                        |
-| 200 response  | `{ doc: { ... kb_document row ... }, deduped: true }` (existing doc — re-firing ingestion)                                                       |
-| 202 response  | `{ doc: { ... kb_document row ... } }` (new doc, ingestion run dispatched)                                                                       |
-| Failure codes | 400 `INVALID` (zod failure). 401 `UNAUTHORIZED`. 404 `ATTACHMENT_NOT_FOUND` / `FOLDER_NOT_FOUND`. 409 `ATTACHMENT_NOT_UPLOADED`. 500 `INTERNAL`. |
+|               |                                                                                                                                                                                                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `{ folderId: string, attachmentId?: string, url?: string /* absolute http(s) URL */, title?: string /* 1..256 */ }` — exactly one of `attachmentId` / `url` is required                                                                                           |
+| 200 response  | `{ doc: { ... kb_document row ... }, deduped: true }` (existing doc — re-firing ingestion)                                                                                                                                                                        |
+| 202 response  | `{ doc: { ... kb_document row ... } }` (new doc, ingestion run dispatched)                                                                                                                                                                                        |
+| Failure codes | 400 `INVALID` (zod failure — including missing both `attachmentId` and `url`). 401 `UNAUTHORIZED`. 404 `ATTACHMENT_NOT_FOUND` / `FOLDER_NOT_FOUND`. 409 `ATTACHMENT_NOT_UPLOADED`. 500 `INTERNAL` (URL fetch failed, R2 put failed, jina upstream failure, etc.). |
 
 ### `POST /api/kb/documents/[id]/reprocess`
 

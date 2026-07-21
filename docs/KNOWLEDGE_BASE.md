@@ -19,9 +19,11 @@ schemas and query APIs under `lib/kb/`; the user-facing settings under
   generation, and entity/relationship extraction.
 - **`lib/kb/`** — Database schema (`schema.ts`), queries (`queries.ts`),
   environment loader (`env.ts`), resolve (`resolve.ts`),
-  ingest dispatch (`ingest.ts`), screenshot helpers (`screenshot.ts`),
-  text utilities (`text.ts`), entity color map (`entityColor.ts`),
-  LRU cache (`cache.ts`), and hybrid search + Reranker (`search.ts`).
+  ingest dispatch (`ingest.ts`), ingest handler factory
+  (`ingest-handlers.ts`), URL fetcher (`url.ts`), screenshot helpers
+  (`screenshot.ts`), text utilities (`text.ts`), entity color map
+  (`entityColor.ts`), LRU cache (`cache.ts`), and hybrid search +
+  Reranker (`search.ts`).
 - **`lib/kb/resolve.ts`** — Server-side middleware that runs at
   LLM-invoke time (`prepareMessagesForInvoke`): replaces every
   `kb_ref`-bearing part on every `HumanMessage` with a text part
@@ -64,11 +66,15 @@ section is the design rationale.
 - **`kb_folder`** — per-user grouping. `(user_id, name)` is unique so the
   default "Attachments" folder auto-creates idempotently on first upload.
   Cascade-delete from `user`.
-- **`kb_document`** — one row per ingested PDF. `attachment_id` is the
-  source FK (chat upload → KB). `pages` is a `jsonb` array carrying
-  `{ pageNumber, markdown, errorMessage }` per page; the chunk pipeline
-  reads from here without re-OCR-ing. `content_hash` is sha256 (or
-  `r2key:<key>` fallback) and is the primary dedup key.
+- **`kb_document`** — one row per ingested document. `attachment_id` is
+  the source FK (chat upload → KB OR URL flow's synthesized R2 object).
+  `pages` is a `jsonb` array carrying
+  `{ pageIndex, imageUrl, markdown, referenceText, status }`; the chunk
+  pipeline reads from here without re-processing the source. PDFs and
+  images produce one page per source page/screenshot; markdown / plain
+  text / URL flows produce a single page with `markdown` pre-baked and
+  `status='success'`. `content_hash` is sha256 (or `r2key:<key>`
+  fallback) and is the primary dedup key across all four source kinds.
 - **`kb_chunk`** — one row per text chunk. Holds the `vector(1024)`
   embedding (BAAI/bge-m3 dim, served by apimart under
   `OPENAI_EMBEDDING_MODEL`), a generated `tsvector` (English,
@@ -100,24 +106,36 @@ presigned-URL rules live in one place.
 
 ## 3. Ingestion Pipeline
 
-When a document is uploaded (chat composer or Settings → KB), it is
-routed to the background `kbAgent` graph for ingestion:
+When a document is uploaded (chat composer, Settings → KB Add dialog,
+or URL paste), it is routed to the background `kbAgent` graph for
+ingestion. Four source kinds share the same downstream pipeline —
+they diverge only in the `splitFileToPageNode` factory dispatch:
 
 ```
-Upload ─▶ Status='parsing' ─▶ Parse PDF Pages ─▶ Text Split (LangChain)
-                                                    │
-  ┌─────────────────────────────────────────────────┘
-  ▼
-Generate Embeddings (Vector) ─▶ Extract Entities (JSONB) ─▶ Status='success'
+                    ┌─── pdf ──────► mupdf render + native text extract + R2 PNG upload
+                    │
+                    ├─── markdown ─► bytes → utf-8 → single pre-baked markdown page
+                    │
+Upload ─▶ parse ────┤
+                    ├─── plain ────► same as markdown
+                    │
+                    └─── image ────► bytes → R2 PNG/JPEG/WebP upload → single imageUrl page
+                                                                                 │
+                                                                                 ▼
+                                          MarkdownTextSplitter → Embed (BAAI/bge-m3) → Entity extract
 ```
 
 1. **Placeholder Creation** — Immediately inserts a document row with
    `status = 'parsing'` so the Settings table shows a row before any
    work has been done.
-2. **Page Processing** — Parses PDF bytes, renders high-resolution page
-   screenshots (saved to R2 via the attachments store), and extracts
-   markdown text page by page. Each page carries a `status` mirror
-   (`pending | parsing | success | failed`) written by `pageToMarkdownNode`.
+2. **Source-specific page construction** — `splitFileToPageNode`
+   dispatches via `getIngestHandler(mimeType)` from
+   `lib/kb/ingest-handlers.ts`. PDF keeps the mupdf render + extract
+   pipeline; markdown / plain text read the bytes as utf-8 and produce
+   a single pre-baked page (`status='success'`); image uploads to
+   `kb-tmp/<userId>/<docId>/image.<ext>` and produces a single page
+   with `imageUrl` set + `status='pending'`. Each page carries a
+   `status` mirror written by `pageToMarkdownNode`.
 3. **Text Chunking** — `MarkdownTextSplitter` (from `@langchain/textsplitters`)
    over the joined page markdown. Chunk size is `KB_CHUNK_MAX_CHARS`
    (default 2000).
@@ -389,9 +407,11 @@ table — see [`docs/ADMIN.md`](./ADMIN.md).
 
 ## 10. Open Items / Out of Scope Today
 
-- **Source URL ingestion** — `kb_document` has no `source_url` column;
-  URL ingestion is deferred to v3. Today everything goes through the
-  `attachments` table (R2).
+- **Source URL ingestion** — done. Settings → KB → Add dialog
+  accepts a URL; `lib/kb/url.ts` fetches via `r.jina.ai` (handles HTML
+  - SPA + content negotiation server-side), the server uploads the
+    result to R2 as `text/markdown`, and the rest of the pipeline
+    picks it up via the same file-part path the chat composer uses.
 - **Folder-level permissions** — All folders under a user are owned
   exclusively by that user. Sharing a folder across users is not yet
   modelled.

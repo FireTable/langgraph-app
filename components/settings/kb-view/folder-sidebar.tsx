@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -113,13 +114,15 @@ export function FolderSidebar({
                       <Folder className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
                       <span className="truncate">{g.folder.name}</span>
                       <span className="ml-auto flex items-center gap-1">
-                        {/* ponytail: only show the count for the
-                            selected folder — the scoped API returns
-                            `documents: []` for every other folder, so
-                            a literal 0 there would just be noise. */}
-                        {g.documents.length > 0 && (
+                        {/* ponytail: `g.folder.docCount` is set for
+                            every folder regardless of scope — the
+                            route issues a cheap COUNT for scoped-
+                            out folders so the sidebar can show
+                            "ArcBlock · 3" everywhere, not just on
+                            the selected folder. */}
+                        {(g.folder.docCount ?? 0) > 0 && (
                           <span className="text-muted-foreground text-xs tabular-nums transition-opacity group-hover/folder:opacity-0 group-data-[menu-open]/folder:opacity-0 mr-2">
-                            {g.documents.length}
+                            {g.folder.docCount}
                           </span>
                         )}
                       </span>
@@ -183,5 +186,48 @@ export function FolderSidebar({
         }}
       />
     </>
+  );
+}
+
+// ponytail: shared table skeleton — KbViewSkeleton (cold load) and
+// DocTable (in-flight folder switch) both render this so the two
+// loading paths look identical. Lives here (not in doc-table.tsx)
+// to avoid a doc-table ↔ kb-view import cycle.
+export function DocTableSkeleton() {
+  return (
+    <Card className="p-0">
+      <CardContent className="p-0">
+        <div className="flex h-9 items-center justify-between px-4">
+          <Skeleton className="h-3 w-32" />
+          <Skeleton className="size-6 rounded-md" />
+        </div>
+        <Separator />
+        {[0, 1, 2].map((i) => (
+          <div key={i}>
+            {i > 0 && <Separator />}
+            <div className="space-y-2 px-4 py-3 md:hidden">
+              <div className="flex items-start gap-2">
+                <Skeleton className="h-4 flex-1" />
+                <Skeleton className="size-7 rounded-md" />
+                <Skeleton className="size-7 rounded-md" />
+                <Skeleton className="size-7 rounded-md" />
+              </div>
+              <Skeleton className="h-3 w-3/4" />
+            </div>
+            <div className="hidden md:grid md:grid-cols-[minmax(0,1fr)_auto_120px_auto_84px] md:items-center md:gap-x-3 md:px-4 md:py-3">
+              <Skeleton className="h-4" />
+              <Skeleton className="h-3 w-8" />
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+              <div className="flex justify-end gap-0.5">
+                <Skeleton className="size-7 rounded-md" />
+                <Skeleton className="size-7 rounded-md" />
+                <Skeleton className="size-7 rounded-md" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }

@@ -150,3 +150,25 @@ export async function uploadKbImage(args: {
   );
   return buildPublicUrl(args.key);
 }
+
+// ponytail: server-side raw PUT for the URL-ingest flow. The browser
+// can't presign itself for a URL we fetched server-side, so we PUT
+// directly with the bucket creds. Used only for small KB payloads
+// (markdown bytes from a fetched URL) — not a general-purpose upload.
+export async function putObject(args: {
+  key: string;
+  body: Buffer;
+  contentType: string;
+  contentDisposition?: "inline" | "attachment";
+}): Promise<string> {
+  await getS3Client().send(
+    new PutObjectCommand({
+      Bucket: getR2Bucket(),
+      Key: args.key,
+      Body: args.body,
+      ContentType: args.contentType,
+      ContentDisposition: args.contentDisposition ?? "inline",
+    }),
+  );
+  return buildPublicUrl(args.key);
+}

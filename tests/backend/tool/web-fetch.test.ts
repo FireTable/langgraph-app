@@ -2,16 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { fetchUrl } from "@/backend/tool/web-fetch";
 
-const fetchMock = vi.fn();
+const jinaFetchMock = vi.hoisted(() => vi.fn());
 
-beforeEach(() => {
-  vi.stubGlobal("fetch", fetchMock);
-  fetchMock.mockReset();
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
+vi.mock("@/lib/jina", () => ({ jinaFetch: jinaFetchMock }));
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -20,9 +13,17 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+beforeEach(() => {
+  jinaFetchMock.mockReset();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("fetchUrl", () => {
   it("calls r.jina.ai with the target URL and returns parsed content", async () => {
-    fetchMock.mockResolvedValueOnce(
+    jinaFetchMock.mockResolvedValueOnce(
       jsonResponse(200, {
         data: {
           title: "Example Domain",
@@ -34,10 +35,10 @@ describe("fetchUrl", () => {
 
     const result = await fetchUrl.invoke({ url: "https://example.com/" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [calledUrl, calledInit] = fetchMock.mock.calls[0];
+    expect(jinaFetchMock).toHaveBeenCalledTimes(1);
+    const [calledUrl, calledInit] = jinaFetchMock.mock.calls[0];
     expect(calledUrl).toBe("https://r.jina.ai/https://example.com/");
-    expect(calledInit.headers.Authorization).toMatch(/^Bearer /);
+    expect(calledInit.headers.Accept).toBe("application/json");
 
     const parsed = JSON.parse(result as string);
     expect(parsed.title).toBe("Example Domain");
@@ -47,11 +48,11 @@ describe("fetchUrl", () => {
 
   it("rejects non-URL input via schema validation", async () => {
     await expect(fetchUrl.invoke({ url: "not a url" })).rejects.toThrow();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(jinaFetchMock).not.toHaveBeenCalled();
   });
 
   it("throws when the upstream returns a non-2xx status", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse(404, { error: "not found" }));
+    jinaFetchMock.mockResolvedValueOnce(jsonResponse(404, { error: "not found" }));
     await expect(fetchUrl.invoke({ url: "https://missing.example/" })).rejects.toThrow(/404/);
   });
 });

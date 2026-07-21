@@ -56,6 +56,11 @@ export type ProcessedFile = {
   r2Key: string | null;
   title: string | null;
   contentHash: string | null;
+  // ponytail: source mime_type copied from attachment.contentType at
+  // prepareKBDataNode time. splitFileToPageNode reads this to dispatch
+  // via getIngestHandler() — pdf vs markdown vs plain vs image all
+  // share the same orchestrator but take different code paths.
+  contentType: string | null;
   // "new" = docId freshly generated, needs OCR + chunk + insert.
   // "dedup" = existing docId, skip the heavy pipeline.
   // "failed" = OCR failed (or empty markdown); docId may or may not
