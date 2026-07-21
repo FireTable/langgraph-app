@@ -132,10 +132,24 @@ export const officeHandler: IngestHandler = {
     // ponytail: only `image` attachments go through vision OCR; charts
     // get dropped (their structured chartData isn't surfaced in
     // markdown anyway, and we don't have a code path to use it).
+    //
+    // Filter aggressively: officeparser returns attachments for things
+    // the downstream vision LLM (Claude via apimart) can't usefully
+    // read — empty placeholder images, SVG vector graphics, TIFF/BMP
+    // formats the provider rejects, and tiny stub bytes from slide-
+    // master layouts. Uploading any of those produces an imageUrl that
+    // OCR fails to fetch (400 "File downloaded contains no data") and
+    // cascades a "Bypassed" through every subsequent page in the doc.
+    // The allowed set mirrors R2_ALLOWED_CONTENT_TYPES' image half so
+    // the same chat-composer rules apply here.
+    const VISION_OK_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+    const MIN_ATTACHMENT_BYTES = 100; // below this is almost certainly a stub
     let pageIndex = 1;
     for (const att of ast.attachments) {
       if (att.type !== "image") continue;
-      const buf = Buffer.from(att.data, "base64");
+      if (!VISION_OK_MIME.has(att.mimeType.toLowerCase())) continue;
+      const buf = Buffer.from(att.data ?? "", "base64");
+      if (buf.length < MIN_ATTACHMENT_BYTES) continue;
       const ext = att.extension || "png";
       const key = `kb-tmp/${userId}/${docId}/office-${pageIndex}.${ext}`;
       const imageUrl = await uploadKbImage({ key, body: buf, contentType: att.mimeType });

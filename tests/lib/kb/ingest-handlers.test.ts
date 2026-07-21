@@ -210,6 +210,8 @@ describe("officeHandler", () => {
 
   it("uploads each image attachment as a separate vision-OCR page", async () => {
     mocks.getObject.mockResolvedValue(Buffer.from("fake-pptx"));
+    const realPng = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(500)]);
+    const realJpg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(500)]);
     mocks.parseOffice.mockResolvedValue(
       fakeAst({
         value: "# Slide 1\n\nHello.",
@@ -217,14 +219,14 @@ describe("officeHandler", () => {
           {
             type: "image",
             mimeType: "image/png",
-            data: Buffer.from([0x89, 0x50]).toString("base64"),
+            data: realPng.toString("base64"),
             name: "img1.png",
             extension: "png",
           },
           {
             type: "image",
             mimeType: "image/jpeg",
-            data: Buffer.from([0xff, 0xd8]).toString("base64"),
+            data: realJpg.toString("base64"),
             name: "img2.jpg",
             extension: "jpg",
           },
@@ -253,6 +255,7 @@ describe("officeHandler", () => {
 
   it("skips chart attachments (no markdown representation to anchor them to)", async () => {
     mocks.getObject.mockResolvedValue(Buffer.from("fake-xlsx"));
+    const realPng = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(500)]);
     mocks.parseOffice.mockResolvedValue(
       fakeAst({
         value: "| A | B |\n|---|---|\n| 1 | 2 |",
@@ -267,7 +270,7 @@ describe("officeHandler", () => {
           {
             type: "image",
             mimeType: "image/png",
-            data: Buffer.from([0x89, 0x50]).toString("base64"),
+            data: realPng.toString("base64"),
             name: "img1.png",
             extension: "png",
           },
@@ -312,6 +315,75 @@ describe("officeHandler", () => {
     expect(ast.to).toHaveBeenCalledWith(
       "md",
       expect.objectContaining({ includeImages: false, generateIds: false }),
+    );
+  });
+
+  // ponytail: PPTX slides often ship with placeholder / vector /
+  // legacy-bitmap images that officeparser surfaces as `image`
+  // attachments but the downstream vision LLM can't fetch — pushing
+  // them through OCR fails with "400 File downloaded contains no data"
+  // and cascades a "Bypassed" through every subsequent page. Filter
+  // them at ingest time.
+  it("skips attachments the vision LLM can't read (SVG / TIFF / BMP / empty / tiny)", async () => {
+    const stubBytes = Buffer.alloc(50); // < MIN_ATTACHMENT_BYTES — stub
+    const realBytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(500)]);
+    mocks.getObject.mockResolvedValue(Buffer.from("fake-pptx"));
+    mocks.parseOffice.mockResolvedValue(
+      fakeAst({
+        value: "md",
+        attachments: [
+          {
+            type: "image",
+            mimeType: "image/svg+xml",
+            data: "<svg/>",
+            name: "logo.svg",
+            extension: "svg",
+          },
+          {
+            type: "image",
+            mimeType: "image/tiff",
+            data: "ignored",
+            name: "scan.tiff",
+            extension: "tiff",
+          },
+          {
+            type: "image",
+            mimeType: "image/bmp",
+            data: "ignored",
+            name: "old.bmp",
+            extension: "bmp",
+          },
+          { type: "image", mimeType: "image/png", data: "", name: "empty.png", extension: "png" },
+          {
+            type: "image",
+            mimeType: "image/png",
+            data: stubBytes.toString("base64"),
+            name: "stub.png",
+            extension: "png",
+          },
+          // the one keeper — real PNG, real bytes
+          {
+            type: "image",
+            mimeType: "image/png",
+            data: realBytes.toString("base64"),
+            name: "real.png",
+            extension: "png",
+          },
+        ],
+      }),
+    );
+
+    const pages = await officeHandler.buildPages({
+      ...ARGS,
+      contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    });
+
+    // text page + 1 vision page (only the real PNG survives)
+    expect(pages).toHaveLength(2);
+    expect(pages[1].imageUrl).toMatch(/office-1\.png$/);
+    expect(mocks.uploadKbImage).toHaveBeenCalledTimes(1);
+    expect(mocks.uploadKbImage).toHaveBeenCalledWith(
+      expect.objectContaining({ contentType: "image/png" }),
     );
   });
 });
