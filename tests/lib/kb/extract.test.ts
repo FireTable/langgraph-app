@@ -175,6 +175,29 @@ describe("lib/kb/extract", () => {
       expect(extractAllPdfParts([h])).toHaveLength(4);
     });
 
+    it("includes Office Open XML parts (DOCX/XLSX/PPTX)", () => {
+      const docx = {
+        type: "file" as const,
+        data: "u/A",
+        mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      };
+      const xlsx = {
+        type: "file" as const,
+        data: "u/B",
+        mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      };
+      const pptx = {
+        type: "file" as const,
+        data: "u/C",
+        mime_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      };
+      const h = new HumanMessage({
+        content: [docx, xlsx, pptx] as never,
+        id: "h-1",
+      });
+      expect(extractAllPdfParts([h])).toHaveLength(3);
+    });
+
     it("returns an empty array when no HumanMessage has a PDF", () => {
       const sys = new SystemMessage("x");
       const ai = new AIMessage("y");

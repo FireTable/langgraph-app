@@ -73,8 +73,10 @@ section is the design rationale.
   pipeline reads from here without re-processing the source. PDFs and
   images produce one page per source page/screenshot; markdown / plain
   text / URL flows produce a single page with `markdown` pre-baked and
-  `status='success'`. `content_hash` is sha256 (or `r2key:<key>`
-  fallback) and is the primary dedup key across all four source kinds.
+  `status='success'`; Office (DOCX/XLSX/PPTX) produces one text page
+  plus one imageUrl page per embedded image (vision OCR). `content_hash`
+  is sha256 (or `r2key:<key>` fallback) and is the primary dedup key
+  across all seven source kinds.
 - **`kb_chunk`** — one row per text chunk. Holds the `vector(1024)`
   embedding (BAAI/bge-m3 dim, served by apimart under
   `OPENAI_EMBEDDING_MODEL`), a generated `tsvector` (English,
@@ -116,10 +118,14 @@ they diverge only in the `splitFileToPageNode` factory dispatch:
                     │
                     ├─── markdown ─► bytes → utf-8 → single pre-baked markdown page
                     │
-Upload ─▶ parse ────┤
                     ├─── plain ────► same as markdown
                     │
-                    └─── image ────► bytes → R2 PNG/JPEG/WebP upload → single imageUrl page
+Upload ─▶ parse ────┤
+                    ├─── image ────► bytes → R2 PNG/JPEG/WebP upload → single imageUrl page
+                    │
+                    └─── office ───► officeparser → single markdown page (text stripped)
+                    (docx/xlsx/      + one imageUrl page per embedded image (vision OCR)
+                     pptx)
                                                                                  │
                                                                                  ▼
                                           MarkdownTextSplitter → Embed (BAAI/bge-m3) → Entity extract
@@ -134,8 +140,14 @@ Upload ─▶ parse ────┤
    pipeline; markdown / plain text read the bytes as utf-8 and produce
    a single pre-baked page (`status='success'`); image uploads to
    `kb-tmp/<userId>/<docId>/image.<ext>` and produces a single page
-   with `imageUrl` set + `status='pending'`. Each page carries a
-   `status` mirror written by `pageToMarkdownNode`.
+   with `imageUrl` set + `status='pending'`; **Office Open XML
+   (DOCX/XLSX/PPTX)** goes through a single `officeHandler` that uses
+   `officeparser` to produce one markdown page (text stripped of
+   inline base64 image data via `includeImages: false`) plus one
+   `imageUrl` page per embedded image attachment (charts skipped —
+   their structured `chartData` isn't surfaced in markdown and we have
+   no code path to use it). Each page carries a `status` mirror
+   written by `pageToMarkdownNode`.
 3. **Text Chunking** — `MarkdownTextSplitter` (from `@langchain/textsplitters`)
    over the joined page markdown. Chunk size is `KB_CHUNK_MAX_CHARS`
    (default 2000).

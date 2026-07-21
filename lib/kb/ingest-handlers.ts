@@ -2,6 +2,7 @@ import type { PageResult } from "@/backend/state";
 import { screenshotPdf } from "@/lib/kb/screenshot";
 import { extractPdfText } from "@/lib/kb/text";
 import { getObject, uploadKbImage } from "@/lib/r2/client";
+import { OfficeParser } from "officeparser";
 import type { IngestKind } from "@/lib/kb/source-kind";
 
 // ponytail: per-source-type ingest strategy. Each handler turns R2
@@ -91,11 +92,74 @@ export const imageHandler: IngestHandler = {
   },
 };
 
+// Office (DOCX/XLSX/PPTX): single officeparser handles all three.
+// Returns a 1-page text result + one vision-OCR PageResult per image
+// attachment. Charts are skipped — they're rare, and the markdown
+// generator emits them via the same attachment pipeline that we're
+// bypassing by setting `includeImages: false`.
+// ponytail: ocr is OFF even though attachments get extracted. We don't
+// run tesseract on DOCX/PPTX images because vision OCR downstream
+// (pageToMarkdownNode) produces strictly better quality text for our
+// Claude-based pipeline. Skipping officeparser's OCR also avoids the
+// 30MB+ tesseract trained-data download on first use.
+export const officeHandler: IngestHandler = {
+  async buildPages({ r2Key, userId, docId }) {
+    const bytes = await getObject(r2Key);
+    const ast = await OfficeParser.parseOffice(bytes, {
+      extractAttachments: true,
+      ocr: false,
+    });
+    // ponytail: includeImages: false strips inline `data:` base64 from
+    // the markdown body — images land on separate vision-OCR pages
+    // below. generateIds: false skips officeparser's auto-slug
+    // `{#test-docx-document}` block on headings (the chunking pipeline
+    // doesn't read anchor IDs; they're noise that bloats the
+    // chunkable text).
+    const { value: markdown } = await ast.to("md", {
+      includeImages: false,
+      generateIds: false,
+    });
+
+    const pages: PageResult[] = [
+      {
+        pageIndex: 0,
+        imageUrl: "",
+        markdown: markdown ?? "",
+        status: "success" as const,
+      },
+    ];
+
+    // ponytail: only `image` attachments go through vision OCR; charts
+    // get dropped (their structured chartData isn't surfaced in
+    // markdown anyway, and we don't have a code path to use it).
+    let pageIndex = 1;
+    for (const att of ast.attachments) {
+      if (att.type !== "image") continue;
+      const buf = Buffer.from(att.data, "base64");
+      const ext = att.extension || "png";
+      const key = `kb-tmp/${userId}/${docId}/office-${pageIndex}.${ext}`;
+      const imageUrl = await uploadKbImage({ key, body: buf, contentType: att.mimeType });
+      pages.push({
+        pageIndex,
+        imageUrl,
+        markdown: "",
+        status: "pending" as const,
+      });
+      pageIndex++;
+    }
+
+    return pages;
+  },
+};
+
 const handlers: Record<IngestKind, IngestHandler> = {
   pdf: pdfHandler,
   markdown: textHandler,
   plain: textHandler,
   image: imageHandler,
+  docx: officeHandler,
+  xlsx: officeHandler,
+  pptx: officeHandler,
 };
 
 export function getIngestHandler(mimeType: string): IngestHandler | null {
@@ -104,6 +168,13 @@ export function getIngestHandler(mimeType: string): IngestHandler | null {
   if (mt === "text/markdown") return handlers.markdown;
   if (mt === "text/plain") return handlers.plain;
   if (mt.startsWith("image/")) return handlers.image;
+  if (
+    mt === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    mt === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mt === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  ) {
+    return handlers.docx; // any of the three — same handler
+  }
   return null;
 }
 

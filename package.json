@@ -95,6 +95,7 @@
     "mupdf": "^1.28.0",
     "next": "16.1.7",
     "next-themes": "^0.4.6",
+    "officeparser": "^7.4.0",
     "p-queue": "^9.3.1",
     "postgres": "^3.4.9",
     "prism-react-renderer": "^2.4.1",

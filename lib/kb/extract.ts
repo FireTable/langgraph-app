@@ -100,7 +100,17 @@ export function stripKbRefFromFilename(filename: string | undefined): string {
 // pipeline, markdown / plain text pass through as pre-baked markdown,
 // images go through vision OCR. Single source of truth so the router
 // signal and the extractor agree on "what kbAgent should eat".
-const KB_INGESTIBLE_MIME = new Set(["application/pdf", "text/markdown", "text/plain"]);
+const KB_INGESTIBLE_MIME = new Set([
+  "application/pdf",
+  "text/markdown",
+  "text/plain",
+  // ponytail: Office Open XML — one officeparser call handles all
+  // three. Exact-match set (not startsWith) so unrelated
+  // application/vnd.* payloads don't accidentally get tagged.
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+]);
 
 function isKbIngestibleMime(mime: string | undefined): boolean {
   if (!mime) return false;

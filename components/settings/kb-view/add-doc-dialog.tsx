@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { Link2, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -170,14 +171,23 @@ export function AddDocDialog({
               accept={accept}
               onChange={onFileChange}
             />
-            <Button type="button" disabled={fileSubmitting || !folderId} onClick={onPickFile}>
+            <Button
+              type="button"
+              variant={"outline"}
+              disabled={fileSubmitting || !folderId}
+              onClick={onPickFile}
+              className="gap-2"
+            >
               {fileSubmitting ? (
                 <>
                   <Spinner />
                   Uploading…
                 </>
               ) : (
-                "Choose file"
+                <>
+                  <Upload className="size-3.5" aria-hidden />
+                  Choose file
+                </>
               )}
             </Button>
             {supportedLabels.length > 0 ? (
@@ -215,6 +225,7 @@ export function AddDocDialog({
                 type="button"
                 disabled={urlSubmitting || !urlValid || !folderId}
                 onClick={() => void onAddUrl()}
+                className="gap-2"
               >
                 {urlSubmitting ? (
                   <>
@@ -222,7 +233,10 @@ export function AddDocDialog({
                     Parsing…
                   </>
                 ) : (
-                  "Add URL"
+                  <>
+                    <Link2 className="size-3.5" aria-hidden />
+                    Add URL
+                  </>
                 )}
               </Button>
             </div>

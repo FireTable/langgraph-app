@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { KB_POLL_INTERVAL_MS } from "@/lib/constants";
+import { mimeShortLabel } from "@/lib/kb/source-kind";
 import { KbResponse, KbDocument } from "./types";
 import { HeaderBar, DocTableSkeleton } from "./folder-sidebar";
 import { DocStatusBadge, ChunksStatusBadge, formatTimestamp } from "./status-badge";
@@ -141,19 +142,15 @@ export function DocRow({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [reprocessOpen, setReprocessOpen] = useState(false);
-  // ponytail: show a short, consistent file-type badge — strip the
-  // mime prefix and map long subtypes to compact labels (md, txt, jpg)
-  // so the table row doesn't get cluttered with "text/markdown".
-  const TYPE_LABEL: Record<string, string> = {
-    pdf: "pdf",
-    markdown: "md",
-    plain: "txt",
-    png: "png",
-    jpeg: "jpg",
-    webp: "webp",
-  };
-  const subtype = doc.contentType.split("/")[1] ?? "";
-  const type = TYPE_LABEL[subtype] ?? (subtype || doc.contentType);
+  // ponytail: route through the shared source-kind helper so the table
+  // badge and the AddDoc dialog "Supports" hint agree on labels
+  // (DOCX/XLSX/PPTX included). Local TYPE_LABEL used to drift and fall
+  // through to the raw mime for any unmapped subtype — a freshly
+  // uploaded Word file rendered as the full
+  // "vnd.openxmlformats-officedocument.wordprocessingml.document"
+  // string in the row. Lowercased here to match the existing badge
+  // casing (md, txt, png); the AddDoc dialog lowercases its own copy.
+  const type = mimeShortLabel(doc.contentType).toLowerCase();
   const rowRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {

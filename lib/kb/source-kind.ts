@@ -7,7 +7,7 @@
 // dependency-free (no mupdf / R2 / jina) means the client bundle
 // stays light.
 
-export type IngestKind = "pdf" | "markdown" | "plain" | "image";
+export type IngestKind = "pdf" | "markdown" | "plain" | "image" | "docx" | "xlsx" | "pptx";
 
 export function getIngestKind(mimeType: string): IngestKind | null {
   const mt = mimeType.toLowerCase();
@@ -15,6 +15,14 @@ export function getIngestKind(mimeType: string): IngestKind | null {
   if (mt === "text/markdown") return "markdown";
   if (mt === "text/plain") return "plain";
   if (mt.startsWith("image/")) return "image";
+  // ponytail: Office Open XML mimes — exact matches only, not
+  // `startsWith`, so unrelated application/vnd.* payloads don't
+  // accidentally route to the office parser.
+  if (mt === "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    return "docx";
+  if (mt === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "xlsx";
+  if (mt === "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    return "pptx";
   return null;
 }
 
@@ -47,8 +55,21 @@ const TYPE_LABEL: Record<string, string> = {
   webp: "WEBP",
 };
 
+// ponytail: Office Open XML subtypes are full strings like
+// "vnd.openxmlformats-officedocument.wordprocessingml.document",
+// not friendly "docx". Map by exact mime so DOCX/XLSX/PPTX get
+// short labels without having to substring-match the long subtype.
+const OFFICE_LABEL: Record<string, string> = {
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "DOCX",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "XLSX",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "PPTX",
+};
+
 export function mimeShortLabel(mimeType: string): string {
-  const subtype = mimeType.split("/")[1]?.toLowerCase() ?? "";
+  const mt = mimeType.toLowerCase();
+  const office = OFFICE_LABEL[mt];
+  if (office) return office;
+  const subtype = mt.split("/")[1] ?? "";
   return TYPE_LABEL[subtype] ?? (subtype.toUpperCase() || mimeType);
 }
 
@@ -76,6 +97,13 @@ const MIME_TO_EXT: Record<string, string> = {
   png: ".png",
   jpeg: ".jpg",
   webp: ".webp",
+  // ponytail: OOXML subtypes don't follow the simple "mime -> ext"
+  // shape because the subtype is the long vendor string. Use the
+  // full mime as the lookup key so buildAcceptAttribute can find
+  // the right .docx/.xlsx/.pptx extension for the file picker.
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
 };
 
 export function buildAcceptAttribute(allowed: string): string {
@@ -84,8 +112,8 @@ export function buildAcceptAttribute(allowed: string): string {
     .map((s) => s.trim())
     .filter(Boolean)
     .flatMap((mime) => {
-      const subtype = mime.split("/")[1]?.toLowerCase() ?? "";
-      const ext = MIME_TO_EXT[subtype];
+      const mt = mime.toLowerCase();
+      const ext = MIME_TO_EXT[mt] ?? MIME_TO_EXT[mt.split("/")[1]?.toLowerCase() ?? ""];
       return ext ? [mime, ext] : [mime];
     })
     .join(",");
