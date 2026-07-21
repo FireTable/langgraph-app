@@ -168,9 +168,14 @@ describe("imageHandler", () => {
 });
 
 describe("officeHandler", () => {
+  // ponytail: AST walker reads `ast.content` (top-level nodes) and
+  // recurses into each node's `children`. The fake only needs the
+  // top-level array — `walkNode` is what recurses, and tests that
+  // exercise it pass nested nodes explicitly.
   function fakeAst({
     value,
     attachments,
+    content = [],
   }: {
     value: string;
     attachments: Array<{
@@ -180,10 +185,12 @@ describe("officeHandler", () => {
       name: string;
       extension: string;
     }>;
+    content?: Array<{ type: string; metadata?: Record<string, unknown>; children?: unknown[] }>;
   }) {
     return {
       to: vi.fn().mockResolvedValue({ value }),
       attachments,
+      content,
     };
   }
 
@@ -208,31 +215,58 @@ describe("officeHandler", () => {
     expect(mocks.uploadKbImage).not.toHaveBeenCalled();
   });
 
-  it("uploads each image attachment as a separate vision-OCR page", async () => {
-    mocks.getObject.mockResolvedValue(Buffer.from("fake-pptx"));
+  // ponytail: image nodes get uploaded to R2 and the AST metadata
+  // gets rewritten in place. The markdown generator's URL-precedence
+  // rule (`meta.url || meta.attachmentName`) picks up our rewrite and
+  // emits `![](r2-url)` inline at the original AST position. We
+  // assert the AST mutation here, not the markdown string, because
+  // the actual markdown layout depends on the generator's traversal.
+  it("uploads image attachments and rewrites image-node metadata.url", async () => {
     const realPng = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(500)]);
     const realJpg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(500)]);
-    mocks.parseOffice.mockResolvedValue(
-      fakeAst({
-        value: "# Slide 1\n\nHello.",
-        attachments: [
-          {
-            type: "image",
-            mimeType: "image/png",
-            data: realPng.toString("base64"),
-            name: "img1.png",
-            extension: "png",
-          },
-          {
-            type: "image",
-            mimeType: "image/jpeg",
-            data: realJpg.toString("base64"),
-            name: "img2.jpg",
-            extension: "jpg",
-          },
-        ],
+    const ast = {
+      to: vi.fn().mockResolvedValue({
+        value: "# Slide 1\n\n![chart](https://r2/chart.png)\n\nMore text.",
       }),
-    );
+      attachments: [
+        {
+          type: "image",
+          mimeType: "image/png",
+          data: realPng.toString("base64"),
+          name: "chart.png",
+          extension: "png",
+        },
+        {
+          type: "image",
+          mimeType: "image/jpeg",
+          data: realJpg.toString("base64"),
+          name: "photo.jpg",
+          extension: "jpg",
+        },
+      ],
+      content: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "image",
+              metadata: { attachmentName: "chart.png", altText: "chart" },
+            },
+          ],
+        },
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "image",
+              metadata: { attachmentName: "photo.jpg", altText: "team photo" },
+            },
+          ],
+        },
+      ],
+    };
+    mocks.getObject.mockResolvedValue(Buffer.from("fake-pptx"));
+    mocks.parseOffice.mockResolvedValue(ast);
 
     const pages = await officeHandler.buildPages({
       ...ARGS,
@@ -240,51 +274,73 @@ describe("officeHandler", () => {
       contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     });
 
-    expect(pages).toHaveLength(3);
-    // text page first, then one vision page per image attachment
+    // One pre-baked page with inline image refs — same shape as textHandler.
+    expect(pages).toHaveLength(1);
     expect(pages[0]).toMatchObject({
       pageIndex: 0,
       status: "success",
-      markdown: "# Slide 1\n\nHello.",
     });
-    expect(pages[1]).toMatchObject({ pageIndex: 1, status: "pending", markdown: "" });
-    expect(pages[1].imageUrl).toMatch(/^https:\/\/r2\/kb-tmp\/u-1\/d-1\/office-1\.png$/);
-    expect(pages[2].imageUrl).toMatch(/^https:\/\/r2\/kb-tmp\/u-1\/d-1\/office-2\.jpg$/);
+    expect(pages[0].markdown).toContain("![chart](https://r2/chart.png)");
+
+    // AST got mutated: image nodes now carry R2 URLs in metadata.url.
+    const images = (
+      ast.content as Array<{ children: Array<{ metadata: { url?: string } }> }>
+    ).flatMap((p) => p.children);
+    expect(images[0].metadata.url).toMatch(/^https:\/\/r2\/kb-tmp\/u-1\/d-1\/chart\.png$/);
+    expect(images[1].metadata.url).toMatch(/^https:\/\/r2\/kb-tmp\/u-1\/d-1\/photo\.jpg$/);
     expect(mocks.uploadKbImage).toHaveBeenCalledTimes(2);
   });
 
   it("skips chart attachments (no markdown representation to anchor them to)", async () => {
-    mocks.getObject.mockResolvedValue(Buffer.from("fake-xlsx"));
     const realPng = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(500)]);
-    mocks.parseOffice.mockResolvedValue(
-      fakeAst({
-        value: "| A | B |\n|---|---|\n| 1 | 2 |",
-        attachments: [
-          {
-            type: "chart",
-            mimeType: "image/png",
-            data: "ignored",
-            name: "chart1.png",
-            extension: "png",
-          },
-          {
-            type: "image",
-            mimeType: "image/png",
-            data: realPng.toString("base64"),
-            name: "img1.png",
-            extension: "png",
-          },
-        ],
-      }),
-    );
+    const ast = {
+      to: vi.fn().mockResolvedValue({ value: "md" }),
+      attachments: [
+        {
+          type: "chart",
+          mimeType: "image/png",
+          data: "ignored",
+          name: "chart1.png",
+          extension: "png",
+        },
+        {
+          type: "image",
+          mimeType: "image/png",
+          data: realPng.toString("base64"),
+          name: "img1.png",
+          extension: "png",
+        },
+      ],
+      // Only `img1.png` is referenced from the AST — chart1.png is an
+      // orphan attachment that no image node points at, so it would
+      // never be rendered as a markdown ref. The handler doesn't
+      // upload unattached attachments either (no markdown impact).
+      content: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "image",
+              metadata: { attachmentName: "img1.png" },
+            },
+          ],
+        },
+      ],
+    };
+    mocks.getObject.mockResolvedValue(Buffer.from("fake-xlsx"));
+    mocks.parseOffice.mockResolvedValue(ast);
 
-    const pages = await officeHandler.buildPages({
+    await officeHandler.buildPages({
       ...ARGS,
       contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
 
-    expect(pages).toHaveLength(2);
-    expect(mocks.uploadKbImage).toHaveBeenCalledTimes(1); // chart skipped
+    // Only the image attachment got uploaded — chart is type:'chart',
+    // not type:'image', so it's never even looked up.
+    expect(mocks.uploadKbImage).toHaveBeenCalledTimes(1);
+    expect(mocks.uploadKbImage).toHaveBeenCalledWith(
+      expect.objectContaining({ contentType: "image/png" }),
+    );
   });
 
   it("passes extractAttachments=true and ocr=false to officeparser", async () => {
@@ -302,7 +358,7 @@ describe("officeHandler", () => {
     );
   });
 
-  it("asks for markdown output with images stripped (avoids base64 in markdown text)", async () => {
+  it("asks for markdown output with images included (URLs come from the AST walk)", async () => {
     mocks.getObject.mockResolvedValue(Buffer.from("fake"));
     mocks.parseOffice.mockResolvedValue(fakeAst({ value: "md", attachments: [] }));
 
@@ -312,18 +368,19 @@ describe("officeHandler", () => {
     });
 
     const ast = await mocks.parseOffice.mock.results[0].value;
+    // includeImages: true → generator emits `![](url)` refs at AST
+    // positions. The AST walk above sets metadata.url to R2 URLs so
+    // the refs point at our bucket, not at base64 data URIs.
     expect(ast.to).toHaveBeenCalledWith(
       "md",
-      expect.objectContaining({ includeImages: false, generateIds: false }),
+      expect.objectContaining({ includeImages: true, generateIds: false }),
     );
   });
 
   // ponytail: PPTX slides often ship with placeholder / vector /
-  // legacy-bitmap images that officeparser surfaces as `image`
-  // attachments but the downstream vision LLM can't fetch — pushing
-  // them through OCR fails with "400 File downloaded contains no data"
-  // and cascades a "Bypassed" through every subsequent page. Filter
-  // them at ingest time.
+  // legacy-bitmap images. Filtering at ingest prevents broken refs
+  // (SVG, TIFF, BMP) and empty/stub bytes from cluttering the
+  // markdown with `![](nonexistent)` placeholders.
   it("skips attachments the vision LLM can't read (SVG / TIFF / BMP / empty / tiny)", async () => {
     const stubBytes = Buffer.alloc(50); // < MIN_ATTACHMENT_BYTES — stub
     const realBytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(500)]);
@@ -370,20 +427,39 @@ describe("officeHandler", () => {
             extension: "png",
           },
         ],
+        // Only `real.png` is referenced from the AST — the SVG/TIFF/BMP/
+        // empty/stub attachments are unreferenced, so they wouldn't be
+        // rendered as markdown refs anyway. We still verify the handler
+        // filters them out by mime/size for the ones that DO get
+        // referenced, just to be defensive.
+        content: [
+          {
+            type: "paragraph",
+            children: [
+              { type: "image", metadata: { attachmentName: "logo.svg" } },
+              { type: "image", metadata: { attachmentName: "scan.tiff" } },
+              { type: "image", metadata: { attachmentName: "old.bmp" } },
+              { type: "image", metadata: { attachmentName: "empty.png" } },
+              { type: "image", metadata: { attachmentName: "stub.png" } },
+              { type: "image", metadata: { attachmentName: "real.png" } },
+            ],
+          },
+        ],
       }),
     );
 
-    const pages = await officeHandler.buildPages({
+    await officeHandler.buildPages({
       ...ARGS,
       contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     });
 
-    // text page + 1 vision page (only the real PNG survives)
-    expect(pages).toHaveLength(2);
-    expect(pages[1].imageUrl).toMatch(/office-1\.png$/);
+    // Only the real PNG makes it to R2.
     expect(mocks.uploadKbImage).toHaveBeenCalledTimes(1);
     expect(mocks.uploadKbImage).toHaveBeenCalledWith(
-      expect.objectContaining({ contentType: "image/png" }),
+      expect.objectContaining({
+        key: "kb-tmp/u-1/d-1/real.png",
+        contentType: "image/png",
+      }),
     );
   });
 });

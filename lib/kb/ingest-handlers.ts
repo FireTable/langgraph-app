@@ -93,15 +93,18 @@ export const imageHandler: IngestHandler = {
 };
 
 // Office (DOCX/XLSX/PPTX): single officeparser handles all three.
-// Returns a 1-page text result + one vision-OCR PageResult per image
-// attachment. Charts are skipped — they're rare, and the markdown
-// generator emits them via the same attachment pipeline that we're
-// bypassing by setting `includeImages: false`.
-// ponytail: ocr is OFF even though attachments get extracted. We don't
-// run tesseract on DOCX/PPTX images because vision OCR downstream
-// (pageToMarkdownNode) produces strictly better quality text for our
-// Claude-based pipeline. Skipping officeparser's OCR also avoids the
-// 30MB+ tesseract trained-data download on first use.
+// Returns a single pre-baked markdown page (same shape as
+// textHandler / URL flow). Image attachments get uploaded to R2 and
+// referenced inline at their original AST position via
+// `![](r2-url)`, so chunked markdown preserves "the chart followed
+// this paragraph" context without forcing each image through
+// pageToMarkdownNode vision OCR.
+//
+// ponytail: ocr is OFF even though attachments get extracted. We
+// don't run tesseract because we don't OCR images through officeparser
+// at all — images stay as inline `![](url)` references in the
+// markdown. Skipping officeparser's OCR also avoids the 30MB+
+// tesseract trained-data download on first use.
 export const officeHandler: IngestHandler = {
   async buildPages({ r2Key, userId, docId }) {
     const bytes = await getObject(r2Key);
@@ -109,18 +112,27 @@ export const officeHandler: IngestHandler = {
       extractAttachments: true,
       ocr: false,
     });
-    // ponytail: includeImages: false strips inline `data:` base64 from
-    // the markdown body — images land on separate vision-OCR pages
-    // below. generateIds: false skips officeparser's auto-slug
-    // `{#test-docx-document}` block on headings (the chunking pipeline
-    // doesn't read anchor IDs; they're noise that bloats the
-    // chunkable text).
+    // ponytail: walk the AST and rewrite each `image` node's metadata
+    // so the markdown generator emits `![](r2-url)` instead of an
+    // inline base64 data URI. The generator's URL-precedence rule
+    // (`meta?.url || meta?.attachmentName`) means setting
+    // `metadata.url` short-circuits the attachment lookup entirely.
+    //
+    // Filter aggressively: SVG/TIFF/BMP/empty/stub images produce
+    // broken refs or are just decoration.
+    await injectAttachmentUrls(ast, { userId, docId });
+
+    // ponytail: includeImages: true keeps the `![](...)` refs the
+    // generator emits (R2 URLs after the walk above). generateIds:
+    // false skips officeparser's auto-slug `{#test-docx-document}`
+    // block on headings (the chunking pipeline doesn't read anchor
+    // IDs).
     const { value: markdown } = await ast.to("md", {
-      includeImages: false,
+      includeImages: true,
       generateIds: false,
     });
 
-    const pages: PageResult[] = [
+    return [
       {
         pageIndex: 0,
         imageUrl: "",
@@ -128,43 +140,82 @@ export const officeHandler: IngestHandler = {
         status: "success" as const,
       },
     ];
-
-    // ponytail: only `image` attachments go through vision OCR; charts
-    // get dropped (their structured chartData isn't surfaced in
-    // markdown anyway, and we don't have a code path to use it).
-    //
-    // Filter aggressively: officeparser returns attachments for things
-    // the downstream vision LLM (Claude via apimart) can't usefully
-    // read — empty placeholder images, SVG vector graphics, TIFF/BMP
-    // formats the provider rejects, and tiny stub bytes from slide-
-    // master layouts. Uploading any of those produces an imageUrl that
-    // OCR fails to fetch (400 "File downloaded contains no data") and
-    // cascades a "Bypassed" through every subsequent page in the doc.
-    // The allowed set mirrors R2_ALLOWED_CONTENT_TYPES' image half so
-    // the same chat-composer rules apply here.
-    const VISION_OK_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-    const MIN_ATTACHMENT_BYTES = 100; // below this is almost certainly a stub
-    let pageIndex = 1;
-    for (const att of ast.attachments) {
-      if (att.type !== "image") continue;
-      if (!VISION_OK_MIME.has(att.mimeType.toLowerCase())) continue;
-      const buf = Buffer.from(att.data ?? "", "base64");
-      if (buf.length < MIN_ATTACHMENT_BYTES) continue;
-      const ext = att.extension || "png";
-      const key = `kb-tmp/${userId}/${docId}/office-${pageIndex}.${ext}`;
-      const imageUrl = await uploadKbImage({ key, body: buf, contentType: att.mimeType });
-      pages.push({
-        pageIndex,
-        imageUrl,
-        markdown: "",
-        status: "pending" as const,
-      });
-      pageIndex++;
-    }
-
-    return pages;
   },
 };
+
+// ponytail: filter constants at module scope so tests can reference
+// them without duplicating the allowlist.
+const VISION_OK_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const MIN_ATTACHMENT_BYTES = 100;
+
+async function injectAttachmentUrls(
+  ast: Awaited<ReturnType<typeof OfficeParser.parseOffice>>,
+  ctx: { userId: string; docId: string },
+): Promise<void> {
+  // ponytail: build an attachment lookup once, then walk the AST.
+  // Indexing by `name` matches the generator's lookup pattern.
+  const attachmentByName = new Map<string, (typeof ast.attachments)[number]>();
+  for (const att of ast.attachments) {
+    if (att.type !== "image") continue;
+    if (!VISION_OK_MIME.has(att.mimeType.toLowerCase())) continue;
+    const buf = Buffer.from(att.data ?? "", "base64");
+    if (buf.length < MIN_ATTACHMENT_BYTES) continue;
+    attachmentByName.set(att.name, att);
+  }
+  if (attachmentByName.size === 0) return;
+
+  for (const node of ast.content) {
+    await walkNode(node as AstNodeShape, attachmentByName, ctx);
+  }
+}
+
+// ponytail: deliberately typed as a duck-typed shape rather than the
+// discriminated `OfficeContentNode` union — TypeScript can't narrow
+// `metadata` from `SlideMetadata | HeadingMetadata | ... | undefined`
+// down to `{ attachmentName?, url? }` at the call site without an
+// assertion at every step. The walker only ever reads
+// `node.type === "image"` and `node.metadata.{attachmentName,url}`,
+// so the duck-typed shape captures what we touch.
+type AstNodeShape = {
+  type?: string;
+  metadata?: { attachmentName?: string; url?: string };
+  children?: unknown[];
+};
+
+async function walkNode(
+  node: AstNodeShape,
+  attachmentByName: Map<
+    string,
+    { data: string; mimeType: string; extension: string; name: string }
+  >,
+  ctx: { userId: string; docId: string },
+): Promise<void> {
+  if (node.type === "image" && node.metadata?.attachmentName && !node.metadata.url) {
+    const att = attachmentByName.get(node.metadata.attachmentName);
+    if (att) {
+      const buf = Buffer.from(att.data, "base64");
+      // ponytail: `att.name` often already includes an extension
+      // ("image1.png"), so re-appending `att.extension` produces
+      // "image1.png.png". Strip the trailing ext from the name and
+      // re-attach the canonical one — or skip if they're identical.
+      const ext = att.extension || "png";
+      const baseName = att.name.toLowerCase().endsWith(`.${ext.toLowerCase()}`)
+        ? att.name.slice(0, -(ext.length + 1))
+        : att.name;
+      const key = `kb-tmp/${ctx.userId}/${ctx.docId}/${baseName}.${ext}`;
+      const url = await uploadKbImage({ key, body: buf, contentType: att.mimeType });
+      // ponytail: rewrite in place — the generator's URL-precedence
+      // rule (`meta?.url || meta?.attachmentName`) picks this up
+      // and skips the data-URI fallback.
+      node.metadata.url = url;
+    }
+  }
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) {
+      await walkNode(child as AstNodeShape, attachmentByName, ctx);
+    }
+  }
+}
 
 const handlers: Record<IngestKind, IngestHandler> = {
   pdf: pdfHandler,
