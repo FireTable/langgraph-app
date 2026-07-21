@@ -24,16 +24,19 @@ PDF picker. PDF (and other non-image types) is intentionally excluded:
   own ALL attachment-derived representations (page images for vision
   models, markdown for text models, embeddings for retrieval). KB v3
   has now shipped — see [`docs/KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md)
-  for the PDF → kbAgent pipeline. The chat composer still does NOT
-  surface a PDF picker: PDFs land in the user's KB via Settings → KB
-  upload (or via the kbAgent subgraph on a chat-path PDF mention), not
-  inline in the chat composer.
+  for the kbAgent ingest pipeline. The chat composer still does NOT
+  surface a non-image picker: PDFs, Office documents, and text files
+  land in the user's KB via Settings → KB upload (or via the
+  kbAgent subgraph on a chat-path file mention), not inline in the
+  chat composer.
 
 To re-enable a non-image flow in the meantime, set
 `R2_ALLOWED_CONTENT_TYPES` to a comma-separated list that
-includes the desired MIME types. The presign route will accept them
-and the composer will surface the picker. Note: even with PDF
-re-enabled, the model still won't see the file — this is a
+includes the desired MIME types (PDF, `text/markdown`, `text/plain`,
+or any of the three Office Open XML mimes for full KB support). The
+presign route will accept them and the composer will surface the
+picker. Note: even with PDF re-enabled, the model still won't see the
+file — this is a
 **composer-side** toggle, not a model-side fix. Use it only for
 experimentation, not production.
 
