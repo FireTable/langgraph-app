@@ -43,12 +43,24 @@ function KbViewContent({ className }: { className?: string }) {
   const [isLivePolling, setIsLivePolling] = useState(false);
   // ponytail: distinct from `data` being null on cold-load — this
   // tracks the in-flight fetch for the *currently selected* folder.
-  // DocTable shows a spinner when true so folder-switch doesn't
-  // flash an empty "Select a folder" state.
+  // DocTable shows a skeleton only when the current `data` is stale
+  // (different folderId than the one selected). Polling + user-action
+  // refreshes are optimistic — they keep showing the previous data +
+  // the isLivePolling indicator pulsing, so the table never flashes
+  // to a skeleton mid-session.
+  //
+  // ponytail: `loadedFor` remembers which folderId the current
+  // `data` was fetched for. We can't use `data?.groups.find(id)` to
+  // detect staleness — the API returns ALL folders in the sidebar
+  // payload, just with empty `documents` for the scoped-out ones,
+  // so find() always resolves to a group even after a switch.
   const [folderLoading, setFolderLoading] = useState(false);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
+  // ponytail: `load` is the bare fetch. Callers wrap it for the
+  // UX they want — explicit user-triggered loads set folderLoading
+  // first, polling calls it bare (no loading state flicker).
   const load = useCallback(async () => {
-    setFolderLoading(true);
     try {
       // ponytail: scope the payload to the currently-selected folder —
       // the sidebar still gets the full folder list, but only the
@@ -64,6 +76,11 @@ function KbViewContent({ className }: { className?: string }) {
       }
       const body = (await res.json()) as KbResponse;
       setData(body);
+      // ponytail: remember which folder this payload is for. Used by
+      // the loading prop below to tell "data is for the selected
+      // folder" (optimistic) apart from "data is stale, new fetch
+      // in flight" (skeleton). Null on cold load.
+      setLoadedFor(selectedFolderId);
       setSelectedFolderId((prev) => {
         if (prev && body.groups.some((g) => g.folder.id === prev)) return prev;
         // ponytail: ?folder=<id> from the URL outranks the
@@ -83,10 +100,21 @@ function KbViewContent({ className }: { className?: string }) {
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [focusDocId, initialFolderId, selectedFolderId]);
+
+  // ponytail: explicit user-triggered load (folder switch, manual
+  // refresh). Toggles folderLoading so DocTable can swap to a
+  // skeleton when the new group isn't available. The auto-poll
+  // interval calls bare `load` so it never flashes a skeleton.
+  const loadWithSkeleton = useCallback(async () => {
+    setFolderLoading(true);
+    try {
+      await load();
     } finally {
       setFolderLoading(false);
     }
-  }, [focusDocId, initialFolderId, selectedFolderId]);
+  }, [load]);
 
   // ponytail: after any "reprocess" / "delete" / "upload" action we
   // brute-force polling for a short window (~12s — covers the worst
@@ -110,12 +138,15 @@ function KbViewContent({ className }: { className?: string }) {
   }, [load, markRecentlyDispatched]);
 
   useEffect(() => {
-    void load();
+    void loadWithSkeleton();
     // ponytail: re-fetch when the user switches folders. The API
     // payload is scoped via `?folderId=<id>`, so the doc table on
     // the right side lands on the new folder's data without us
-    // having to do any client-side filtering.
-  }, [load]);
+    // having to do any client-side filtering. `loadWithSkeleton`
+    // toggles folderLoading so DocTable swaps to the shared
+    // DocTableSkeleton while waiting; auto-poll below uses bare
+    // `load` to keep the table optimistic.
+  }, [loadWithSkeleton]);
 
   useEffect(() => {
     if (!data) return;
@@ -199,7 +230,13 @@ function KbViewContent({ className }: { className?: string }) {
             onAddDoc={() => setAddDocOpen(true)}
             onRefresh={loadWithHeartbeat}
             isLivePolling={isLivePolling}
-            loading={folderLoading}
+            // ponytail: skeleton fires only when the in-flight fetch
+            // is for a *different* folder than the one currently
+            // rendered. Cold load (loadedFor=null) + folder switch
+            // (loadedFor !== selectedFolderId) both qualify. Polling
+            // and user-action refreshes keep showing the previous
+            // data with the isLivePolling indicator pulsing.
+            loading={folderLoading && loadedFor !== selectedFolderId}
           />
         </div>
 

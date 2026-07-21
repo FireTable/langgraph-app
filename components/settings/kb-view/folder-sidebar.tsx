@@ -202,7 +202,7 @@ export function DocTableSkeleton() {
           <Skeleton className="size-6 rounded-md" />
         </div>
         <Separator />
-        {[0, 1, 2].map((i) => (
+        {[0].map((i) => (
           <div key={i}>
             {i > 0 && <Separator />}
             <div className="space-y-2 px-4 py-3 md:hidden">

@@ -170,12 +170,7 @@ export function AddDocDialog({
               accept={accept}
               onChange={onFileChange}
             />
-            <Button
-              type="button"
-              variant="outline"
-              disabled={fileSubmitting || !folderId}
-              onClick={onPickFile}
-            >
+            <Button type="button" disabled={fileSubmitting || !folderId} onClick={onPickFile}>
               {fileSubmitting ? (
                 <>
                   <Spinner />
