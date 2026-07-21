@@ -54,33 +54,34 @@ export function AddDocDialog({
   const [accept] = useState(() => readAllowedAccept());
   const [supportedLabels] = useState(() => readSupportedLabels());
 
-  // ponytail: gate the Add URL button on a parseable http(s) URL.
-  // Client-side reachability probe (HEAD) is unreliable (CORS, server
-  // support, opaque responses) — the server's /api/kb/upload gives a
-  // proper error on bad URLs. We only verify format here, with two
-  // guards: regex pre-check on the host (catches obvious garbage
-  // like "///" or "   ") and new URL as the source of truth.
+  // ponytail: gate Add URL on new URL() succeeding and yielding a real
+  // http/https URL with a dotted host — i.e. something the server's
+  // jina fetch can actually try to extract content from. new URL() is
+  // the single source of truth: it rejects malformed input ("///", " ",
+  // bare scheme) on its own, so the old host regex was redundant
+  // belt-and-suspenders. Server-side validateIngestUrl is the real
+  // security boundary (DNS + private-IP deny); this just stops the
+  // button being clickable on garbage so the user gets feedback before
+  // round-tripping to /api/kb/upload.
   //
-  // `new URL`'s second arg acts as a base: typing `firetable.tech`
-  // resolves to `https://firetable.tech/` without forcing the user
-  // to type the scheme. Regex / new URL combo so a pasted URL with
-  // scheme also still works.
+  // Two guards on top of new URL():
+  //   - dotted host: rejects `https:///path` (parsed as host="path") and
+  //     `https://fire` (no TLD). Without this, new URL() accepts both
+  //     and the button would falsely enable.
+  //   - scheme-aware auto-prepend: only prepend `https://` when the
+  //     input has NO scheme prefix. If user types `ftp://x.com`,
+  //     blindly prepending yields `https://ftp://x.com`, which new
+  //     URL() parses with host="x.com" — wrong protocol sneaks through.
+  //     Detect any scheme (`scheme://`) and pass through unchanged; the
+  //     protocol check then rejects non-http(s).
   const urlValid = useMemo(() => {
     const trimmed = url.trim();
     if (!trimmed) return false;
-    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-    const hostMatch = withScheme.match(/^https?:\/\/([^/?#:]+)/i);
-    if (!hostMatch) return false;
-    // ponytail: reject obvious garbage like "fire" (no TLD), "..",
-    // trailing dashes. Each label must start + end with [a-z0-9],
-    // labels separated by dots, and the TLD must be ≥ 2 chars.
-    const host = hostMatch[1].toLowerCase();
-    if (!/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i.test(host)) {
-      return false;
-    }
+    const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+    const withScheme = hasScheme ? trimmed : `https://${trimmed}`;
     try {
       const u = new URL(withScheme);
-      return u.protocol === "http:" || u.protocol === "https:";
+      return (u.protocol === "http:" || u.protocol === "https:") && u.hostname.includes(".");
     } catch {
       return false;
     }
