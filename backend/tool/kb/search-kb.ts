@@ -33,31 +33,31 @@ const searchKbSchema = z.object({
     .default("")
     .describe(
       "Natural-language query (NOT a keyword soup). Pass a clean, " +
-      "complete sentence that re-states what you want — even when the " +
-      "user's message is short or context-dependent. Omit (or pass '') " +
-      "to dump the full filtered scope (e.g. 'summarize @doc').",
+        "complete sentence that re-states what you want — even when the " +
+        "user's message is short or context-dependent. Omit (or pass '') " +
+        "to dump the full filtered scope (e.g. 'summarize @doc').",
     ),
   originalQuery: z
     .string()
     .optional()
     .describe(
       "Verbatim user message, when it's short or relies on prior " +
-      "context. Drives a second dense sub-leg for multi-query fusion. " +
-      "Safe to omit; falls back to rewriteQuery alone.",
+        "context. Drives a second dense sub-leg for multi-query fusion. " +
+        "Safe to omit; falls back to rewriteQuery alone.",
     ),
   entities: z
     .array(z.string())
     .optional()
     .describe(
       "Specific named terms the user mentioned (people, products, " +
-      "companies, abbreviations). Used by the tag leg for exact match.",
+        "companies, abbreviations). Used by the tag leg for exact match.",
     ),
   themes: z
     .array(z.string())
     .optional()
     .describe(
       "High-level topics / intents (e.g. 'pricing', 'onboarding', " +
-      "'architecture'). Used by the tag leg alongside entities.",
+        "'architecture'). Used by the tag leg alongside entities.",
     ),
   folderId: z
     .string()
@@ -70,7 +70,7 @@ const searchKbSchema = z.object({
     .optional()
     .describe(
       "Filter to this document ID only. Copy from the " +
-      "':kb-document[label]{documentId=...}' directive.",
+        "':kb-document[label]{documentId=...}' directive.",
     ),
 });
 

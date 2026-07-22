@@ -272,9 +272,15 @@ describe("Step 4 · multi-query fusion (audit §2b)", () => {
     const mockReranker = {
       rerank: vi.fn(async (q: string, _docs: string[]) => {
         if (q === "Original User Query") {
-          return [{ index: 0, score: 0.95 }, { index: 1, score: 0.20 }];
+          return [
+            { index: 0, score: 0.95 },
+            { index: 1, score: 0.2 },
+          ];
         }
-        return [{ index: 0, score: 0.30 }, { index: 1, score: 0.85 }];
+        return [
+          { index: 0, score: 0.3 },
+          { index: 1, score: 0.85 },
+        ];
       }),
     };
 

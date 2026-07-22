@@ -334,8 +334,8 @@ export async function chunkExtractNode(
                   const systemMessage = new SystemMessage(KB_ENTITY_EXTRACTION_SYSTEM_PROMPT);
                   const humanMessage = new HumanMessage(
                     `Context Document Title: [${docTitle}]\n` +
-                    `Chunk: [${ordinal + 1} / ${totalChunksForPrompt}]\n\n` +
-                    `Text to extract:\n${text}`,
+                      `Chunk: [${ordinal + 1} / ${totalChunksForPrompt}]\n\n` +
+                      `Text to extract:\n${text}`,
                   );
 
                   try {
