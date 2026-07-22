@@ -25,7 +25,13 @@ export function legBadges(legs: KbDocument["legsHit"]): string[] {
       case "vec":
         return "vector";
       case "tag":
+        return "tag";
+      case "rel":
+        return "rel";
+      case "entity":
         return "entity";
+      case "graph":
+        return "graph";
       case "full":
         return "full doc";
       default:

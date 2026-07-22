@@ -111,18 +111,16 @@ describe("GET /api/kb/folders/[id]", () => {
     const embedLiteral = `'[${Array.from({ length: 1024 }, () => "0").join(",")}]'::vector`;
     await db.execute(
       // language=postgresql
-      `INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, entities)
+      `INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding)
        VALUES (
-         'c-a0', 'd-a', 0, 'alpha intro', ${embedLiteral},
-         '[{"name":"alphaEntity","type":"Concept","description":"a"}]'::jsonb
+         'c-a0', 'd-a', 0, 'alpha intro', ${embedLiteral}
        )` as never,
     );
     await db.execute(
       // language=postgresql
-      `INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, entities)
+      `INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding)
        VALUES (
-         'c-b0', 'd-b', 0, 'beta intro', ${embedLiteral},
-         '[{"name":"betaEntity","type":"Concept","description":"b"}]'::jsonb
+         'c-b0', 'd-b', 0, 'beta intro', ${embedLiteral}
        )` as never,
     );
 
@@ -133,8 +131,6 @@ describe("GET /api/kb/folders/[id]", () => {
     expect(body.chunks).toHaveLength(2);
     const contents = body.chunks.map((c: { content: string }) => c.content).sort();
     expect(contents).toEqual(["alpha intro", "beta intro"]);
-    expect(body.chunks[0].entities[0].name).toMatch(/^(alpha|beta)Entity$/);
-    expect(Array.isArray(body.chunks[0].themes)).toBe(true);
-    expect(Array.isArray(body.chunks[0].relationships)).toBe(true);
+    expect(body.chunks).toHaveLength(2);
   });
 });

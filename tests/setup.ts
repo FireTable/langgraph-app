@@ -11,9 +11,9 @@ import { KEK_LENGTH_BYTES } from "@/lib/auth/encryption";
 // are read (and .env.local is intentionally skipped).
 loadEnvConfig(process.cwd());
 
-// Postgres error codes that mean "object already exists" — safe to
+// Postgres error codes that mean "object already exists" or "column dropped by later migration" — safe to
 // ignore when re-running against a possibly-stale test DB.
-const SWALLOW = new Set(["42P07", "42710", "42P06", "42701"]); // duplicate_table / duplicate_object / duplicate_schema / duplicate_column
+const SWALLOW = new Set(["42P07", "42710", "42P06", "42701", "42703"]); // duplicate_table / duplicate_object / duplicate_schema / duplicate_column / undefined_column
 
 async function applyContent(sql: postgres.Sql, content: string) {
   for (const chunk of content.split(/--> statement-breakpoint/g)) {

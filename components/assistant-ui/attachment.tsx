@@ -296,6 +296,7 @@ const MessageAttachmentCard: FC<MessageAttachmentCardProps> = ({ attachment }) =
     const ref = extractKbRefFromFilename(attachment.name);
     return ref?.docId ?? null;
   }, [attachment.name]);
+
   const isKbDoc = kbRefDocId !== null;
   const displayName = useMemo(() => stripKbRefFromFilename(attachment.name), [attachment.name]);
   const typeLabel = useMemo(() => {
@@ -456,6 +457,7 @@ function buildUserMessageAttachments(parts: readonly unknown[]): CompleteAttachm
       // but a different docId would otherwise show two tiles; the same
       // file uploaded twice with no docId change stays as one tile.
       const key = kbRef ? `kb_ref:${kbRef.docId}` : fileName;
+
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({

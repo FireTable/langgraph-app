@@ -120,6 +120,10 @@ export const KbAgentState = new StateSchema({
   processedFiles: z.array(z.custom<ProcessedFile>()).default([]),
   status: z.enum(["pending", "parsing", "success", "failed"]).default("pending"),
   errorMessage: z.string().nullable().default(null),
+  // ponytail: Step 2 3-node topology split fields (ids / names reference arrays, audit §9)
+  entityExtractedChunks: z.array(z.string()).default([]),
+  alignedEntities: z.array(z.string()).default([]),
+  entityEmbeddings: z.array(z.string()).default([]),
 });
 
 export type KbAgentStateShape = {
@@ -131,4 +135,7 @@ export type KbAgentStateShape = {
   processedFiles: ProcessedFile[];
   status: "pending" | "parsing" | "success" | "failed";
   errorMessage: string | null;
+  entityExtractedChunks?: string[];
+  alignedEntities?: string[];
+  entityEmbeddings?: string[];
 };

@@ -8,28 +8,38 @@ import { threads } from "@/lib/threads/schema";
 import {
   kbChunk,
   kbDocument,
+  kbEntity,
   kbFolder,
   kbObservability,
+  kbRelationship,
   type KbChunk,
   type KbDocument,
+  type KbEntity,
   type KbFolder,
   type KbObservability,
+  type KbRelationship,
   type NewKbChunk,
   type NewKbDocument,
+  type NewKbEntity,
   type NewKbFolder,
   type NewKbObservability,
+  type NewKbRelationship,
 } from "./schema";
 
 // Re-export types so consumers don't need a second import line.
 export type {
   KbChunk,
   KbDocument,
+  KbEntity,
   KbFolder,
   KbObservability,
+  KbRelationship,
   NewKbChunk,
   NewKbDocument,
+  NewKbEntity,
   NewKbFolder,
   NewKbObservability,
+  NewKbRelationship,
 };
 
 // ponytail: tx type alias keeps insertKbChunks + withKbTx in sync with
@@ -205,9 +215,6 @@ export async function markFailedKbChunksRetryingByDocumentId(
     .set({
       status: "parsing",
       errorMessage: null,
-      entities: [],
-      relationships: [],
-      themes: [],
     })
     .where(and(eq(kbChunk.documentId, docId), eq(kbChunk.status, "failed")));
 }
@@ -443,31 +450,16 @@ export async function listKbDocumentsGroupedByFolder(
 // doc + its chunks land atomically.
 export async function insertKbChunks(tx: PgTx, rows: NewKbChunk[]): Promise<void> {
   if (rows.length === 0) return;
-  // ponytail: bypass Drizzle's `vector` customType for the embedding
-  // column. The customType's toDriver returns `[1,2,3]`, but postgres.js
-  // sees a JS number[] and encodes it as the PG array literal `1,2,3`
-  // (no brackets), so the server-side `vector_in` parser rejects it with
-  // "Vector contents must start with '['" (SQLSTATE 22P02). We instead
-  // construct the SQL fragment ourselves with the literal already in
-  // pgvector's `[1,2,3]` form, and use postgres.js's `sql` template
-  // (via Drizzle's `tx.execute`) so the cast happens with the right
-  // shape on the wire.
-  //
-  // Single-row INSERT loop also dodges a separate multi-row + pgvector
-  // failure mode that surfaced as a no-SQLSTATE FailedQueryError on
-  // some runs.
   for (const row of rows) {
     const embeddingLiteral = `[${row.embedding.join(",")}]`;
-    const entitiesJson = JSON.stringify(row.entities ?? []);
     await tx.execute(sql`
-      INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, entities)
+      INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding)
       VALUES (
         ${row.id},
         ${row.documentId},
         ${row.ordinal},
         ${row.content},
-        ${embeddingLiteral}::vector,
-        ${entitiesJson}::jsonb
+        ${embeddingLiteral}::vector
       )
     `);
   }
@@ -475,9 +467,6 @@ export async function insertKbChunks(tx: PgTx, rows: NewKbChunk[]): Promise<void
 
 // Resolve a kb_ref to its chunks (in document order) for LLM context.
 export async function findKbChunksByDocumentId(userId: string, docId: string): Promise<KbChunk[]> {
-  // ponytail: per-user filter via JOIN to keep the helper self-contained
-  // — callers don't have to remember to scope by userId. Returns [] for
-  // cross-user ids, which the resolver turns into "not found".
   return db
     .select({ chunk: kbChunk })
     .from(kbChunk)
@@ -487,47 +476,126 @@ export async function findKbChunksByDocumentId(userId: string, docId: string): P
     .then((rows) => rows.map((r) => r.chunk));
 }
 
-// Slim variant for the Settings → KB doc-detail payload: skip the 1536-dim
-// embedding array (6 KB per chunk) and the generated `tsv` column. The
-// preview UI just needs the text + extracted entities + per-chunk status
-// (so a failed entity extract is visibly distinct from a successful one).
+// Slim variant for the Settings → KB doc-detail payload.
+// ponytail: per-chunk entities/relationships come from the new
+// `kb_entity` / `kb_relationship` tables joined on `source_chunk_ids @>`
+// ARRAY[chunkId]` (audit §8 — dropped the jsonB columns on kb_chunk in
+// migration 0012; the doc-detail contract keeps the same shape the UI
+// expects so chunks carry their graph payload without an extra fetch).
 export type KbChunkPreview = {
   ordinal: number;
   content: string;
+  status: "pending" | "parsing" | "success" | "failed";
+  errorMessage: string | null;
   entities: Array<{ name: string; type: string; description: string }>;
   relationships: Array<{ source: string; target: string; relation: string; description: string }>;
   themes: string[];
-  status: "pending" | "parsing" | "success" | "failed";
-  errorMessage: string | null;
 };
 
 export async function findKbChunksContentByDocumentId(
   userId: string,
   docId: string,
 ): Promise<KbChunkPreview[]> {
-  return db
+  const chunks = await db
     .select({
+      id: kbChunk.id,
       ordinal: kbChunk.ordinal,
       content: kbChunk.content,
-      entities: kbChunk.entities,
-      relationships: kbChunk.relationships,
-      themes: kbChunk.themes,
       status: kbChunk.status,
       errorMessage: kbChunk.errorMessage,
     })
     .from(kbChunk)
     .innerJoin(kbDocument, eq(kbChunk.documentId, kbDocument.id))
     .where(and(eq(kbDocument.userId, userId), eq(kbChunk.documentId, docId)))
-    .orderBy(asc(kbChunk.ordinal))
-    .then((rows) => rows);
+    .orderBy(asc(kbChunk.ordinal));
+
+  if (chunks.length === 0) return [];
+
+  // Pull every entity / relationship whose source_chunk_ids contains
+  // any of this doc's chunk ids. We do it in two bulk queries (entity
+  // + relationship) instead of N+1 per-chunk. The Postgres `&&`
+  // operator on text[] returns true when arrays overlap.
+  const chunkIds = chunks.map((c) => c.id);
+  const chunkIdArrayLiteral = `{${chunkIds.map((id) => `"${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
+
+  const entityRows = await db.execute<{
+    name: string;
+    type: string;
+    description: string;
+    source_chunk_ids: string[];
+    themes: string[];
+  }>(sql`
+    SELECT name, type, description, source_chunk_ids, themes
+    FROM kb_entity
+    WHERE user_id = ${userId}
+      AND document_id = ${docId}
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+
+  const relationshipRows = await db.execute<{
+    source: string;
+    target: string;
+    relation: string;
+    description: string;
+    source_chunk_ids: string[];
+  }>(sql`
+    SELECT source, target, relation, description, source_chunk_ids
+    FROM kb_relationship
+    WHERE user_id = ${userId}
+      AND document_id = ${docId}
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+
+  // Index entities / relationships by chunk id for O(1) lookup. Same
+  // entity / relationship can appear in many chunks (canonical merge
+  // dedupes by name), so we de-dupe per chunk before assignment.
+  // Themes are also unioned across all entities referencing a chunk
+  // — same edge entity can carry different themes from different
+  // LLM extractions, and the front-end chunk row wants the union.
+  const entitiesByChunk = new Map<string, KbChunkPreview["entities"]>();
+  const themesByChunk = new Map<string, Set<string>>();
+  for (const e of entityRows) {
+    for (const cid of e.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = entitiesByChunk.get(cid) ?? [];
+      if (!bucket.some((x) => x.name === e.name)) {
+        bucket.push({ name: e.name, type: e.type, description: e.description ?? "" });
+      }
+      entitiesByChunk.set(cid, bucket);
+      const themeSet = themesByChunk.get(cid) ?? new Set<string>();
+      for (const t of e.themes ?? []) themeSet.add(t);
+      themesByChunk.set(cid, themeSet);
+    }
+  }
+  const relsByChunk = new Map<string, KbChunkPreview["relationships"]>();
+  for (const r of relationshipRows) {
+    for (const cid of r.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = relsByChunk.get(cid) ?? [];
+      const key = `${r.source}|${r.target}|${r.relation}`;
+      if (!bucket.some((x) => `${x.source}|${x.target}|${x.relation}` === key)) {
+        bucket.push({
+          source: r.source,
+          target: r.target,
+          relation: r.relation,
+          description: r.description ?? "",
+        });
+      }
+      relsByChunk.set(cid, bucket);
+    }
+  }
+
+  return chunks.map((c) => ({
+    ordinal: c.ordinal,
+    content: c.content,
+    status: c.status,
+    errorMessage: c.errorMessage,
+    entities: entitiesByChunk.get(c.id) ?? [],
+    relationships: relsByChunk.get(c.id) ?? [],
+    themes: Array.from(themesByChunk.get(c.id) ?? []),
+  }));
 }
 
-// ponytail: per-chunk state writes — companion to kb_document.status.
-// chunkEmbedStoreNode writes these in the same pipeline that
-// finalizes kb_document.status="success", so a transient chunk
-// failure never blocks the parent doc from landing at success
-// (matches the goal: chunks are derived data, the doc's status
-// reflects only the OCR + pages phase).
 export async function markKbChunkSuccess(chunkId: string): Promise<void> {
   await db
     .update(kbChunk)
@@ -539,14 +607,6 @@ export async function markKbChunkFailed(chunkId: string, errorMessage: string): 
   await db.update(kbChunk).set({ status: "failed", errorMessage }).where(eq(kbChunk.id, chunkId));
 }
 
-// ponytail: bulk status flip for a doc's chunks. Drives the visible
-// 3-stage chunk lifecycle (pending → parsing → success/failed) —
-// called right BEFORE the entity-LLM dispatch so the UI snapshot
-// captures the "parsing" frame even though the work is short.
-// Caller supplies the tx so this UPDATE participates in the
-// same atomicity envelope as the INSERT (just before this helper),
-// giving polling observers a clean INSERT-then-parsing transition
-// (no intermediate "pending" frame visible from the network).
 export async function markAllKbChunksParsingForDocInTx(tx: PgTx, docId: string): Promise<void> {
   await tx
     .update(kbChunk)
@@ -554,25 +614,22 @@ export async function markAllKbChunksParsingForDocInTx(tx: PgTx, docId: string):
     .where(and(eq(kbChunk.documentId, docId), eq(kbChunk.status, "pending")));
 }
 
-// ponytail: end-of-pipeline per-row updates. The chunks table already
-// has content + embedding (written by insertKbChunks at the start);
-// these UPDATEs back-fill the entity list + finalise status. Two
-// separate columns + status so we don't have to choose between
-// "optimistic row ready before llm" and "at-least-once status flip".
 export async function updateKbChunkForSuccess(
   chunkId: string,
-  out: {
-    entities: Array<{ name: string; type: string; description: string }>;
-    relationships: Array<{ source: string; target: string; relation: string; description: string }>;
-    themes: string[];
+  _out?: {
+    entities?: Array<{ name: string; type: string; description: string }>;
+    relationships?: Array<{
+      source: string;
+      target: string;
+      relation: string;
+      description: string;
+    }>;
+    themes?: string[];
   },
 ): Promise<void> {
   await db
     .update(kbChunk)
     .set({
-      entities: out.entities,
-      relationships: out.relationships,
-      themes: out.themes,
       errorMessage: null,
     })
     .where(eq(kbChunk.id, chunkId));
@@ -582,14 +639,9 @@ export async function updateKbChunkForFailure(
   chunkId: string,
   errorMessage: string,
 ): Promise<void> {
-  // Don't clobber entities — if a previous successful entity
-  // extract landed somewhere (e.g. a partial run), keep it visible.
   await db.update(kbChunk).set({ errorMessage }).where(eq(kbChunk.id, chunkId));
 }
 
-// Counts of failed chunks for a doc — surfaces in the doc-detail
-// dialog so the user sees "23/47 indexed, 2 failed" without
-// having to scroll every chunk row.
 export async function getKbChunkFailureCount(docId: string): Promise<number> {
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -598,11 +650,6 @@ export async function getKbChunkFailureCount(docId: string): Promise<number> {
   return count;
 }
 
-// ponytail: rebuildChunksOnly — flips every chunk for the doc back
-// to 'pending' without touching kb_document. Used by the
-// Settings→Reprocess "Only rebuild chunks (keep OCR result)" toggle
-// so chunk-level failures (entity extract / dim mismatch) can be
-// retried without spending another OCR pass.
 export async function resetKbChunksForReprocess(tx: PgTx, docId: string): Promise<void> {
   await tx
     .update(kbChunk)
@@ -614,35 +661,234 @@ export async function findKbChunksByFolderId(
   userId: string,
   folderId: string,
 ): Promise<KbChunkPreview[]> {
-  return db
+  const chunks = await db
     .select({
+      id: kbChunk.id,
       ordinal: kbChunk.ordinal,
       content: kbChunk.content,
-      entities: kbChunk.entities,
-      relationships: kbChunk.relationships,
-      themes: kbChunk.themes,
       status: kbChunk.status,
       errorMessage: kbChunk.errorMessage,
     })
     .from(kbChunk)
     .innerJoin(kbDocument, eq(kbChunk.documentId, kbDocument.id))
     .where(and(eq(kbDocument.userId, userId), eq(kbDocument.folderId, folderId)))
-    .orderBy(asc(kbChunk.ordinal))
-    .then((rows) => rows);
+    .orderBy(asc(kbChunk.ordinal));
+
+  if (chunks.length === 0) return [];
+
+  // ponytail: same shape as findKbChunksContentByDocumentId, but
+  // scoped across every doc in the folder. The front-end
+  // KnowledgeGraph component dedupes entities / relationships
+  // / themes across chunks itself (per-chunk payload → rollup),
+  // so returning per-chunk data here matches the doc-detail
+  // contract and lets the same UI work for both views.
+  const chunkIds = chunks.map((c) => c.id);
+  const chunkIdArrayLiteral = `{${chunkIds
+    .map((id) => `"${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+    .join(",")}}`;
+
+  const entityRows = await db.execute<{
+    name: string;
+    type: string;
+    description: string;
+    source_chunk_ids: string[];
+    themes: string[];
+  }>(sql`
+    SELECT name, type, description, source_chunk_ids, themes
+    FROM kb_entity
+    WHERE user_id = ${userId}
+      AND document_id IN (SELECT id FROM kb_document WHERE user_id = ${userId} AND folder_id = ${folderId})
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+
+  const relationshipRows = await db.execute<{
+    source: string;
+    target: string;
+    relation: string;
+    description: string;
+    source_chunk_ids: string[];
+  }>(sql`
+    SELECT source, target, relation, description, source_chunk_ids
+    FROM kb_relationship
+    WHERE user_id = ${userId}
+      AND document_id IN (SELECT id FROM kb_document WHERE user_id = ${userId} AND folder_id = ${folderId})
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+
+  const entitiesByChunk = new Map<string, KbChunkPreview["entities"]>();
+  const themesByChunk = new Map<string, Set<string>>();
+  for (const e of entityRows) {
+    for (const cid of e.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = entitiesByChunk.get(cid) ?? [];
+      if (!bucket.some((x) => x.name === e.name)) {
+        bucket.push({ name: e.name, type: e.type, description: e.description ?? "" });
+      }
+      entitiesByChunk.set(cid, bucket);
+      const themeSet = themesByChunk.get(cid) ?? new Set<string>();
+      for (const t of e.themes ?? []) themeSet.add(t);
+      themesByChunk.set(cid, themeSet);
+    }
+  }
+  const relsByChunk = new Map<string, KbChunkPreview["relationships"]>();
+  for (const r of relationshipRows) {
+    for (const cid of r.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = relsByChunk.get(cid) ?? [];
+      const key = `${r.source}|${r.target}|${r.relation}`;
+      if (!bucket.some((x) => `${x.source}|${x.target}|${x.relation}` === key)) {
+        bucket.push({
+          source: r.source,
+          target: r.target,
+          relation: r.relation,
+          description: r.description ?? "",
+        });
+      }
+      relsByChunk.set(cid, bucket);
+    }
+  }
+
+  return chunks.map((c) => ({
+    ordinal: c.ordinal,
+    content: c.content,
+    status: c.status,
+    errorMessage: c.errorMessage,
+    entities: entitiesByChunk.get(c.id) ?? [],
+    relationships: relsByChunk.get(c.id) ?? [],
+    themes: Array.from(themesByChunk.get(c.id) ?? []),
+  }));
+}
+
+// ponytail: Step 3 canonical query helpers for kb_entity & kb_relationship
+export async function findCanonicalEntitiesByDocId(
+  userId: string,
+  docId: string,
+): Promise<KbEntity[]> {
+  return db
+    .select()
+    .from(kbEntity)
+    .where(and(eq(kbEntity.userId, userId), eq(kbEntity.documentId, docId)));
+}
+
+export async function findCanonicalRelationshipsByDocId(
+  userId: string,
+  docId: string,
+): Promise<KbRelationship[]> {
+  return db
+    .select()
+    .from(kbRelationship)
+    .where(and(eq(kbRelationship.userId, userId), eq(kbRelationship.documentId, docId)));
+}
+
+export async function upsertEntityEmbedding(id: string, embedding: number[]): Promise<void> {
+  const embeddingLiteral = `[${embedding.join(",")}]`;
+  await db.execute(sql`
+    UPDATE kb_entity
+    SET embedding = ${embeddingLiteral}::vector,
+        updated_at = NOW()
+    WHERE id = ${id}
+  `);
+}
+
+export async function upsertRelationshipEmbedding(id: string, embedding: number[]): Promise<void> {
+  const embeddingLiteral = `[${embedding.join(",")}]`;
+  await db.execute(sql`
+    UPDATE kb_relationship
+    SET embedding = ${embeddingLiteral}::vector,
+        updated_at = NOW()
+    WHERE id = ${id}
+  `);
+}
+
+export async function updateKbChunkGraphData(
+  _chunkId: string,
+  _entities: Array<{ name: string; type: string; description: string }>,
+  _relationships: Array<{ source: string; target: string; relation: string; description: string }>,
+): Promise<void> {
+  // no-op placeholder for legacy callers
+}
+
+export async function upsertKbEntity(args: {
+  userId: string;
+  documentId: string;
+  name: string;
+  type: string;
+  description: string;
+  chunkId: string;
+  themes?: string[];
+}): Promise<void> {
+  const nameTrim = args.name.trim();
+  if (!nameTrim) return;
+
+  // ponytail: themes union-dedup (audit §15). The new column defaults
+  // to '{}'::text[] when no themes are passed; ON CONFLICT we merge
+  // the incoming themes into the existing array, deduped.
+  const themesArray = Array.from(new Set((args.themes ?? []).map((t) => t.trim()).filter(Boolean)));
+  const themesLiteral =
+    themesArray.length === 0
+      ? sql`'{}'::text[]`
+      : sql`ARRAY[${sql.join(
+          themesArray.map((t) => sql`${t}`),
+          sql`, `,
+        )}]::text[]`;
+
+  const id = `e-${randomUUID()}`;
+  await db.execute(sql`
+    INSERT INTO kb_entity (id, user_id, document_id, name, type, description, source_chunk_ids, themes, created_at, updated_at)
+    VALUES (${id}, ${args.userId}, ${args.documentId}, ${nameTrim}, ${args.type.trim()}, ${args.description.trim()}, ARRAY[${args.chunkId}]::text[], ${themesLiteral}, NOW(), NOW())
+    ON CONFLICT (user_id, document_id, name) DO UPDATE
+    SET source_chunk_ids = CASE
+          WHEN ${args.chunkId} = ANY(kb_entity.source_chunk_ids) THEN kb_entity.source_chunk_ids
+          ELSE array_append(kb_entity.source_chunk_ids, ${args.chunkId})
+        END,
+        themes = ARRAY(SELECT DISTINCT unnest(kb_entity.themes || ${themesLiteral})),
+        updated_at = NOW()
+  `);
+}
+
+export async function upsertKbRelationship(args: {
+  userId: string;
+  documentId: string;
+  source: string;
+  target: string;
+  relation: string;
+  description: string;
+  chunkId: string;
+  themes?: string[];
+}): Promise<void> {
+  const sourceTrim = args.source.trim();
+  const targetTrim = args.target.trim();
+  const relationTrim = args.relation.trim();
+  if (!sourceTrim || !targetTrim || !relationTrim) return;
+
+  const themesArray = Array.from(new Set((args.themes ?? []).map((t) => t.trim()).filter(Boolean)));
+  const themesLiteral =
+    themesArray.length === 0
+      ? sql`'{}'::text[]`
+      : sql`ARRAY[${sql.join(
+          themesArray.map((t) => sql`${t}`),
+          sql`, `,
+        )}]::text[]`;
+
+  const id = `r-${randomUUID()}`;
+  await db.execute(sql`
+    INSERT INTO kb_relationship (id, user_id, document_id, source, target, relation, description, source_chunk_ids, themes, weight, created_at, updated_at)
+    VALUES (${id}, ${args.userId}, ${args.documentId}, ${sourceTrim}, ${targetTrim}, ${relationTrim}, ${args.description.trim()}, ARRAY[${args.chunkId}]::text[], ${themesLiteral}, 1, NOW(), NOW())
+    ON CONFLICT (user_id, document_id, source, target, relation) DO UPDATE
+    SET weight = kb_relationship.weight + 1,
+        source_chunk_ids = CASE
+          WHEN ${args.chunkId} = ANY(kb_relationship.source_chunk_ids) THEN kb_relationship.source_chunk_ids
+          ELSE array_append(kb_relationship.source_chunk_ids, ${args.chunkId})
+        END,
+        themes = ARRAY(SELECT DISTINCT unnest(kb_relationship.themes || ${themesLiteral})),
+        updated_at = NOW()
+  `);
 }
 
 export async function deleteKbDocumentForUser(
   userId: string,
   docId: string,
 ): Promise<KbDocument | null> {
-  // ponytail: one transaction wraps the doc delete + its companion
-  // thread row cleanup. kb_chunk + kb_observability cascade off the
-  // doc row via ON DELETE CASCADE; the threads row has no FK so we
-  // remove it explicitly. Only the docId-derived `kind='kb'` thread
-  // is touched — chat threads (kind='chat') for the same user stay
-  // put even if their ids happen to match (defensive: docId-derived
-  // threadId is docId.strip('d-'), a UUID, so collision is implausible
-  // but the kind filter is the safety belt).
   return db.transaction(async (tx) => {
     const [row] = await tx
       .delete(kbDocument)
@@ -678,20 +924,6 @@ export async function updateKbFolderNameForUser(
     .where(and(eq(kbFolder.id, folderId), eq(kbFolder.userId, userId)))
     .returning();
   return row ?? null;
-}
-
-export async function updateKbChunkGraphData(
-  chunkId: string,
-  entities: Array<{ name: string; type: string; description: string }>,
-  relationships: Array<{ source: string; target: string; relation: string; description: string }>,
-): Promise<void> {
-  await db
-    .update(kbChunk)
-    .set({
-      entities,
-      relationships,
-    })
-    .where(eq(kbChunk.id, chunkId));
 }
 
 // ponytail: KB transaction helper. Wraps Drizzle's transaction so the

@@ -79,22 +79,23 @@ section is the design rationale.
   across all seven source kinds.
 - **`kb_chunk`** — one row per text chunk. Holds the `vector(1024)`
   embedding (BAAI/bge-m3 dim, served by apimart under
-  `OPENAI_EMBEDDING_MODEL`), a generated `tsvector` (English,
-  `to_tsvector('english', content) STORED`) for the BM25 leg, plus
-  `entities` / `relationships` / `themes` JSONB columns seeded by the
-  LLM-driven entity-extract pass.
+  `OPENAI_EMBEDDING_MODEL`), and a generated `tsvector` (language-neutral,
+  `to_tsvector('simple', content) STORED`) for the BM25 leg.
+- **`kb_entity`** — canonical extracted entities per document with 1024-dim
+  vector embeddings for GraphRAG ANN entrypoint retrieval (`name`, `type`,
+  `description`, `source_chunk_ids`, `embedding`).
+- **`kb_relationship`** — extracted graph relationships connecting entity pairs
+  with 1024-dim vector embeddings for GraphRAG global retrieval (`source`, `target`,
+  `relation`, `description`, `source_chunk_ids`, `weight`, `embedding`).
 
-### Indexes (the four that matter)
+### Indexes
 
 - `kb_document_user_contenthash_idx` — **unique** `(user_id, content_hash)`;
   the dedup path (`screenshotNode` probes this on every upload).
-- `kb_chunk_embedding_idx` — HNSW over `embedding vector_cosine_ops`. The
-  dim of the column, the dim of the index operator, and the dim of the
-  embedder must all agree — `pgvector` rejects mismatched inserts with
-  `22P02`.
-- `kb_chunk_tsv_idx` — GIN over the generated `tsvector` (BM25 leg).
-- `kb_chunk_entities_idx` — GIN over `entities jsonb` (entity-overlap
-  leg + Folder Graph seed).
+- `kb_chunk_embedding_idx` — HNSW over `embedding vector_cosine_ops`.
+- `kb_chunk_tsv_idx` — GIN over the generated `tsvector` (`'simple'` BM25 leg).
+- `kb_entity_embedding_idx` — HNSW over `kb_entity.embedding vector_cosine_ops`.
+- `kb_relationship_embedding_idx` — HNSW over `kb_relationship.embedding vector_cosine_ops`.
 
 ### Why an `attachment_id` and not a stored `r2_key`
 

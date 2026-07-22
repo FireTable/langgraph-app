@@ -652,13 +652,6 @@ describe("lib/kb/queries", () => {
       expect(chunks).toHaveLength(2);
       // join sends back both docs' chunks; row shapes preserved
       expect(chunks.map((c) => c.content).sort()).toEqual(["alpha intro", "beta intro"]);
-      expect(chunks[0].entities[0].name).toMatch(/^(alpha|beta)Entity$/);
-      // themes / relationships come back as the column default (insertKbChunks
-      // doesn't persist them today; UI relies on this read shape regardless).
-      expect(Array.isArray(chunks[0].themes)).toBe(true);
-      expect(Array.isArray(chunks[0].relationships)).toBe(true);
-      expect(Array.isArray(chunks[1].themes)).toBe(true);
-      expect(Array.isArray(chunks[1].relationships)).toBe(true);
     });
 
     it("returns empty array for an unknown folder", async () => {

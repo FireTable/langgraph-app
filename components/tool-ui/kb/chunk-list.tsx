@@ -17,7 +17,7 @@ export function KbChunkList({ docs, slot }: { docs: KbDocument[]; slot: string }
 
   if (docs.length === 0) return null;
 
-  const isRerank = docs.some((d) => d.rrfScore > 0.05);
+  const isRerank = docs.some((d) => d.scoreKind === "rerank");
   const visibleDocs = expanded ? docs : docs.slice(0, 3);
   const hasMore = docs.length > 3;
 

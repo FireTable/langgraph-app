@@ -327,10 +327,12 @@ When `?folderId=<id>` is set, the sidebar still lists every folder the user owns
 
 Single-doc detail + slim chunk preview (text content only — no 1024-dim embedding, no generated `tsv` column). The status field drives whether chunks are included: only `success` docs return their parsed content; other statuses return `chunks: []`.
 
-|               |                                                                                                                                                                           |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 200 response  | `{ doc: { id, title, status, errorMessage, contentType, attachmentId, folderId, contentHash, createdAt, updatedAt }, chunks: Array<{ index: number, content: string }> }` |
-| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND`.                                                                                                                                      |
+> **Internal change, same contract.** Post issue #45 (audit §8 / migration `0012_blue_steve_rogers.sql`), per-chunk `entities` / `relationships` / `themes` are no longer stored on `kb_chunk` — they're JOINed server-side from the new `kb_entity` / `kb_relationship` tables via `source_chunk_ids && ARRAY[chunkId]` (`lib/kb/queries.ts:findKbChunksContentByDocumentId`). The chunk shape returned here is unchanged so the Settings → KB doc-detail UI reads them transparently.
+
+|               |                                                                                                                                                                                                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 200 response  | `{ doc: { id, title, status, errorMessage, contentType, attachmentId, folderId, contentHash, createdAt, updatedAt }, chunks: Array<{ ordinal: number, content: string, status, errorMessage, entities: Array<{name,type,description}>, relationships: Array<{source,target,relation,description}>, themes: string[] }> }` |
+| Failure codes | 401 `UNAUTHORIZED`. 404 `NOT_FOUND`.                                                                                                                                                                                                                                                                                      |
 
 ### `DELETE /api/kb/documents/[id]`
 

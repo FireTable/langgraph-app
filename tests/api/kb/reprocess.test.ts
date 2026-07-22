@@ -167,10 +167,10 @@ describe("POST /api/kb/documents/[id]/reprocess", () => {
     // deletion can be observed — content + embedding shapes are
     // irrelevant.
     await db.execute(
-      sql`INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, entities)
+      sql`INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, status)
           VALUES
-            ('c-old-1', 'd-1', 0, 'old chunk 1', ${embeddingLiteral}, '[]'::jsonb),
-            ('c-old-2', 'd-1', 1, 'old chunk 2', ${embeddingLiteral}, '[]'::jsonb)`,
+            ('c-old-1', 'd-1', 0, 'old chunk 1', ${embeddingLiteral}, 'success'),
+            ('c-old-2', 'd-1', 1, 'old chunk 2', ${embeddingLiteral}, 'success')`,
     );
 
     const res = await POST(newRequest(), ctxModel("d-1"));
@@ -208,20 +208,12 @@ describe("POST /api/kb/documents/[id]/reprocess", () => {
     await seedDoc({ userId: USER_A.id, status: "success" });
 
     await db.execute(
-      sql`INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, entities, relationships, themes, status, error_message)
+      sql`INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, status, error_message)
           VALUES
-            ('c-ok-1', 'd-1', 0, 'good chunk 1', ${embeddingLiteral}, '[]'::jsonb, '[]'::jsonb, '{}'::text[], 'success', NULL),
-            ('c-ok-2', 'd-1', 1, 'good chunk 2', ${embeddingLiteral}, '[]'::jsonb, '[]'::jsonb, '{}'::text[], 'success', NULL),
-            ('c-bad-1', 'd-1', 2, 'bad chunk 1', ${embeddingLiteral},
-              '[{"name":"Alice","type":"Person","description":"old"}]'::jsonb,
-              '[{"source":"Alice","target":"Bob","relation":"knows","description":"old"}]'::jsonb,
-              ARRAY['#old-theme-1','#old-theme-2'],
-              'failed', 'embed timeout'),
-            ('c-bad-2', 'd-1', 3, 'bad chunk 2', ${embeddingLiteral},
-              '[{"name":"Carol","type":"Person","description":"old"}]'::jsonb,
-              '[{"source":"Carol","target":"Dave","relation":"likes","description":"old"}]'::jsonb,
-              ARRAY['#old-theme-3'],
-              'failed', 'llm 502')`,
+            ('c-ok-1', 'd-1', 0, 'good chunk 1', ${embeddingLiteral}, 'success', NULL),
+            ('c-ok-2', 'd-1', 1, 'good chunk 2', ${embeddingLiteral}, 'success', NULL),
+            ('c-bad-1', 'd-1', 2, 'bad chunk 1', ${embeddingLiteral}, 'failed', 'embed timeout'),
+            ('c-bad-2', 'd-1', 3, 'bad chunk 2', ${embeddingLiteral}, 'failed', 'llm 502')`,
     );
 
     const req = new Request(
@@ -269,15 +261,9 @@ describe("POST /api/kb/documents/[id]/reprocess", () => {
     const bad1 = byId.get("c-bad-1");
     expect(bad1?.status).toBe("parsing");
     expect(bad1?.errorMessage).toBeNull();
-    expect(bad1?.entities).toEqual([]);
-    expect(bad1?.relationships).toEqual([]);
-    expect(bad1?.themes).toEqual([]);
     const bad2 = byId.get("c-bad-2");
     expect(bad2?.status).toBe("parsing");
     expect(bad2?.errorMessage).toBeNull();
-    expect(bad2?.entities).toEqual([]);
-    expect(bad2?.relationships).toEqual([]);
-    expect(bad2?.themes).toEqual([]);
 
     expect(mockRunsCreate).toHaveBeenCalledTimes(1);
     const [_threadId, assistantId, payload] = mockRunsCreate.mock.calls[0];

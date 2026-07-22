@@ -8,7 +8,8 @@ export type KbDocument = {
   pageNumbers: number[];
   content: string;
   rrfScore: number;
-  legsHit: Array<"kw" | "vec" | "tag" | "full">;
+  scoreKind?: "rrf" | "rerank";
+  legsHit: Array<"kw" | "vec" | "tag" | "rel" | "entity" | "graph" | "full">;
 };
 
 export type KbToolResult = {

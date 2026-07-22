@@ -72,9 +72,9 @@ const vector = customType<{ data: number[]; driverData: string }>({
 // so the SELECT path reads the computed column without us trying to
 // write to it. Writes go through INSERT with only `content`; the rest
 // is the DB's job.
-const tsvectorEnglish = customType<{ data: string; driverData: string }>({
+const tsvectorSimple = customType<{ data: string; driverData: string }>({
   dataType() {
-    return "tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED";
+    return "tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED";
   },
 });
 
@@ -140,8 +140,8 @@ export const kbDocument = pgTable(
 );
 
 // Chunks produced by kbAgent.chunkEmbedStoreNode. Embeddings stored as
-// pgvector; `tsv` is a generated tsvector column (English) used by the
-// BM25 leg. v3 retrieval tools will hit both columns; v2 just stores.
+// pgvector; `tsv` is a generated tsvector column (simple) used by the
+// BM25 leg.
 export const kbChunk = pgTable(
   "kb_chunk",
   {
@@ -152,26 +152,12 @@ export const kbChunk = pgTable(
     ordinal: integer("ordinal").notNull(),
     content: text("content").notNull(),
     embedding: vector("embedding").notNull(),
-    tsv: tsvectorEnglish("tsv").notNull(),
-    entities: jsonb("entities")
-      .$type<Array<{ name: string; type: string; description: string }>>()
-      .notNull()
-      .default([]),
-    relationships: jsonb("relationships")
-      .$type<Array<{ source: string; target: string; relation: string; description: string }>>()
-      .notNull()
-      .default([]),
-    themes: text("themes")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
+    tsv: tsvectorSimple("tsv").notNull(),
     // ponytail: per-chunk status — independent of kb_document.status so
     // a failed entity extract can mark a single chunk failed without
     // downgrading the whole document. Default 'pending' so freshly
     // inserted chunks are visible to the UI before the embedding
-    // pass completes. The legacy migration sets DEFAULT 'success'
-    // (NOT 'pending') so existing rows stay searchable — see
-    // 0008_*.sql for the rationale.
+    // pass completes.
     status: kbChunkStatusEnum("status").notNull().default("pending"),
     errorMessage: text("error_message"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -183,9 +169,91 @@ export const kbChunk = pgTable(
     index("kb_chunk_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
     // GIN over the generated tsvector for BM25-style full-text lookup.
     index("kb_chunk_tsv_idx").using("gin", t.tsv),
-    // GIN over extracted entities — graphRAG seed queries.
-    index("kb_chunk_entities_idx").using("gin", t.entities),
-    index("kb_chunk_themes_idx").using("gin", t.themes),
+  ],
+);
+
+// ponytail: Step 3 (audit §8) GraphRAG entity table. Stores extracted
+// canonical entities with embeddings for GraphRAG ANN entrypoints.
+export const kbEntity = pgTable(
+  "kb_entity",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => kbDocument.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: text("type").notNull(),
+    description: text("description").notNull(),
+    sourceChunkIds: text("source_chunk_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    // ponytail: themes migrated from kb_chunk.themes (audit §8). Theme
+    // is an entity property, not a chunk property. Default empty
+    // array — `upsertKbEntity` does union-merge on conflict.
+    themes: text("themes")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    embedding: vector("embedding"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("kb_entity_user_doc_name_idx").on(t.userId, t.documentId, t.name),
+    index("kb_entity_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    index("kb_entity_user_name_idx").on(t.userId, t.name),
+    index("kb_entity_document_idx").on(t.documentId),
+  ],
+);
+
+// ponytail: Step 3 (audit §8) GraphRAG relationship table. Stores directed
+// relationships connecting entities with embeddings for GraphRAG ANN entrypoints.
+export const kbRelationship = pgTable(
+  "kb_relationship",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => kbDocument.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    target: text("target").notNull(),
+    relation: text("relation").notNull(),
+    description: text("description").notNull(),
+    sourceChunkIds: text("source_chunk_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    // ponytail: themes migrated from kb_chunk.themes (audit §8). Theme
+    // is a relationship-edge property, not a chunk property.
+    // Default empty array — `upsertKbRelationship` does union-merge.
+    themes: text("themes")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    weight: integer("weight").notNull().default(1),
+    embedding: vector("embedding"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("kb_relationship_user_doc_str_idx").on(
+      t.userId,
+      t.documentId,
+      t.source,
+      t.target,
+      t.relation,
+    ),
+    index("kb_relationship_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    index("kb_relationship_user_source_idx").on(t.userId, t.documentId, t.source),
+    index("kb_relationship_user_target_idx").on(t.userId, t.documentId, t.target),
+    index("kb_relationship_document_idx").on(t.documentId),
   ],
 );
 
@@ -195,6 +263,10 @@ export type KbDocument = typeof kbDocument.$inferSelect;
 export type NewKbDocument = typeof kbDocument.$inferInsert;
 export type KbChunk = typeof kbChunk.$inferSelect;
 export type NewKbChunk = typeof kbChunk.$inferInsert;
+export type KbEntity = typeof kbEntity.$inferSelect;
+export type NewKbEntity = typeof kbEntity.$inferInsert;
+export type KbRelationship = typeof kbRelationship.$inferSelect;
+export type NewKbRelationship = typeof kbRelationship.$inferInsert;
 
 // ponytail: per-kbAgent-invocation observability event. Every kbAgent run
 // (standalone via fireIngestionRun OR chat subgraph via mainAgent) inserts
