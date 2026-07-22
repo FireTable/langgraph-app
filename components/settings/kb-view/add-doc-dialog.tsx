@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { buildAcceptAttribute, formatAcceptList } from "@/lib/kb/source-kind";
-import { handleAddDoc, TOAST_DESCRIPTION_CLASS } from "./helpers";
+import { handleAddDoc, handleAddMultipleDocs, TOAST_DESCRIPTION_CLASS } from "./helpers";
 
 // ponytail: single entry point for adding a doc — Upload File on top,
 // From URL below. accept comes from window.__CONFIG__ so the
@@ -50,6 +50,9 @@ export function AddDocDialog({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [url, setUrl] = useState("");
   const [fileSubmitting, setFileSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ completed: number; total: number } | null>(
+    null,
+  );
   const [urlSubmitting, setUrlSubmitting] = useState(false);
   const [accept] = useState(() => readAllowedAccept());
   const [supportedLabels] = useState(() => readSupportedLabels());
@@ -93,18 +96,25 @@ export function AddDocDialog({
 
   const onFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
+      const files = Array.from(e.target.files ?? []);
       e.target.value = "";
-      if (!file || !folderId) return;
+      if (files.length === 0 || !folderId) return;
       setFileSubmitting(true);
+      setUploadProgress(null);
       try {
-        // ponytail: only close the dialog when handleAddDoc actually
-        // succeeded — on failure it has already toasted the error and
-        // the user needs to retry without losing context.
-        const ok = await handleAddDoc(file, folderId, () => onSuccess?.());
-        if (ok) onOpenChange(false);
+        // ponytail: only close the dialog when handleAddMultipleDocs actually
+        // succeeded at least one file — on total failure it has already toasted
+        // the error and the user needs to retry without losing context.
+        const { successCount } = await handleAddMultipleDocs(
+          files,
+          folderId,
+          () => onSuccess?.(),
+          (completed, total) => setUploadProgress({ completed, total }),
+        );
+        if (successCount > 0) onOpenChange(false);
       } finally {
         setFileSubmitting(false);
+        setUploadProgress(null);
       }
     },
     [folderId, onOpenChange, onSuccess],
@@ -160,17 +170,18 @@ export function AddDocDialog({
         <DialogHeader>
           <DialogTitle>Add to Knowledge Base</DialogTitle>
           <DialogDescription>
-            Upload a file or fetch a URL. All supported types are parsed automatically.
+            Upload files or fetch a URL. All supported types are parsed automatically.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
           <section className="flex flex-col gap-2">
-            <Label htmlFor="kb-add-file">Upload File</Label>
+            <Label htmlFor="kb-add-file">Upload Files</Label>
             <input
               id="kb-add-file"
               ref={fileInputRef}
               type="file"
+              multiple
               className="hidden"
               accept={accept}
               onChange={onFileChange}
@@ -185,12 +196,14 @@ export function AddDocDialog({
               {fileSubmitting ? (
                 <>
                   <Spinner />
-                  Uploading…
+                  {uploadProgress && uploadProgress.total > 1
+                    ? `Uploading (${uploadProgress.completed}/${uploadProgress.total})…`
+                    : "Uploading…"}
                 </>
               ) : (
                 <>
                   <Upload className="size-3.5" aria-hidden />
-                  Choose file
+                  Choose file(s)
                 </>
               )}
             </Button>

@@ -46,11 +46,15 @@ export async function sha256Hex(file: File): Promise<string | undefined> {
   }
 }
 
-export async function handleAddDoc(
+export type UploadDocResult =
+  | { status: "queued"; docTitle: string }
+  | { status: "deduped"; docTitle: string }
+  | { status: "error"; title: string; description: string };
+
+export async function processSingleDocUpload(
   file: File,
   folderId: string,
-  onRefresh: () => Promise<void> | void,
-): Promise<boolean> {
+): Promise<UploadDocResult> {
   try {
     const sha = await sha256Hex(file);
     const presignRes = await fetch("/api/attachments/presign", {
@@ -96,30 +100,112 @@ export async function handleAddDoc(
     }
     if (uploadRes.status === 200) {
       const body = (await uploadRes.json()) as { deduped?: boolean; doc?: { title?: string } };
-      if (body.deduped) {
-        toast.info("Already in knowledge base", {
-          descriptionClassName: TOAST_DESCRIPTION_CLASS,
-          description: `「${body.doc?.title ?? file.name}」was previously uploaded — skipped duplicate.`,
-        });
-      }
-    } else if (uploadRes.status === 202) {
+      return { status: "deduped", docTitle: body.doc?.title ?? file.name };
+    } else {
       const body = (await uploadRes.json()) as { doc?: { title?: string } };
-      toast.success("Upload queued", {
-        descriptionClassName: TOAST_DESCRIPTION_CLASS,
-        description: `「${body.doc?.title ?? file.name}」is being ingested. Status will flip Pending → Parsing → Ready.`,
-      });
+      return { status: "queued", docTitle: body.doc?.title ?? file.name };
     }
-    void onRefresh();
-    return true;
   } catch (err) {
     console.error("Add Doc failed", err);
     const { title, description } = describeAddDocError(err, file.name);
-    toast.error(title, {
-      descriptionClassName: TOAST_DESCRIPTION_CLASS,
-      description,
-    });
-    return false;
+    return { status: "error", title, description };
   }
+}
+
+export async function handleAddDoc(
+  file: File,
+  folderId: string,
+  onRefresh: () => Promise<void> | void,
+): Promise<boolean> {
+  const result = await processSingleDocUpload(file, folderId);
+  if (result.status === "deduped") {
+    toast.info("Already in knowledge base", {
+      descriptionClassName: TOAST_DESCRIPTION_CLASS,
+      description: `「${result.docTitle}」was previously uploaded — skipped duplicate.`,
+    });
+    void onRefresh();
+    return true;
+  }
+  if (result.status === "queued") {
+    toast.success("Upload queued", {
+      descriptionClassName: TOAST_DESCRIPTION_CLASS,
+      description: `「${result.docTitle}」is being ingested. Status will flip Pending → Parsing → Ready.`,
+    });
+    void onRefresh();
+    return true;
+  }
+  toast.error(result.title, {
+    descriptionClassName: TOAST_DESCRIPTION_CLASS,
+    description: result.description,
+  });
+  return false;
+}
+
+export async function handleAddMultipleDocs(
+  files: File[],
+  folderId: string,
+  onRefresh: () => Promise<void> | void,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<{ successCount: number; failCount: number }> {
+  if (files.length === 0) return { successCount: 0, failCount: 0 };
+  if (files.length === 1) {
+    const ok = await handleAddDoc(files[0], folderId, onRefresh);
+    return { successCount: ok ? 1 : 0, failCount: ok ? 0 : 1 };
+  }
+
+  let completed = 0;
+  onProgress?.(0, files.length);
+
+  const results: UploadDocResult[] = [];
+  const CONCURRENCY = 3;
+
+  let index = 0;
+  const workers = Array.from({ length: Math.min(CONCURRENCY, files.length) }, async () => {
+    while (index < files.length) {
+      const currentIndex = index++;
+      const res = await processSingleDocUpload(files[currentIndex], folderId);
+      results[currentIndex] = res;
+      completed++;
+      onProgress?.(completed, files.length);
+      if (res.status === "queued" || res.status === "deduped") {
+        void onRefresh();
+      }
+    }
+  });
+
+  await Promise.all(workers);
+
+  const queuedCount = results.filter((r) => r.status === "queued").length;
+  const dedupedCount = results.filter((r) => r.status === "deduped").length;
+  const failCount = results.filter((r) => r.status === "error").length;
+  const successCount = queuedCount + dedupedCount;
+
+  if (failCount === 0) {
+    if (dedupedCount === files.length) {
+      toast.info("All files already in knowledge base", {
+        descriptionClassName: TOAST_DESCRIPTION_CLASS,
+        description: `Skipped ${files.length} duplicate file(s).`,
+      });
+    } else {
+      toast.success("Batch upload queued", {
+        descriptionClassName: TOAST_DESCRIPTION_CLASS,
+        description: `${queuedCount} file(s) uploaded & queued for ingestion${dedupedCount > 0 ? ` (${dedupedCount} duplicate(s) skipped)` : ""}. Status will flip Pending → Parsing → Ready.`,
+      });
+    }
+  } else if (successCount > 0) {
+    toast.warning("Batch upload completed with errors", {
+      descriptionClassName: TOAST_DESCRIPTION_CLASS,
+      description: `${successCount} file(s) queued for ingestion, ${failCount} file(s) failed to upload.`,
+    });
+  } else {
+    toast.error("Batch upload failed", {
+      descriptionClassName: TOAST_DESCRIPTION_CLASS,
+      description: `All ${files.length} file(s) failed to upload. Check error logs for details.`,
+    });
+  }
+
+  void onRefresh();
+  return { successCount, failCount };
 }
 
 // ponytail: parse the API's structured error body (`{code, message?, ...}`)

@@ -1,7 +1,7 @@
 import "@/tests/frontend/setup";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { handleAddDoc } from "@/components/settings/kb-view/helpers";
+import { handleAddDoc, handleAddMultipleDocs } from "@/components/settings/kb-view/helpers";
 
 // ponytail: handleAddDoc used to swallow every error with a plain
 // `console.error` — the user clicked "Choose file" on a too-big PDF,
@@ -12,6 +12,7 @@ import { handleAddDoc } from "@/components/settings/kb-view/helpers";
 const toast = vi.hoisted(() => ({
   info: vi.fn(),
   success: vi.fn(),
+  warning: vi.fn(),
   error: vi.fn(),
 }));
 
@@ -43,6 +44,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   toast.info.mockReset();
   toast.success.mockReset();
+  toast.warning.mockReset();
   toast.error.mockReset();
 });
 
@@ -210,5 +212,105 @@ describe("handleAddDoc error surfacing", () => {
 
     expect(ok).toBe(true);
     expect(toast.info).toHaveBeenCalledWith("Already in knowledge base", expect.any(Object));
+  });
+});
+
+describe("handleAddMultipleDocs batch uploads", () => {
+  beforeEach(() => {
+    vi.spyOn(crypto.subtle, "digest").mockResolvedValue(new ArrayBuffer(32));
+  });
+
+  it("uploads multiple files, reports progress, and toasts batch success", async () => {
+    const file1 = makeFile("doc1.pdf", "application/pdf", 100);
+    const file2 = makeFile("doc2.md", "text/markdown", 50);
+
+    let attCounter = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "/api/attachments/presign") {
+          attCounter++;
+          return jsonResponse(201, {
+            id: `att-${attCounter}`,
+            uploadUrl: `https://r2.example/upload/${attCounter}`,
+            uploadHeaders: { "Content-Type": "application/octet-stream" },
+            publicUrl: `https://cdn.example/file${attCounter}`,
+          });
+        }
+        if (url.startsWith("https://r2.example/upload/")) return emptyResponse(200);
+        if (url.includes("/confirm")) return emptyResponse(200);
+        if (url === "/api/kb/upload") {
+          return jsonResponse(202, { doc: { title: `doc${attCounter}` } });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+
+    const progressCalls: Array<[number, number]> = [];
+    const refreshFn = vi.fn();
+
+    const { successCount, failCount } = await handleAddMultipleDocs(
+      [file1, file2],
+      FOLDER,
+      refreshFn,
+      (completed, total) => progressCalls.push([completed, total]),
+    );
+
+    expect(successCount).toBe(2);
+    expect(failCount).toBe(0);
+    expect(progressCalls).toContainEqual([0, 2]);
+    expect(progressCalls).toContainEqual([2, 2]);
+    expect(toast.success).toHaveBeenCalledWith(
+      "Batch upload queued",
+      expect.objectContaining({
+        description: expect.stringContaining("2 file(s) uploaded"),
+      }),
+    );
+  });
+
+  it("handles partial failure and toasts warning", async () => {
+    const file1 = makeFile("ok.pdf", "application/pdf", 100);
+    const file2 = makeFile("fail.exe", "application/x-msdownload", 50);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === "/api/attachments/presign") {
+          const body = JSON.parse((init?.body as string) || "{}");
+          if (body.name === "fail.exe") {
+            return jsonResponse(400, { code: "CONTENT_TYPE_NOT_ALLOWED" });
+          }
+          return jsonResponse(201, {
+            id: "att-ok",
+            uploadUrl: "https://r2.example/upload/ok",
+            uploadHeaders: {},
+            publicUrl: "https://cdn.example/ok",
+          });
+        }
+        if (url === "https://r2.example/upload/ok") return emptyResponse(200);
+        if (url === "/api/attachments/att-ok/confirm") return emptyResponse(200);
+        if (url === "/api/kb/upload") {
+          return jsonResponse(202, { doc: { title: "ok.pdf" } });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+
+    const { successCount, failCount } = await handleAddMultipleDocs(
+      [file1, file2],
+      FOLDER,
+      () => {},
+    );
+
+    expect(successCount).toBe(1);
+    expect(failCount).toBe(1);
+    expect(toast.warning).toHaveBeenCalledWith(
+      "Batch upload completed with errors",
+      expect.objectContaining({
+        description: expect.stringContaining("1 file(s) queued for ingestion, 1 file(s) failed"),
+      }),
+    );
   });
 });
