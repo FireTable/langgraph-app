@@ -8,19 +8,19 @@ import {
   splitFileToPageNode,
   pageToMarkdownNode,
   rewriteMessagesNode,
-  entityExtractNode,
-  entityAlignmentNode,
-  entityEmbedNode,
+  chunkExtractNode,
+  chunkAlignmentNode,
+  chunkEmbedNode,
 } from "@/backend/node/kb";
 import type { RunnableConfig } from "@langchain/core/runnables";
 
 // ponytail: chunksEmbedAgent is a SUB-graph that owns the
-// entity extraction → alignment → embedding chain. Parent kbAgent
+// chunk extraction → alignment → embedding chain. Parent kbAgent
 // hangs it as a single node, so by construction the three inner
-// steps run in declared order with no race: entityExtractNode
+// steps run in declared order with no race: chunkExtractNode
 // awaits its per-doc IIFE completion before returning, so
-// entityAlignmentNode sees the rows in kb_entity /
-// kb_relationship, and entityEmbedNode gets the canonical graph
+// chunkAlignmentNode sees the rows in kb_entity /
+// kb_relationship, and chunkEmbedNode gets the canonical graph
 // already aligned.
 //
 // Audit §3 "kbAgent 拆 3 个 node" still holds — these three
@@ -33,13 +33,13 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 // or scopeDump fallback.
 
 export const chunksEmbedAgent = new StateGraph(KbAgentState)
-  .addNode("entityExtract", entityExtractNode)
-  .addNode("entityAlignment", entityAlignmentNode)
-  .addNode("entityEmbed", entityEmbedNode)
-  .addEdge(START, "entityExtract")
-  .addEdge("entityExtract", "entityAlignment")
-  .addEdge("entityAlignment", "entityEmbed")
-  .addEdge("entityEmbed", END)
+  .addNode("chunkExtract", chunkExtractNode)
+  .addNode("chunkAlignment", chunkAlignmentNode)
+  .addNode("chunkEmbed", chunkEmbedNode)
+  .addEdge(START, "chunkExtract")
+  .addEdge("chunkExtract", "chunkAlignment")
+  .addEdge("chunkAlignment", "chunkEmbed")
+  .addEdge("chunkEmbed", END)
   .compile();
 
 function routeAfterRewrite(state: KbAgentStateShape, config: RunnableConfig): string | typeof END {

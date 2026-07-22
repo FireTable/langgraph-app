@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mergeHrOnlyChunks, normalizeLightRagOut } from "@/backend/node/kb/entity-extract-node";
+import { mergeHrOnlyChunks, normalizeLightRagOut } from "@/backend/node/kb/chunk-extract-node";
 
 // ponytail: forward-merge orphan HR chunks. officeparser emits `\n---\n`
 // between sheets/slides/pages; LangChain's MarkdownTextSplitter treats
@@ -8,7 +8,7 @@ import { mergeHrOnlyChunks, normalizeLightRagOut } from "@/backend/node/kb/entit
 // `chunkSize` the splitter cuts AT the rule and emits it as its own
 // chunk. Embedding `---` alone is meaningless — merge forward.
 
-describe("backend/node/kb/entity-extract-node — mergeHrOnlyChunks", () => {
+describe("backend/node/kb/chunk-extract-node — mergeHrOnlyChunks", () => {
   it("passes through plain content unchanged", () => {
     expect(mergeHrOnlyChunks(["alpha", "beta"])).toEqual(["alpha", "beta"]);
   });
@@ -73,7 +73,7 @@ describe("backend/node/kb/entity-extract-node — mergeHrOnlyChunks", () => {
 // the caller (entity-extract-node) writes them to kb_theme via
 // replaceChunkThemes, NOT into the entity / relationship rows.
 
-describe("backend/node/kb/entity-extract-node — normalizeLightRagOut (themes)", () => {
+describe("backend/node/kb/chunk-extract-node — normalizeLightRagOut (themes)", () => {
   it("returns top-level themes as a separate field", () => {
     const out = normalizeLightRagOut({
       entities: [

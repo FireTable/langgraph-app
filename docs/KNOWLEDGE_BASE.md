@@ -57,7 +57,7 @@ section is the design rationale.
 - `kb_doc_status` — `pending | parsing | success | failed`. Lives on
   `kb_document.status`; mirrors the macro OCR + chunk pipeline.
 - `kb_chunk_status` — same four values, independent of the parent doc so
-  a failed entity-extract on one chunk can mark that chunk `failed`
+  a failed chunk-extract on one chunk can mark that chunk `failed`
   without downgrading the whole document (user still sees Ready in the
   table; the doc detail dialog surfaces per-chunk failures).
 
@@ -170,7 +170,7 @@ Upload ─▶ parse ────┤
    over the joined page markdown. Chunk size is `KB_CHUNK_MAX_CHARS`
    (default 2000). Rows are inserted with `embedding = NULL` (migration
    `0015_romantic_sir_ram.sql`) — chunk vectors are written by
-   `entity-embed-node.ts` AFTER alignment so the bge-m3 vector can
+   `chunk-embed-node.ts` AFTER alignment so the bge-m3 vector can
    capture post-alignment canonical names (LightRAG augmented text,
    see step 5).
 4. **Entity Extraction** — For each chunk, the LLM extracts entities
@@ -180,7 +180,7 @@ Upload ─▶ parse ────┤
    tables (rows link back to chunks via `source_chunk_ids: text[]`)
    and `kb_theme` (one row per `(chunk_id, name)`). The tag leg
    reads entities / themes; the Folder Graph dedupes per chunk.
-5. **Vector Generation + Alignment** — `entity-embed-node.ts` runs
+5. **Vector Generation + Alignment** — `chunk-embed-node.ts` runs
    THREE legs in one pass:
    - **Chunk leg** — LightRAG-style augmented text
      `content + Entities: ... + Relationships: ... + Themes: ...`
@@ -373,13 +373,13 @@ section is the design rationale.
 | `full` (default)    | OCR / chunking is stale or wrong             | PDF render + OCR + chunk + embed + extract  | `parsing` → `success` / `failed` |
 | `chunksOnly`        | pages cache is good, chunks are stale        | chunk + embed + extract on the cached pages | stays `success`                  |
 | `retryFailed`       | some pages failed OCR                        | failed pages only + full re-chunk           | flips to `parsing`               |
-| `retryFailedChunks` | entity-extract failed on a handful of chunks | failed chunks only (in-place UPDATE)        | **stays `success`**              |
+| `retryFailedChunks` | chunk-extract failed on a handful of chunks | failed chunks only (in-place UPDATE)        | **stays `success`**              |
 
 Key invariant: `retryFailedChunks` does **not** touch `doc.status` and
 does **not** DELETE chunks. Failed chunks are marked `status='parsing'`
 in place (id, ordinal, embedding, content all preserved), so the
 IIFE inside `kbAgent.generateChunkEmbedNode` finds them by
-`status='parsing'` and re-runs entity-extract per row. DELETE+INSERT
+`status='parsing'` and re-runs chunk-extract per row. DELETE+INSERT
 here was the wrong design — `pageToMarkdownNode` skips under chunksOnly
 / retryFailed modes, so `fullMarkdown` is empty, the IIFE throws, and
 the DELETE has already committed, leaving the doc with N−K chunks and
@@ -442,7 +442,7 @@ a fifth mode means updating the enum in `state.ts` AND
   that row only. `kb_document.status` stays `success`. The doc table
   shows the doc as Ready; the doc detail dialog surfaces the chunk
   count breakdown (`Indexed N/M` + a failed badge). Pick
-  `retryFailedChunks` to re-run entity-extract in place.
+  `retryFailedChunks` to re-run chunk-extract in place.
 - **Embed failure on the whole doc** — `kb_document.status='failed'`
   with `error_message` set. Reprocess (`full`) re-runs the whole
   pipeline. `retryFailedChunks` returns 409 `NOT_READY` because the doc

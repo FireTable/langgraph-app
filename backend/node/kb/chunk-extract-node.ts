@@ -148,7 +148,7 @@ export function mergeHrOnlyChunks(texts: string[]): string[] {
   return out;
 }
 
-export async function entityExtractNode(
+export async function chunkExtractNode(
   state: KbAgentStateShape,
   config?: RunnableConfig,
 ): Promise<Partial<KbAgentStateShape>> {
@@ -171,7 +171,7 @@ export async function entityExtractNode(
         const docId = pf.docId;
         const userId = state.userId;
 
-        console.log(`[kbAgent] Starting entityExtract task for docId=${docId}`);
+        console.log(`[kbAgent] Starting chunkExtract task for docId=${docId}`);
         const work = (async () => {
           try {
             type ChunkInput = { id: string; ordinal: number; content: string };
@@ -223,8 +223,8 @@ export async function entityExtractNode(
               }
 
               // ponytail: chunk rows are inserted with embedding=NULL —
-              // chunk embedding is now entity-embed-node's job (runs
-              // after entityAlignmentNode so vectors can include the
+              // chunk embedding is now chunk-embed-node's job (runs
+              // after chunkAlignmentNode so vectors can include the
               // graph metadata for the chunk: entities + relationships
               // + themes, in lightRAG dual-level organization). This
               // node is now pure LLM extraction — owns the LLM cost
@@ -262,7 +262,7 @@ export async function entityExtractNode(
                 await markAllKbChunksParsingForDocInTx(tx, docId);
               });
               console.log(
-                `[kbAgent] Background task: successfully inserted ${texts.length} chunks for docId=${docId} (embedding deferred to entityEmbedNode)`,
+                `[kbAgent] Background task: successfully inserted ${texts.length} chunks for docId=${docId} (embedding deferred to chunkEmbedNode)`,
               );
             }
 
@@ -295,7 +295,7 @@ export async function entityExtractNode(
 
                     // ponytail: per-chunk appLevelCanonical fallback
                     // (audit §15). When LLM alignment later runs via
-                    // entityAlignmentNode it folds cross-chunk
+                    // chunkAlignmentNode it folds cross-chunk
                     // variants, but inside ONE chunk we still need
                     // surface-form unification so the unique index
                     // (user_id, document_id, name) doesn't split one
@@ -344,7 +344,7 @@ export async function entityExtractNode(
                   } catch (err) {
                     const msg = err instanceof Error ? (err as any).message : String(err);
                     console.error(
-                      `kbAgent entityExtractNode: chunk ${chunkId} failed (doc ${docId} ordinal ${ordinal}): ${msg}`,
+                      `kbAgent chunkExtractNode: chunk ${chunkId} failed (doc ${docId} ordinal ${ordinal}): ${msg}`,
                       err as any,
                     );
                     try {
@@ -354,7 +354,7 @@ export async function entityExtractNode(
                       ]);
                     } catch (writeErr) {
                       console.error(
-                        `kbAgent entityExtractNode: failed-row write-back itself errored for chunk ${chunkId}:`,
+                        `kbAgent chunkExtractNode: failed-row write-back itself errored for chunk ${chunkId}:`,
                         writeErr,
                       );
                     }
@@ -374,7 +374,7 @@ export async function entityExtractNode(
               ? `${pgErr.code}: ${pgErr.detail ?? pgErr.message}${pgErr.hint ? ` (${pgErr.hint})` : ""}`
               : pgErr.message;
             console.error(
-              `kbAgent entityExtractNode: batch failure for doc ${docId}: ${reason}`,
+              `kbAgent chunkExtractNode: batch failure for doc ${docId}: ${reason}`,
               pgErr,
             );
           }

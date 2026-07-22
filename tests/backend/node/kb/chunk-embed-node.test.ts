@@ -28,7 +28,7 @@ vi.mock("@/lib/kb/queries", () => ({
   upsertChunkEmbedding: (...args: unknown[]) => mockUpsertChunkEmbedding(...args),
 }));
 
-import { entityEmbedNode } from "@/backend/node/kb/entity-embed-node";
+import { chunkEmbedNode } from "@/backend/node/kb/chunk-embed-node";
 import type { KbAgentStateShape } from "@/backend/state";
 
 const baseFile = {
@@ -85,7 +85,7 @@ beforeEach(() => {
   });
 });
 
-describe("entityEmbedNode", () => {
+describe("chunkEmbedNode", () => {
   it("embeds entities and relationships for new docs lacking embeddings", async () => {
     mockFindCanonicalEntities.mockResolvedValueOnce([
       { id: "e-1", name: "AWS", type: "Org", description: "Cloud provider", embedding: null },
@@ -105,7 +105,7 @@ describe("entityEmbedNode", () => {
       .mockResolvedValueOnce([[0.1, 0.2]]) // entity vector
       .mockResolvedValueOnce([[0.3, 0.4]]); // rel vector
 
-    const result = await entityEmbedNode(baseState({ pipelineStatus: "new" } as never));
+    const result = await chunkEmbedNode(baseState({ pipelineStatus: "new" } as never));
 
     expect(result.status).toBe("success");
     expect(result.entityEmbeddings).toEqual(["e-1", "r-1"]);
@@ -143,7 +143,7 @@ describe("entityEmbedNode", () => {
     mockFindCanonicalRelationships.mockResolvedValueOnce([]);
     mockEmbedDocuments.mockResolvedValueOnce([[0.1, 0.2]]);
 
-    const result = await entityEmbedNode(baseState({ pipelineStatus: "new" } as never));
+    const result = await chunkEmbedNode(baseState({ pipelineStatus: "new" } as never));
 
     expect(result.entityEmbeddings).toEqual(["e-1"]);
     expect(mockEmbedDocuments).toHaveBeenCalledTimes(1);
@@ -171,7 +171,7 @@ describe("entityEmbedNode", () => {
     ]);
     mockEmbedDocuments.mockResolvedValueOnce([[0.5, 0.6]]);
 
-    const result = await entityEmbedNode(baseState({ pipelineStatus: "new" } as never));
+    const result = await chunkEmbedNode(baseState({ pipelineStatus: "new" } as never));
 
     expect(result.entityEmbeddings).toEqual(["r-1"]);
     expect(mockEmbedDocuments).toHaveBeenCalledWith([
@@ -195,7 +195,7 @@ describe("entityEmbedNode", () => {
     mockFindCanonicalRelationships.mockResolvedValueOnce([]);
     mockEmbedDocuments.mockResolvedValueOnce([[0.1, 0.2]]);
 
-    await entityEmbedNode(baseState({ pipelineStatus: "new" } as never));
+    await chunkEmbedNode(baseState({ pipelineStatus: "new" } as never));
 
     expect(mockFindKbThemesByChunkIds).not.toHaveBeenCalled();
     expect(mockEmbedDocuments).toHaveBeenCalledWith(["Acme (Org): founded 2020"]);
@@ -209,7 +209,7 @@ describe("entityEmbedNode", () => {
       { id: "r-1", source: "AWS", relation: "PROVIDES", target: "S3", embedding: [0.2] },
     ]);
 
-    const result = await entityEmbedNode(baseState({ pipelineStatus: "new" } as never));
+    const result = await chunkEmbedNode(baseState({ pipelineStatus: "new" } as never));
 
     expect(result.status).toBe("success");
     expect(result.entityEmbeddings).toEqual([]);
@@ -223,7 +223,7 @@ describe("entityEmbedNode", () => {
       errorMessage: "ocr failed",
     } as never);
 
-    const result = await entityEmbedNode(state);
+    const result = await chunkEmbedNode(state);
 
     expect(result.status).toBe("failed");
     expect(mockFindCanonicalEntities).not.toHaveBeenCalled();
@@ -234,10 +234,10 @@ describe("entityEmbedNode", () => {
 // ponytail: chunk-embed leg added — chunk vectors now encode the
 // augmented text (content + per-chunk entities + per-chunk rels +
 // per-chunk themes) so the ANN dense leg matches LightRAG's
-// dual-level concept. entityExtractNode inserts chunks with NULL
-// embedding, entityEmbedNode fills them in after alignment runs.
+// dual-level concept. chunkExtractNode inserts chunks with NULL
+// embedding, chunkEmbedNode fills them in after alignment runs.
 
-describe("entityEmbedNode — chunk leg (lightRAG augmented text)", () => {
+describe("chunkEmbedNode — chunk leg (lightRAG augmented text)", () => {
   it("embeds a fresh chunk with augmented text (content + entities + rels + themes)", async () => {
     mockFindCanonicalEntities.mockResolvedValueOnce([]);
     mockFindCanonicalRelationships.mockResolvedValueOnce([]);
@@ -268,7 +268,7 @@ describe("entityEmbedNode — chunk leg (lightRAG augmented text)", () => {
     mockFindKbThemesByChunkIds.mockResolvedValueOnce(new Map([["c-1", ["Funding", "Market"]]]));
     mockEmbedDocuments.mockResolvedValueOnce([[0.7, 0.8, 0.9]]);
 
-    const result = await entityEmbedNode(
+    const result = await chunkEmbedNode(
       baseState({
         pipelineStatus: "new",
         entityExtractedChunks: ["c-1"],
@@ -292,7 +292,7 @@ describe("entityEmbedNode — chunk leg (lightRAG augmented text)", () => {
     // Simulating a retried chunk: status=success, embedding exists
     // already (older bge-m3 vector), but entityExtractedChunks
     // contains its id because LLM extract re-ran and got new graph
-    // metadata. entityEmbedNode must recompute so the vector reflects
+    // metadata. chunkEmbedNode must recompute so the vector reflects
     // the post-alignment canonical names.
     mockFindCanonicalEntities.mockResolvedValueOnce([]);
     mockFindCanonicalRelationships.mockResolvedValueOnce([]);
@@ -313,7 +313,7 @@ describe("entityEmbedNode — chunk leg (lightRAG augmented text)", () => {
     mockFindKbThemesByChunkIds.mockResolvedValueOnce(new Map());
     mockEmbedDocuments.mockResolvedValueOnce([[0.5, 0.6]]);
 
-    const result = await entityEmbedNode(
+    const result = await chunkEmbedNode(
       baseState({
         pipelineStatus: "parsing",
         entityExtractedChunks: ["c-1"],
@@ -341,7 +341,7 @@ describe("entityEmbedNode — chunk leg (lightRAG augmented text)", () => {
       } as never,
     ]);
 
-    const result = await entityEmbedNode(
+    const result = await chunkEmbedNode(
       baseState({
         pipelineStatus: "new",
         entityExtractedChunks: [],
@@ -373,7 +373,7 @@ describe("entityEmbedNode — chunk leg (lightRAG augmented text)", () => {
       } as never,
     ]);
 
-    const result = await entityEmbedNode(
+    const result = await chunkEmbedNode(
       baseState({
         pipelineStatus: "new",
         entityExtractedChunks: ["c-1"],
@@ -407,7 +407,7 @@ describe("entityEmbedNode — chunk leg (lightRAG augmented text)", () => {
     mockFindKbThemesByChunkIds.mockResolvedValueOnce(new Map());
     mockEmbedDocuments.mockResolvedValueOnce([[0.9]]);
 
-    await entityEmbedNode(
+    await chunkEmbedNode(
       baseState({
         pipelineStatus: "new",
         entityExtractedChunks: ["c-1"],

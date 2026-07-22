@@ -63,12 +63,12 @@ function buildChunkEmbedText(
   return sections.join("\n");
 }
 
-export async function entityEmbedNode(
+export async function chunkEmbedNode(
   state: KbAgentStateShape,
   _config?: RunnableConfig,
 ): Promise<Partial<KbAgentStateShape>> {
   console.log(
-    `[kbAgent] Entering entityEmbedNode, files=`,
+    `[kbAgent] Entering chunkEmbedNode, files=`,
     state.processedFiles.map((p) => ({ docId: p.docId, status: p.pipelineStatus })),
   );
 
@@ -173,7 +173,7 @@ export async function entityEmbedNode(
       }
     }
   } catch (err) {
-    console.error(`kbAgent entityEmbedNode failed:`, err);
+    console.error(`kbAgent chunkEmbedNode failed:`, err);
   }
 
   const hasFailed = state.processedFiles.some((p) => p.pipelineStatus === "failed");

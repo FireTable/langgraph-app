@@ -253,7 +253,7 @@ export const kbRelationship = pgTable(
 // ANN text (audit §13b line 456). Unique on (chunk_id, name) so a
 // retry can ON CONFLICT DO NOTHING instead of producing duplicates.
 //
-// Theme alignment is in-place via entity-alignment-node.ts: the LLM
+// Theme alignment is in-place via chunk-alignment-node.ts: the LLM
 // emits `themeAliases: [{ canonicalName, aliases: [...] }]` and the
 // matching rows in kb_theme have their `name` UPDATE'd to the
 // canonical form (no `canonical_name` column). Original variants

@@ -10,6 +10,9 @@ describe("kbAgent topology (chunksEmbed collapse)", () => {
     // with no race.
     const nodeNames = Object.keys((kbAgent as any).nodes ?? {});
     expect(nodeNames).toContain("chunksEmbedAgent");
+    expect(nodeNames).not.toContain("chunkExtract");
+    expect(nodeNames).not.toContain("chunkAlignment");
+    expect(nodeNames).not.toContain("chunkEmbed");
     expect(nodeNames).not.toContain("entityExtract");
     expect(nodeNames).not.toContain("entityAlignment");
     expect(nodeNames).not.toContain("entityEmbed");

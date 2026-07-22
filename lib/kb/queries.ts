@@ -465,8 +465,8 @@ export async function listKbDocumentsGroupedByFolder(
 }
 
 // ponytail: tx-scoped chunk insert. embedding is nullable in the
-// schema — entity-extract-node writes rows with embedding=NULL,
-// and entity-embed-node later fills them with graph-augmented
+// schema — chunk-extract-node writes rows with embedding=NULL,
+// and chunk-embed-node later fills them with graph-augmented
 // 1024-dim bge-m3 vectors. Kept NULL insert path explicit (not a
 // `0,0,...,0` placeholder) so the HNSW index and dense-leg ANN
 // can trivially skip fresh chunks until their first embed pass.
@@ -850,8 +850,8 @@ export async function upsertRelationshipEmbedding(id: string, embedding: number[
   `);
 }
 
-// ponytail: chunk-side embedding writer for entityEmbedNode's new
-// chunk leg. entity-extract-node now inserts chunks with embedding=NULL;
+// ponytail: chunk-side embedding writer for chunkEmbedNode's new
+// chunk leg. chunk-extract-node now inserts chunks with embedding=NULL;
 // this UPDATE fires after the LightRAG-style augmentation text is built
 // (content + per-chunk entities + per-chunk relationships + per-chunk
 // themes — same doc, but seen fresh at embed time so the post-alignment
@@ -1039,7 +1039,7 @@ export async function replaceChunkThemes(args: {
   await db.insert(kbTheme).values(rows).onConflictDoNothing();
 }
 
-// ponytail: theme alignment LLM pass (entity-alignment-node.ts) feeds
+// ponytail: theme alignment LLM pass (chunk-alignment-node.ts) feeds
 // these mappings in. For each `{canonical, aliases}`, all matching
 // `kb_theme.name` rows in this `(user_id, document_id)` get renamed
 // in place to the canonical form. After the renames complete, a
@@ -1104,7 +1104,7 @@ export async function applyThemeAlignment(args: {
 }
 
 // ponytail: entity alias alignment, mirrors applyThemeAlignment's
-// in-place rename + dedup. The LLM pass in entity-alignment-node.ts
+// in-place rename + dedup. The LLM pass in chunk-alignment-node.ts
 // emits `entityAliases: [{ canonicalName, aliases: string[] }]` and
 // historically those rows were computed-and-discarded — only the
 // themes side wrote back to the DB. Audit caught the gap; this
@@ -1392,7 +1392,7 @@ export async function applyEntityAliases(args: {
 // ponytail: bulk-read all themes that reference ANY chunk in
 // `chunkIds`. Returns one flat array dedup'd per chunk via Map
 // downstream — the caller is responsible for splitting by chunk.
-// Used by entityEmbedNode to prepend macro themes into the entity's
+// Used by chunkEmbedNode to prepend macro themes into the entity's
 // embed text (audit §13b line 456).
 export async function findKbThemesByChunkIds(
   userId: string,

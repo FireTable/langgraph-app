@@ -157,12 +157,12 @@ export async function resolveEntityAliasesForDoc(args: {
   }
 }
 
-export async function entityAlignmentNode(
+export async function chunkAlignmentNode(
   state: KbAgentStateShape,
   config?: RunnableConfig,
 ): Promise<Partial<KbAgentStateShape>> {
   console.log(
-    `[kbAgent] Entering entityAlignmentNode, files=`,
+    `[kbAgent] Entering chunkAlignmentNode, files=`,
     state.processedFiles.map((p) => ({ docId: p.docId, status: p.pipelineStatus })),
   );
 

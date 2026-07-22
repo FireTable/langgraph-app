@@ -123,7 +123,7 @@ afterEach(async () => {
 });
 
 describe("chunksEmbed sub-agent — sub-graph collapse", () => {
-  it("runs entityExtract → alignment → embed in order; alignment sees committed rows", async () => {
+  it("runs chunkExtract → alignment → embed in order; alignment sees committed rows", async () => {
     // pre-condition: zero entities
     const before = await db.select().from(kbEntity).where(eq(kbEntity.userId, TEST_USER.id));
     expect(before).toHaveLength(0);
@@ -144,7 +144,7 @@ describe("chunksEmbed sub-agent — sub-graph collapse", () => {
       docId: DOC_ID,
     } as never);
 
-    // Phase 1 (entityExtract) committed rows BEFORE returning.
+    // Phase 1 (chunkExtract) committed rows BEFORE returning.
     const afterExtract = await db.select().from(kbEntity).where(eq(kbEntity.userId, TEST_USER.id));
     expect(afterExtract.length).toBeGreaterThanOrEqual(2);
 
