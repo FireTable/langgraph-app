@@ -106,7 +106,7 @@ Postgres `vector` extension; `list_documents` is unconditional.
 
 | Tool             | Backend file | Frontend card                                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ---------------- | ------------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `search_KB`      | `kb.ts`      | `components/tool-ui/kb/search-kb-card.tsx`      | Hybrid RRF (k=60) over three legs: BM25 (`tsv` GIN), pgvector cosine (`embedding` HNSW), and entity-tag overlap (`entities` GIN). Optional `folderId` / `documentId` filters add `WHERE` clauses inside the same SQL. Empty `query` falls back to ordinal-sorted chunks for the filtered scope (lets the LLM "summarize @doc.pdf" without a keyword). When a Reranker model is registered, the candidate pool is widened to `max(50, topK * 5)` and the Reranker rescores; results below `KB_RERANK_MIN_SCORE` are filtered out before the final `topK` trim. Returns structured JSON: `{ content, documents[], empty }`. `content` embeds `[1] [2] [3]` markers; `documents[]` carries `chunkId`/`docId`/`rrfScore`/`legsHit` for UI. |
+| `search_KB`      | `kb.ts`      | `components/tool-ui/kb/search-kb-card.tsx`      | Hybrid RRF (k=60) over three legs: BM25 (`tsv` GIN), pgvector cosine (`embedding` HNSW), and entity-tag overlap (`entities` GIN). Optional `folderId` / `documentId` filters add `WHERE` clauses inside the same SQL. Empty `rewriteQuery` falls back to ordinal-sorted chunks for the filtered scope (lets the LLM "summarize @doc.pdf" without a keyword); the dump cap is `KB_HYBRID_TOPK_DEFAULT` (8), not the previous 1000 — long-scope "summarize @doc" requests return at most 8 chunks, so doc-level summaries may be incomplete. When a Reranker model is registered, the candidate pool is widened to `max(50, topK * 5)` and the Reranker rescores; results below `KB_RERANK_MIN_SCORE` are filtered out before the final `topK` trim. **Partial Rerank caveat**: if the Reranker only returns scores for a subset of candidates, the unscored ones are discarded (no merge back with RRF scores), so a request for `topK` can return fewer than `topK`. Returns structured JSON: `{ content, documents[], empty }`. `content` embeds `[1] [2] [3]` markers; `documents[]` carries `chunkId`/`docId`/`rrfScore`/`legsHit` for UI. |
 | `list_documents` | `kb.ts`      | `components/tool-ui/kb/list-documents-card.tsx` | Paginated list of the user's KB docs. Filters: `folderId`, `status` (default `success`), `titleQuery` (ILIKE), `page` (default 1), `pageSize` (default 20, max 100). Strict filtering — no soft warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### ToolMessage shape
@@ -129,6 +129,20 @@ departure from the `... (tool ? [tool] : [])` pattern used elsewhere
 — the alternative (null-spread) caused the tool to disappear when
 pgvector flipped states, which is worse for the LLM than a stable tool
 that errors on call.
+
+### Backward compat: `search_kb` → `search_KB`
+
+The tool was renamed `search_kb` → `search_KB` (capital `KB`) for
+consistency with the surrounding `search_web` / `search_KB` /
+`fetch_url` casing. The LLM-facing schema, the system prompt's
+`[KNOWLEDGE BASE]` clause, and `components/tool-ui/toolkit.tsx`'s
+renderer key all use the new name. **Persisted threads that contain
+completed tool calls under the old `search_kb` key will not render via
+`KbSearchToolUI` on this version** — they fall through to the
+unknown-tool fallback. The ToolMessage content is still readable in
+the thread text, but the inline card is missing. New threads started
+after deploy use `search_KB` and render normally. No migration is
+planned (old threads age out naturally).
 
 ### Knobs
 

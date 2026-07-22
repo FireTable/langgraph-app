@@ -304,6 +304,31 @@ The Reranker is invoked only when configured; the SQL path is identical
 otherwise. ToolMessage chips in the chat distinguish the two modes
 (percentage vs three-decimal float, see §7).
 
+**Caveat — partial Rerank output**: if the Reranker service returns
+scores for only a subset of the candidates (e.g. it only scored its own
+top-N), the unscored candidates are dropped from the result — there is
+no merge-back with the pre-rerank RRF scores. A request for `topK=8`
+can therefore return fewer than 8 chunks. If full coverage matters,
+either raise `topK` so the post-filter still has material, or disable
+the Reranker for that call.
+
+**Caveat — scope-dump topK**: empty-query scope dumps (e.g.
+"summarize @doc.pdf") now use `KB_HYBRID_TOPK_DEFAULT` (default 8) as
+the result cap, replacing the previous 1000-chunk dump. Long documents
+that need more than 8 chunks for a faithful summary will be
+truncated; raise `KB_HYBRID_TOPK_DEFAULT` (or pass `topK` explicitly if
+exposed in a future tool version) for that workload.
+
+**Caveat — chunk-embed silent failure**: `chunkEmbedNode` in the
+ingestion sub-graph catches per-doc embedding errors and only logs
+them; it then derives the returned `status` from `state.status` and
+`processedFiles.pipelineStatus`. A doc with a fully failed chunk /
+entity / relationship embed leg can therefore still surface `status:
+"success"` and leave `kb_chunk.embedding IS NULL` rows invisible to the
+vector leg of retrieval. Until this is hardened, check
+`embedding IS NULL` and `kb_entity.embedding IS NULL` after a fresh
+ingest if you suspect a silent embed failure.
+
 ---
 
 ## 5. Mention Resolution
