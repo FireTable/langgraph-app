@@ -51,8 +51,8 @@ export const KB_REF_PREFIX_REGEX = /^\[kb:([^\]]+)\]\s?/;
 // doc that finishes OCR can move into entity extract without
 // blocking on a separately-tuned queue. Bump together if the
 // upstream tier changes; lower if you start hitting 429s.
-export const KB_OCR_CONCURRENCY = 5;
-export const KB_ENTITY_CONCURRENCY = 5;
+export const KB_OCR_CONCURRENCY = 10;
+export const KB_ENTITY_CONCURRENCY = 10;
 
 // ponytail: KB view + Preview-dialog auto-refresh cadence. Same value
 // across both surfaces so the user's mental model ("docs refresh
