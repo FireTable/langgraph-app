@@ -279,6 +279,102 @@ describe("resolveEntityAliasesForDoc", () => {
     expect(mockDbExecute).not.toHaveBeenCalled();
   });
 
+  // ponytail: entity aliases used to be computed-and-discarded; the
+  // audit caught the gap. applyEntityAliases now runs alongside
+  // applyThemeAlignment in the same LLM pass — it does 3 db.execute
+  // calls per mapping (entity UPDATE + rel.source UPDATE +
+  // rel.target UPDATE), each returning { renamed_count, merged_count }.
+
+  it("applies entityAliases via applyEntityAliases — 3 db.execute calls per mapping", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "Amazon Web Services"),
+    ]);
+    mockFindCanonicalRelationships.mockResolvedValueOnce([makeRelationship("r-1", "AWS", "S3")]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [{ canonicalName: "Amazon Web Services", aliases: ["AWS"] }],
+      themeAliases: [],
+    });
+    // Default mockDbExecute returns [{ n: 0 }] — applyEntityAliases
+    // calls don't need a special handler, but we still want exactly 3
+    // calls (one per query in the function).
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // entity UPDATE + rel.source UPDATE + rel.target UPDATE = 3 calls.
+    // The status update goes through db.update (not execute).
+    expect(mockDbExecute).toHaveBeenCalledTimes(3);
+  });
+
+  it("does NOT touch db.execute when entityAliases is empty AND themeAliases is empty", async () => {
+    // Already covered above; this is the all-empty sentinel case.
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [],
+      themeAliases: [],
+    });
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    expect(mockDbUpdate).toHaveBeenCalled();
+    expect(mockDbExecute).not.toHaveBeenCalled();
+  });
+
+  it("filters entityAliases whose aliases contain only the canonical (no-op group)", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [{ canonicalName: "Frontend", aliases: ["Frontend"] }],
+      themeAliases: [],
+    });
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // The legacy filter (lines 95-98) drops groups where every alias
+    // already equals the canonical — applyEntityAliases never fires.
+    expect(mockDbExecute).not.toHaveBeenCalled();
+  });
+
+  it("runs both entity and theme alignment in the same LLM pass (3 + 2 = 5 calls)", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "Amazon Web Services"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [{ canonicalName: "Amazon Web Services", aliases: ["AWS"] }],
+      themeAliases: [{ canonicalName: "AI Application", aliases: ["AI 应用", "AI App"] }],
+    });
+    mockDbExecute.mockResolvedValueOnce([{ n: 3 }]); // theme rename
+    mockDbExecute.mockResolvedValueOnce([{ n: 1 }]); // theme dedup
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // theme alignment = 2 calls (rename + dedup)
+    // entity alignment = 3 calls (entity + rel.source + rel.target)
+    expect(mockDbExecute).toHaveBeenCalledTimes(5);
+  });
+
   it("filters themeAliases whose aliases array contains only the canonical (no-op group)", async () => {
     mockFindCanonicalEntities.mockResolvedValueOnce([
       makeEntity("e-1", "AWS"),

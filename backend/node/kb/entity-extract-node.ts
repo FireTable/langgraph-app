@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import type { KbAgentStateShape } from "@/backend/state";
-import { getEmbeddingModel, getExtractModel } from "@/backend/model";
+import { getExtractModel } from "@/backend/model";
 import { KB_ENTITY_EXTRACTION_SYSTEM_PROMPT } from "@/backend/prompt/system";
 import {
   findKbDocumentById,
@@ -21,7 +21,6 @@ import {
   withKbTx,
 } from "@/lib/kb/queries";
 import { invalidateKbDoc } from "@/lib/kb/cache";
-import { EMBEDDING_DIM } from "@/lib/kb/schema";
 import { appLevelCanonical } from "@/lib/kb/canonical";
 import { KB_ENTITY_CONCURRENCY } from "@/lib/constants";
 
@@ -223,7 +222,13 @@ export async function entityExtractNode(
                 throw new Error(`Document ${docId} has no markdown content extracted yet`);
               }
 
-              const embedder = await getEmbeddingModel();
+              // ponytail: chunk rows are inserted with embedding=NULL —
+              // chunk embedding is now entity-embed-node's job (runs
+              // after entityAlignmentNode so vectors can include the
+              // graph metadata for the chunk: entities + relationships
+              // + themes, in lightRAG dual-level organization). This
+              // node is now pure LLM extraction — owns the LLM cost
+              // but defers bge-m3 batch embed for chunks.
               const lengthSplitter = new MarkdownTextSplitter({
                 chunkSize: KB_CHUNK_SIZE,
                 chunkOverlap: KB_CHUNK_OVERLAP,
@@ -232,15 +237,6 @@ export async function entityExtractNode(
               const splitDocs = await lengthSplitter.createDocuments([fullMarkdown]);
               const rawTexts = splitDocs.map((d) => d.pageContent);
               const texts = mergeHrOnlyChunks(rawTexts);
-
-              const embeddings = await embedder.embedDocuments(texts);
-
-              const actualDim = embeddings[0]?.length ?? 0;
-              if (actualDim !== EMBEDDING_DIM) {
-                throw new Error(
-                  `embedding dimension mismatch: schema expects ${EMBEDDING_DIM}, embedder returned ${actualDim}. Update lib/kb/schema.ts EMBEDDING_DIM + run the matching ALTER COLUMN migration.`,
-                );
-              }
 
               const chunkIds = texts.map(() => `c-${randomUUID()}`);
               extractedChunkIds.push(...chunkIds);
@@ -260,13 +256,13 @@ export async function entityExtractNode(
                     documentId: docId,
                     ordinal: i,
                     content: text,
-                    embedding: embeddings[i] ?? [],
+                    embedding: null,
                   })) as never,
                 );
                 await markAllKbChunksParsingForDocInTx(tx, docId);
               });
               console.log(
-                `[kbAgent] Background task: successfully inserted ${texts.length} chunks for docId=${docId}`,
+                `[kbAgent] Background task: successfully inserted ${texts.length} chunks for docId=${docId} (embedding deferred to entityEmbedNode)`,
               );
             }
 

@@ -168,21 +168,39 @@ Upload ─▶ parse ────┤
    `pageToMarkdownNode`.
 3. **Text Chunking** — `MarkdownTextSplitter` (from `@langchain/textsplitters`)
    over the joined page markdown. Chunk size is `KB_CHUNK_MAX_CHARS`
-   (default 2000).
-4. **Vector Generation** — 1024-dim embeddings per chunk via the
-   `OPENAI_EMBEDDING_MODEL` alias (BAAI/bge-m3). Written to `kb_chunk.embedding`
-   inside a single `INSERT` (raw SQL — Drizzle's `vector` customType
-   encodes the pgvector literal correctly only via a hand-built
-   fragment; the bulk-insert helper does this).
-5. **Entity Extraction** — For each chunk, the LLM extracts entities
+   (default 2000). Rows are inserted with `embedding = NULL` (migration
+   `0015_romantic_sir_ram.sql`) — chunk vectors are written by
+   `entity-embed-node.ts` AFTER alignment so the bge-m3 vector can
+   capture post-alignment canonical names (LightRAG augmented text,
+   see step 5).
+4. **Entity Extraction** — For each chunk, the LLM extracts entities
    (`{name, type, description}[]`), relationships
    (`{source, target, relation, description}[]`), and themes
    (`text[]`). Stored in dedicated `kb_entity` / `kb_relationship`
    tables (rows link back to chunks via `source_chunk_ids: text[]`)
    and `kb_theme` (one row per `(chunk_id, name)`). The tag leg
-   reads entities / themes; the Folder Graph dedupes per chunk;
-   `entity-embed-node.ts` concatenates `kb_theme` rows into the
-   entity / relationship embed text for theme-aware ANN.
+   reads entities / themes; the Folder Graph dedupes per chunk.
+5. **Vector Generation + Alignment** — `entity-embed-node.ts` runs
+   THREE legs in one pass:
+   - **Chunk leg** — LightRAG-style augmented text
+     `content + Entities: ... + Relationships: ... + Themes: ...`
+     (empty graph sections are dropped). 1024-dim bge-m3 vectors via
+     the `OPENAI_EMBEDDING_MODEL` alias, written to `kb_chunk.embedding`
+     with `updated_at = NOW()` (raw SQL — Drizzle's `vector`
+     customType needs a hand-built `[1,2,...]::vector` literal;
+     `upsertChunkEmbedding` does this). Chunks whose id is in
+     `state.entityExtractedChunks` ALWAYS re-embed on retry so the
+     vector reflects the latest graph metadata.
+   - **Entity leg** — JOINs `kb_theme` for each entity's
+     `source_chunk_ids` and concatenates `themes.join(' ')` onto
+     the embed string so the ANN vector carries the chunk's macro
+     topics (audit §13b 456).
+   - **Relationship leg** — same shape as entity leg, on
+     `kb_relationship.embedding`.
+     Before any of these legs, `resolveEntityAliasesForDoc` rewrites
+     `kb_entity` / `kb_relationship` rows in place — entity alias
+     mappings cascade into `kb_relationship.source / target` so graph
+     context stays self-consistent (no dangling edges).
 6. **Status Flip** — `kb_document.status` flips to `success` (or
    `failed` if any node throws); `kb_chunk.status` reflects per-chunk
    outcome. `kbAgent.mode` (`full | chunksOnly | retryFailed |

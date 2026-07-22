@@ -5,7 +5,12 @@ import { randomUUID } from "node:crypto";
 
 import { db } from "@/db/client";
 import { kbChunk, kbDocument, kbEntity, kbFolder, kbRelationship, kbTheme } from "@/lib/kb/schema";
-import { findKbChunksContentByDocumentId, insertKbChunks, withKbTx } from "@/lib/kb/queries";
+import {
+  applyEntityAliases,
+  findKbChunksContentByDocumentId,
+  insertKbChunks,
+  withKbTx,
+} from "@/lib/kb/queries";
 import { user } from "@/lib/auth/schema";
 import { TEST_USER, ensureTestUser } from "@/tests/helpers/auth";
 
@@ -230,5 +235,180 @@ describe("findKbChunksContentByDocumentId — graph rehydration (audit §8)", ()
     const chunkA = chunks.find((c) => c.ordinal === 0)!;
     expect(chunkA.entities.map((e) => e.name)).not.toContain("OtherUser");
     expect(chunkA.themes).not.toContain("should-not-leak");
+  });
+});
+
+describe("applyEntityAliases — in-place canonical alignment", () => {
+  // ponytail: mirrors applyThemeAlignment's contract. Theme alignment
+  // was the first piece wired to the LLM output; entity aliases were
+  // historically computed-and-discarded. This regression pins that the
+  // LLM entityAliases pass NOW actually fires against the DB —
+  // collapsing duplicate-name rows per (user_id, document_id) so the
+  // UNIQUE index doesn't fragment a single logical entity across rows.
+  // Same trade-off as themes: we keep NO canonical_name column —
+  // variant loss is fine for LLM-generated entity tokens.
+
+  beforeEach(async () => {
+    await seedFixture();
+  });
+  afterEach(async () => {
+    await db.delete(kbTheme).where(eq(kbTheme.userId, TEST_USER.id));
+    await db.delete(kbRelationship).where(eq(kbRelationship.userId, TEST_USER.id));
+    await db.delete(kbEntity).where(eq(kbEntity.userId, TEST_USER.id));
+    await db.delete(kbChunk);
+    await db.delete(kbDocument).where(eq(kbDocument.userId, TEST_USER.id));
+    await db.delete(kbFolder).where(eq(kbFolder.userId, TEST_USER.id));
+    for (const id of dynamicUserIds) {
+      await db.delete(user).where(eq(user.id, id));
+    }
+    dynamicUserIds.length = 0;
+  });
+
+  it("renames alias rows to canonical and merges source_chunk_ids when no canonical exists yet", async () => {
+    const aliasId = `e-${randomUUID()}`;
+    await db.insert(kbEntity).values({
+      id: aliasId,
+      userId: TEST_USER.id,
+      documentId: DOC_ID,
+      name: "Acme Inc",
+      type: "Organization",
+      description: "alias variant",
+      sourceChunkIds: [CHUNK_A],
+    });
+
+    const result = await applyEntityAliases({
+      userId: TEST_USER.id,
+      documentId: DOC_ID,
+      mappings: [{ canonical: "Acme", aliases: ["Acme Inc"] }],
+    });
+
+    expect(result.entitiesRenamed).toBe(1);
+    expect(result.entitiesMerged).toBe(1);
+
+    // Two rows became one row named "Acme"; the kept row inherited the
+    // union of source_chunk_ids from both originals.
+    const rows = await db.select().from(kbEntity).where(eq(kbEntity.documentId, DOC_ID));
+    const acmeRows = rows.filter((e) => e.name === "Acme");
+    expect(acmeRows).toHaveLength(1);
+    expect(acmeRows[0].sourceChunkIds.sort()).toEqual([CHUNK_A, CHUNK_B].sort());
+  });
+
+  it("merges description across collapsed rows", async () => {
+    await db.insert(kbEntity).values({
+      id: `e-${randomUUID()}`,
+      userId: TEST_USER.id,
+      documentId: DOC_ID,
+      name: "Acme Corp",
+      type: "Organization",
+      description: "parent of BetaCorp",
+      sourceChunkIds: [CHUNK_B],
+    });
+
+    const result = await applyEntityAliases({
+      userId: TEST_USER.id,
+      documentId: DOC_ID,
+      mappings: [{ canonical: "Acme", aliases: ["Acme Corp"] }],
+    });
+
+    expect(result.entitiesRenamed).toBe(1);
+    const rows = await db.select().from(kbEntity).where(eq(kbEntity.documentId, DOC_ID));
+    const acme = rows.find((e) => e.name === "Acme");
+    expect(acme).toBeDefined();
+    // Both descriptions joined by "; "
+    expect(acme!.description).toContain("founded 2020");
+    expect(acme!.description).toContain("parent of BetaCorp");
+  });
+
+  it("updates kb_relationship.source when alias matches", async () => {
+    await db.insert(kbRelationship).values({
+      id: `r-${randomUUID()}`,
+      userId: TEST_USER.id,
+      documentId: DOC_ID,
+      source: "Acme Inc",
+      target: "BetaCorp",
+      relation: "PARTNERED_WITH",
+      description: "via alias",
+      sourceChunkIds: [CHUNK_B],
+      weight: 1,
+    });
+
+    const result = await applyEntityAliases({
+      userId: TEST_USER.id,
+      documentId: DOC_ID,
+      mappings: [{ canonical: "Acme", aliases: ["Acme Inc"] }],
+    });
+
+    expect(result.relSourcesRenamed).toBe(1);
+
+    const rels = await db
+      .select()
+      .from(kbRelationship)
+      .where(eq(kbRelationship.documentId, DOC_ID));
+    // Original (Acme → BetaCorp) and renamed (Acme Inc → BetaCorp)
+    // collapsed to one canonical edge after dedup.
+    const acmeEdges = rels.filter(
+      (r) => r.source === "Acme" && r.target === "BetaCorp" && r.relation === "PARTNERED_WITH",
+    );
+    expect(acmeEdges).toHaveLength(1);
+    // weight summed from both edges
+    expect(acmeEdges[0].weight).toBe(2);
+  });
+
+  it("updates kb_relationship.target when alias matches", async () => {
+    await db.insert(kbRelationship).values({
+      id: `r-${randomUUID()}`,
+      userId: TEST_USER.id,
+      documentId: DOC_ID,
+      source: "Acme",
+      target: "BetaCorp Inc",
+      relation: "PARTNERED_WITH",
+      description: "via target alias",
+      sourceChunkIds: [CHUNK_B],
+      weight: 1,
+    });
+
+    const result = await applyEntityAliases({
+      userId: TEST_USER.id,
+      documentId: DOC_ID,
+      mappings: [{ canonical: "BetaCorp", aliases: ["BetaCorp Inc"] }],
+    });
+
+    expect(result.relTargetsRenamed).toBe(1);
+
+    const rels = await db
+      .select()
+      .from(kbRelationship)
+      .where(eq(kbRelationship.documentId, DOC_ID));
+    const acmeEdges = rels.filter(
+      (r) => r.source === "Acme" && r.target === "BetaCorp" && r.relation === "PARTNERED_WITH",
+    );
+    expect(acmeEdges).toHaveLength(1);
+  });
+
+  it("returns zero counts when mappings is empty", async () => {
+    const result = await applyEntityAliases({
+      userId: TEST_USER.id,
+      documentId: DOC_ID,
+      mappings: [],
+    });
+    expect(result).toEqual({
+      entitiesRenamed: 0,
+      entitiesMerged: 0,
+      relSourcesRenamed: 0,
+      relSourcesMerged: 0,
+      relTargetsRenamed: 0,
+      relTargetsMerged: 0,
+    });
+  });
+
+  it("skips a mapping whose aliases array contains only the canonical", async () => {
+    const result = await applyEntityAliases({
+      userId: TEST_USER.id,
+      documentId: DOC_ID,
+      mappings: [{ canonical: "Acme", aliases: ["Acme"] }],
+    });
+    expect(result.entitiesRenamed).toBe(0);
+    expect(result.relSourcesRenamed).toBe(0);
+    expect(result.relTargetsRenamed).toBe(0);
   });
 });

@@ -447,12 +447,20 @@ export async function listKbDocumentsGroupedByFolder(
   return out;
 }
 
-// Used by chunkEmbedStoreNode inside a transaction; takes the tx so a
-// doc + its chunks land atomically.
+// ponytail: tx-scoped chunk insert. embedding is nullable in the
+// schema — entity-extract-node writes rows with embedding=NULL,
+// and entity-embed-node later fills them with graph-augmented
+// 1024-dim bge-m3 vectors. Kept NULL insert path explicit (not a
+// `0,0,...,0` placeholder) so the HNSW index and dense-leg ANN
+// can trivially skip fresh chunks until their first embed pass.
+// Mirror upsertEntityEmbedding's pattern: build the JS vector
+// literal, drizzle binds it as a positional $N, ::vector cast
+// stays in the SQL template so pgvector's lexer sees it once.
 export async function insertKbChunks(tx: PgTx, rows: NewKbChunk[]): Promise<void> {
   if (rows.length === 0) return;
   for (const row of rows) {
-    const embeddingLiteral = `[${row.embedding.join(",")}]`;
+    const embeddingLiteral =
+      row.embedding && row.embedding.length > 0 ? `[${row.embedding.join(",")}]` : null;
     await tx.execute(sql`
       INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding)
       VALUES (
@@ -825,6 +833,103 @@ export async function upsertRelationshipEmbedding(id: string, embedding: number[
   `);
 }
 
+// ponytail: chunk-side embedding writer for entityEmbedNode's new
+// chunk leg. entity-extract-node now inserts chunks with embedding=NULL;
+// this UPDATE fires after the LightRAG-style augmentation text is built
+// (content + per-chunk entities + per-chunk relationships + per-chunk
+// themes — same doc, but seen fresh at embed time so the post-alignment
+// canonical names are what get vectorized). Idempotent on retry.
+export async function upsertChunkEmbedding(id: string, embedding: number[]): Promise<void> {
+  const embeddingLiteral = `[${embedding.join(",")}]`;
+  await db.execute(sql`
+    UPDATE kb_chunk
+    SET embedding = ${embeddingLiteral}::vector,
+        updated_at = NOW()
+    WHERE id = ${id}
+  `);
+}
+
+// ponytail: bulk reader for chunk's graph context used by the chunk-embed
+// leg. Returns entities + relationships + themes per chunkId for ONE doc
+// scope, joining via source_chunk_ids && ARRAY[chunkId]. One round-trip
+// per leg rather than N queries. Caller splits by chunk_id downstream.
+export async function findKbChunksGraphContext(
+  userId: string,
+  docId: string,
+  chunkIds: readonly string[],
+): Promise<{
+  entitiesByChunk: Map<string, Array<{ name: string; type: string }>>;
+  relsByChunk: Map<string, Array<{ source: string; target: string; relation: string }>>;
+}> {
+  const entitiesByChunk = new Map<string, Array<{ name: string; type: string }>>();
+  const relsByChunk = new Map<
+    string,
+    Array<{ source: string; target: string; relation: string }>
+  >();
+  if (chunkIds.length === 0) return { entitiesByChunk, relsByChunk };
+
+  const chunkIdArrayLiteral = `{${chunkIds
+    .map((id) => `"${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+    .join(",")}}`;
+
+  const entityRows = await db.execute<{
+    name: string;
+    type: string;
+    source_chunk_ids: string[];
+  }>(sql`
+    SELECT name, type, source_chunk_ids
+    FROM kb_entity
+    WHERE user_id = ${userId}
+      AND document_id = ${docId}
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+  for (const e of entityRows) {
+    for (const cid of e.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = entitiesByChunk.get(cid) ?? [];
+      // Same dedup pattern as findKbChunksContentByDocumentId — one
+      // entity can be referenced by many chunks; surface it once per.
+      if (!bucket.some((x) => x.name === e.name)) {
+        bucket.push({ name: e.name, type: e.type });
+      }
+      entitiesByChunk.set(cid, bucket);
+    }
+  }
+
+  const relRows = await db.execute<{
+    source: string;
+    target: string;
+    relation: string;
+    source_chunk_ids: string[];
+  }>(sql`
+    SELECT source, target, relation, source_chunk_ids
+    FROM kb_relationship
+    WHERE user_id = ${userId}
+      AND document_id = ${docId}
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+  for (const r of relRows) {
+    for (const cid of r.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = relsByChunk.get(cid) ?? [];
+      const triple = { source: r.source, target: r.target, relation: r.relation };
+      if (
+        !bucket.some(
+          (x) =>
+            x.source === triple.source &&
+            x.relation === triple.relation &&
+            x.target === triple.target,
+        )
+      ) {
+        bucket.push(triple);
+      }
+      relsByChunk.set(cid, bucket);
+    }
+  }
+
+  return { entitiesByChunk, relsByChunk };
+}
+
 export async function updateKbChunkGraphData(
   _chunkId: string,
   _entities: Array<{ name: string; type: string; description: string }>,
@@ -979,6 +1084,226 @@ export async function applyThemeAlignment(args: {
   `);
   const deduped = Number((dupResult as unknown as { n: number }[])[0]?.n ?? 0);
   return { updated, deduped };
+}
+
+// ponytail: entity alias alignment, mirrors applyThemeAlignment's
+// in-place rename + dedup. The LLM pass in entity-alignment-node.ts
+// emits `entityAliases: [{ canonicalName, aliases: string[] }]` and
+// historically those rows were computed-and-discarded — only the
+// themes side wrote back to the DB. Audit caught the gap; this
+// function now actually folds alias variants into one canonical
+// row per (user_id, document_id, name).
+//
+// Per mapping:
+//  1. kb_entity — worklist = rows matching canonical ∪ aliases.
+//     Existing canonical row wins as the kept row; if none, the
+//     lowest-id alias row is the kept row. The kept row gets merged
+//     `description` (joined with "; ") and merged `source_chunk_ids`
+//     (array distinct union). All other worklist rows DELETE.
+//  2. kb_relationship.source — same strategy: existing canonical edge
+//     wins, lowest-id alias edge otherwise. Kept edge sums `weight`
+//     and unions `source_chunk_ids`. Other worklist rows DELETE.
+//     Guards against dangling graph references after an entity rename.
+//  3. kb_relationship.target — same as 2.
+//
+// No canonical_name column — same trade-off as applyThemeAlignment.
+// LLM-generated entity tokens lose the original variant on alignment;
+// read paths stay trivial. UNIQUE (user, doc, name) on kb_entity and
+// UNIQUE (user, doc, source, target, relation) on kb_relationship
+// are preserved because kept/losers are disjoint within one CTE.
+export async function applyEntityAliases(args: {
+  userId: string;
+  documentId: string;
+  mappings: ReadonlyArray<{ canonical: string; aliases: readonly string[] }>;
+}): Promise<{
+  entitiesRenamed: number;
+  entitiesMerged: number;
+  relSourcesRenamed: number;
+  relSourcesMerged: number;
+  relTargetsRenamed: number;
+  relTargetsMerged: number;
+}> {
+  let entitiesRenamed = 0;
+  let entitiesMerged = 0;
+  let relSourcesRenamed = 0;
+  let relSourcesMerged = 0;
+  let relTargetsRenamed = 0;
+  let relTargetsMerged = 0;
+
+  if (args.mappings.length === 0) {
+    return {
+      entitiesRenamed,
+      entitiesMerged,
+      relSourcesRenamed,
+      relSourcesMerged,
+      relTargetsRenamed,
+      relTargetsMerged,
+    };
+  }
+
+  // ponytail: alias set → Postgres text[] literal. drizzle's sql tag
+  // doesn't auto-bind a JS array as pg text[] without a driver hint,
+  // so we interpolate the literal. Each alias is double-quote-escaped.
+  // Same pattern as applyThemeAlignment above.
+  const escapeLiteral = (names: readonly string[]) =>
+    `{${names.map((a) => `"${a.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
+
+  for (const mapping of args.mappings) {
+    const aliases = mapping.aliases.filter((a) => a !== mapping.canonical);
+    if (aliases.length === 0) continue;
+    const literal = escapeLiteral(aliases);
+    const canonical = mapping.canonical;
+
+    // 1. kb_entity: pick existing-canonical row first (priority 1),
+    //    then lowest-id alias row. UPDATE kept, DELETE losers. Merges
+    //    description + source_chunk_ids onto the kept row.
+    const entRes = await db.execute<{ renamed_count: number; merged_count: number }>(sql`
+      WITH worklist AS (
+        SELECT id, name, description, source_chunk_ids,
+          ROW_NUMBER() OVER (
+            ORDER BY (name = ${canonical})::int DESC, id ASC
+          ) AS rn
+        FROM kb_entity
+        WHERE user_id = ${args.userId}
+          AND document_id = ${args.documentId}
+          AND (name = ${canonical} OR name = ANY(${literal}::text[]))
+      ),
+      deleted AS (
+        DELETE FROM kb_entity
+        WHERE id IN (SELECT id FROM worklist WHERE rn > 1)
+        RETURNING id
+      ),
+      updated AS (
+        UPDATE kb_entity
+        SET name = ${canonical},
+            description = COALESCE(
+              (SELECT STRING_AGG(description, '; ' ORDER BY id) FROM worklist),
+              description
+            ),
+            source_chunk_ids = COALESCE(
+              (
+                SELECT array_agg(DISTINCT sid)
+                FROM (SELECT unnest(source_chunk_ids) AS sid FROM worklist) t
+              ),
+              source_chunk_ids
+            ),
+            updated_at = NOW()
+        WHERE id = (SELECT id FROM worklist WHERE rn = 1)
+        RETURNING id
+      )
+      SELECT
+        (SELECT COUNT(*) FROM updated)::int AS renamed_count,
+        (SELECT COUNT(*) FROM deleted)::int AS merged_count
+    `);
+    const entRow = (entRes as unknown as { renamed_count: number; merged_count: number }[])[0] ?? {
+      renamed_count: 0,
+      merged_count: 0,
+    };
+    entitiesRenamed += Number(entRow.renamed_count ?? 0);
+    entitiesMerged += Number(entRow.merged_count ?? 0);
+
+    // 2. kb_relationship.source: kept edge wins by existing-canonical
+    //    priority, else lowest-id. Sums weight + unions source_chunk_ids
+    //    so semantic "edge strength" survives the merge. Worklist
+    //    includes the canonical-named row too — without it, alias rows
+    //    get UPDATED to canonical and collide with the pre-existing
+    //    edge on UNIQUE (user, doc, source, target, relation).
+    const srcRes = await db.execute<{ renamed_count: number; merged_count: number }>(sql`
+      WITH worklist AS (
+        SELECT id, source, target, relation, source_chunk_ids, weight,
+          ROW_NUMBER() OVER (
+            ORDER BY (source = ${canonical})::int DESC, id ASC
+          ) AS rn
+        FROM kb_relationship
+        WHERE user_id = ${args.userId}
+          AND document_id = ${args.documentId}
+          AND (source = ${canonical} OR source = ANY(${literal}::text[]))
+      ),
+      deleted AS (
+        DELETE FROM kb_relationship
+        WHERE id IN (SELECT id FROM worklist WHERE rn > 1)
+        RETURNING id
+      ),
+      updated AS (
+        UPDATE kb_relationship
+        SET source = ${canonical},
+            source_chunk_ids = COALESCE(
+              (
+                SELECT array_agg(DISTINCT sid)
+                FROM (SELECT unnest(source_chunk_ids) AS sid FROM worklist) t
+              ),
+              source_chunk_ids
+            ),
+            weight = COALESCE((SELECT SUM(weight) FROM worklist), weight),
+            updated_at = NOW()
+        WHERE id = (SELECT id FROM worklist WHERE rn = 1)
+        RETURNING id
+      )
+      SELECT
+        (SELECT COUNT(*) FROM updated)::int AS renamed_count,
+        (SELECT COUNT(*) FROM deleted)::int AS merged_count
+    `);
+    const srcRow = (srcRes as unknown as { renamed_count: number; merged_count: number }[])[0] ?? {
+      renamed_count: 0,
+      merged_count: 0,
+    };
+    relSourcesRenamed += Number(srcRow.renamed_count ?? 0);
+    relSourcesMerged += Number(srcRow.merged_count ?? 0);
+
+    // 3. kb_relationship.target: mirror of step 2 — worklist must
+    //    include the canonical-named row to avoid a UNIQUE collision
+    //    when an existing canonical edge already lives in the scope.
+    const tgtRes = await db.execute<{ renamed_count: number; merged_count: number }>(sql`
+      WITH worklist AS (
+        SELECT id, source, target, relation, source_chunk_ids, weight,
+          ROW_NUMBER() OVER (
+            ORDER BY (target = ${canonical})::int DESC, id ASC
+          ) AS rn
+        FROM kb_relationship
+        WHERE user_id = ${args.userId}
+          AND document_id = ${args.documentId}
+          AND (target = ${canonical} OR target = ANY(${literal}::text[]))
+      ),
+      deleted AS (
+        DELETE FROM kb_relationship
+        WHERE id IN (SELECT id FROM worklist WHERE rn > 1)
+        RETURNING id
+      ),
+      updated AS (
+        UPDATE kb_relationship
+        SET target = ${canonical},
+            source_chunk_ids = COALESCE(
+              (
+                SELECT array_agg(DISTINCT sid)
+                FROM (SELECT unnest(source_chunk_ids) AS sid FROM worklist) t
+              ),
+              source_chunk_ids
+            ),
+            weight = COALESCE((SELECT SUM(weight) FROM worklist), weight),
+            updated_at = NOW()
+        WHERE id = (SELECT id FROM worklist WHERE rn = 1)
+        RETURNING id
+      )
+      SELECT
+        (SELECT COUNT(*) FROM updated)::int AS renamed_count,
+        (SELECT COUNT(*) FROM deleted)::int AS merged_count
+    `);
+    const tgtRow = (tgtRes as unknown as { renamed_count: number; merged_count: number }[])[0] ?? {
+      renamed_count: 0,
+      merged_count: 0,
+    };
+    relTargetsRenamed += Number(tgtRow.renamed_count ?? 0);
+    relTargetsMerged += Number(tgtRow.merged_count ?? 0);
+  }
+
+  return {
+    entitiesRenamed,
+    entitiesMerged,
+    relSourcesRenamed,
+    relSourcesMerged,
+    relTargetsRenamed,
+    relTargetsMerged,
+  };
 }
 
 // ponytail: bulk-read all themes that reference ANY chunk in

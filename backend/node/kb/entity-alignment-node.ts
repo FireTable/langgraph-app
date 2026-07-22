@@ -5,6 +5,7 @@ import type { KbAgentStateShape } from "@/backend/state";
 import { getExtractModel } from "@/backend/model";
 import { KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT } from "@/backend/prompt/system";
 import {
+  applyEntityAliases,
   applyThemeAlignment,
   findCanonicalEntitiesByDocId,
   findCanonicalRelationshipsByDocId,
@@ -91,10 +92,17 @@ export async function resolveEntityAliasesForDoc(args: {
         }
         return null;
       })
-      .filter((m: { canonicalName: string; aliases: string[] } | null) => {
-        if (!m) return false;
-        return m.aliases.some((a) => a !== m.canonicalName);
-      });
+      .filter(
+        (
+          m: { canonicalName: string; aliases: string[] } | null,
+        ): m is {
+          canonicalName: string;
+          aliases: string[];
+        } => {
+          if (!m) return false;
+          return m.aliases.some((a) => a !== m.canonicalName);
+        },
+      );
     console.log(
       `[resolveEntityAliasesForDoc] docId=${documentId}: resolved ${aliases.length} canonical alias mapping(s) for entities`,
     );
@@ -119,6 +127,23 @@ export async function resolveEntityAliasesForDoc(args: {
       });
       console.log(
         `[resolveEntityAliasesForDoc] docId=${documentId}: theme alignment renamed ${result.updated} row(s), deduped ${result.deduped} collision(s)`,
+      );
+    }
+
+    // ponytail: entity alias alignment mirrors theme alignment — same
+    // LLM pass, no extra call. applyEntityAliases renames kb_entity
+    // rows in-place (no canonical_name column), merges descriptions
+    // and source_chunk_ids onto the kept row, and cascades the rename
+    // onto kb_relationship.source / target so graph context stays
+    // self-consistent (no dangling edges pointing to vanished names).
+    if (aliases.length > 0) {
+      const result = await applyEntityAliases({
+        userId,
+        documentId,
+        mappings: aliases.map((m) => ({ canonical: m.canonicalName, aliases: m.aliases })),
+      });
+      console.log(
+        `[resolveEntityAliasesForDoc] docId=${documentId}: entity alignment renamed ${result.entitiesRenamed} row(s), merged ${result.entitiesMerged}; rel source ${result.relSourcesRenamed}/${result.relSourcesMerged}, rel target ${result.relTargetsRenamed}/${result.relTargetsMerged}`,
       );
     }
 

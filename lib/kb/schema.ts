@@ -151,7 +151,7 @@ export const kbChunk = pgTable(
       .references(() => kbDocument.id, { onDelete: "cascade" }),
     ordinal: integer("ordinal").notNull(),
     content: text("content").notNull(),
-    embedding: vector("embedding").notNull(),
+    embedding: vector("embedding"),
     tsv: tsvectorSimple("tsv").notNull(),
     // ponytail: per-chunk status — independent of kb_document.status so
     // a failed entity extract can mark a single chunk failed without
@@ -161,6 +161,7 @@ export const kbChunk = pgTable(
     status: kbChunkStatusEnum("status").notNull().default("pending"),
     errorMessage: text("error_message"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     // Per-document ordering + retrieval filter.
