@@ -5,7 +5,7 @@ import type { BaseMessage } from "@langchain/core/messages";
 // pre-LLM transformation happens here. The KB @-mention flow is
 // driven entirely by the LLM reading the directive token
 // (':kb-document[label]{documentId=…}' / ':kb-folder[label]{folderId=…}')
-// from the HumanMessage text and calling search_kb / list_documents
+// from the HumanMessage text and calling search_KB / list_documents
 // with the right filter.
 //
 // The node is reserved for future per-turn Message transforms:

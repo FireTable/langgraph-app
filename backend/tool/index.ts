@@ -30,7 +30,7 @@ import { listDocumentsTool, searchKbTool } from "@/backend/tool/kb";
 // the free tier (lower rate limit, no key needed).
 //
 // KB tools (issue #13 v3):
-//   - search_kb — gated on pgvector extension (rule #10).
+//   - search_KB — gated on pgvector extension (rule #10).
 //   - list_documents — pure SQL, always available.
 
 export const WEATHER_TOOLS = [askLocationTool, geocodeLocationTool, getWeatherTool, saveMemoryTool];
@@ -52,7 +52,7 @@ export const CRYPTO_TOOLS = [
 // fallback runs at click-time.
 export const CODE_TOOLS = [writeCodeTool, ...(executeCodeTool ? [executeCodeTool] : [])];
 
-// ponytail: KB tools — search_kb throws at runtime when pgvector is
+// ponytail: KB tools — search_KB throws at runtime when pgvector is
 // missing (the tool is still registered so the LLM sees a consistent
 // tool surface; missing-extension produces a clean error message instead
 // of a 500). list_documents is unconditional.

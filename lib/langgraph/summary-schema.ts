@@ -13,16 +13,31 @@ import { z } from "zod";
 // is what gets written, no field renaming needed.
 
 const summaryEntryShape = z.object({
-  question: z.string().min(1),
-  answer: z.string().min(1),
-  refs: z.array(z.string().min(1)).min(1),
+  question: z
+    .string()
+    .min(1)
+    .describe("Core question, intent, or primary topic summarized from the conversation segment"),
+  answer: z
+    .string()
+    .min(1)
+    .describe("Comprehensive answer or key resolution for the corresponding question/topic"),
+  refs: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe("Message IDs, source references, or key citations supporting this Q&A summary entry"),
 });
 
 export const SummaryEntriesSchema = z.array(summaryEntryShape).min(1);
 
-export const summaryOutputSchema = z.object({
-  entries: SummaryEntriesSchema,
-});
+export const summaryOutputSchema = z
+  .object({
+    entries: SummaryEntriesSchema.describe(
+      "Array of structured Q&A summary entries capturing key facts, resolutions, and message references from the conversation",
+    ),
+  })
+  .describe(
+    "Structured summary output containing key Q&A entries and citations for long-term thread memory",
+  );
 
 export type SummaryEntryShape = z.infer<typeof summaryEntryShape>;
 export type SummaryEntries = z.infer<typeof SummaryEntriesSchema>;

@@ -57,7 +57,7 @@ section is the design rationale.
 - `kb_doc_status` — `pending | parsing | success | failed`. Lives on
   `kb_document.status`; mirrors the macro OCR + chunk pipeline.
 - `kb_chunk_status` — same four values, independent of the parent doc so
-  a failed entity-extract on one chunk can mark that chunk `failed`
+  a failed chunk-extract on one chunk can mark that chunk `failed`
   without downgrading the whole document (user still sees Ready in the
   table; the doc detail dialog surfaces per-chunk failures).
 
@@ -79,22 +79,23 @@ section is the design rationale.
   across all seven source kinds.
 - **`kb_chunk`** — one row per text chunk. Holds the `vector(1024)`
   embedding (BAAI/bge-m3 dim, served by apimart under
-  `OPENAI_EMBEDDING_MODEL`), a generated `tsvector` (English,
-  `to_tsvector('english', content) STORED`) for the BM25 leg, plus
-  `entities` / `relationships` / `themes` JSONB columns seeded by the
-  LLM-driven entity-extract pass.
+  `OPENAI_EMBEDDING_MODEL`), and a generated `tsvector` (language-neutral,
+  `to_tsvector('simple', content) STORED`) for the BM25 leg.
+- **`kb_entity`** — canonical extracted entities per document with 1024-dim
+  vector embeddings for GraphRAG ANN entrypoint retrieval (`name`, `type`,
+  `description`, `source_chunk_ids`, `embedding`).
+- **`kb_relationship`** — extracted graph relationships connecting entity pairs
+  with 1024-dim vector embeddings for GraphRAG global retrieval (`source`, `target`,
+  `relation`, `description`, `source_chunk_ids`, `weight`, `embedding`).
 
-### Indexes (the four that matter)
+### Indexes
 
 - `kb_document_user_contenthash_idx` — **unique** `(user_id, content_hash)`;
   the dedup path (`screenshotNode` probes this on every upload).
-- `kb_chunk_embedding_idx` — HNSW over `embedding vector_cosine_ops`. The
-  dim of the column, the dim of the index operator, and the dim of the
-  embedder must all agree — `pgvector` rejects mismatched inserts with
-  `22P02`.
-- `kb_chunk_tsv_idx` — GIN over the generated `tsvector` (BM25 leg).
-- `kb_chunk_entities_idx` — GIN over `entities jsonb` (entity-overlap
-  leg + Folder Graph seed).
+- `kb_chunk_embedding_idx` — HNSW over `embedding vector_cosine_ops`.
+- `kb_chunk_tsv_idx` — GIN over the generated `tsvector` (`'simple'` BM25 leg).
+- `kb_entity_embedding_idx` — HNSW over `kb_entity.embedding vector_cosine_ops`.
+- `kb_relationship_embedding_idx` — HNSW over `kb_relationship.embedding vector_cosine_ops`.
 
 ### Why an `attachment_id` and not a stored `r2_key`
 
@@ -167,17 +168,39 @@ Upload ─▶ parse ────┤
    `pageToMarkdownNode`.
 3. **Text Chunking** — `MarkdownTextSplitter` (from `@langchain/textsplitters`)
    over the joined page markdown. Chunk size is `KB_CHUNK_MAX_CHARS`
-   (default 2000).
-4. **Vector Generation** — 1024-dim embeddings per chunk via the
-   `OPENAI_EMBEDDING_MODEL` alias (BAAI/bge-m3). Written to `kb_chunk.embedding`
-   inside a single `INSERT` (raw SQL — Drizzle's `vector` customType
-   encodes the pgvector literal correctly only via a hand-built
-   fragment; the bulk-insert helper does this).
-5. **Entity Extraction** — For each chunk, the LLM extracts entities
+   (default 2000). Rows are inserted with `embedding = NULL` (migration
+   `0015_romantic_sir_ram.sql`) — chunk vectors are written by
+   `chunk-embed-node.ts` AFTER alignment so the bge-m3 vector can
+   capture post-alignment canonical names (LightRAG augmented text,
+   see step 5).
+4. **Entity Extraction** — For each chunk, the LLM extracts entities
    (`{name, type, description}[]`), relationships
    (`{source, target, relation, description}[]`), and themes
-   (`text[]`). Stored as JSONB; the tag leg and the Folder Graph read
-   from these columns directly.
+   (`text[]`) via `graphRagSchema` in `chunk-extract-node.ts`. Stored in dedicated `kb_entity` / `kb_relationship`
+   tables (rows link back to chunks via `source_chunk_ids: text[]`)
+   and `kb_theme` (one row per `(chunk_id, name)`). The tag leg
+   reads entities / themes; the Folder Graph dedupes per chunk.
+5. **Vector Generation + Alignment** — `chunk-embed-node.ts` runs
+   THREE legs in one pass:
+   - **Chunk leg** — LightRAG-style augmented text
+     `content + Entities: ... + Relationships: ... + Themes: ...`
+     (empty graph sections are dropped). 1024-dim bge-m3 vectors via
+     the `OPENAI_EMBEDDING_MODEL` alias, written to `kb_chunk.embedding`
+     with `updated_at = NOW()` (raw SQL — Drizzle's `vector`
+     customType needs a hand-built `[1,2,...]::vector` literal;
+     `upsertChunkEmbedding` does this). Chunks whose id is in
+     `state.entityExtractedChunks` ALWAYS re-embed on retry so the
+     vector reflects the latest graph metadata.
+   - **Entity leg** — JOINs `kb_theme` for each entity's
+     `source_chunk_ids` and concatenates `themes.join(' ')` onto
+     the embed string so the ANN vector carries the chunk's macro
+     topics (audit §13b 456).
+   - **Relationship leg** — same shape as entity leg, on
+     `kb_relationship.embedding`.
+     Before any of these legs, `resolveEntityAliasesForDoc` rewrites
+     `kb_entity` / `kb_relationship` rows in place — entity alias
+     mappings cascade into `kb_relationship.source / target` so graph
+     context stays self-consistent (no dangling edges).
 6. **Status Flip** — `kb_document.status` flips to `success` (or
    `failed` if any node throws); `kb_chunk.status` reflects per-chunk
    outcome. `kbAgent.mode` (`full | chunksOnly | retryFailed |
@@ -281,6 +304,31 @@ The Reranker is invoked only when configured; the SQL path is identical
 otherwise. ToolMessage chips in the chat distinguish the two modes
 (percentage vs three-decimal float, see §7).
 
+**Caveat — partial Rerank output**: if the Reranker service returns
+scores for only a subset of the candidates (e.g. it only scored its own
+top-N), the unscored candidates are dropped from the result — there is
+no merge-back with the pre-rerank RRF scores. A request for `topK=8`
+can therefore return fewer than 8 chunks. If full coverage matters,
+either raise `topK` so the post-filter still has material, or disable
+the Reranker for that call.
+
+**Caveat — scope-dump topK**: empty-query scope dumps (e.g.
+"summarize @doc.pdf") now use `KB_HYBRID_TOPK_DEFAULT` (default 8) as
+the result cap, replacing the previous 1000-chunk dump. Long documents
+that need more than 8 chunks for a faithful summary will be
+truncated; raise `KB_HYBRID_TOPK_DEFAULT` (or pass `topK` explicitly if
+exposed in a future tool version) for that workload.
+
+**Caveat — chunk-embed silent failure**: `chunkEmbedNode` in the
+ingestion sub-graph catches per-doc embedding errors and only logs
+them; it then derives the returned `status` from `state.status` and
+`processedFiles.pipelineStatus`. A doc with a fully failed chunk /
+entity / relationship embed leg can therefore still surface `status:
+"success"` and leave `kb_chunk.embedding IS NULL` rows invisible to the
+vector leg of retrieval. Until this is hardened, check
+`embedding IS NULL` and `kb_entity.embedding IS NULL` after a fresh
+ingest if you suspect a silent embed failure.
+
 ---
 
 ## 5. Mention Resolution
@@ -293,7 +341,7 @@ The composer renders two KB directive tokens via assistant-ui's
 - `:kb-folder[label]{folderId=<UUID>}` — mention a folder (the
   popover's first item per folder)
 
-The brace-group key **matches the `search_kb` / `list_documents`
+The brace-group key **matches the `search_KB` / `list_documents`
 parameter name** so the LLM can copy the value verbatim into the
 tool call — no ambiguity, no resolver in the loop.
 
@@ -301,22 +349,22 @@ The directive survives the SDK wire and lands in
 `HumanMessage.content` as a plain string. From there the LLM does
 the work:
 
-- `:kb-document[…]` → `search_kb({ documentId: "<UUID>", query: <user's question> })`
+- `:kb-document[…]` → `search_KB({ documentId: "<UUID>", query: <user's question> })`
   (or `list_documents({ documentId: "<UUID>" })` to inspect the doc)
-- `:kb-folder[…]` → `search_kb({ folderId: "<UUID>", query: <user's question> })`
+- `:kb-folder[…]` → `search_KB({ folderId: "<UUID>", query: <user's question> })`
   or `list_documents({ folderId: "<UUID>" })` to enumerate
 
 The system prompt
 (`backend/prompt/system.ts`, `[KNOWLEDGE BASE]` clause) names the
 two directive forms and tells the LLM to copy the id into the
-matching tool arg. `search_kb` itself enforces per-user scoping,
+matching tool arg. `search_KB` itself enforces per-user scoping,
 so cross-user mentions return empty rather than leaking.
 
 `backend/node/prepare-data-node.ts` is now a pass-through — no
 pre-LLM resolver. The KB agent's `tool-loop` handles the full flow:
 
 1. LLM reads the directive from `HumanMessage.content`
-2. LLM calls `search_kb` (or `list_documents`) with the right filter
+2. LLM calls `search_KB` (or `list_documents`) with the right filter
 3. The tool returns the content; the LLM reasons over it
 
 The chip survives the assistant-ui SDK wire because the SDK's
@@ -345,18 +393,18 @@ The Settings → KB row actions expose four reprocess modes via
 [`docs/APIS.md`](./APIS.md#kb) for the request/response contract; this
 section is the design rationale.
 
-| Mode                | When to pick it                              | Re-runs                                     | Doc status during                |
-| :------------------ | :------------------------------------------- | :------------------------------------------ | :------------------------------- |
-| `full` (default)    | OCR / chunking is stale or wrong             | PDF render + OCR + chunk + embed + extract  | `parsing` → `success` / `failed` |
-| `chunksOnly`        | pages cache is good, chunks are stale        | chunk + embed + extract on the cached pages | stays `success`                  |
-| `retryFailed`       | some pages failed OCR                        | failed pages only + full re-chunk           | flips to `parsing`               |
-| `retryFailedChunks` | entity-extract failed on a handful of chunks | failed chunks only (in-place UPDATE)        | **stays `success`**              |
+| Mode                | When to pick it                             | Re-runs                                     | Doc status during                |
+| :------------------ | :------------------------------------------ | :------------------------------------------ | :------------------------------- |
+| `full` (default)    | OCR / chunking is stale or wrong            | PDF render + OCR + chunk + embed + extract  | `parsing` → `success` / `failed` |
+| `chunksOnly`        | pages cache is good, chunks are stale       | chunk + embed + extract on the cached pages | stays `success`                  |
+| `retryFailed`       | some pages failed OCR                       | failed pages only + full re-chunk           | flips to `parsing`               |
+| `retryFailedChunks` | chunk-extract failed on a handful of chunks | failed chunks only (in-place UPDATE)        | **stays `success`**              |
 
 Key invariant: `retryFailedChunks` does **not** touch `doc.status` and
 does **not** DELETE chunks. Failed chunks are marked `status='parsing'`
 in place (id, ordinal, embedding, content all preserved), so the
 IIFE inside `kbAgent.generateChunkEmbedNode` finds them by
-`status='parsing'` and re-runs entity-extract per row. DELETE+INSERT
+`status='parsing'` and re-runs chunk-extract per row. DELETE+INSERT
 here was the wrong design — `pageToMarkdownNode` skips under chunksOnly
 / retryFailed modes, so `fullMarkdown` is empty, the IIFE throws, and
 the DELETE has already committed, leaving the doc with N−K chunks and
@@ -419,7 +467,7 @@ a fifth mode means updating the enum in `state.ts` AND
   that row only. `kb_document.status` stays `success`. The doc table
   shows the doc as Ready; the doc detail dialog surfaces the chunk
   count breakdown (`Indexed N/M` + a failed badge). Pick
-  `retryFailedChunks` to re-run entity-extract in place.
+  `retryFailedChunks` to re-run chunk-extract in place.
 - **Embed failure on the whole doc** — `kb_document.status='failed'`
   with `error_message` set. Reprocess (`full`) re-runs the whole
   pipeline. `retryFailedChunks` returns 409 `NOT_READY` because the doc
@@ -441,7 +489,7 @@ shared singletons):
 | Env variable              | Default | Purpose                                               |
 | :------------------------ | :------ | :---------------------------------------------------- |
 | `KB_CHUNK_MAX_CHARS`      | `2000`  | Max character length of a single text chunk.          |
-| `KB_HYBRID_TOPK_DEFAULT`  | `8`     | Default top-K returned by `search_kb`.                |
+| `KB_HYBRID_TOPK_DEFAULT`  | `8`     | Default top-K returned by `search_KB`.                |
 | `KB_HYBRID_TOPK_MAX`      | `20`    | Clamp on user-supplied `topK`.                        |
 | `KB_RERANK_MIN_SCORE`     | `0.4`   | Threshold filter for the Reranker stage.              |
 | `KB_MENTION_TOPK_DEFAULT` | `5`     | Per-mention top-K under Meta mode.                    |

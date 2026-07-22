@@ -6,7 +6,7 @@ import { FileTextIcon } from "lucide-react";
 import { chunkPreview, legBadges } from "./parser";
 import type { KbDocument } from "./types";
 
-// ponytail: shared chunk list — search_kb renders
+// ponytail: shared chunk list — search_KB renders
 // the same { [n] · title · leg badges · preview } rows. Order is locked
 // to the backend's RRF ranking (.claude/13-kb-v3.md "顺序锁定").
 // Now collapsible (default 3) to prevent large context lists from
@@ -17,7 +17,7 @@ export function KbChunkList({ docs, slot }: { docs: KbDocument[]; slot: string }
 
   if (docs.length === 0) return null;
 
-  const isRerank = docs.some((d) => d.rrfScore > 0.05);
+  const isRerank = docs.some((d) => d.scoreKind === "rerank");
   const visibleDocs = expanded ? docs : docs.slice(0, 3);
   const hasMore = docs.length > 3;
 

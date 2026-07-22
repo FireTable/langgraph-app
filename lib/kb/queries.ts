@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 
@@ -8,28 +8,39 @@ import { threads } from "@/lib/threads/schema";
 import {
   kbChunk,
   kbDocument,
+  kbEntity,
   kbFolder,
   kbObservability,
+  kbRelationship,
+  kbTheme,
   type KbChunk,
   type KbDocument,
+  type KbEntity,
   type KbFolder,
   type KbObservability,
+  type KbRelationship,
   type NewKbChunk,
   type NewKbDocument,
+  type NewKbEntity,
   type NewKbFolder,
   type NewKbObservability,
+  type NewKbRelationship,
 } from "./schema";
 
 // Re-export types so consumers don't need a second import line.
 export type {
   KbChunk,
   KbDocument,
+  KbEntity,
   KbFolder,
   KbObservability,
+  KbRelationship,
   NewKbChunk,
   NewKbDocument,
+  NewKbEntity,
   NewKbFolder,
   NewKbObservability,
+  NewKbRelationship,
 };
 
 // ponytail: tx type alias keeps insertKbChunks + withKbTx in sync with
@@ -177,6 +188,23 @@ export async function deleteKbChunksByDocumentId(tx: PgTx, docId: string): Promi
   await tx.delete(kbChunk).where(eq(kbChunk.documentId, docId));
 }
 
+// ponytail: reprocess wipes stale graph rows for the same reason as
+// chunks — the new entity-extract pass will upsert fresh rows keyed
+// on (user_id, document_id, name) / (user_id, document_id, source,
+// target, relation). Without these DELETEs the old rows survive
+// upsert-on-conflict-no-op: the source_chunk_ids array just keeps
+// growing (new chunk_id appended to old array), so old chunkIds
+// become permanent dangling pointers and the embedding text carries
+// stale graph metadata. Reset to first-ingest state — caller wraps
+// in the same tx as deleteKbChunksByDocumentId so it's atomic.
+export async function deleteKbEntitiesByDocumentId(tx: PgTx, docId: string): Promise<void> {
+  await tx.delete(kbEntity).where(eq(kbEntity.documentId, docId));
+}
+
+export async function deleteKbRelationshipsByDocumentId(tx: PgTx, docId: string): Promise<void> {
+  await tx.delete(kbRelationship).where(eq(kbRelationship.documentId, docId));
+}
+
 // ponytail: retryFailedChunks reprocess — UPDATE failed chunk rows
 // in place rather than DELETE+INSERT. The DELETE+INSERT design had
 // a race: if the IIFE inside generateChunkEmbedNode fails to reach
@@ -205,9 +233,6 @@ export async function markFailedKbChunksRetryingByDocumentId(
     .set({
       status: "parsing",
       errorMessage: null,
-      entities: [],
-      relationships: [],
-      themes: [],
     })
     .where(and(eq(kbChunk.documentId, docId), eq(kbChunk.status, "failed")));
 }
@@ -439,35 +464,28 @@ export async function listKbDocumentsGroupedByFolder(
   return out;
 }
 
-// Used by chunkEmbedStoreNode inside a transaction; takes the tx so a
-// doc + its chunks land atomically.
+// ponytail: tx-scoped chunk insert. embedding is nullable in the
+// schema — chunk-extract-node writes rows with embedding=NULL,
+// and chunk-embed-node later fills them with graph-augmented
+// 1024-dim bge-m3 vectors. Kept NULL insert path explicit (not a
+// `0,0,...,0` placeholder) so the HNSW index and dense-leg ANN
+// can trivially skip fresh chunks until their first embed pass.
+// Mirror upsertEntityEmbedding's pattern: build the JS vector
+// literal, drizzle binds it as a positional $N, ::vector cast
+// stays in the SQL template so pgvector's lexer sees it once.
 export async function insertKbChunks(tx: PgTx, rows: NewKbChunk[]): Promise<void> {
   if (rows.length === 0) return;
-  // ponytail: bypass Drizzle's `vector` customType for the embedding
-  // column. The customType's toDriver returns `[1,2,3]`, but postgres.js
-  // sees a JS number[] and encodes it as the PG array literal `1,2,3`
-  // (no brackets), so the server-side `vector_in` parser rejects it with
-  // "Vector contents must start with '['" (SQLSTATE 22P02). We instead
-  // construct the SQL fragment ourselves with the literal already in
-  // pgvector's `[1,2,3]` form, and use postgres.js's `sql` template
-  // (via Drizzle's `tx.execute`) so the cast happens with the right
-  // shape on the wire.
-  //
-  // Single-row INSERT loop also dodges a separate multi-row + pgvector
-  // failure mode that surfaced as a no-SQLSTATE FailedQueryError on
-  // some runs.
   for (const row of rows) {
-    const embeddingLiteral = `[${row.embedding.join(",")}]`;
-    const entitiesJson = JSON.stringify(row.entities ?? []);
+    const embeddingLiteral =
+      row.embedding && row.embedding.length > 0 ? `[${row.embedding.join(",")}]` : null;
     await tx.execute(sql`
-      INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, entities)
+      INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding)
       VALUES (
         ${row.id},
         ${row.documentId},
         ${row.ordinal},
         ${row.content},
-        ${embeddingLiteral}::vector,
-        ${entitiesJson}::jsonb
+        ${embeddingLiteral}::vector
       )
     `);
   }
@@ -475,9 +493,6 @@ export async function insertKbChunks(tx: PgTx, rows: NewKbChunk[]): Promise<void
 
 // Resolve a kb_ref to its chunks (in document order) for LLM context.
 export async function findKbChunksByDocumentId(userId: string, docId: string): Promise<KbChunk[]> {
-  // ponytail: per-user filter via JOIN to keep the helper self-contained
-  // — callers don't have to remember to scope by userId. Returns [] for
-  // cross-user ids, which the resolver turns into "not found".
   return db
     .select({ chunk: kbChunk })
     .from(kbChunk)
@@ -487,47 +502,138 @@ export async function findKbChunksByDocumentId(userId: string, docId: string): P
     .then((rows) => rows.map((r) => r.chunk));
 }
 
-// Slim variant for the Settings → KB doc-detail payload: skip the 1536-dim
-// embedding array (6 KB per chunk) and the generated `tsv` column. The
-// preview UI just needs the text + extracted entities + per-chunk status
-// (so a failed entity extract is visibly distinct from a successful one).
+// Slim variant for the Settings → KB doc-detail payload.
+// ponytail: per-chunk entities/relationships come from the new
+// `kb_entity` / `kb_relationship` tables joined on `source_chunk_ids @>`
+// ARRAY[chunkId]` (audit §8 — dropped the jsonB columns on kb_chunk in
+// migration 0012; the doc-detail contract keeps the same shape the UI
+// expects so chunks carry their graph payload without an extra fetch).
 export type KbChunkPreview = {
   ordinal: number;
   content: string;
+  status: "pending" | "parsing" | "success" | "failed";
+  errorMessage: string | null;
   entities: Array<{ name: string; type: string; description: string }>;
   relationships: Array<{ source: string; target: string; relation: string; description: string }>;
   themes: string[];
-  status: "pending" | "parsing" | "success" | "failed";
-  errorMessage: string | null;
 };
 
 export async function findKbChunksContentByDocumentId(
   userId: string,
   docId: string,
 ): Promise<KbChunkPreview[]> {
-  return db
+  const chunks = await db
     .select({
+      id: kbChunk.id,
       ordinal: kbChunk.ordinal,
       content: kbChunk.content,
-      entities: kbChunk.entities,
-      relationships: kbChunk.relationships,
-      themes: kbChunk.themes,
       status: kbChunk.status,
       errorMessage: kbChunk.errorMessage,
     })
     .from(kbChunk)
     .innerJoin(kbDocument, eq(kbChunk.documentId, kbDocument.id))
     .where(and(eq(kbDocument.userId, userId), eq(kbChunk.documentId, docId)))
-    .orderBy(asc(kbChunk.ordinal))
-    .then((rows) => rows);
+    .orderBy(asc(kbChunk.ordinal));
+
+  if (chunks.length === 0) return [];
+
+  // Pull every entity / relationship whose source_chunk_ids contains
+  // any of this doc's chunk ids. We do it in two bulk queries (entity
+  // + relationship) instead of N+1 per-chunk. The Postgres `&&`
+  // operator on text[] returns true when arrays overlap.
+  const chunkIds = chunks.map((c) => c.id);
+  const chunkIdArrayLiteral = `{${chunkIds.map((id) => `"${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
+
+  const entityRows = await db.execute<{
+    name: string;
+    type: string;
+    description: string;
+    source_chunk_ids: string[];
+  }>(sql`
+    SELECT name, type, description, source_chunk_ids
+    FROM kb_entity
+    WHERE user_id = ${userId}
+      AND document_id = ${docId}
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+
+  const relationshipRows = await db.execute<{
+    source: string;
+    target: string;
+    relation: string;
+    description: string;
+    source_chunk_ids: string[];
+  }>(sql`
+    SELECT source, target, relation, description, source_chunk_ids
+    FROM kb_relationship
+    WHERE user_id = ${userId}
+      AND document_id = ${docId}
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+
+  // ponytail: themes are stored flat on kb_theme (one row per chunk +
+  // name). Single bulk read covers the whole doc — no entity-union
+  // fan-out. We reuse chunkIdArrayLiteral (string-form array literal)
+  // rather than ANY(${array}::text[]) — drizzle's sql tag won't
+  // auto-bind a JS array as a pgvector text[] parameter without an
+  // explicit cast, so passing a pre-formatted literal is the safe path.
+  const themeRows = await db.execute<{ chunk_id: string; name: string }>(sql`
+    SELECT chunk_id, name
+    FROM kb_theme
+    WHERE user_id = ${userId}
+      AND document_id = ${docId}
+      AND chunk_id = ANY(${chunkIdArrayLiteral}::text[])
+  `);
+
+  // Index entities / relationships by chunk id for O(1) lookup. Same
+  // entity / relationship can appear in many chunks (canonical merge
+  // dedupes by name), so we de-dupe per chunk before assignment.
+  const entitiesByChunk = new Map<string, KbChunkPreview["entities"]>();
+  for (const e of entityRows) {
+    for (const cid of e.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = entitiesByChunk.get(cid) ?? [];
+      if (!bucket.some((x) => x.name === e.name)) {
+        bucket.push({ name: e.name, type: e.type, description: e.description ?? "" });
+      }
+      entitiesByChunk.set(cid, bucket);
+    }
+  }
+  const relsByChunk = new Map<string, KbChunkPreview["relationships"]>();
+  for (const r of relationshipRows) {
+    for (const cid of r.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = relsByChunk.get(cid) ?? [];
+      const key = `${r.source}|${r.target}|${r.relation}`;
+      if (!bucket.some((x) => `${x.source}|${x.target}|${x.relation}` === key)) {
+        bucket.push({
+          source: r.source,
+          target: r.target,
+          relation: r.relation,
+          description: r.description ?? "",
+        });
+      }
+      relsByChunk.set(cid, bucket);
+    }
+  }
+  const themesByChunk = new Map<string, string[]>();
+  for (const t of themeRows) {
+    const bucket = themesByChunk.get(t.chunk_id) ?? [];
+    if (!bucket.includes(t.name)) bucket.push(t.name);
+    themesByChunk.set(t.chunk_id, bucket);
+  }
+
+  return chunks.map((c) => ({
+    ordinal: c.ordinal,
+    content: c.content,
+    status: c.status,
+    errorMessage: c.errorMessage,
+    entities: entitiesByChunk.get(c.id) ?? [],
+    relationships: relsByChunk.get(c.id) ?? [],
+    themes: themesByChunk.get(c.id) ?? [],
+  }));
 }
 
-// ponytail: per-chunk state writes — companion to kb_document.status.
-// chunkEmbedStoreNode writes these in the same pipeline that
-// finalizes kb_document.status="success", so a transient chunk
-// failure never blocks the parent doc from landing at success
-// (matches the goal: chunks are derived data, the doc's status
-// reflects only the OCR + pages phase).
 export async function markKbChunkSuccess(chunkId: string): Promise<void> {
   await db
     .update(kbChunk)
@@ -539,14 +645,6 @@ export async function markKbChunkFailed(chunkId: string, errorMessage: string): 
   await db.update(kbChunk).set({ status: "failed", errorMessage }).where(eq(kbChunk.id, chunkId));
 }
 
-// ponytail: bulk status flip for a doc's chunks. Drives the visible
-// 3-stage chunk lifecycle (pending → parsing → success/failed) —
-// called right BEFORE the entity-LLM dispatch so the UI snapshot
-// captures the "parsing" frame even though the work is short.
-// Caller supplies the tx so this UPDATE participates in the
-// same atomicity envelope as the INSERT (just before this helper),
-// giving polling observers a clean INSERT-then-parsing transition
-// (no intermediate "pending" frame visible from the network).
 export async function markAllKbChunksParsingForDocInTx(tx: PgTx, docId: string): Promise<void> {
   await tx
     .update(kbChunk)
@@ -554,25 +652,22 @@ export async function markAllKbChunksParsingForDocInTx(tx: PgTx, docId: string):
     .where(and(eq(kbChunk.documentId, docId), eq(kbChunk.status, "pending")));
 }
 
-// ponytail: end-of-pipeline per-row updates. The chunks table already
-// has content + embedding (written by insertKbChunks at the start);
-// these UPDATEs back-fill the entity list + finalise status. Two
-// separate columns + status so we don't have to choose between
-// "optimistic row ready before llm" and "at-least-once status flip".
 export async function updateKbChunkForSuccess(
   chunkId: string,
-  out: {
-    entities: Array<{ name: string; type: string; description: string }>;
-    relationships: Array<{ source: string; target: string; relation: string; description: string }>;
-    themes: string[];
+  _out?: {
+    entities?: Array<{ name: string; type: string; description: string }>;
+    relationships?: Array<{
+      source: string;
+      target: string;
+      relation: string;
+      description: string;
+    }>;
+    themes?: string[];
   },
 ): Promise<void> {
   await db
     .update(kbChunk)
     .set({
-      entities: out.entities,
-      relationships: out.relationships,
-      themes: out.themes,
       errorMessage: null,
     })
     .where(eq(kbChunk.id, chunkId));
@@ -582,14 +677,9 @@ export async function updateKbChunkForFailure(
   chunkId: string,
   errorMessage: string,
 ): Promise<void> {
-  // Don't clobber entities — if a previous successful entity
-  // extract landed somewhere (e.g. a partial run), keep it visible.
   await db.update(kbChunk).set({ errorMessage }).where(eq(kbChunk.id, chunkId));
 }
 
-// Counts of failed chunks for a doc — surfaces in the doc-detail
-// dialog so the user sees "23/47 indexed, 2 failed" without
-// having to scroll every chunk row.
 export async function getKbChunkFailureCount(docId: string): Promise<number> {
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -598,11 +688,6 @@ export async function getKbChunkFailureCount(docId: string): Promise<number> {
   return count;
 }
 
-// ponytail: rebuildChunksOnly — flips every chunk for the doc back
-// to 'pending' without touching kb_document. Used by the
-// Settings→Reprocess "Only rebuild chunks (keep OCR result)" toggle
-// so chunk-level failures (entity extract / dim mismatch) can be
-// retried without spending another OCR pass.
 export async function resetKbChunksForReprocess(tx: PgTx, docId: string): Promise<void> {
   await tx
     .update(kbChunk)
@@ -614,35 +699,733 @@ export async function findKbChunksByFolderId(
   userId: string,
   folderId: string,
 ): Promise<KbChunkPreview[]> {
-  return db
+  const chunks = await db
     .select({
+      id: kbChunk.id,
       ordinal: kbChunk.ordinal,
       content: kbChunk.content,
-      entities: kbChunk.entities,
-      relationships: kbChunk.relationships,
-      themes: kbChunk.themes,
       status: kbChunk.status,
       errorMessage: kbChunk.errorMessage,
     })
     .from(kbChunk)
     .innerJoin(kbDocument, eq(kbChunk.documentId, kbDocument.id))
     .where(and(eq(kbDocument.userId, userId), eq(kbDocument.folderId, folderId)))
-    .orderBy(asc(kbChunk.ordinal))
-    .then((rows) => rows);
+    .orderBy(asc(kbChunk.ordinal));
+
+  if (chunks.length === 0) return [];
+
+  // ponytail: same shape as findKbChunksContentByDocumentId, but
+  // scoped across every doc in the folder. The front-end
+  // KnowledgeGraph component dedupes entities / relationships
+  // / themes across chunks itself (per-chunk payload → rollup),
+  // so returning per-chunk data here matches the doc-detail
+  // contract and lets the same UI work for both views.
+  const chunkIds = chunks.map((c) => c.id);
+  const chunkIdArrayLiteral = `{${chunkIds
+    .map((id) => `"${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+    .join(",")}}`;
+
+  const entityRows = await db.execute<{
+    name: string;
+    type: string;
+    description: string;
+    source_chunk_ids: string[];
+  }>(sql`
+    SELECT name, type, description, source_chunk_ids
+    FROM kb_entity
+    WHERE user_id = ${userId}
+      AND document_id IN (SELECT id FROM kb_document WHERE user_id = ${userId} AND folder_id = ${folderId})
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+
+  const relationshipRows = await db.execute<{
+    source: string;
+    target: string;
+    relation: string;
+    description: string;
+    source_chunk_ids: string[];
+  }>(sql`
+    SELECT source, target, relation, description, source_chunk_ids
+    FROM kb_relationship
+    WHERE user_id = ${userId}
+      AND document_id IN (SELECT id FROM kb_document WHERE user_id = ${userId} AND folder_id = ${folderId})
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+
+  // ponytail: themes live flat on kb_theme (single source of truth).
+  // Use chunkIdArrayLiteral — drizzle's sql tag doesn't auto-bind a
+  // JS array to pgvector text[] parameter without an explicit cast.
+  const themeRows = await db.execute<{ chunk_id: string; name: string }>(sql`
+    SELECT chunk_id, name
+    FROM kb_theme
+    WHERE user_id = ${userId}
+      AND document_id IN (SELECT id FROM kb_document WHERE user_id = ${userId} AND folder_id = ${folderId})
+      AND chunk_id = ANY(${chunkIdArrayLiteral}::text[])
+  `);
+
+  const entitiesByChunk = new Map<string, KbChunkPreview["entities"]>();
+  for (const e of entityRows) {
+    for (const cid of e.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = entitiesByChunk.get(cid) ?? [];
+      if (!bucket.some((x) => x.name === e.name)) {
+        bucket.push({ name: e.name, type: e.type, description: e.description ?? "" });
+      }
+      entitiesByChunk.set(cid, bucket);
+    }
+  }
+  const relsByChunk = new Map<string, KbChunkPreview["relationships"]>();
+  for (const r of relationshipRows) {
+    for (const cid of r.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = relsByChunk.get(cid) ?? [];
+      const key = `${r.source}|${r.target}|${r.relation}`;
+      if (!bucket.some((x) => `${x.source}|${x.target}|${x.relation}` === key)) {
+        bucket.push({
+          source: r.source,
+          target: r.target,
+          relation: r.relation,
+          description: r.description ?? "",
+        });
+      }
+      relsByChunk.set(cid, bucket);
+    }
+  }
+  const themesByChunk = new Map<string, string[]>();
+  for (const t of themeRows) {
+    const bucket = themesByChunk.get(t.chunk_id) ?? [];
+    if (!bucket.includes(t.name)) bucket.push(t.name);
+    themesByChunk.set(t.chunk_id, bucket);
+  }
+
+  return chunks.map((c) => ({
+    ordinal: c.ordinal,
+    content: c.content,
+    status: c.status,
+    errorMessage: c.errorMessage,
+    entities: entitiesByChunk.get(c.id) ?? [],
+    relationships: relsByChunk.get(c.id) ?? [],
+    themes: themesByChunk.get(c.id) ?? [],
+  }));
+}
+
+// ponytail: Step 3 canonical query helpers for kb_entity & kb_relationship
+export async function findCanonicalEntitiesByDocId(
+  userId: string,
+  docId: string,
+): Promise<KbEntity[]> {
+  return db
+    .select()
+    .from(kbEntity)
+    .where(and(eq(kbEntity.userId, userId), eq(kbEntity.documentId, docId)));
+}
+
+export async function findCanonicalRelationshipsByDocId(
+  userId: string,
+  docId: string,
+): Promise<KbRelationship[]> {
+  return db
+    .select()
+    .from(kbRelationship)
+    .where(and(eq(kbRelationship.userId, userId), eq(kbRelationship.documentId, docId)));
+}
+
+export async function upsertEntityEmbedding(id: string, embedding: number[]): Promise<void> {
+  const embeddingLiteral = `[${embedding.join(",")}]`;
+  await db.execute(sql`
+    UPDATE kb_entity
+    SET embedding = ${embeddingLiteral}::vector,
+        updated_at = NOW()
+    WHERE id = ${id}
+  `);
+}
+
+export async function upsertRelationshipEmbedding(id: string, embedding: number[]): Promise<void> {
+  const embeddingLiteral = `[${embedding.join(",")}]`;
+  await db.execute(sql`
+    UPDATE kb_relationship
+    SET embedding = ${embeddingLiteral}::vector,
+        updated_at = NOW()
+    WHERE id = ${id}
+  `);
+}
+
+// ponytail: chunk-side embedding writer for chunkEmbedNode's new
+// chunk leg. chunk-extract-node now inserts chunks with embedding=NULL;
+// this UPDATE fires after the LightRAG-style augmentation text is built
+// (content + per-chunk entities + per-chunk relationships + per-chunk
+// themes — same doc, but seen fresh at embed time so the post-alignment
+// canonical names are what get vectorized). Idempotent on retry.
+export async function upsertChunkEmbedding(id: string, embedding: number[]): Promise<void> {
+  const embeddingLiteral = `[${embedding.join(",")}]`;
+  await db.execute(sql`
+    UPDATE kb_chunk
+    SET embedding = ${embeddingLiteral}::vector,
+        updated_at = NOW()
+    WHERE id = ${id}
+  `);
+}
+
+// ponytail: bulk reader for chunk's graph context used by the chunk-embed
+// leg. Returns entities + relationships + themes per chunkId for ONE doc
+// scope, joining via source_chunk_ids && ARRAY[chunkId]. One round-trip
+// per leg rather than N queries. Caller splits by chunk_id downstream.
+export async function findKbChunksGraphContext(
+  userId: string,
+  docId: string,
+  chunkIds: readonly string[],
+): Promise<{
+  entitiesByChunk: Map<string, Array<{ name: string; type: string }>>;
+  relsByChunk: Map<string, Array<{ source: string; target: string; relation: string }>>;
+}> {
+  const entitiesByChunk = new Map<string, Array<{ name: string; type: string }>>();
+  const relsByChunk = new Map<
+    string,
+    Array<{ source: string; target: string; relation: string }>
+  >();
+  if (chunkIds.length === 0) return { entitiesByChunk, relsByChunk };
+
+  const chunkIdArrayLiteral = `{${chunkIds
+    .map((id) => `"${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+    .join(",")}}`;
+
+  const entityRows = await db.execute<{
+    name: string;
+    type: string;
+    source_chunk_ids: string[];
+  }>(sql`
+    SELECT name, type, source_chunk_ids
+    FROM kb_entity
+    WHERE user_id = ${userId}
+      AND document_id = ${docId}
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+  for (const e of entityRows) {
+    for (const cid of e.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = entitiesByChunk.get(cid) ?? [];
+      // Same dedup pattern as findKbChunksContentByDocumentId — one
+      // entity can be referenced by many chunks; surface it once per.
+      if (!bucket.some((x) => x.name === e.name)) {
+        bucket.push({ name: e.name, type: e.type });
+      }
+      entitiesByChunk.set(cid, bucket);
+    }
+  }
+
+  const relRows = await db.execute<{
+    source: string;
+    target: string;
+    relation: string;
+    source_chunk_ids: string[];
+  }>(sql`
+    SELECT source, target, relation, source_chunk_ids
+    FROM kb_relationship
+    WHERE user_id = ${userId}
+      AND document_id = ${docId}
+      AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
+  `);
+  for (const r of relRows) {
+    for (const cid of r.source_chunk_ids ?? []) {
+      if (!chunkIds.includes(cid)) continue;
+      const bucket = relsByChunk.get(cid) ?? [];
+      const triple = { source: r.source, target: r.target, relation: r.relation };
+      if (
+        !bucket.some(
+          (x) =>
+            x.source === triple.source &&
+            x.relation === triple.relation &&
+            x.target === triple.target,
+        )
+      ) {
+        bucket.push(triple);
+      }
+      relsByChunk.set(cid, bucket);
+    }
+  }
+
+  return { entitiesByChunk, relsByChunk };
+}
+
+export async function updateKbChunkGraphData(
+  _chunkId: string,
+  _entities: Array<{ name: string; type: string; description: string }>,
+  _relationships: Array<{ source: string; target: string; relation: string; description: string }>,
+): Promise<void> {
+  // no-op placeholder for legacy callers
+}
+
+export async function upsertKbEntity(args: {
+  userId: string;
+  documentId: string;
+  name: string;
+  type: string;
+  description: string;
+  chunkId: string;
+}): Promise<void> {
+  const nameTrim = args.name.trim();
+  if (!nameTrim) return;
+
+  const id = `e-${randomUUID()}`;
+  await db.execute(sql`
+    INSERT INTO kb_entity (id, user_id, document_id, name, type, description, source_chunk_ids, created_at, updated_at)
+    VALUES (${id}, ${args.userId}, ${args.documentId}, ${nameTrim}, ${args.type.trim()}, ${args.description.trim()}, ARRAY[${args.chunkId}]::text[], NOW(), NOW())
+    ON CONFLICT (user_id, document_id, name) DO UPDATE
+    SET source_chunk_ids = CASE
+          WHEN ${args.chunkId} = ANY(kb_entity.source_chunk_ids) THEN kb_entity.source_chunk_ids
+          ELSE array_append(kb_entity.source_chunk_ids, ${args.chunkId})
+        END,
+        updated_at = NOW()
+  `);
+}
+
+export async function upsertKbRelationship(args: {
+  userId: string;
+  documentId: string;
+  source: string;
+  target: string;
+  relation: string;
+  description: string;
+  chunkId: string;
+}): Promise<void> {
+  const sourceTrim = args.source.trim();
+  const targetTrim = args.target.trim();
+  const relationTrim = args.relation.trim();
+  if (!sourceTrim || !targetTrim || !relationTrim) return;
+
+  const id = `r-${randomUUID()}`;
+  await db.execute(sql`
+    INSERT INTO kb_relationship (id, user_id, document_id, source, target, relation, description, source_chunk_ids, weight, created_at, updated_at)
+    VALUES (${id}, ${args.userId}, ${args.documentId}, ${sourceTrim}, ${targetTrim}, ${relationTrim}, ${args.description.trim()}, ARRAY[${args.chunkId}]::text[], 1, NOW(), NOW())
+    ON CONFLICT (user_id, document_id, source, target, relation) DO UPDATE
+    SET weight = kb_relationship.weight + 1,
+        source_chunk_ids = CASE
+          WHEN ${args.chunkId} = ANY(kb_relationship.source_chunk_ids) THEN kb_relationship.source_chunk_ids
+          ELSE array_append(kb_relationship.source_chunk_ids, ${args.chunkId})
+        END,
+        updated_at = NOW()
+  `);
+}
+
+// ponytail: replace the chunk's theme set with `themes` (single source
+// of truth — kb_theme is flat, one row per (chunk, name); no entity
+// fan-out). Idempotent on retry — UNIQUE(chunk_id, name) makes
+// re-INSERT a no-op via ON CONFLICT DO NOTHING. Callers run this
+// AFTER entity / relationship upserts so `kb_theme` rows survive
+// even when graph extraction returns zero nodes (chunk without
+// entities still carries its macro themes).
+export async function replaceChunkThemes(args: {
+  userId: string;
+  documentId: string;
+  chunkId: string;
+  themes: readonly string[];
+}): Promise<void> {
+  await db.execute(sql`
+    DELETE FROM kb_theme
+    WHERE user_id = ${args.userId}
+      AND chunk_id = ${args.chunkId}
+  `);
+
+  const trimmed = Array.from(new Set(args.themes.map((t) => t.trim()).filter((t) => t.length > 0)));
+  if (trimmed.length === 0) return;
+
+  const rows = trimmed.map((name) => ({
+    id: `t-${randomUUID()}`,
+    userId: args.userId,
+    documentId: args.documentId,
+    chunkId: args.chunkId,
+    name,
+  }));
+  await db.insert(kbTheme).values(rows).onConflictDoNothing();
+}
+
+// ponytail: theme alignment LLM pass (chunk-alignment-node.ts) feeds
+// these mappings in. For each `{canonical, aliases}`, all matching
+// `kb_theme.name` rows in this `(user_id, document_id)` get renamed
+// in place to the canonical form. After the renames complete, a
+// per-(chunk_id, name) dedup pass kills any row collisions (multiple
+// aliases collapsing to the same canonical can leave a single chunk
+// with two rows of the same name, violating UNIQUE(chunk_id, name)).
+//
+// Why in-place: storing `canonical_name` would mean read paths
+// COALESCE everywhere + a schema migration. Theme names are LLM-
+// generated tokens that the user never quotes back verbatim — losing
+// the original variant on alignment is fine.
+export async function applyThemeAlignment(args: {
+  userId: string;
+  documentId: string;
+  mappings: ReadonlyArray<{ canonical: string; aliases: readonly string[] }>;
+}): Promise<{ updated: number; deduped: number }> {
+  let updated = 0;
+  for (const mapping of args.mappings) {
+    const aliases = mapping.aliases.filter((a) => a !== mapping.canonical);
+    if (aliases.length === 0) continue;
+    // Pre-format the alias set as a Postgres array literal — the
+    // same drizzle sql tag gotcha as elsewhere (js arrays don't auto-
+    // bind as pg text[]). Each alias is double-quote-escaped.
+    const literal = `{${aliases
+      .map((a) => `"${a.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+      .join(",")}}`;
+    const result = await db.execute(sql`
+      WITH updated_rows AS (
+        UPDATE kb_theme
+        SET name = ${mapping.canonical}
+        WHERE user_id = ${args.userId}
+          AND document_id = ${args.documentId}
+          AND name = ANY(${literal}::text[])
+        RETURNING id
+      )
+      SELECT COUNT(*)::int AS n FROM updated_rows
+    `);
+    updated += Number((result as unknown as { n: number }[])[0]?.n ?? 0);
+  }
+
+  // ponytail: dedup collisions — keep one row per (chunk_id, name)
+  // group, drop the rest. ROW_NUMBER over (chunk_id, name) ORDER BY id
+  // (UUIDs are random, so any row is equivalent for our purpose).
+  const dupResult = await db.execute(sql`
+    WITH ranked AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY chunk_id, name ORDER BY id
+      ) AS rn
+      FROM kb_theme
+      WHERE user_id = ${args.userId}
+        AND document_id = ${args.documentId}
+    ),
+    deleted AS (
+      DELETE FROM kb_theme
+      WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+      RETURNING id
+    )
+    SELECT COUNT(*)::int AS n FROM deleted
+  `);
+  const deduped = Number((dupResult as unknown as { n: number }[])[0]?.n ?? 0);
+  return { updated, deduped };
+}
+
+// ponytail: entity alias alignment, mirrors applyThemeAlignment's
+// in-place rename + dedup. The LLM pass in chunk-alignment-node.ts
+// emits `entityAliases: [{ canonicalName, aliases: string[] }]` and
+// historically those rows were computed-and-discarded — only the
+// themes side wrote back to the DB. Audit caught the gap; this
+// function now actually folds alias variants into one canonical
+// row per (user_id, document_id, name).
+//
+// Algorithm — pull all rows once, dedup in JS, write back per-row:
+//  1. SELECT kb_entity + kb_relationship for the doc (2 round-trips).
+//  2. Build alias → canonical rename map from the mappings.
+//  3. Group entities by post-rename `name`. Each group:
+//     - kept row = existing-canonical row if present, else lowest-id
+//       alias row (id is UUID, stable ordering for ties)
+//     - UPDATE kept with merged description (`;`-joined) and merged
+//       source_chunk_ids (array distinct union)
+//     - DELETE all losers (worklist in CTE)
+//     - "renamed" = groups where any source name ≠ canonical name
+//     - "merged" = groups with >1 input row
+//  4. Apply the same rename to relationships, then group by
+//     (post-rename source, post-rename target, relation). Each group
+//     gets the same kept-row strategy + UPDATE (sum weight, union
+//     source_chunk_ids) + DELETE losers.
+//  5. Single withKbTx wraps the writes so a mid-flight failure rolls
+//     back the whole rename.
+//
+// Why this is clearer than the SQL-only version: the rename + dedup
+// logic lives in plain JS where it's testable as a function. The SQL
+// does only the bulk read + per-row UPDATE/DELETE, so each round-trip
+// is one statement. Adding invariant checks (e.g. "every rel target
+// resolves to an entity row") becomes a JS assertion in step 3, not
+// a 60-line CTE.
+export async function applyEntityAliases(args: {
+  userId: string;
+  documentId: string;
+  mappings: ReadonlyArray<{ canonical: string; aliases: readonly string[] }>;
+}): Promise<{
+  entitiesRenamed: number;
+  entitiesMerged: number;
+  relSourcesRenamed: number;
+  relSourcesMerged: number;
+  relTargetsRenamed: number;
+  relTargetsMerged: number;
+}> {
+  const empty = {
+    entitiesRenamed: 0,
+    entitiesMerged: 0,
+    relSourcesRenamed: 0,
+    relSourcesMerged: 0,
+    relTargetsRenamed: 0,
+    relTargetsMerged: 0,
+  };
+  if (args.mappings.length === 0) return empty;
+
+  // ponytail: build alias → canonical rename map once. Aliases list
+  // may contain the canonical itself (LLM sometimes echoes it back);
+  // filter those out so a row already named canonical doesn't get
+  // "renamed" to itself. Empty aliases → skip the whole mapping.
+  const renameMap = new Map<string, string>();
+  for (const m of args.mappings) {
+    for (const alias of m.aliases) {
+      if (alias !== m.canonical) renameMap.set(alias, m.canonical);
+    }
+  }
+  if (renameMap.size === 0) return empty;
+
+  const [entities, relationships] = await Promise.all([
+    findCanonicalEntitiesByDocId(args.userId, args.documentId),
+    findCanonicalRelationshipsByDocId(args.userId, args.documentId),
+  ]);
+
+  // ---- entities ----
+  // Group by canonical name. Kept row = existing-canonical row if one
+  // exists in this group (avoids UPDATE-into-UNIQUE-collision against
+  // an already-canonical row), else the lowest-id alias row.
+  type EntityGroup = {
+    canonical: string;
+    rows: typeof entities;
+    kept: (typeof entities)[number];
+    mergedDesc: string;
+    mergedChunkIds: string[];
+    needsRename: boolean;
+  };
+  const entityGroupsByCanonical = new Map<string, EntityGroup>();
+  for (const e of entities) {
+    const canonical = renameMap.get(e.name) ?? e.name;
+    let group = entityGroupsByCanonical.get(canonical);
+    if (!group) {
+      group = {
+        canonical,
+        rows: [],
+        kept: e,
+        mergedDesc: e.description ?? "",
+        mergedChunkIds: [...(e.sourceChunkIds ?? [])],
+        needsRename: e.name !== canonical,
+      };
+      entityGroupsByCanonical.set(canonical, group);
+    }
+    group.rows.push(e);
+    // ponytail: existing-canonical row always wins — even if it
+    // sorts after the alias in the input order. This keeps UPDATE
+    // targets stable against pre-seeded fixture / reprocess rows.
+    if (e.name === canonical && group.kept.name !== canonical) {
+      group.kept = e;
+      group.mergedDesc = e.description ?? "";
+      group.mergedChunkIds = [...(e.sourceChunkIds ?? [])];
+      group.needsRename = false;
+    } else if (e.name !== canonical && group.kept.name !== canonical) {
+      // both alias rows: tiebreak by lowest id
+      if (e.id < group.kept.id) group.kept = e;
+    }
+    if (e.description) {
+      if (group.mergedDesc.length === 0) group.mergedDesc = e.description;
+      else if (!group.mergedDesc.includes(e.description)) {
+        group.mergedDesc = `${group.mergedDesc}; ${e.description}`;
+      }
+    }
+    for (const cid of e.sourceChunkIds ?? []) {
+      if (!group.mergedChunkIds.includes(cid)) group.mergedChunkIds.push(cid);
+    }
+    if (e.name !== canonical) group.needsRename = true;
+  }
+
+  let entitiesRenamed = 0;
+  let entitiesMerged = 0;
+  const entityUpdates: Array<{
+    id: string;
+    name: string;
+    description: string;
+    sourceChunkIds: string[];
+  }> = [];
+  const entityDeletes: string[] = [];
+  for (const group of entityGroupsByCanonical.values()) {
+    if (group.rows.length === 1 && !group.needsRename) continue;
+    if (group.rows.length > 1) entitiesMerged += 1;
+    if (group.needsRename || group.rows.length > 1) entitiesRenamed += 1;
+    // ponytail: DELETE losers FIRST (drizzle tx runs statements in
+    // order). If we UPDATE kept to canonical while alias rows still
+    // exist with their old name, no collision — but if kept is an
+    // alias row being renamed to canonical and a pre-existing
+    // canonical row sat in the group... that's filtered above by
+    // picking canonical as kept. Losers are always alias rows that
+    // never collide with kept's post-update name.
+    entityDeletes.push(...group.rows.filter((r) => r.id !== group.kept.id).map((r) => r.id));
+    entityUpdates.push({
+      id: group.kept.id,
+      name: group.canonical,
+      description: group.mergedDesc,
+      sourceChunkIds: group.mergedChunkIds,
+    });
+  }
+
+  // ---- relationships ----
+  // Apply rename to source / target, then dedup by (source, target,
+  // relation). Track whether a group needed source-rename and/or
+  // target-rename separately so the counters stay distinct.
+  type RelGroup = {
+    key: string;
+    rows: typeof relationships;
+    kept: (typeof relationships)[number];
+    sourceRenamed: boolean;
+    targetRenamed: boolean;
+    mergedChunkIds: string[];
+    totalWeight: number;
+  };
+  const relGroupsByKey = new Map<string, RelGroup>();
+  for (const r of relationships) {
+    const newSource = renameMap.get(r.source) ?? r.source;
+    const newTarget = renameMap.get(r.target) ?? r.target;
+    const key = `${newSource}::${r.relation}::${newTarget}`;
+    const sourceRenamed = newSource !== r.source;
+    const targetRenamed = newTarget !== r.target;
+    let group = relGroupsByKey.get(key);
+    if (!group) {
+      group = {
+        key,
+        rows: [],
+        kept: r,
+        sourceRenamed,
+        targetRenamed,
+        mergedChunkIds: [...(r.sourceChunkIds ?? [])],
+        totalWeight: 0,
+      };
+      relGroupsByKey.set(key, group);
+    }
+    group.rows.push(r);
+    // ponytail: same kept-row strategy — existing-canonical edge
+    // (no rename on either side) wins. Among same-shape edges, pick
+    // the lowest id.
+    const keptIsCanonical = group.kept.source === newSource && group.kept.target === newTarget;
+    const rIsCanonical = sourceRenamed === false && targetRenamed === false;
+    if (rIsCanonical && !keptIsCanonical) {
+      group.kept = r;
+      group.mergedChunkIds = [...(r.sourceChunkIds ?? [])];
+    } else if (keptIsCanonical && rIsCanonical && r.id < group.kept.id) {
+      group.kept = r;
+    } else if (!keptIsCanonical && !rIsCanonical && r.id < group.kept.id) {
+      group.kept = r;
+    }
+    if (sourceRenamed) group.sourceRenamed = true;
+    if (targetRenamed) group.targetRenamed = true;
+    for (const cid of r.sourceChunkIds ?? []) {
+      if (!group.mergedChunkIds.includes(cid)) group.mergedChunkIds.push(cid);
+    }
+    group.totalWeight += r.weight;
+  }
+
+  let relSourcesRenamed = 0;
+  let relSourcesMerged = 0;
+  let relTargetsRenamed = 0;
+  let relTargetsMerged = 0;
+  const relUpdates: Array<{
+    id: string;
+    source: string;
+    target: string;
+    weight: number;
+    sourceChunkIds: string[];
+  }> = [];
+  const relDeletes: string[] = [];
+  for (const group of relGroupsByKey.values()) {
+    if (group.sourceRenamed) relSourcesRenamed += 1;
+    if (group.targetRenamed) relTargetsRenamed += 1;
+    if (group.rows.length > 1) {
+      if (group.sourceRenamed) relSourcesMerged += 1;
+      if (group.targetRenamed) relTargetsMerged += 1;
+    }
+    relDeletes.push(...group.rows.filter((r) => r.id !== group.kept.id).map((r) => r.id));
+    const keptRow = group.kept;
+    const newSource = renameMap.get(keptRow.source) ?? keptRow.source;
+    const newTarget = renameMap.get(keptRow.target) ?? keptRow.target;
+    relUpdates.push({
+      id: keptRow.id,
+      source: newSource,
+      target: newTarget,
+      weight: group.totalWeight,
+      sourceChunkIds: group.mergedChunkIds,
+    });
+  }
+
+  // ---- write back ----
+  // ponytail: one tx wraps the whole rename. Per-row UPDATE / DELETE
+  // are simple — drizzle's update() / delete() don't need a custom
+  // CTE to keep things atomic. 100 rows × 2 round-trips is fine for
+  // the doc sizes we see (KB entity / rel counts stay under ~300 each).
+  await withKbTx(async (tx) => {
+    for (const u of entityUpdates) {
+      await tx
+        .update(kbEntity)
+        .set({
+          name: u.name,
+          description: u.description,
+          sourceChunkIds: u.sourceChunkIds,
+          updatedAt: new Date(),
+        })
+        .where(eq(kbEntity.id, u.id));
+    }
+    if (entityDeletes.length > 0) {
+      await tx.delete(kbEntity).where(inArray(kbEntity.id, entityDeletes));
+    }
+    for (const u of relUpdates) {
+      await tx
+        .update(kbRelationship)
+        .set({
+          source: u.source,
+          target: u.target,
+          weight: u.weight,
+          sourceChunkIds: u.sourceChunkIds,
+          updatedAt: new Date(),
+        })
+        .where(eq(kbRelationship.id, u.id));
+    }
+    if (relDeletes.length > 0) {
+      await tx.delete(kbRelationship).where(inArray(kbRelationship.id, relDeletes));
+    }
+  });
+
+  return {
+    entitiesRenamed,
+    entitiesMerged,
+    relSourcesRenamed,
+    relSourcesMerged,
+    relTargetsRenamed,
+    relTargetsMerged,
+  };
+}
+
+// ponytail: bulk-read all themes that reference ANY chunk in
+// `chunkIds`. Returns one flat array dedup'd per chunk via Map
+// downstream — the caller is responsible for splitting by chunk.
+// Used by chunkEmbedNode to prepend macro themes into the entity's
+// embed text (audit §13b line 456).
+export async function findKbThemesByChunkIds(
+  userId: string,
+  chunkIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (chunkIds.length === 0) return out;
+  // ponytail: pre-formatted text[] literal — drizzle's sql tag doesn't
+  // auto-bind a JS array as pg text[] without an explicit driver hint,
+  // so we interpolate the literal instead of relying on parameter
+  // inference. Same pattern as chunkIdArrayLiteral in the doc-detail
+  // and folder-detail joins above.
+  const literal = `{${chunkIds
+    .map((id) => `"${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+    .join(",")}}`;
+  const rows = await db.execute<{ chunk_id: string; name: string }>(sql`
+    SELECT chunk_id, name
+    FROM kb_theme
+    WHERE user_id = ${userId}
+      AND chunk_id = ANY(${literal}::text[])
+  `);
+  for (const r of rows) {
+    const bucket = out.get(r.chunk_id) ?? [];
+    if (!bucket.includes(r.name)) bucket.push(r.name);
+    out.set(r.chunk_id, bucket);
+  }
+  return out;
 }
 
 export async function deleteKbDocumentForUser(
   userId: string,
   docId: string,
 ): Promise<KbDocument | null> {
-  // ponytail: one transaction wraps the doc delete + its companion
-  // thread row cleanup. kb_chunk + kb_observability cascade off the
-  // doc row via ON DELETE CASCADE; the threads row has no FK so we
-  // remove it explicitly. Only the docId-derived `kind='kb'` thread
-  // is touched — chat threads (kind='chat') for the same user stay
-  // put even if their ids happen to match (defensive: docId-derived
-  // threadId is docId.strip('d-'), a UUID, so collision is implausible
-  // but the kind filter is the safety belt).
   return db.transaction(async (tx) => {
     const [row] = await tx
       .delete(kbDocument)
@@ -678,20 +1461,6 @@ export async function updateKbFolderNameForUser(
     .where(and(eq(kbFolder.id, folderId), eq(kbFolder.userId, userId)))
     .returning();
   return row ?? null;
-}
-
-export async function updateKbChunkGraphData(
-  chunkId: string,
-  entities: Array<{ name: string; type: string; description: string }>,
-  relationships: Array<{ source: string; target: string; relation: string; description: string }>,
-): Promise<void> {
-  await db
-    .update(kbChunk)
-    .set({
-      entities,
-      relationships,
-    })
-    .where(eq(kbChunk.id, chunkId));
 }
 
 // ponytail: KB transaction helper. Wraps Drizzle's transaction so the

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const mockReranker = {
-  rerank: vi.fn(async (query: string, docs: string[]) => {
+  rerank: vi.fn(async (_query: string, docs: string[]) => {
     const mapped = docs.map((d, index) => {
       const isBeta = d.includes("BetaCorp");
       return {
@@ -139,18 +139,18 @@ describe("backend/tool/kb — gating", () => {
 
   it("tool throws a clear error when pgvector is unavailable", async () => {
     _resetPgVectorCache(false);
-    // search_kb is now registered unconditionally — the gate is inside.
+    // search_KB is now registered unconditionally — the gate is inside.
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
-    await expect(tool.invoke({ query: "Acme", topK: 3 })).rejects.toThrow(
+    await expect(tool.invoke({ rewriteQuery: "Acme" })).rejects.toThrow(
       /pgvector extension is not installed/,
     );
   });
 });
 
-describe("backend/tool/kb — search_kb ToolMessage shape", () => {
+describe("backend/tool/kb — search_KB ToolMessage shape", () => {
   it("returns structured JSON with content (numbered) + documents array", async () => {
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
-    const raw = await tool.invoke({ query: "Acme", topK: 3 });
+    const raw = await tool.invoke({ rewriteQuery: "Acme" });
     const parsed = JSON.parse(raw);
     expect(parsed.empty).toBe(false);
     expect(typeof parsed.content).toBe("string");
@@ -160,7 +160,7 @@ describe("backend/tool/kb — search_kb ToolMessage shape", () => {
 
   it("content embeds [1] [2] markers and NEVER exposes numeric rrfScore", async () => {
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
-    const raw = await tool.invoke({ query: "Acme", topK: 3 });
+    const raw = await tool.invoke({ rewriteQuery: "Acme" });
     const parsed = JSON.parse(raw);
     // ponytail: the LLM string never contains the score (community
     // consensus — scores are ranking metadata only).
@@ -171,7 +171,7 @@ describe("backend/tool/kb — search_kb ToolMessage shape", () => {
 
   it("documents array carries rrfScore + legsHit + chunkId for UI", async () => {
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
-    const raw = await tool.invoke({ query: "Acme", topK: 3 });
+    const raw = await tool.invoke({ rewriteQuery: "Acme" });
     const parsed = JSON.parse(raw);
     const doc = parsed.documents[0];
     expect(doc).toHaveProperty("chunkId");
@@ -188,7 +188,7 @@ describe("backend/tool/kb — search_kb ToolMessage shape", () => {
     const { _resetKbEnvCache } = await import("@/lib/kb/env");
     _resetKbEnvCache();
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
-    const raw = await tool.invoke({ query: "Acme", topK: 99 });
+    const raw = await tool.invoke({ rewriteQuery: "Acme" });
     const parsed = JSON.parse(raw);
     expect(parsed.documents.length).toBeLessThanOrEqual(1);
     delete process.env.KB_HYBRID_TOPK_MAX;
@@ -197,7 +197,7 @@ describe("backend/tool/kb — search_kb ToolMessage shape", () => {
 
   it("returns empty result when no docs match", async () => {
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
-    const raw = await tool.invoke({ query: "completely-unrelated-zzz", topK: 3 });
+    const raw = await tool.invoke({ rewriteQuery: "completely-unrelated-zzz" });
     const parsed = JSON.parse(raw);
     expect(parsed.empty).toBe(true);
     expect(parsed.documents).toEqual([]);
@@ -403,7 +403,7 @@ describe("backend/tool/kb — listKbFoldersForUser", () => {
 
 describe("backend/tool/kb — formatSearchResult", () => {
   it("formats empty results", () => {
-    const r = formatSearchResult([], 2000);
+    const r = formatSearchResult({ chunks: [] }, 2000);
     expect(r.empty).toBe(true);
     expect(r.content).toBe("");
     expect(r.documents).toEqual([]);
@@ -411,26 +411,30 @@ describe("backend/tool/kb — formatSearchResult", () => {
 
   it("numbers chunks [1] [2] in order", () => {
     const r = formatSearchResult(
-      [
-        {
-          chunkId: "c1",
-          documentId: "d1",
-          docTitle: "doc.pdf",
-          pageNumbers: [],
-          content: "alpha content",
-          rrfScore: 0.1,
-          legsHit: ["kw"],
-        },
-        {
-          chunkId: "c2",
-          documentId: "d1",
-          docTitle: "doc.pdf",
-          pageNumbers: [],
-          content: "beta content",
-          rrfScore: 0.05,
-          legsHit: ["vec"],
-        },
-      ],
+      {
+        chunks: [
+          {
+            chunkId: "c1",
+            documentId: "d1",
+            docTitle: "doc.pdf",
+            pageNumbers: [],
+            content: "alpha content",
+            score: 0.1,
+            scoreKind: "rrf",
+            legsHit: ["kw"],
+          },
+          {
+            chunkId: "c2",
+            documentId: "d1",
+            docTitle: "doc.pdf",
+            pageNumbers: [],
+            content: "beta content",
+            score: 0.05,
+            scoreKind: "rrf",
+            legsHit: ["vec"],
+          },
+        ],
+      },
       2000,
     );
     expect(r.content).toBe("[1] alpha content\n\n[2] beta content");
@@ -441,17 +445,20 @@ describe("backend/tool/kb — formatSearchResult", () => {
   it("truncates per chunk to chunkMaxChars", () => {
     const long = "x".repeat(500);
     const r = formatSearchResult(
-      [
-        {
-          chunkId: "c1",
-          documentId: "d1",
-          docTitle: "doc.pdf",
-          pageNumbers: [],
-          content: long,
-          rrfScore: 0.1,
-          legsHit: ["kw"],
-        },
-      ],
+      {
+        chunks: [
+          {
+            chunkId: "c1",
+            documentId: "d1",
+            docTitle: "doc.pdf",
+            pageNumbers: [],
+            content: long,
+            score: 0.1,
+            scoreKind: "rrf",
+            legsHit: ["kw"],
+          },
+        ],
+      },
       100,
     );
     // content has [1] prefix (3 chars) + space + 100 chars + ellipsis
@@ -468,10 +475,10 @@ describe("backend/tool/kb — LIST_DOCUMENTS_STATUSES", () => {
   });
 });
 
-describe("backend/tool/kb — search_kb improvements", () => {
+describe("backend/tool/kb — search_KB improvements", () => {
   it("filters search results by documentId", async () => {
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
-    const raw = await tool.invoke({ query: "Acme", topK: 3, documentId: DOC_A_ID });
+    const raw = await tool.invoke({ rewriteQuery: "Acme", documentId: DOC_A_ID });
     const parsed = JSON.parse(raw);
     expect(parsed.empty).toBe(false);
     expect(parsed.documents.every((d: any) => d.documentId === DOC_A_ID)).toBe(true);
@@ -479,7 +486,7 @@ describe("backend/tool/kb — search_kb improvements", () => {
 
   it("filters search results by folderId", async () => {
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
-    const raw = await tool.invoke({ query: "Acme", topK: 3, folderId: FOLDER_ID });
+    const raw = await tool.invoke({ rewriteQuery: "Acme", folderId: FOLDER_ID });
     const parsed = JSON.parse(raw);
     expect(parsed.empty).toBe(false);
     expect(parsed.documents.length).toBeGreaterThan(0);
@@ -487,7 +494,7 @@ describe("backend/tool/kb — search_kb improvements", () => {
 
   it("supports empty query fallback to return ordinal sorted chunks", async () => {
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
-    const raw = await tool.invoke({ query: "   ", topK: 3, documentId: DOC_A_ID });
+    const raw = await tool.invoke({ rewriteQuery: "   ", documentId: DOC_A_ID });
     const parsed = JSON.parse(raw);
     expect(parsed.empty).toBe(false);
     expect(parsed.documents.length).toBe(2);
@@ -498,7 +505,7 @@ describe("backend/tool/kb — search_kb improvements", () => {
   it("supports Reranker scoring if configured", async () => {
     (globalThis as any).shouldMockRerank = true;
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
-    const raw = await tool.invoke({ query: "Acme", topK: 3 });
+    const raw = await tool.invoke({ rewriteQuery: "Acme" });
     const parsed = JSON.parse(raw);
     expect(parsed.empty).toBe(false);
     expect(parsed.documents[0].content).toContain("BetaCorp");

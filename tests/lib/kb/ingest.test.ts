@@ -101,7 +101,7 @@ describe("lib/kb/ingest", () => {
       expect(payload.config.configurable.thread_id).toBe("abc");
     });
 
-    it("passes multitaskStrategy 'interrupt' so a fresh reprocess aborts a prior in-flight run", async () => {
+    it("passes multitaskStrategy 'rollback' so a fresh reprocess aborts + rolls back any in-flight run on the same thread", async () => {
       await fireIngestionRun({
         userId: "user-1",
         attachment: ATTACHMENT,
@@ -109,7 +109,7 @@ describe("lib/kb/ingest", () => {
         title: "resume.pdf",
       });
       const payload = mockRunsCreate.mock.calls[0][2];
-      expect(payload.multitaskStrategy).toBe("interrupt");
+      expect(payload.multitaskStrategy).toBe("rollback");
     });
 
     it("stamps the synthetic HumanMessage with a per-run id (CapturingHandler pmid)", async () => {

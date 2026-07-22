@@ -73,6 +73,7 @@ Non-negotiable. Every change.
     **SSR gotcha**: client-visible values are also evaluated during server-side rendering of any module that imports them (e.g. `lib/wagmi.ts` is pulled in by `app/web3-providers.tsx`, which `RootLayout` imports). Read them with the `isBrowser ? window.__CONFIG__?.X : process.env.X` ternary + a non-empty fallback (e.g. `"ssr-placeholder"`) — `window.__CONFIG__` is `undefined` on the server and RainbowKit / similar constructors throw on empty. The placeholder never reaches the network because no client-side call happens during SSR.
 
 13. **No ad-hoc test scripts in `scripts/`.** `scripts/` is for production tooling (migrations, snapshots, start, retention). Ad-hoc verification / seed / smoke scripts go in `/tmp/<name>.ts` (or anywhere outside the repo) — not alongside the real ones, so they can't get committed by accident.
+14. **`withStructuredOutput` zod schemas must use required fields, never `.optional()` / defaultless `.default([])`.** OpenAI's jsonSchema strict mode and most structured-output providers reject optional arrays / nullable object types. If the LLM may legitimately emit an empty result, type the field as `z.array(...)` (empty array is fine) — don't weaken with `.optional()` to paper over missing fields. Tests must always supply every field the schema declares.
 
 ## Things to know before editing
 

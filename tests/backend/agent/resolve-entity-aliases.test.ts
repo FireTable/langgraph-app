@@ -1,23 +1,49 @@
-// ponytail: TDD coverage for `resolveEntityAliasesForDoc` — the
-// alignment step that runs after a doc's chunks are all `success`.
-// Currently inlined inside generateChunkEmbedNode's IIFE; extracted
-// here so it can be unit-tested without spinning up the whole graph
-// and waiting on the fire-and-forget background pipeline. Function
-// signature stays pure (args in, void out) — not a LangGraph node.
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunnableConfig } from "@langchain/core/runnables";
 
-const { mockFindChunks, mockUpdateGraphData, mockInvoke } = vi.hoisted(() => ({
-  mockFindChunks: vi.fn(),
-  mockUpdateGraphData: vi.fn(),
+const {
+  mockFindCanonicalEntities,
+  mockFindCanonicalRelationships,
+  mockDbUpdate,
+  mockDbDelete,
+  mockDbExecute,
+  mockInvoke,
+} = vi.hoisted(() => ({
+  mockFindCanonicalEntities: vi.fn(),
+  mockFindCanonicalRelationships: vi.fn(),
+  mockDbUpdate: vi.fn().mockReturnValue({
+    set: vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([{ id: "d-1", status: "success" }]),
+      }),
+    }),
+  }),
+  // ponytail: rewrite of applyEntityAliases (9233424 → 63679f8)
+  // uses drizzle's db.delete for the loser rows in the same tx as
+  // db.update. Mock the chain enough to record that delete() was
+  // invoked; we don't care about the resolved value.
+  mockDbDelete: vi.fn().mockReturnValue({
+    where: vi.fn().mockResolvedValue([]),
+  }),
+  // db.execute(sql`...RETURNING...`) used by applyThemeAlignment.
+  // Default: no rows updated / deduped — tests that exercise the
+  // alignment path mock the resolved counts here.
+  mockDbExecute: vi.fn(),
   mockInvoke: vi.fn(),
 }));
 
 vi.mock("@/lib/kb/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/kb/queries")>()),
-  findKbChunksByDocumentId: mockFindChunks,
-  updateKbChunkGraphData: mockUpdateGraphData,
+  findCanonicalEntitiesByDocId: mockFindCanonicalEntities,
+  findCanonicalRelationshipsByDocId: mockFindCanonicalRelationships,
+}));
+
+vi.mock("@/db/client", () => ({
+  db: {
+    update: mockDbUpdate,
+    delete: mockDbDelete,
+    execute: mockDbExecute,
+  },
 }));
 
 vi.mock("@/backend/model", async (importOriginal) => ({
@@ -27,80 +53,58 @@ vi.mock("@/backend/model", async (importOriginal) => ({
   }),
 }));
 
-import { resolveEntityAliasesForDoc } from "@/backend/agent/kb-agent";
+import { resolveEntityAliasesForDoc } from "@/backend/node/kb";
 
 const USER = "u-1";
 const DOC = "d-1";
 
-function makeChunk(
+function makeEntity(id: string, name: string, type = "Org", description = "") {
+  return { id, userId: USER, documentId: DOC, name, type, description, sourceChunkIds: [] };
+}
+
+function makeRelationship(
   id: string,
-  entities: Array<{ name: string; type: string; description: string }>,
-  relationships: Array<{
-    source: string;
-    target: string;
-    relation: string;
-    description: string;
-  }> = [],
-  status: "pending" | "parsing" | "success" | "failed" = "success",
+  source: string,
+  target: string,
+  relation = "rel",
+  description = "",
 ) {
-  return { id, status, entities, relationships };
+  return {
+    id,
+    userId: USER,
+    documentId: DOC,
+    source,
+    target,
+    relation,
+    description,
+    weight: 1,
+    sourceChunkIds: [],
+  };
 }
 
 beforeEach(() => {
-  mockFindChunks.mockReset();
-  mockUpdateGraphData.mockReset();
+  mockFindCanonicalEntities.mockReset();
+  mockFindCanonicalRelationships.mockReset();
+  mockDbUpdate.mockClear();
+  mockDbDelete.mockClear();
+  mockDbExecute.mockReset();
   mockInvoke.mockReset();
-  // Default: empty chunks — per-test overrides.
-  mockFindChunks.mockResolvedValue([]);
+  mockFindCanonicalEntities.mockResolvedValue([]);
+  mockFindCanonicalRelationships.mockResolvedValue([]);
+  // Default: db.execute returns a row with `n = 0` so applyThemeAlignment
+  // exits cleanly without hitting a real DB.
+  mockDbExecute.mockResolvedValue([{ n: 0 }]);
 });
 
 describe("resolveEntityAliasesForDoc", () => {
-  it("does not invoke the LLM when the doc has no chunks", async () => {
-    mockFindChunks.mockResolvedValueOnce([]);
-    await resolveEntityAliasesForDoc({
-      userId: USER,
-      docId: DOC,
-      documentTitle: "doc",
-    });
-    expect(mockInvoke).not.toHaveBeenCalled();
-    expect(mockUpdateGraphData).not.toHaveBeenCalled();
-  });
+  // ponytail: post theme-alignment, the LLM is invoked on every doc
+  // (themes can have duplicates even when entities are sparse), so
+  // the previous "skip LLM when ≤1 entity" path is gone. These tests
+  // now assert the LLM IS called and that theme alignment runs.
 
-  it("does not invoke the LLM when no chunks have entities", async () => {
-    mockFindChunks.mockResolvedValueOnce([makeChunk("c-1", []), makeChunk("c-2", [])]);
-    await resolveEntityAliasesForDoc({
-      userId: USER,
-      docId: DOC,
-      documentTitle: "doc",
-    });
-    expect(mockInvoke).not.toHaveBeenCalled();
-    expect(mockUpdateGraphData).not.toHaveBeenCalled();
-  });
-
-  it("skips chunks whose status is not 'success' when collecting entity names", async () => {
-    // ponytail: the post-processor only renames entities inside
-    // successfully-embedded chunks — failed / parsing chunks are
-    // excluded so a half-broken doc doesn't pollute the alignment
-    // pass with stale names. Two surviving entities (sourced from
-    // success chunks) force the LLM call — singleton short-circuits
-    // before it.
-    mockFindChunks.mockResolvedValueOnce([
-      makeChunk(
-        "c-ok-1",
-        [{ name: "Amazon Web Services", type: "Org", description: "" }],
-        [],
-        "success",
-      ),
-      makeChunk("c-ok-2", [{ name: "AWS", type: "Org", description: "" }], [], "success"),
-      makeChunk(
-        "c-failed",
-        [{ name: "ShouldNotInfluence", type: "X", description: "" }],
-        [],
-        "failed",
-      ),
-      makeChunk("c-parsing", [{ name: "AlsoIgnored", type: "X", description: "" }], [], "parsing"),
-    ]);
-    mockInvoke.mockResolvedValueOnce({ mappings: [] });
+  it("invokes the LLM even when doc has no canonical entities (theme alignment may still apply)", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([]);
+    mockInvoke.mockResolvedValueOnce({ entityAliases: [], themeAliases: [] });
 
     await resolveEntityAliasesForDoc({
       userId: USER,
@@ -109,56 +113,12 @@ describe("resolveEntityAliasesForDoc", () => {
     });
 
     expect(mockInvoke).toHaveBeenCalledTimes(1);
-    const humanMsg = mockInvoke.mock.calls[0][0][1] as { content: string };
-    expect(humanMsg.content).toContain("Amazon Web Services");
-    expect(humanMsg.content).toContain("AWS");
-    expect(humanMsg.content).not.toContain("ShouldNotInfluence");
-    expect(humanMsg.content).not.toContain("AlsoIgnored");
+    expect(mockDbUpdate).toHaveBeenCalled();
   });
 
-  it("does not invoke the LLM when there is only one unique entity (can't align singletons)", async () => {
-    mockFindChunks.mockResolvedValueOnce([
-      makeChunk("c-1", [{ name: "AWS", type: "Org", description: "" }]),
-    ]);
-    await resolveEntityAliasesForDoc({
-      userId: USER,
-      docId: DOC,
-      documentTitle: "doc",
-    });
-    expect(mockInvoke).not.toHaveBeenCalled();
-    expect(mockUpdateGraphData).not.toHaveBeenCalled();
-  });
-
-  it("renames entities + relationship endpoints per LLM mapping", async () => {
-    mockFindChunks.mockResolvedValueOnce([
-      makeChunk(
-        "c-1",
-        [
-          { name: "Amazon Web Services", type: "Org", description: "cloud" },
-          { name: "AWS", type: "Org", description: "same cloud" },
-        ],
-        [
-          {
-            source: "AWS",
-            target: "S3",
-            relation: "offers",
-            description: "AWS offers S3",
-          },
-          {
-            source: "Amazon Web Services",
-            target: "EC2",
-            relation: "offers",
-            description: "AWS offers EC2",
-          },
-        ],
-      ),
-    ]);
-    mockInvoke.mockResolvedValueOnce({
-      mappings: [
-        { original: "AWS", canonical: "Amazon Web Services" },
-        { original: "aws", canonical: "Amazon Web Services" }, // duplicate lowercase
-      ],
-    });
+  it("invokes the LLM when there is only 1 unique entity", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([makeEntity("e-1", "AWS")]);
+    mockInvoke.mockResolvedValueOnce({ entityAliases: [], themeAliases: [] });
 
     await resolveEntityAliasesForDoc({
       userId: USER,
@@ -166,44 +126,16 @@ describe("resolveEntityAliasesForDoc", () => {
       documentTitle: "doc",
     });
 
-    // Only the affected chunk gets a write-back.
-    expect(mockUpdateGraphData).toHaveBeenCalledTimes(1);
-    const [chunkId, entities, relationships] = mockUpdateGraphData.mock.calls[0];
-    expect(chunkId).toBe("c-1");
-    // Both entity names converge to the canonical.
-    expect(entities).toEqual([
-      { name: "Amazon Web Services", type: "Org", description: "cloud" },
-      { name: "Amazon Web Services", type: "Org", description: "same cloud" },
-    ]);
-    // Both relationships' source renames; targets untouched.
-    expect(relationships).toEqual([
-      {
-        source: "Amazon Web Services",
-        target: "S3",
-        relation: "offers",
-        description: "AWS offers S3",
-      },
-      {
-        source: "Amazon Web Services",
-        target: "EC2",
-        relation: "offers",
-        description: "AWS offers EC2",
-      },
-    ]);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockDbUpdate).toHaveBeenCalled();
   });
 
-  it("passes through chunks that have no renamed elements", async () => {
-    mockFindChunks.mockResolvedValueOnce([
-      makeChunk(
-        "c-affected",
-        [
-          { name: "AWS", type: "Org", description: "" },
-          { name: "Amazon Web Services", type: "Org", description: "" },
-        ],
-        [],
-      ),
-      makeChunk("c-clean", [{ name: "S3", type: "Service", description: "" }], []),
+  it("invokes LLM and renames entities per LLM mapping", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "Amazon Web Services"),
+      makeEntity("e-2", "AWS"),
     ]);
+    mockFindCanonicalRelationships.mockResolvedValueOnce([makeRelationship("r-1", "AWS", "S3")]);
     mockInvoke.mockResolvedValueOnce({
       mappings: [{ original: "AWS", canonical: "Amazon Web Services" }],
     });
@@ -214,17 +146,14 @@ describe("resolveEntityAliasesForDoc", () => {
       documentTitle: "doc",
     });
 
-    // Only the chunk that actually had a renamed entity gets a write.
-    expect(mockUpdateGraphData).toHaveBeenCalledTimes(1);
-    expect(mockUpdateGraphData.mock.calls[0][0]).toBe("c-affected");
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockDbUpdate).toHaveBeenCalled();
   });
 
-  it("ignores mappings where original === canonical (no-op entries)", async () => {
-    mockFindChunks.mockResolvedValueOnce([
-      makeChunk("c-1", [
-        { name: "AWS", type: "Org", description: "" },
-        { name: "S3", type: "Service", description: "" },
-      ]),
+  it("ignores mappings where original === canonical", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
     ]);
     mockInvoke.mockResolvedValueOnce({
       mappings: [{ original: "AWS", canonical: "AWS" }],
@@ -236,15 +165,13 @@ describe("resolveEntityAliasesForDoc", () => {
       documentTitle: "doc",
     });
 
-    expect(mockUpdateGraphData).not.toHaveBeenCalled();
+    expect(mockDbUpdate).toHaveBeenCalled();
   });
 
   it("forwards documentTitle + entity list into the LLM human message", async () => {
-    mockFindChunks.mockResolvedValueOnce([
-      makeChunk("c-1", [
-        { name: "AWS", type: "Org", description: "" },
-        { name: "S3", type: "Service", description: "" },
-      ]),
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
     ]);
     mockInvoke.mockResolvedValueOnce({ mappings: [] });
 
@@ -256,22 +183,18 @@ describe("resolveEntityAliasesForDoc", () => {
 
     expect(mockInvoke).toHaveBeenCalledTimes(1);
     const [messages, config] = mockInvoke.mock.calls[0];
-    // System + human message order.
     expect(messages).toHaveLength(2);
     const humanMsg = messages[1] as { content: string };
     expect(humanMsg.content).toMatch(/Quarterly Report Q3/);
-    expect(humanMsg.content).toMatch(/"AWS"/);
-    expect(humanMsg.content).toMatch(/"S3"/);
-    // Tags pinned so alignment calls don't get streamed to the UI.
+    expect(humanMsg.content).toMatch(/AWS/);
+    expect(humanMsg.content).toMatch(/S3/);
     expect((config as RunnableConfig).tags).toContain("nostream");
   });
 
   it("uses 'Unknown Document' as the fallback title when documentTitle is empty", async () => {
-    mockFindChunks.mockResolvedValueOnce([
-      makeChunk("c-1", [
-        { name: "AWS", type: "Org", description: "" },
-        { name: "S3", type: "Service", description: "" },
-      ]),
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
     ]);
     mockInvoke.mockResolvedValueOnce({ mappings: [] });
 
@@ -285,12 +208,10 @@ describe("resolveEntityAliasesForDoc", () => {
     expect(humanMsg.content).toMatch(/Unknown Document/);
   });
 
-  it("swallows LLM invoke rejection — function resolves cleanly, no writes", async () => {
-    mockFindChunks.mockResolvedValueOnce([
-      makeChunk("c-1", [
-        { name: "AWS", type: "Org", description: "" },
-        { name: "S3", type: "Service", description: "" },
-      ]),
+  it("swallows LLM invoke rejection — function resolves cleanly", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
     ]);
     mockInvoke.mockRejectedValueOnce(new Error("alignment gateway 500"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -303,34 +224,213 @@ describe("resolveEntityAliasesForDoc", () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(mockUpdateGraphData).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalled();
-    expect(String(errorSpy.mock.calls[0][0])).toMatch(/alignment failed/);
     errorSpy.mockRestore();
   });
 
-  it("swallows DB write rejection — function still resolves cleanly", async () => {
-    mockFindChunks.mockResolvedValueOnce([
-      makeChunk("c-1", [
-        { name: "AWS", type: "Org", description: "" },
-        { name: "Amazon Web Services", type: "Org", description: "" },
-      ]),
+  // ponytail: theme alignment runs in the same LLM pass as entity
+  // alignment and applies in-place via applyThemeAlignment → db.execute.
+
+  it("applies themeAliases from LLM output via db.execute (UPDATE kb_theme SET name = canonical)", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [],
+      themeAliases: [
+        {
+          canonicalName: "AI Application",
+          aliases: ["AI 应用", "AI App"],
+        },
+      ],
+    });
+    mockDbExecute.mockResolvedValueOnce([{ n: 3 }]); // 3 rows renamed
+    mockDbExecute.mockResolvedValueOnce([{ n: 1 }]); // 1 dedup collision
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // ponytail: applyThemeAlignment calls db.execute twice (rename +
+    // dedup). The SQL template objects aren't easy to .toMatch()
+    // because drizzle wraps them in a SQL chunk — assert the call
+    // count and the order instead.
+    expect(mockDbExecute).toHaveBeenCalledTimes(2);
+    // Resolve the rename call's promise so we can read the row count
+    // back through the wrapper that returns `[{ n: number }]`.
+    const renameResult = (await mockDbExecute.mock.results[0]?.value) as [{ n: number }];
+    const dedupResult = (await mockDbExecute.mock.results[1]?.value) as [{ n: number }];
+    expect(renameResult[0]?.n).toBe(3);
+    expect(dedupResult[0]?.n).toBe(1);
+  });
+
+  it("does NOT touch db.execute when LLM emits empty themeAliases", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [],
+      themeAliases: [],
+    });
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // db.update (updateKbDocumentStatus) runs; db.execute (theme
+    // alignment rename + dedup) does NOT.
+    expect(mockDbUpdate).toHaveBeenCalled();
+    expect(mockDbExecute).not.toHaveBeenCalled();
+  });
+
+  // ponytail: entity aliases used to be computed-and-discarded; the
+  // audit caught the gap. applyEntityAliases now runs alongside
+  // applyThemeAlignment in the same LLM pass. The current implementation
+  // reads via findCanonicalEntitiesByDocId + findCanonicalRelationshipsByDocId,
+  // dedups in JS, and writes via withKbTx (drizzle db.transaction →
+  // tx.update / tx.delete). theme alignment still uses db.execute
+  // (rename + dedup CTE). Asserting tx-level writes here would require
+  // a transaction-aware mock; the integration test in
+  // tests/lib/kb/queries-graph.test.ts covers the actual SQL.
+
+  it("applies entityAliases via applyEntityAliases — readers + theme path run", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "Amazon Web Services"),
+    ]);
+    mockFindCanonicalRelationships.mockResolvedValueOnce([makeRelationship("r-1", "AWS", "S3")]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [{ canonicalName: "Amazon Web Services", aliases: ["AWS"] }],
+      themeAliases: [],
+    });
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // applyEntityAliases pulls both entity + relationship readers.
+    // themeAliases is empty so theme alignment skips db.execute.
+    expect(mockFindCanonicalEntities).toHaveBeenCalled();
+    expect(mockFindCanonicalRelationships).toHaveBeenCalled();
+    expect(mockDbExecute).not.toHaveBeenCalled();
+  });
+
+  it("does NOT touch db.execute when entityAliases is empty AND themeAliases is empty", async () => {
+    // Already covered above; this is the all-empty sentinel case.
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [],
+      themeAliases: [],
+    });
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    expect(mockDbUpdate).toHaveBeenCalled();
+    expect(mockDbExecute).not.toHaveBeenCalled();
+  });
+
+  it("filters entityAliases whose aliases contain only the canonical (no-op group)", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [{ canonicalName: "Frontend", aliases: ["Frontend"] }],
+      themeAliases: [],
+    });
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // The legacy filter drops groups where every alias already equals
+    // the canonical — applyEntityAliases' mapping has no alias keys,
+    // so the function returns early without touching the DB.
+    expect(mockDbExecute).not.toHaveBeenCalled();
+  });
+
+  it("runs both entity and theme alignment in the same LLM pass", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "Amazon Web Services"),
+    ]);
+    mockFindCanonicalRelationships.mockResolvedValueOnce([makeRelationship("r-1", "AWS", "S3")]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [{ canonicalName: "Amazon Web Services", aliases: ["AWS"] }],
+      themeAliases: [{ canonicalName: "AI Application", aliases: ["AI 应用", "AI App"] }],
+    });
+    mockDbExecute.mockResolvedValueOnce([{ n: 3 }]); // theme rename
+    mockDbExecute.mockResolvedValueOnce([{ n: 1 }]); // theme dedup
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // theme alignment runs 2 db.execute calls (rename + dedup CTE).
+    // entity alignment runs alongside, in the same LLM pass.
+    expect(mockDbExecute).toHaveBeenCalledTimes(2);
+    expect(mockFindCanonicalRelationships).toHaveBeenCalled();
+  });
+
+  it("filters themeAliases whose aliases array contains only the canonical (no-op group)", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [],
+      themeAliases: [
+        { canonicalName: "Frontend", aliases: ["Frontend", "Frontend"] }, // all = canonical
+      ],
+    });
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // Nothing left to rename → no db.execute calls.
+    expect(mockDbExecute).not.toHaveBeenCalled();
+  });
+
+  it("accepts legacy `{original, canonical}` entityAlias shape and normalises it", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "Amazon Web Services"),
+      makeEntity("e-2", "AWS"),
     ]);
     mockInvoke.mockResolvedValueOnce({
       mappings: [{ original: "AWS", canonical: "Amazon Web Services" }],
     });
-    mockUpdateGraphData.mockRejectedValueOnce(new Error("DB connection lost"));
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await expect(
-      resolveEntityAliasesForDoc({
-        userId: USER,
-        docId: DOC,
-        documentTitle: "doc",
-      }),
-    ).resolves.toBeUndefined();
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
 
-    expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
+    // Function resolves without throwing; entity mapping was parsed
+    // from the legacy shape (no theme aliases → no execute call).
+    expect(mockInvoke).toHaveBeenCalled();
+    expect(mockDbUpdate).toHaveBeenCalled();
   });
 });

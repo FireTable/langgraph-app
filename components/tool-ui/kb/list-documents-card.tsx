@@ -21,7 +21,7 @@ type ListArgs = {
 };
 
 // ponytail: visible cap before the "show more" button. Matches the
-// per-folder default in the search_kb chunk list so the two cards
+// per-folder default in the search_KB chunk list so the two cards
 // feel consistent in the chat thread.
 const VISIBLE_DOCS_PER_FOLDER = 3;
 

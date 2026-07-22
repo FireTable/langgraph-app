@@ -17,6 +17,8 @@ type KbEnv = {
   hybridTopKMax: number;
   chunkMaxChars: number;
   rerankMinScore: number;
+  kbGraphHops: number;
+  kbHybridEntryTopK: number;
 };
 
 let cached: KbEnv | null = null;
@@ -45,6 +47,8 @@ export function getKbEnv(): KbEnv {
     hybridTopKMax: readInt("KB_HYBRID_TOPK_MAX", 20),
     chunkMaxChars: readInt("KB_CHUNK_MAX_CHARS", 2000),
     rerankMinScore: readFloat("KB_RERANK_MIN_SCORE", 0.4),
+    kbGraphHops: readInt("KB_GRAPH_HOPS", 2),
+    kbHybridEntryTopK: readInt("KB_HYBRID_ENTRY_TOPK", 50),
   };
   return cached;
 }

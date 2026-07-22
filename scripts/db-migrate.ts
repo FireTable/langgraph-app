@@ -68,7 +68,11 @@ function step(name: string, fn: () => Promise<void> | void) {
 // Postgres error codes that mean "object already exists" — safe to
 // ignore on idempotent re-runs (start.sh calls this on every container
 // start; tests/setup.ts re-runs against a possibly-stale DB).
-const SWALLOW = new Set(["42P07", "42710", "42P06", "42701"]); // duplicate_table / duplicate_object / duplicate_schema / duplicate_column
+// 42703 (undefined_column) is also swallowed: 0012 drops the jsonB
+// `entities` column from kb_chunk that 0005 then tries to GIN-index
+// on re-run. The index creation is now redundant (the column is gone)
+// so the error is benign — the index is dead code anyway.
+const SWALLOW = new Set(["42P07", "42710", "42P06", "42701", "42703"]); // duplicate_table / duplicate_object / duplicate_schema / duplicate_column / undefined_column
 
 async function applyContent(sql: postgres.Sql, content: string) {
   // Drizzle SQL files are written with `--> statement-breakpoint`

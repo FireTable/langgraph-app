@@ -1,5 +1,5 @@
 // KB tool result shapes returned by backend/tool/kb.ts. Shared between
-// search_kb (chunks) and list_documents (folder-grouped row list).
+// search_KB (chunks) and list_documents (folder-grouped row list).
 
 export type KbDocument = {
   chunkId: string;
@@ -8,7 +8,8 @@ export type KbDocument = {
   pageNumbers: number[];
   content: string;
   rrfScore: number;
-  legsHit: Array<"kw" | "vec" | "tag" | "full">;
+  scoreKind?: "rrf" | "rerank";
+  legsHit: Array<"kw" | "vec" | "tag" | "rel" | "entity" | "graph" | "full">;
 };
 
 export type KbToolResult = {

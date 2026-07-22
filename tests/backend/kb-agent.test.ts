@@ -92,6 +92,8 @@ vi.mock("@/lib/kb/queries", () => ({
   findKbDocumentByAttachmentId: mocks.findByAtt,
   findKbDocumentById: mocks.findById,
   findKbChunksByDocumentId: vi.fn(() => Promise.resolve([])),
+  findCanonicalEntitiesByDocId: vi.fn(() => Promise.resolve([])),
+  findCanonicalRelationshipsByDocId: vi.fn(() => Promise.resolve([])),
   insertKbDocument: mocks.insertDoc,
   insertKbChunks: mocks.insertChunks,
   updateKbDocumentStatus: mocks.updateDocStatus,
@@ -102,6 +104,10 @@ vi.mock("@/lib/kb/queries", () => ({
   markKbChunkFailed: vi.fn(),
   updateKbChunkForFailure: vi.fn(),
   updateKbChunkForSuccess: vi.fn(),
+  upsertKbEntity: vi.fn(() => Promise.resolve()),
+  upsertKbRelationship: vi.fn(() => Promise.resolve()),
+  upsertEntityEmbedding: vi.fn(() => Promise.resolve()),
+  upsertRelationshipEmbedding: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("@/lib/kb/cache", () => ({
   invalidateKbDoc: mocks.invalidate,
@@ -231,7 +237,7 @@ beforeEach(() => {
     texts.map(() => makeEmbedding()),
   );
   mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "page text" });
-  // ponytail: chatInvoke must return lightRagSchema shape (entities, relationships, themes)
+  // ponytail: chatInvoke must return graphRagSchema shape (entities, relationships, themes)
   mocks.chatInvoke.mockResolvedValue({
     entities: [
       { name: "entity1", type: "Concept", description: "first" },
@@ -258,7 +264,7 @@ describe("backend/kb-agent", () => {
     it("fails when no human message is present", async () => {
       const out = await kbAgent.invoke(
         { messages: [], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("failed");
       expect(out.errorMessage).toMatch(/no PDF|no human/i);
@@ -270,7 +276,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("failed");
       expect(out.errorMessage).toMatch(/no PDF|no file/i);
@@ -281,7 +287,7 @@ describe("backend/kb-agent", () => {
       const messages = [humanWithOnePdf()];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("failed");
       expect(out.errorMessage).toMatch(/no PDF could be processed/i);
@@ -292,7 +298,7 @@ describe("backend/kb-agent", () => {
       const messages = [humanWithOnePdf()];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       // File part dropped, no kb_ref for it (unknown).
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
@@ -314,7 +320,7 @@ describe("backend/kb-agent", () => {
       });
       const out = await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       expect(out.errorMessage).toBeNull();
@@ -349,7 +355,7 @@ describe("backend/kb-agent", () => {
       mocks.chatInvoke.mockRejectedValue(new Error("parse error"));
       const out = await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       const processed = out.processedFiles as Array<Record<string, unknown>>;
@@ -373,7 +379,7 @@ describe("backend/kb-agent", () => {
           ],
           userId: USER,
         },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       const processed = out.processedFiles as Array<Record<string, unknown>>;
       expect(processed[0].contentHash).toBe(`r2key:${url.replace(`${BASE_URL}/`, "")}`);
@@ -397,7 +403,7 @@ describe("backend/kb-agent", () => {
       });
       const out = await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       const processed = out.processedFiles as Array<Record<string, unknown>>;
       expect(processed[0].docId).toBe("d-existing");
@@ -430,7 +436,7 @@ describe("backend/kb-agent", () => {
       });
       const out = await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       const processed = out.processedFiles as Array<Record<string, unknown>>;
       expect(processed[0].errorMessage).toBe("OCR timed out");
@@ -460,7 +466,7 @@ describe("backend/kb-agent", () => {
       });
       const out = await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       const processed = out.processedFiles as Array<Record<string, unknown>>;
       // Reuses the existing row id, marked as a fresh 'new' run so
@@ -491,7 +497,7 @@ describe("backend/kb-agent", () => {
       });
       const out = await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       const processed = out.processedFiles as Array<Record<string, unknown>>;
       expect(processed[0].docId).toBe("d-by-attachment");
@@ -505,7 +511,7 @@ describe("backend/kb-agent", () => {
       mocks.ocrStructuredInvoke.mockRejectedValue(new Error("OCR gateway 502"));
       const out = await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("failed");
       expect(out.errorMessage).toMatch(/OCR gateway 502/);
@@ -527,7 +533,7 @@ describe("backend/kb-agent", () => {
       mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "" });
       const out = await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("failed");
       expect(out.errorMessage).toMatch(/empty markdown/i);
@@ -561,7 +567,7 @@ describe("backend/kb-agent", () => {
 
       await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
 
       expect(mocks.extractText).toHaveBeenCalledTimes(1);
@@ -605,7 +611,7 @@ describe("backend/kb-agent", () => {
 
       await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
 
       expect(mocks.ocrStructuredInvoke).toHaveBeenCalledTimes(2);
@@ -628,7 +634,7 @@ describe("backend/kb-agent", () => {
       mocks.ocrStructuredInvoke.mockResolvedValueOnce({ markdown: "gamma" });
       const out = await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       const processed = out.processedFiles as Array<Record<string, unknown>>;
@@ -643,24 +649,20 @@ describe("backend/kb-agent", () => {
       );
     });
 
-    // ponytail: standalone Settings path (source='kb-upload' /
-    // 'kb-reprocess' OR explicit waitForChunks:true) awaits the
-    // chunk + embed IIFE before returning — the route's 202 contract
-    // lands with chunks already inserted, so the next poll sees the
-    // terminal state. Chat path (no waitForChunks) keeps the
-    // existing fire-and-forget semantics so the chat reply isn't
-    // blocked on entity extraction.
-    it("waitForChunks:true awaits chunk+embed before returning (standalone path)", async () => {
+    // ponytail: post sub-graph collapse, kbAgent.invoke ALWAYS
+    // awaits chunksEmbed as a unit, so /api/kb/documents' 202
+    // contract is satisfied by construction (insertChunks runs
+    // before the graph returns). The `waitForChunks` flag was
+    // deleted in the chunksEmbedAgent refactor; chat path no
+    // longer enters kbAgent's ingestion chain.
+    it("inserts chunks synchronously before returning — chunksEmbed sub-graph awaits as a unit", async () => {
       mocks.ocrStructuredInvoke.mockReset();
       mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "doc text ".repeat(40) });
       const out = await kbAgent.invoke(
         { messages: [humanWithOnePdf()], userId: USER },
-        { configurable: { userId: USER, source: "kb-upload", waitForChunks: true } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
-      // insertChunks ran synchronously before the node returned —
-      // otherwise the route's 202 contract couldn't land with chunks
-      // already indexed.
       expect(mocks.insertChunks).toHaveBeenCalledTimes(1);
     });
 
@@ -688,7 +690,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       // Both docs OCR'd successfully → graph status is success
       expect(out.status).toBe("success");
@@ -742,7 +744,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       const processed = out.processedFiles as Array<Record<string, unknown>>;
@@ -777,7 +779,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       const processed = out.processedFiles as Array<Record<string, unknown>>;
@@ -847,7 +849,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       const processed = out.processedFiles as Array<Record<string, unknown>>;
@@ -884,7 +886,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("failed");
       const processed = out.processedFiles as Array<Record<string, unknown>>;
@@ -934,7 +936,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
@@ -959,7 +961,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       const content = (out.messages as HumanMessage[])[0].content as Array<Record<string, unknown>>;
@@ -1020,7 +1022,7 @@ describe("backend/kb-agent", () => {
 
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
 
@@ -1070,7 +1072,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       const processed = out.processedFiles as Array<Record<string, unknown>>;
@@ -1102,7 +1104,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       const pages = (out.pagesByDocId as Record<string, Array<Record<string, unknown>>>)[
@@ -1125,7 +1127,7 @@ describe("backend/kb-agent", () => {
       ];
       const out = await kbAgent.invoke(
         { messages, userId: USER },
-        { configurable: { userId: USER } },
+        { configurable: { userId: USER, source: "kb-upload" } },
       );
       expect(out.status).toBe("success");
       const pages = (out.pagesByDocId as Record<string, Array<Record<string, unknown>>>)[

@@ -154,16 +154,25 @@ const kbToolkit = defineToolkit({
   // `documents[]` for Sources-style cards; `content` is the LLM's
   // string and is not re-displayed (it's already in the assistant's
   // prose). order locked to backend RRF ranking.
-  search_kb: {
+  search_KB: {
     description: "Render a KB search result card with [1] [2] numbered chunks.",
     parameters: z.object({
-      query: z.string().optional(),
+      // audit Step 1 / §2: tool schema fields the LLM actually fills.
+      // rewriteQuery is the natural-language question (the primary
+      // driver of the dense + BM25 legs). originalQuery is the
+      // verbatim user message for short / context-dependent turns —
+      // drives a second dense sub-leg (multi-query fusion, audit §2b).
+      // entities / themes are LLM-extracted tags feeding the tag leg.
+      rewriteQuery: z.string().optional(),
+      originalQuery: z.string().optional(),
+      entities: z.array(z.string()).optional(),
+      themes: z.array(z.string()).optional(),
       folderId: z.string().optional(),
       documentId: z.string().optional(),
     }),
     render: KbSearchToolUI,
   },
-  // ponytail: search_kb doubles as the @-mention synthetic tool —
+  // ponytail: search_KB doubles as the @-mention synthetic tool —
   // the mention resolver injects a pre-fetched ToolMessage with the
   // same shape (so the LLM sees the @-doc chunks without a real
   // tool call), and the toolkit renders both via KbSearchToolUI.

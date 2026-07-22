@@ -61,16 +61,16 @@ const STAGES: Stage[] = [
     lit: "text-emerald-500 border-emerald-500/40 bg-emerald-500/10",
   },
   {
+    id: "extract",
+    label: "Extract",
+    icon: WorkflowIcon,
+    lit: "text-violet-500 border-violet-500/40 bg-violet-500/10",
+  },
+  {
     id: "embed",
     label: "Embed",
     icon: BlocksIcon,
     lit: "text-sky-500 border-sky-500/40 bg-sky-500/10",
-  },
-  {
-    id: "entity",
-    label: "Entity",
-    icon: WorkflowIcon,
-    lit: "text-violet-500 border-violet-500/40 bg-violet-500/10",
   },
 ];
 
@@ -495,13 +495,13 @@ const StageBox = ({ stage, lit }: { stage: Stage; lit: boolean }) => {
       animate={lit ? { opacity: 1, scale: 1 } : { opacity: 0.5, scale: 0.96 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
       className={cn(
-        "border-border/40 bg-muted/30 text-muted-foreground flex size-10 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border",
+        "border-border/40 bg-muted/30 text-muted-foreground flex size-12 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border",
         lit && stage.lit,
       )}
       aria-label={stage.label}
     >
       <Icon className="size-4" aria-hidden />
-      <span className="text-[8px] font-medium tracking-wide uppercase opacity-80">
+      <span className="text-[8px] mt-0.5 font-medium tracking-wide uppercase opacity-80">
         {stage.label}
       </span>
     </m.div>

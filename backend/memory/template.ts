@@ -114,8 +114,8 @@ export function formatThreadsForPrompt(threads: ThreadSummariesPayload): string 
 //
 // v3 (issue #13): resolveKbMentions leaves the `:kb-doc[…]{id=…}` /
 // `:kb-folder[…]{id=…}` directive tokens in the HumanMessage text
-// (the LLM reads them and calls `search_kb` itself with the right
-// filter). The resolver only injects a synthetic search_kb
+// (the LLM reads them and calls `search_KB` itself with the right
+// filter). The resolver only injects a synthetic search_KB
 // ToolMessage for the rare 0-chunk-fallback case — see
 // `lib/kb/resolve-mentions.ts`.
 export async function prepareMessagesForInvoke(

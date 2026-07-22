@@ -20,9 +20,17 @@ const RouteDecisionSchema = z.object({
 });
 
 // delete RouteDecisionSchema kbAgent
-const InvokeRouteDecisionSchema = z.object({
-  next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent"]),
-});
+const InvokeRouteDecisionSchema = z
+  .object({
+    next: z
+      .enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent"])
+      .describe(
+        "The target specialized agent to dispatch execution to, determined by analyzing the user's message intent and requirements.",
+      ),
+  })
+  .describe(
+    "Routing decision indicating which downstream specialized agent should handle the user's input",
+  );
 
 export type RouterDecision = z.infer<typeof RouteDecisionSchema>;
 

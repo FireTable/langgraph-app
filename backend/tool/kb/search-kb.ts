@@ -2,7 +2,7 @@ import { tool, type StructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 
 import { getKbEnv } from "@/lib/kb/env";
-import { hybridSearch } from "@/lib/kb/search";
+import { hybridSearch } from "@/lib/kb/search/index";
 import { extractUserId } from "@/backend/memory/recall";
 
 import { formatSearchResult } from "./format";
@@ -13,80 +13,107 @@ import { thisUserId } from "./user-id";
 // top-K chunks with `[1] [2] …` markers for the LLM to cite inline.
 // Gated on pgvector — a missing extension throws a clear error rather
 // than crashing the tool (so the LLM tool surface stays stable).
+//
+// Step 1 (audit §11 + §2 / §2b): the LLM-facing schema is now
+//   rewriteQuery   — natural-language query (NOT a keyword soup)
+//   originalQuery  — verbatim user message, drives a second dense
+//                    sub-leg (multi-query / RAG-Fusion)
+//   entities       — specific named terms → tag leg
+//   themes         — high-level topics → tag leg
+//   folderId / documentId — scope filter
+// The describe shrank from ~15 lines to ~3 because the responsibilities
+// are split across fields (P0-2 fix). All retrieval params (qvec /
+// entryTopK / chunkTopK) live inside the orchestrator and never reach
+// the tool (audit §3).
 
 const searchKbSchema = z.object({
-  query: z
+  rewriteQuery: z
     .string()
     .optional()
     .default("")
     .describe(
-      "Two modes. (1) Ranked search — pass 5-10 space-separated entries " +
-        "(NOT a verbatim copy of the user's question): build from (a) the " +
-        "user's question, broken apart (never pass the meta-question " +
-        "itself, e.g. 'what is this', 'summarize please', '这是什么', as " +
-        "a single entry), and (b) the @-directive label if present " +
-        "(split the file/folder name on spaces, dashes, underscores, or " +
-        "dots and treat each piece as an entry). Aim for 5-10 entries " +
-        "total; fewer is fine if the question is narrow; don't pad with " +
-        "repeats or filler. (2) Full scope dump — OMIT query (or pass an " +
-        "empty string) when the user wants everything in the filtered " +
-        "scope, e.g. 'summarize @doc', 'extract all clauses from @folder', " +
-        "'list contents of @doc'. Returns every chunk in documentId, " +
-        "every chunk in folderId, or — with no other filter — the user's " +
-        "most recent chunks.",
+      "Natural-language query (NOT a keyword soup). Pass a clean, " +
+        "complete sentence that re-states what you want — even when the " +
+        "user's message is short or context-dependent. Omit (or pass '') " +
+        "to dump the full filtered scope (e.g. 'summarize @doc').",
+    ),
+  originalQuery: z
+    .string()
+    .optional()
+    .describe(
+      "Verbatim user message, when it's short or relies on prior " +
+        "context. Drives a second dense sub-leg for multi-query fusion. " +
+        "Safe to omit; falls back to rewriteQuery alone.",
+    ),
+  entities: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Specific named terms the user mentioned (people, products, " +
+        "companies, abbreviations). Used by the tag leg for exact match.",
+    ),
+  themes: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "High-level topics / intents (e.g. 'pricing', 'onboarding', " +
+        "'architecture'). Used by the tag leg alongside entities.",
     ),
   folderId: z
     .string()
     .optional()
     .describe(
-      "Filter results to documents within this specific folder ID. " +
-        "Copy the value verbatim from the ':kb-folder[label]{folderId=...}' " +
-        "directive in the user message (optional).",
+      "Filter to this folder ID. Copy from the " + "':kb-folder[label]{folderId=...}' directive.",
     ),
   documentId: z
     .string()
     .optional()
     .describe(
-      "Filter results to this specific document ID only. " +
-        "Copy the value verbatim from the ':kb-document[label]{documentId=...}' " +
-        "directive in the user message (optional).",
+      "Filter to this document ID only. Copy from the " +
+        "':kb-document[label]{documentId=...}' directive.",
     ),
 });
 
 export const searchKbTool: StructuredTool = tool(
-  async ({ query, folderId, documentId }, config) => {
+  async ({ rewriteQuery, originalQuery, entities, themes, folderId, documentId }, config) => {
     if (!(await isPgVectorAvailable())) {
-      throw new Error("search_kb unavailable: pgvector extension is not installed on the database");
+      throw new Error("search_KB unavailable: pgvector extension is not installed on the database");
     }
     const userId = extractUserId(config) ?? thisUserId();
     const env = getKbEnv();
 
     // ponytail: hybridSearch owns the query -> embed -> search
-    // pipeline (qvec auto-embedded if not pre-computed; embed
-    // failures fall back to the BM25 + tag legs only). Empty query
-    // returns the full filtered scope (capped at 1000). When ranked
-    // retrieval returns 0 with a scope filter, hybridSearch itself
-    // transparently retries with an empty query for the same scope
-    // (see "path A fallback" in lib/kb/search.ts).
-    const results = await hybridSearch({ userId, query, folderId, documentId });
-    return JSON.stringify(formatSearchResult(results, env.chunkMaxChars));
+    // pipeline. Empty rewriteQuery returns the full filtered scope
+    // (capped at 1000). originalQuery feeds a second dense sub-leg
+    // when present (multi-query fusion, audit §2b). entities/themes
+    // feed the tag leg.
+    const result = await hybridSearch({
+      userId,
+      rewriteQuery,
+      originalQuery,
+      entities,
+      themes,
+      scope: { folderId, documentId },
+    });
+    return JSON.stringify(formatSearchResult(result, env.chunkMaxChars));
   },
   {
-    name: "search_kb",
+    name: "search_KB",
     description:
       "Search the user's knowledge base (uploaded PDFs / docs) using hybrid " +
       "BM25 + vector + entity-tag retrieval. Returns the most relevant " +
       "chunks with `[1]`, `[2]`, ... markers the LLM can cite inline. Use " +
       "when the user references their KB or asks about content they've uploaded. " +
-      "Pass a natural-language query to rank by relevance, OR omit query " +
-      "(pass an empty string) to dump the full filtered scope — useful " +
-      "for 'summarize @doc', 'extract all clauses from @folder'. " +
-      "If the user @-mentioned a doc or folder, narrow the search by copying " +
-      "the id from the ':kb-document[label]{documentId=...}' or " +
-      "':kb-folder[label]{folderId=...}' directive in the message. " +
-      "If results are empty or insufficient, retry with a fresh query " +
-      "(rephrased keywords, synonyms, English↔Chinese, or relaxed filters) " +
-      "— up to 3 attempts per turn before falling back to search_web.",
+      "Pass a natural-language `rewriteQuery` to rank by relevance; fill `entities` " +
+      "and `themes` with the named terms and topics you read from the message; " +
+      "fill `originalQuery` with the verbatim user message when it's short or " +
+      "context-dependent (multi-query fusion). OR omit `rewriteQuery` to dump " +
+      "the full filtered scope — useful for 'summarize @doc', 'extract all " +
+      "clauses from @folder'. If the user @-mentioned a doc or folder, narrow " +
+      "by copying the id from the `:kb-document[label]{documentId=...}` or " +
+      "`:kb-folder[label]{folderId=...}` directive. If results are empty or " +
+      "insufficient, retry with a fresh query — up to 3 attempts per turn " +
+      "before falling back to search_web.",
     schema: searchKbSchema,
   },
 );

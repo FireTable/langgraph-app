@@ -1,0 +1,1 @@
+ALTER TABLE "kb_chunk" ALTER COLUMN "embedding" DROP NOT NULL;
