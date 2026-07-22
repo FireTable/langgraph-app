@@ -13,28 +13,44 @@ import {
   updateKbDocumentStatus,
 } from "@/lib/kb/queries";
 
-const alignmentSchema = z.object({
-  entityAliases: z.array(
-    z.object({
-      canonicalName: z.string(),
-      aliases: z.array(z.string()),
-    }),
-  ),
-  // ponytail: themes ride along the same LLM pass for free (we
-  // already pay the LLM cost per doc). Each group folds surface-form
-  // variants of the same macro topic ("AI 应用" + "AI App" + "应用
-  // AI") into one canonical name. applyThemeAlignment in queries.ts
-  // UPDATEs kb_theme rows in-place and dedupes per-(chunk_id, name).
-  // Required (not .optional()) — see CLAUDE.md rule on
-  // withStructuredOutput schemas; OpenAI strict mode rejects
-  // optional / defaultless arrays.
-  themeAliases: z.array(
-    z.object({
-      canonicalName: z.string(),
-      aliases: z.array(z.string()),
-    }),
-  ),
-});
+const alignmentSchema = z
+  .object({
+    entityAliases: z
+      .array(
+        z.object({
+          canonicalName: z
+            .string()
+            .describe(
+              "The chosen unified canonical entity name to represent all synonymous variants",
+            ),
+          aliases: z
+            .array(z.string())
+            .describe(
+              "List of surface-form variants, abbreviations, or synonyms to be merged into canonicalName",
+            ),
+        }),
+      )
+      .describe(
+        "Entity alias mappings to fold synonym/variant entity names across chunks into unified canonical entities, eliminating duplicate semantics and dangling entity nodes for programmatic DB merging.",
+      ),
+    themeAliases: z
+      .array(
+        z.object({
+          canonicalName: z.string().describe("The chosen unified canonical theme name"),
+          aliases: z
+            .array(z.string())
+            .describe(
+              "List of synonymous or redundant theme tokens to be merged into canonicalName",
+            ),
+        }),
+      )
+      .describe(
+        "Theme alias mappings to clean up and deduplicate macro themes, reducing redundant surface-form variations for programmatic DB merging.",
+      ),
+  })
+  .describe(
+    "Entity and theme alignment schema for cross-chunk canonical normalization, synonym deduplication, and semantic cleanup",
+  );
 
 export async function resolveEntityAliasesForDoc(args: {
   userId: string;

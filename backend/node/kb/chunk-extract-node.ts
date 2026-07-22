@@ -28,32 +28,66 @@ const KB_CHUNK_SIZE = 1024;
 const KB_CHUNK_OVERLAP = 200;
 const SKIP_CHUNK_TO_ENTRIES = false;
 
-export const lightRagSchema = z.object({
-  entities: z.array(
-    z.object({
-      name: z.string(),
-      type: z.string(),
-      description: z.string(),
-    }),
-  ),
-  relationships: z.array(
-    z.object({
-      source: z.string(),
-      target: z.string(),
-      relation: z.string(),
-      description: z.string(),
-    }),
-  ),
-  // ponytail: per-chunk top-level themes (audit §6.4 + system prompt
-  // §4 — "Themes should be macroscopic abstractions or key topics
-  // summarizing the chunk's intent"). Matches the prompt's original
-  // JSON shape; we then fan out to every entity/relation in the
-  // same chunk before writing. Required (not .optional() / .default())
-  // — OpenAI jsonSchema strict mode rejects both.
-  themes: z.array(z.string()),
-});
+export const graphRagSchema = z
+  .object({
+    entities: z
+      .array(
+        z.object({
+          name: z
+            .string()
+            .describe("Unique name of the extracted entity in its canonical surface form"),
+          type: z
+            .string()
+            .describe(
+              "Category or classification of entity (e.g. Person, Organization, Location, Concept, Technology)",
+            ),
+          description: z
+            .string()
+            .describe(
+              "Comprehensive summary of the entity's attributes, role, and context in this chunk",
+            ),
+        }),
+      )
+      .describe("Extracted key entities appearing in this text chunk"),
+    relationships: z
+      .array(
+        z.object({
+          source: z
+            .string()
+            .describe(
+              "Source entity name; MUST correspond to one of the extracted entities in the entities array",
+            ),
+          target: z
+            .string()
+            .describe(
+              "Target entity name; MUST correspond to one of the extracted entities in the entities array",
+            ),
+          relation: z
+            .string()
+            .describe(
+              "Directed relationship label connecting source to target (e.g. PARTNERED_WITH, USES, FOUNDED_BY)",
+            ),
+          description: z
+            .string()
+            .describe(
+              "Explanation of the relationship and how the source and target interact in this chunk",
+            ),
+        }),
+      )
+      .describe(
+        "Directed relationships connecting the extracted entities in this chunk. Every relationship must link valid entities from the entities list so no isolated entity nodes remain without graph connections.",
+      ),
+    themes: z
+      .array(z.string())
+      .describe(
+        "Macroscopic abstractions or top-level topics summarizing the main intent, domain, and concepts of this chunk",
+      ),
+  })
+  .describe(
+    "Structured GraphRAG extraction result containing entities, directed relationships connecting them, and macro themes",
+  );
 
-export function normalizeLightRagOut(out: Partial<z.infer<typeof lightRagSchema>>) {
+export function normalizeGraphRagOut(out: Partial<z.infer<typeof graphRagSchema>>) {
   // ponytail: per-chunk top-level themes live flat on kb_theme
   // (single source of truth — no fan-out into kb_entity / kb_relationship).
   // We return them as a separate `themes` field; the caller writes
@@ -285,13 +319,13 @@ export async function chunkExtractNode(
 
                   try {
                     const out = (await extractModel
-                      .withStructuredOutput(lightRagSchema, { method: "jsonSchema", strict: true })
+                      .withStructuredOutput(graphRagSchema, { method: "jsonSchema", strict: true })
                       .invoke([systemMessage, humanMessage], {
                         ...config,
                         tags: ["nostream"],
-                      })) as z.infer<typeof lightRagSchema>;
+                      })) as z.infer<typeof graphRagSchema>;
 
-                    const norm = normalizeLightRagOut(out);
+                    const norm = normalizeGraphRagOut(out);
 
                     // ponytail: per-chunk appLevelCanonical fallback
                     // (audit §15). When LLM alignment later runs via

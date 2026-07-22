@@ -237,7 +237,7 @@ beforeEach(() => {
     texts.map(() => makeEmbedding()),
   );
   mocks.ocrStructuredInvoke.mockResolvedValue({ markdown: "page text" });
-  // ponytail: chatInvoke must return lightRagSchema shape (entities, relationships, themes)
+  // ponytail: chatInvoke must return graphRagSchema shape (entities, relationships, themes)
   mocks.chatInvoke.mockResolvedValue({
     entities: [
       { name: "entity1", type: "Concept", description: "first" },

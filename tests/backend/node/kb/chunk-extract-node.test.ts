@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mergeHrOnlyChunks, normalizeLightRagOut } from "@/backend/node/kb/chunk-extract-node";
+import { mergeHrOnlyChunks, normalizeGraphRagOut } from "@/backend/node/kb/chunk-extract-node";
 
 // ponytail: forward-merge orphan HR chunks. officeparser emits `\n---\n`
 // between sheets/slides/pages; LangChain's MarkdownTextSplitter treats
@@ -69,13 +69,13 @@ describe("backend/node/kb/chunk-extract-node — mergeHrOnlyChunks", () => {
 
 // ponytail: per-chunk top-level themes. The prompt emits themes once
 // at the schema top level (high-level macro topics for the chunk);
-// normalizeLightRagOut returns them as a separate `themes` field —
+// normalizeGraphRagOut returns them as a separate `themes` field —
 // the caller (entity-extract-node) writes them to kb_theme via
 // replaceChunkThemes, NOT into the entity / relationship rows.
 
-describe("backend/node/kb/chunk-extract-node — normalizeLightRagOut (themes)", () => {
+describe("backend/node/kb/chunk-extract-node — normalizeGraphRagOut (themes)", () => {
   it("returns top-level themes as a separate field", () => {
-    const out = normalizeLightRagOut({
+    const out = normalizeGraphRagOut({
       entities: [
         { name: "Acme", type: "Organization", description: "d" },
         { name: "Beta", type: "Organization", description: "d" },
@@ -90,7 +90,7 @@ describe("backend/node/kb/chunk-extract-node — normalizeLightRagOut (themes)",
   });
 
   it("returns themes once regardless of entity / relationship count", () => {
-    const out = normalizeLightRagOut({
+    const out = normalizeGraphRagOut({
       entities: [
         { name: "Acme", type: "Organization", description: "d" },
         { name: "Beta", type: "Organization", description: "d" },
@@ -103,7 +103,7 @@ describe("backend/node/kb/chunk-extract-node — normalizeLightRagOut (themes)",
   });
 
   it("trims and dedupes top-level themes", () => {
-    const out = normalizeLightRagOut({
+    const out = normalizeGraphRagOut({
       entities: [{ name: "Acme", type: "Organization", description: "d" }],
       relationships: [],
       themes: ["  Tech  ", "Tech", "Growth", "", "  "],
@@ -112,7 +112,7 @@ describe("backend/node/kb/chunk-extract-node — normalizeLightRagOut (themes)",
   });
 
   it("defaults to [] when themes missing", () => {
-    const out = normalizeLightRagOut({
+    const out = normalizeGraphRagOut({
       entities: [{ name: "Acme", type: "Organization", description: "d" }],
       relationships: [],
     });
@@ -123,7 +123,7 @@ describe("backend/node/kb/chunk-extract-node — normalizeLightRagOut (themes)",
     // Two LLM-emitted entities with the same lower(name+type) merge
     // by description; themes now live at chunk-level and are returned
     // separately, not on the entity row.
-    const out = normalizeLightRagOut({
+    const out = normalizeGraphRagOut({
       entities: [
         { name: "Acme", type: "Organization", description: "first" },
         { name: "acme", type: "organization", description: "second" },
@@ -136,7 +136,7 @@ describe("backend/node/kb/chunk-extract-node — normalizeLightRagOut (themes)",
   });
 
   it("collapses two relations to one canonical row (themes unaffected)", () => {
-    const out = normalizeLightRagOut({
+    const out = normalizeGraphRagOut({
       entities: [],
       relationships: [
         { source: "Acme", target: "Beta", relation: "PARTNERED", description: "x" },
