@@ -177,8 +177,12 @@ Upload ─▶ parse ────┤
 5. **Entity Extraction** — For each chunk, the LLM extracts entities
    (`{name, type, description}[]`), relationships
    (`{source, target, relation, description}[]`), and themes
-   (`text[]`). Stored as JSONB; the tag leg and the Folder Graph read
-   from these columns directly.
+   (`text[]`). Stored in dedicated `kb_entity` / `kb_relationship`
+   tables (rows link back to chunks via `source_chunk_ids: text[]`)
+   and `kb_theme` (one row per `(chunk_id, name)`). The tag leg
+   reads entities / themes; the Folder Graph dedupes per chunk;
+   `entity-embed-node.ts` concatenates `kb_theme` rows into the
+   entity / relationship embed text for theme-aware ANN.
 6. **Status Flip** — `kb_document.status` flips to `success` (or
    `failed` if any node throws); `kb_chunk.status` reflects per-chunk
    outcome. `kbAgent.mode` (`full | chunksOnly | retryFailed |

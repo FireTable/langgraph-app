@@ -67,13 +67,14 @@ describe("backend/node/kb/entity-extract-node — mergeHrOnlyChunks", () => {
   });
 });
 
-// ponytail: top-level per-chunk themes. The prompt emits themes once
+// ponytail: per-chunk top-level themes. The prompt emits themes once
 // at the schema top level (high-level macro topics for the chunk);
-// we fan them out to every entity/relationship in the same chunk
-// so kb_entity.themes and kb_relationship.themes both get populated.
+// normalizeLightRagOut returns them as a separate `themes` field —
+// the caller (entity-extract-node) writes them to kb_theme via
+// replaceChunkThemes, NOT into the entity / relationship rows.
 
 describe("backend/node/kb/entity-extract-node — normalizeLightRagOut (themes)", () => {
-  it("fans chunk-level themes out to every entity", () => {
+  it("returns top-level themes as a separate field", () => {
     const out = normalizeLightRagOut({
       entities: [
         { name: "Acme", type: "Organization", description: "d" },
@@ -82,17 +83,23 @@ describe("backend/node/kb/entity-extract-node — normalizeLightRagOut (themes)"
       relationships: [],
       themes: ["Tech", "Growth"],
     });
-    expect(out.entities[0]!.themes).toEqual(["Tech", "Growth"]);
-    expect(out.entities[1]!.themes).toEqual(["Tech", "Growth"]);
+    // Ponytail: themes are no longer attached to entities / relationships.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((out.entities[0] as any).themes).toBeUndefined();
+    expect(out.themes).toEqual(["Tech", "Growth"]);
   });
 
-  it("fans chunk-level themes out to every relationship", () => {
+  it("returns themes once regardless of entity / relationship count", () => {
     const out = normalizeLightRagOut({
-      entities: [{ name: "Acme", type: "Organization", description: "d" }],
+      entities: [
+        { name: "Acme", type: "Organization", description: "d" },
+        { name: "Beta", type: "Organization", description: "d" },
+      ],
       relationships: [{ source: "Acme", target: "Beta", relation: "PARTNERED", description: "x" }],
       themes: ["Funding"],
     });
-    expect(out.relationships[0]!.themes).toEqual(["Funding"]);
+    expect(out.themes).toEqual(["Funding"]);
+    expect(out.themes).toHaveLength(1);
   });
 
   it("trims and dedupes top-level themes", () => {
@@ -101,7 +108,7 @@ describe("backend/node/kb/entity-extract-node — normalizeLightRagOut (themes)"
       relationships: [],
       themes: ["  Tech  ", "Tech", "Growth", "", "  "],
     });
-    expect(out.entities[0]!.themes).toEqual(["Tech", "Growth"]);
+    expect(out.themes).toEqual(["Tech", "Growth"]);
   });
 
   it("defaults to [] when themes missing", () => {
@@ -109,12 +116,13 @@ describe("backend/node/kb/entity-extract-node — normalizeLightRagOut (themes)"
       entities: [{ name: "Acme", type: "Organization", description: "d" }],
       relationships: [],
     });
-    expect(out.entities[0]!.themes).toEqual([]);
+    expect(out.themes).toEqual([]);
   });
 
-  it("merges themes across two entities that collapse to the same canonical", () => {
+  it("collapses two entities to one canonical row (themes unaffected)", () => {
     // Two LLM-emitted entities with the same lower(name+type) merge
-    // by description; themes are union-deduped across the merged rows.
+    // by description; themes now live at chunk-level and are returned
+    // separately, not on the entity row.
     const out = normalizeLightRagOut({
       entities: [
         { name: "Acme", type: "Organization", description: "first" },
@@ -124,10 +132,10 @@ describe("backend/node/kb/entity-extract-node — normalizeLightRagOut (themes)"
       themes: ["Tech", "Growth"],
     });
     expect(out.entities).toHaveLength(1);
-    expect(out.entities[0]!.themes.sort()).toEqual(["Growth", "Tech"]);
+    expect(out.themes.sort()).toEqual(["Growth", "Tech"]);
   });
 
-  it("merges themes across two relations that collapse to the same canonical", () => {
+  it("collapses two relations to one canonical row (themes unaffected)", () => {
     const out = normalizeLightRagOut({
       entities: [],
       relationships: [
@@ -137,6 +145,6 @@ describe("backend/node/kb/entity-extract-node — normalizeLightRagOut (themes)"
       themes: ["Funding"],
     });
     expect(out.relationships).toHaveLength(1);
-    expect(out.relationships[0]!.themes).toEqual(["Funding"]);
+    expect(out.themes).toEqual(["Funding"]);
   });
 });

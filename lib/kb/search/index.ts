@@ -92,7 +92,6 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
 
   const entryTopK = env.kbHybridEntryTopK ?? 50;
   const chunkTopK = Math.max(1, Math.min(env.hybridTopKDefault ?? 10, env.hybridTopKMax ?? 20));
-  const graphEnabled = env.kbGraphEnabled;
 
   const hasOriginalDense =
     Boolean(args.originalQuery?.trim()) && args.originalQuery?.trim() !== args.rewriteQuery?.trim();
@@ -142,27 +141,25 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
       scope: args.scope,
       topK: entryTopK,
     }),
-    // ponytail: B-phase graph legs gate on KB_GRAPH_ENABLED (default
-    // false). Audit §5 — A phase runs kw/vec/tag only, B adds rel/entity
-    // + assembleGraphContext. Flip on with `KB_GRAPH_ENABLED=true`.
-    graphEnabled
-      ? relationLeg({
-          userId: args.userId,
-          query: queryText,
-          scope: args.scope,
-          topK: entryTopK,
-          qvec: qvecRewrite ?? undefined,
-        })
-      : Promise.resolve({ legs: [], hits: [] }),
-    graphEnabled
-      ? entityLeg({
-          userId: args.userId,
-          query: queryText,
-          scope: args.scope,
-          topK: entryTopK,
-          qvec: qvecRewrite ?? undefined,
-        })
-      : Promise.resolve({ legs: [], hits: [] }),
+    // ponytail: B-phase graph legs (relation / entity) participate in
+    // every search now — they only add hits, never drop the A-phase
+    // results. The old KB_GRAPH_ENABLED gate was dead config; if no
+    // kb_entity / kb_relationship rows exist for the user, the legs
+    // return zero hits and the orchestrator is unaffected.
+    relationLeg({
+      userId: args.userId,
+      query: queryText,
+      scope: args.scope,
+      topK: entryTopK,
+      qvec: qvecRewrite ?? undefined,
+    }),
+    entityLeg({
+      userId: args.userId,
+      query: queryText,
+      scope: args.scope,
+      topK: entryTopK,
+      qvec: qvecRewrite ?? undefined,
+    }),
   ]);
 
   // Aggregate metadata for RRF fusing
@@ -213,16 +210,17 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
   }));
 
   const docIds = Array.from(new Set(finalChunks.map((c) => c.documentId)));
-  const graphContext = graphEnabled
-    ? await assembleGraphContext({
-        userId: args.userId,
-        scope: args.scope,
-        entities: args.entities,
-        themes: args.themes,
-        docIds,
-        maxHops: env.kbGraphHops ?? 2,
-      })
-    : undefined;
+  // ponytail: assembleGraphContext is unconditional — the function is
+  // a no-op when kb_entity / kb_relationship rows for the scope are
+  // empty, so the gate added nothing but env-config complexity.
+  const graphContext = await assembleGraphContext({
+    userId: args.userId,
+    scope: args.scope,
+    entities: args.entities,
+    themes: args.themes,
+    docIds,
+    maxHops: env.kbGraphHops ?? 2,
+  });
 
   return { chunks: truncatedChunks, graphContext };
 }

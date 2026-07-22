@@ -191,13 +191,6 @@ export const kbEntity = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
-    // ponytail: themes migrated from kb_chunk.themes (audit §8). Theme
-    // is an entity property, not a chunk property. Default empty
-    // array — `upsertKbEntity` does union-merge on conflict.
-    themes: text("themes")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
     embedding: vector("embedding"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -230,13 +223,6 @@ export const kbRelationship = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
-    // ponytail: themes migrated from kb_chunk.themes (audit §8). Theme
-    // is a relationship-edge property, not a chunk property.
-    // Default empty array — `upsertKbRelationship` does union-merge.
-    themes: text("themes")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
     weight: integer("weight").notNull().default(1),
     embedding: vector("embedding"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -257,6 +243,44 @@ export const kbRelationship = pgTable(
   ],
 );
 
+// ponytail: per-chunk themes table (single source of truth, replaces
+// the previous fan-out into kb_entity.themes / kb_relationship.themes).
+// One row per (chunk, theme name); the LLM emits one themes list per
+// chunk and we persist it as flat rows. Front-end doc-detail JOINs
+// `kb_theme WHERE chunk_id IN (...)` to surface the chip; the entity
+// embed path also JOINs this table to prepend themes into the entity's
+// ANN text (audit §13b line 456). Unique on (chunk_id, name) so a
+// retry can ON CONFLICT DO NOTHING instead of producing duplicates.
+//
+// Theme alignment is in-place via entity-alignment-node.ts: the LLM
+// emits `themeAliases: [{ canonicalName, aliases: [...] }]` and the
+// matching rows in kb_theme have their `name` UPDATE'd to the
+// canonical form (no `canonical_name` column). Original variants
+// collapse to the canonical on the next doc-detail read.
+export const kbTheme = pgTable(
+  "kb_theme",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => kbDocument.id, { onDelete: "cascade" }),
+    chunkId: text("chunk_id")
+      .notNull()
+      .references(() => kbChunk.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("kb_theme_chunk_name_idx").on(t.chunkId, t.name),
+    index("kb_theme_user_name_idx").on(t.userId, t.name),
+    index("kb_theme_user_document_idx").on(t.userId, t.documentId),
+    index("kb_theme_chunk_idx").on(t.chunkId),
+  ],
+);
+
 export type KbFolder = typeof kbFolder.$inferSelect;
 export type NewKbFolder = typeof kbFolder.$inferInsert;
 export type KbDocument = typeof kbDocument.$inferSelect;
@@ -267,6 +291,8 @@ export type KbEntity = typeof kbEntity.$inferSelect;
 export type NewKbEntity = typeof kbEntity.$inferInsert;
 export type KbRelationship = typeof kbRelationship.$inferSelect;
 export type NewKbRelationship = typeof kbRelationship.$inferInsert;
+export type KbTheme = typeof kbTheme.$inferSelect;
+export type NewKbTheme = typeof kbTheme.$inferInsert;
 
 // ponytail: per-kbAgent-invocation observability event. Every kbAgent run
 // (standalone via fireIngestionRun OR chat subgraph via mainAgent) inserts

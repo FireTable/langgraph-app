@@ -8,13 +8,13 @@ import { kbChunk, kbDocument, kbEntity, kbFolder, kbRelationship } from "@/lib/k
 import { relationLeg } from "@/lib/kb/search/relation-leg";
 import { entityLeg } from "@/lib/kb/search/entity-leg";
 import { hybridSearch } from "@/lib/kb/search";
-import { _resetKbEnvCache } from "@/lib/kb/env";
 import { TEST_USER, ensureTestUser } from "@/tests/helpers/auth";
 
 // ponytail: B-phase graph legs (relation-leg, entity-leg,
-// assembleGraphContext) gate on KB_GRAPH_ENABLED — default false.
-// This suite exercises B-phase behavior, so flip it on for the run
-// and reset in afterEach so other suites see the default.
+// assembleGraphContext) used to gate on KB_GRAPH_ENABLED — that env
+// flag was removed in the audit §5 cleanup. The legs now run on
+// every search and return empty hits when no kb_entity /
+// kb_relationship rows exist for the user's scope.
 
 vi.mock("@/backend/model", () => ({
   getEmbeddingModel: vi.fn(async () => ({
@@ -86,13 +86,9 @@ describe("relationLeg & entityLeg Hybrid Search Tests", () => {
   beforeEach(async () => {
     await ensureTestUser();
     await seedFixture();
-    process.env.KB_GRAPH_ENABLED = "true";
-    _resetKbEnvCache();
   });
 
   afterEach(async () => {
-    delete process.env.KB_GRAPH_ENABLED;
-    _resetKbEnvCache();
     await db.delete(kbRelationship).where(eq(kbRelationship.userId, TEST_USER.id));
     await db.delete(kbEntity).where(eq(kbEntity.userId, TEST_USER.id));
     await db.delete(kbChunk);

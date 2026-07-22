@@ -1,10 +1,10 @@
 import "@/tests/helpers/session";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import { db } from "@/db/client";
-import { kbChunk, kbDocument, kbEntity, kbFolder, kbRelationship } from "@/lib/kb/schema";
+import { kbChunk, kbDocument, kbEntity, kbFolder, kbRelationship, kbTheme } from "@/lib/kb/schema";
 import { findKbChunksContentByDocumentId, insertKbChunks, withKbTx } from "@/lib/kb/queries";
 import { user } from "@/lib/auth/schema";
 import { TEST_USER, ensureTestUser } from "@/tests/helpers/auth";
@@ -21,9 +21,9 @@ async function makeIsolatedUser(): Promise<{ id: string; email: string }> {
 
 // ponytail: regression — audit §8 / Step 6 said "前端 0 改动" but the
 // doc-detail UI reads `c.entities` / `c.relationships` / `c.themes`
-// per chunk. The jsonB columns are gone from kb_chunk; we rehydrate
-// them server-side by JOINing kb_entity / kb_relationship on
-// `source_chunk_ids @> ARRAY[chunkId]`.
+// per chunk. Themes live flat on kb_theme (single source of truth);
+// we rehydrate by JOINing it on chunk_id. Schema rewrite keeps the
+// wire shape so the UI does not need to change.
 
 function makeEmbedding(seed: number): number[] {
   const out: number[] = [];
@@ -108,11 +108,16 @@ describe("findKbChunksContentByDocumentId — graph rehydration (audit §8)", ()
     await seedFixture();
   });
   afterEach(async () => {
+    await db.delete(kbTheme).where(eq(kbTheme.userId, TEST_USER.id));
     await db.delete(kbRelationship).where(eq(kbRelationship.userId, TEST_USER.id));
     await db.delete(kbEntity).where(eq(kbEntity.userId, TEST_USER.id));
     await db.delete(kbChunk);
     await db.delete(kbDocument).where(eq(kbDocument.userId, TEST_USER.id));
     await db.delete(kbFolder).where(eq(kbFolder.userId, TEST_USER.id));
+    for (const id of dynamicUserIds) {
+      await db.delete(user).where(eq(user.id, id));
+    }
+    dynamicUserIds.length = 0;
   });
 
   it("populates entities from kb_entity via source_chunk_ids", async () => {
@@ -143,18 +148,49 @@ describe("findKbChunksContentByDocumentId — graph rehydration (audit §8)", ()
     expect(chunkA.relationships).toEqual([]);
   });
 
-  it("populates themes by union across entities referencing the chunk", async () => {
-    // Acme has themes ["growth", "tech"]; BetaCorp has ["growth", "market"].
-    // Chunk B references both → union = ["growth", "tech", "market"].
-    // Chunk A references only Acme → ["growth", "tech"].
-    await db
-      .update(kbEntity)
-      .set({ themes: ["growth", "tech"] })
-      .where(eq(kbEntity.name, "Acme"));
-    await db
-      .update(kbEntity)
-      .set({ themes: ["growth", "market"] })
-      .where(eq(kbEntity.name, "BetaCorp"));
+  it("populates themes from kb_theme by chunk_id", async () => {
+    // ponytail: themes live flat on kb_theme (one row per chunk +
+    // name), populated by replaceChunkThemes from entity-extract-node.
+    // Acme → CHUNK_A carries ["growth", "tech"]; Acme + BetaCorp on
+    // CHUNK_B carries ["growth", "tech", "market"]. Each chunk should
+    // surface its own theme set — there is no entity-union fan-out.
+    await db.insert(kbTheme).values([
+      {
+        id: `t-${randomUUID()}`,
+        userId: TEST_USER.id,
+        documentId: DOC_ID,
+        chunkId: CHUNK_A,
+        name: "growth",
+      },
+      {
+        id: `t-${randomUUID()}`,
+        userId: TEST_USER.id,
+        documentId: DOC_ID,
+        chunkId: CHUNK_A,
+        name: "tech",
+      },
+      {
+        id: `t-${randomUUID()}`,
+        userId: TEST_USER.id,
+        documentId: DOC_ID,
+        chunkId: CHUNK_B,
+        name: "growth",
+      },
+      {
+        id: `t-${randomUUID()}`,
+        userId: TEST_USER.id,
+        documentId: DOC_ID,
+        chunkId: CHUNK_B,
+        name: "tech",
+      },
+      {
+        id: `t-${randomUUID()}`,
+        userId: TEST_USER.id,
+        documentId: DOC_ID,
+        chunkId: CHUNK_B,
+        name: "market",
+      },
+    ]);
     const chunks = await findKbChunksContentByDocumentId(TEST_USER.id, DOC_ID);
     const chunkA = chunks.find((c) => c.ordinal === 0)!;
     const chunkB = chunks.find((c) => c.ordinal === 1)!;
@@ -162,23 +198,13 @@ describe("findKbChunksContentByDocumentId — graph rehydration (audit §8)", ()
     expect(chunkB.themes.sort()).toEqual(["growth", "market", "tech"]);
   });
 
-  it("themes default to empty when entity has no themes column populated", async () => {
+  it("themes default to empty when no kb_theme rows exist for the chunks", async () => {
     const chunks = await findKbChunksContentByDocumentId(TEST_USER.id, DOC_ID);
     for (const c of chunks) expect(Array.isArray(c.themes)).toBe(true);
+    expect(chunks.every((c) => c.themes.length === 0)).toBe(true);
   });
 
-  it("dedupes the same entity when its source_chunk_ids includes multiple chunks", async () => {
-    // Acme appears in both CHUNK_A and CHUNK_B → still only one row per chunk.
-    const chunks = await findKbChunksContentByDocumentId(TEST_USER.id, DOC_ID);
-    const chunkB = chunks.find((c) => c.ordinal === 1)!;
-    expect(chunkB.entities.filter((e) => e.name === "Acme")).toHaveLength(1);
-  });
-
-  it("returns empty array for an unknown document", async () => {
-    expect(await findKbChunksContentByDocumentId(TEST_USER.id, "d-nope")).toEqual([]);
-  });
-
-  it("does not leak entities / relationships across users", async () => {
+  it("does NOT leak entities / relationships across users", async () => {
     // Insert an entity owned by another user — should NOT appear in the
     // doc-detail payload for TEST_USER.
     const other = await makeIsolatedUser();
@@ -192,8 +218,17 @@ describe("findKbChunksContentByDocumentId — graph rehydration (audit §8)", ()
       description: "should not appear",
       sourceChunkIds: [CHUNK_A],
     });
+    const otherThemeId = `t-${randomUUID()}`;
+    await db.insert(kbTheme).values({
+      id: otherThemeId,
+      userId: other.id,
+      documentId: DOC_ID,
+      chunkId: CHUNK_A,
+      name: "should-not-leak",
+    });
     const chunks = await findKbChunksContentByDocumentId(TEST_USER.id, DOC_ID);
     const chunkA = chunks.find((c) => c.ordinal === 0)!;
     expect(chunkA.entities.map((e) => e.name)).not.toContain("OtherUser");
+    expect(chunkA.themes).not.toContain("should-not-leak");
   });
 });

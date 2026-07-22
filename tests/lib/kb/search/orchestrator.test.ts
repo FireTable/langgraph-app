@@ -172,53 +172,6 @@ describe("Step 4 · Modular Hybrid Search Orchestrator", () => {
   });
 });
 
-describe("Step 6 · KB_GRAPH_ENABLED gate (audit §5)", () => {
-  // ponytail: B-phase graph legs (relation-leg, entity-leg,
-  // assembleGraphContext) gate on KB_GRAPH_ENABLED. Default off →
-  // A-only path. Flip on for B.
-  afterEach(() => {
-    delete process.env.KB_GRAPH_ENABLED;
-    _resetKbEnvCache();
-  });
-
-  it("default OFF: graphContext is undefined (B-phase skipped)", async () => {
-    const res = await hybridSearch({
-      userId: TEST_USER.id,
-      rewriteQuery: "Acme",
-      scope: { folderId: FOLDER_ID },
-    });
-    expect(res.graphContext).toBeUndefined();
-  });
-
-  it("ON: graphContext is populated (B-phase active)", async () => {
-    process.env.KB_GRAPH_ENABLED = "true";
-    _resetKbEnvCache();
-    const res = await hybridSearch({
-      userId: TEST_USER.id,
-      rewriteQuery: "Acme",
-      scope: { folderId: FOLDER_ID },
-    });
-    // Gate flipped — assembleGraphContext ran. Fixture seeds a doc with
-    // the entity "Acme"; context contains it.
-    expect(res.graphContext).toBeDefined();
-    expect(res.graphContext?.entities.some((e) => e.name === "Acme")).toBe(true);
-  });
-
-  it("empty rewriteQuery bypasses the gate (scopeDump path always runs)", async () => {
-    process.env.KB_GRAPH_ENABLED = "true";
-    _resetKbEnvCache();
-    const res = await hybridSearch({
-      userId: TEST_USER.id,
-      rewriteQuery: "",
-      scope: { folderId: FOLDER_ID },
-    });
-    expect(res.chunks.length).toBeGreaterThan(0);
-    // Empty-query path is scopeDump — graphContext isn't built here
-    // by design (scopeDump returns full-doc rows, not search hits).
-    expect(res.graphContext).toBeUndefined();
-  });
-});
-
 describe("Step 4 · multi-query fusion (audit §2b)", () => {
   // ponytail: when originalQuery differs from rewriteQuery, the
   // orchestrator runs TWO dense sub-legs (embed of each) and RRF-fuses

@@ -14,6 +14,7 @@ import {
   markAllKbChunksParsingForDocInTx,
   markKbChunkFailed,
   markKbChunkSuccess,
+  replaceChunkThemes,
   updateKbChunkForFailure,
   upsertKbEntity,
   upsertKbRelationship,
@@ -54,10 +55,11 @@ export const lightRagSchema = z.object({
 });
 
 export function normalizeLightRagOut(out: Partial<z.infer<typeof lightRagSchema>>) {
-  // ponytail: chunk-level themes — trim + dedup + drop empties.
-  // Fan these out to every entity and relationship below.
-  // `out.themes ?? []` covers the dev-only path where LLM omits the
-  // field despite the prompt and required-schema request.
+  // ponytail: per-chunk top-level themes live flat on kb_theme
+  // (single source of truth — no fan-out into kb_entity / kb_relationship).
+  // We return them as a separate `themes` field; the caller writes
+  // them via replaceChunkThemes AFTER the entity / relationship
+  // upserts so chunk-without-entities still carries its macro topics.
   const chunkThemes = Array.from(
     new Set((out.themes ?? []).map((t) => t.trim()).filter((t) => t.length > 0)),
   );
@@ -66,14 +68,12 @@ export function normalizeLightRagOut(out: Partial<z.infer<typeof lightRagSchema>
     name: e.name.trim(),
     type: e.type.trim(),
     description: e.description.trim(),
-    themes: chunkThemes,
   }));
   const normRel = (out.relationships ?? []).map((r) => ({
     source: r.source.trim(),
     target: r.target.trim(),
     relation: r.relation.trim(),
     description: r.description.trim(),
-    themes: chunkThemes,
   }));
 
   const map = new Map<string, (typeof normEnt)[number]>();
@@ -85,11 +85,7 @@ export function normalizeLightRagOut(out: Partial<z.infer<typeof lightRagSchema>
       map.set(k, e);
     } else {
       const mergedDesc = [cur.description, e.description].filter((d) => d.length > 0).join("; ");
-      // ponytail: themes are union-deduped (the DB upsert already
-      // does this; here we normalize surface form so two chunks
-      // with the same canonical entity get a clean merged set).
-      const mergedThemes = Array.from(new Set([...cur.themes, ...e.themes]));
-      map.set(k, { ...cur, description: mergedDesc, themes: mergedThemes });
+      map.set(k, { ...cur, description: mergedDesc });
     }
   }
 
@@ -102,14 +98,14 @@ export function normalizeLightRagOut(out: Partial<z.infer<typeof lightRagSchema>
       relMap.set(k, r);
     } else {
       const mergedDesc = [cur.description, r.description].filter((d) => d.length > 0).join("; ");
-      const mergedThemes = Array.from(new Set([...cur.themes, ...r.themes]));
-      relMap.set(k, { ...cur, description: mergedDesc, themes: mergedThemes });
+      relMap.set(k, { ...cur, description: mergedDesc });
     }
   }
 
   return {
     entities: Array.from(map.values()),
     relationships: Array.from(relMap.values()),
+    themes: chunkThemes,
   };
 }
 
@@ -321,7 +317,6 @@ export async function entityExtractNode(
                         name: canonName,
                         type: e.type,
                         description: e.description,
-                        themes: e.themes,
                         chunkId,
                       });
                     }
@@ -338,6 +333,16 @@ export async function entityExtractNode(
                         chunkId,
                       });
                     }
+
+                    // ponytail: per-chunk themes land flat on kb_theme
+                    // (single source of truth — entities / relationships
+                    // no longer carry themes). Idempotent on retry.
+                    await replaceChunkThemes({
+                      userId,
+                      documentId: docId,
+                      chunkId,
+                      themes: norm.themes,
+                    });
 
                     await markKbChunkSuccess(chunkId);
                   } catch (err) {

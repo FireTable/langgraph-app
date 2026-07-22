@@ -99,6 +99,13 @@
       "when": 1784704354293,
       "tag": "0013_lowly_whirlwind",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1784713457338,
+      "tag": "0014_bright_norrin_radd",
+      "breakpoints": true
     }
   ]
 }

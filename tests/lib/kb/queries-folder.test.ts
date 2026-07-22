@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import { db } from "@/db/client";
-import { kbChunk, kbDocument, kbEntity, kbFolder, kbRelationship } from "@/lib/kb/schema";
+import { kbChunk, kbDocument, kbEntity, kbFolder, kbRelationship, kbTheme } from "@/lib/kb/schema";
 import { findKbChunksByFolderId, insertKbChunks, withKbTx } from "@/lib/kb/queries";
 import { user } from "@/lib/auth/schema";
 import { TEST_USER, ensureTestUser } from "@/tests/helpers/auth";
@@ -117,7 +117,6 @@ async function seedFixture() {
       type: "Organization",
       description: "founded 2020",
       sourceChunkIds: [CHUNK_A1, CHUNK_A2],
-      themes: ["growth", "tech"],
     },
     {
       id: `e-${randomUUID()}`,
@@ -127,7 +126,6 @@ async function seedFixture() {
       type: "Organization",
       description: "acquired",
       sourceChunkIds: [CHUNK_B1],
-      themes: ["growth"],
     },
     {
       id: `e-${randomUUID()}`,
@@ -137,6 +135,46 @@ async function seedFixture() {
       type: "Organization",
       description: "must not leak",
       sourceChunkIds: [CHUNK_OTHER],
+    },
+  ]);
+
+  // Themes live flat on kb_theme (single source of truth). CHUNK_A1
+  // + CHUNK_A2 → ["growth","tech"]; CHUNK_B1 → ["growth"].
+  await db.insert(kbTheme).values([
+    {
+      id: `t-${randomUUID()}`,
+      userId: TEST_USER.id,
+      documentId: DOC_A_ID,
+      chunkId: CHUNK_A1,
+      name: "growth",
+    },
+    {
+      id: `t-${randomUUID()}`,
+      userId: TEST_USER.id,
+      documentId: DOC_A_ID,
+      chunkId: CHUNK_A1,
+      name: "tech",
+    },
+    {
+      id: `t-${randomUUID()}`,
+      userId: TEST_USER.id,
+      documentId: DOC_A_ID,
+      chunkId: CHUNK_A2,
+      name: "growth",
+    },
+    {
+      id: `t-${randomUUID()}`,
+      userId: TEST_USER.id,
+      documentId: DOC_A_ID,
+      chunkId: CHUNK_A2,
+      name: "tech",
+    },
+    {
+      id: `t-${randomUUID()}`,
+      userId: TEST_USER.id,
+      documentId: DOC_B_ID,
+      chunkId: CHUNK_B1,
+      name: "growth",
     },
   ]);
 
@@ -169,6 +207,7 @@ describe("findKbChunksByFolderId — folder-level JOIN (audit §8)", () => {
     await seedFixture();
   });
   afterEach(async () => {
+    await db.delete(kbTheme).where(eq(kbTheme.userId, TEST_USER.id));
     await db.delete(kbRelationship).where(eq(kbRelationship.userId, TEST_USER.id));
     await db.delete(kbEntity).where(eq(kbEntity.userId, TEST_USER.id));
     await db.delete(kbChunk);

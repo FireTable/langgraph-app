@@ -12,6 +12,7 @@ import {
   kbFolder,
   kbObservability,
   kbRelationship,
+  kbTheme,
   type KbChunk,
   type KbDocument,
   type KbEntity,
@@ -523,9 +524,8 @@ export async function findKbChunksContentByDocumentId(
     type: string;
     description: string;
     source_chunk_ids: string[];
-    themes: string[];
   }>(sql`
-    SELECT name, type, description, source_chunk_ids, themes
+    SELECT name, type, description, source_chunk_ids
     FROM kb_entity
     WHERE user_id = ${userId}
       AND document_id = ${docId}
@@ -546,14 +546,24 @@ export async function findKbChunksContentByDocumentId(
       AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
   `);
 
+  // ponytail: themes are stored flat on kb_theme (one row per chunk +
+  // name). Single bulk read covers the whole doc — no entity-union
+  // fan-out. We reuse chunkIdArrayLiteral (string-form array literal)
+  // rather than ANY(${array}::text[]) — drizzle's sql tag won't
+  // auto-bind a JS array as a pgvector text[] parameter without an
+  // explicit cast, so passing a pre-formatted literal is the safe path.
+  const themeRows = await db.execute<{ chunk_id: string; name: string }>(sql`
+    SELECT chunk_id, name
+    FROM kb_theme
+    WHERE user_id = ${userId}
+      AND document_id = ${docId}
+      AND chunk_id = ANY(${chunkIdArrayLiteral}::text[])
+  `);
+
   // Index entities / relationships by chunk id for O(1) lookup. Same
   // entity / relationship can appear in many chunks (canonical merge
   // dedupes by name), so we de-dupe per chunk before assignment.
-  // Themes are also unioned across all entities referencing a chunk
-  // — same edge entity can carry different themes from different
-  // LLM extractions, and the front-end chunk row wants the union.
   const entitiesByChunk = new Map<string, KbChunkPreview["entities"]>();
-  const themesByChunk = new Map<string, Set<string>>();
   for (const e of entityRows) {
     for (const cid of e.source_chunk_ids ?? []) {
       if (!chunkIds.includes(cid)) continue;
@@ -562,9 +572,6 @@ export async function findKbChunksContentByDocumentId(
         bucket.push({ name: e.name, type: e.type, description: e.description ?? "" });
       }
       entitiesByChunk.set(cid, bucket);
-      const themeSet = themesByChunk.get(cid) ?? new Set<string>();
-      for (const t of e.themes ?? []) themeSet.add(t);
-      themesByChunk.set(cid, themeSet);
     }
   }
   const relsByChunk = new Map<string, KbChunkPreview["relationships"]>();
@@ -584,6 +591,12 @@ export async function findKbChunksContentByDocumentId(
       relsByChunk.set(cid, bucket);
     }
   }
+  const themesByChunk = new Map<string, string[]>();
+  for (const t of themeRows) {
+    const bucket = themesByChunk.get(t.chunk_id) ?? [];
+    if (!bucket.includes(t.name)) bucket.push(t.name);
+    themesByChunk.set(t.chunk_id, bucket);
+  }
 
   return chunks.map((c) => ({
     ordinal: c.ordinal,
@@ -592,7 +605,7 @@ export async function findKbChunksContentByDocumentId(
     errorMessage: c.errorMessage,
     entities: entitiesByChunk.get(c.id) ?? [],
     relationships: relsByChunk.get(c.id) ?? [],
-    themes: Array.from(themesByChunk.get(c.id) ?? []),
+    themes: themesByChunk.get(c.id) ?? [],
   }));
 }
 
@@ -692,9 +705,8 @@ export async function findKbChunksByFolderId(
     type: string;
     description: string;
     source_chunk_ids: string[];
-    themes: string[];
   }>(sql`
-    SELECT name, type, description, source_chunk_ids, themes
+    SELECT name, type, description, source_chunk_ids
     FROM kb_entity
     WHERE user_id = ${userId}
       AND document_id IN (SELECT id FROM kb_document WHERE user_id = ${userId} AND folder_id = ${folderId})
@@ -715,8 +727,18 @@ export async function findKbChunksByFolderId(
       AND source_chunk_ids && ${chunkIdArrayLiteral}::text[]
   `);
 
+  // ponytail: themes live flat on kb_theme (single source of truth).
+  // Use chunkIdArrayLiteral — drizzle's sql tag doesn't auto-bind a
+  // JS array to pgvector text[] parameter without an explicit cast.
+  const themeRows = await db.execute<{ chunk_id: string; name: string }>(sql`
+    SELECT chunk_id, name
+    FROM kb_theme
+    WHERE user_id = ${userId}
+      AND document_id IN (SELECT id FROM kb_document WHERE user_id = ${userId} AND folder_id = ${folderId})
+      AND chunk_id = ANY(${chunkIdArrayLiteral}::text[])
+  `);
+
   const entitiesByChunk = new Map<string, KbChunkPreview["entities"]>();
-  const themesByChunk = new Map<string, Set<string>>();
   for (const e of entityRows) {
     for (const cid of e.source_chunk_ids ?? []) {
       if (!chunkIds.includes(cid)) continue;
@@ -725,9 +747,6 @@ export async function findKbChunksByFolderId(
         bucket.push({ name: e.name, type: e.type, description: e.description ?? "" });
       }
       entitiesByChunk.set(cid, bucket);
-      const themeSet = themesByChunk.get(cid) ?? new Set<string>();
-      for (const t of e.themes ?? []) themeSet.add(t);
-      themesByChunk.set(cid, themeSet);
     }
   }
   const relsByChunk = new Map<string, KbChunkPreview["relationships"]>();
@@ -747,6 +766,12 @@ export async function findKbChunksByFolderId(
       relsByChunk.set(cid, bucket);
     }
   }
+  const themesByChunk = new Map<string, string[]>();
+  for (const t of themeRows) {
+    const bucket = themesByChunk.get(t.chunk_id) ?? [];
+    if (!bucket.includes(t.name)) bucket.push(t.name);
+    themesByChunk.set(t.chunk_id, bucket);
+  }
 
   return chunks.map((c) => ({
     ordinal: c.ordinal,
@@ -755,7 +780,7 @@ export async function findKbChunksByFolderId(
     errorMessage: c.errorMessage,
     entities: entitiesByChunk.get(c.id) ?? [],
     relationships: relsByChunk.get(c.id) ?? [],
-    themes: Array.from(themesByChunk.get(c.id) ?? []),
+    themes: themesByChunk.get(c.id) ?? [],
   }));
 }
 
@@ -815,33 +840,19 @@ export async function upsertKbEntity(args: {
   type: string;
   description: string;
   chunkId: string;
-  themes?: string[];
 }): Promise<void> {
   const nameTrim = args.name.trim();
   if (!nameTrim) return;
 
-  // ponytail: themes union-dedup (audit §15). The new column defaults
-  // to '{}'::text[] when no themes are passed; ON CONFLICT we merge
-  // the incoming themes into the existing array, deduped.
-  const themesArray = Array.from(new Set((args.themes ?? []).map((t) => t.trim()).filter(Boolean)));
-  const themesLiteral =
-    themesArray.length === 0
-      ? sql`'{}'::text[]`
-      : sql`ARRAY[${sql.join(
-          themesArray.map((t) => sql`${t}`),
-          sql`, `,
-        )}]::text[]`;
-
   const id = `e-${randomUUID()}`;
   await db.execute(sql`
-    INSERT INTO kb_entity (id, user_id, document_id, name, type, description, source_chunk_ids, themes, created_at, updated_at)
-    VALUES (${id}, ${args.userId}, ${args.documentId}, ${nameTrim}, ${args.type.trim()}, ${args.description.trim()}, ARRAY[${args.chunkId}]::text[], ${themesLiteral}, NOW(), NOW())
+    INSERT INTO kb_entity (id, user_id, document_id, name, type, description, source_chunk_ids, created_at, updated_at)
+    VALUES (${id}, ${args.userId}, ${args.documentId}, ${nameTrim}, ${args.type.trim()}, ${args.description.trim()}, ARRAY[${args.chunkId}]::text[], NOW(), NOW())
     ON CONFLICT (user_id, document_id, name) DO UPDATE
     SET source_chunk_ids = CASE
           WHEN ${args.chunkId} = ANY(kb_entity.source_chunk_ids) THEN kb_entity.source_chunk_ids
           ELSE array_append(kb_entity.source_chunk_ids, ${args.chunkId})
         END,
-        themes = ARRAY(SELECT DISTINCT unnest(kb_entity.themes || ${themesLiteral})),
         updated_at = NOW()
   `);
 }
@@ -854,35 +865,153 @@ export async function upsertKbRelationship(args: {
   relation: string;
   description: string;
   chunkId: string;
-  themes?: string[];
 }): Promise<void> {
   const sourceTrim = args.source.trim();
   const targetTrim = args.target.trim();
   const relationTrim = args.relation.trim();
   if (!sourceTrim || !targetTrim || !relationTrim) return;
 
-  const themesArray = Array.from(new Set((args.themes ?? []).map((t) => t.trim()).filter(Boolean)));
-  const themesLiteral =
-    themesArray.length === 0
-      ? sql`'{}'::text[]`
-      : sql`ARRAY[${sql.join(
-          themesArray.map((t) => sql`${t}`),
-          sql`, `,
-        )}]::text[]`;
-
   const id = `r-${randomUUID()}`;
   await db.execute(sql`
-    INSERT INTO kb_relationship (id, user_id, document_id, source, target, relation, description, source_chunk_ids, themes, weight, created_at, updated_at)
-    VALUES (${id}, ${args.userId}, ${args.documentId}, ${sourceTrim}, ${targetTrim}, ${relationTrim}, ${args.description.trim()}, ARRAY[${args.chunkId}]::text[], ${themesLiteral}, 1, NOW(), NOW())
+    INSERT INTO kb_relationship (id, user_id, document_id, source, target, relation, description, source_chunk_ids, weight, created_at, updated_at)
+    VALUES (${id}, ${args.userId}, ${args.documentId}, ${sourceTrim}, ${targetTrim}, ${relationTrim}, ${args.description.trim()}, ARRAY[${args.chunkId}]::text[], 1, NOW(), NOW())
     ON CONFLICT (user_id, document_id, source, target, relation) DO UPDATE
     SET weight = kb_relationship.weight + 1,
         source_chunk_ids = CASE
           WHEN ${args.chunkId} = ANY(kb_relationship.source_chunk_ids) THEN kb_relationship.source_chunk_ids
           ELSE array_append(kb_relationship.source_chunk_ids, ${args.chunkId})
         END,
-        themes = ARRAY(SELECT DISTINCT unnest(kb_relationship.themes || ${themesLiteral})),
         updated_at = NOW()
   `);
+}
+
+// ponytail: replace the chunk's theme set with `themes` (single source
+// of truth — kb_theme is flat, one row per (chunk, name); no entity
+// fan-out). Idempotent on retry — UNIQUE(chunk_id, name) makes
+// re-INSERT a no-op via ON CONFLICT DO NOTHING. Callers run this
+// AFTER entity / relationship upserts so `kb_theme` rows survive
+// even when graph extraction returns zero nodes (chunk without
+// entities still carries its macro themes).
+export async function replaceChunkThemes(args: {
+  userId: string;
+  documentId: string;
+  chunkId: string;
+  themes: readonly string[];
+}): Promise<void> {
+  await db.execute(sql`
+    DELETE FROM kb_theme
+    WHERE user_id = ${args.userId}
+      AND chunk_id = ${args.chunkId}
+  `);
+
+  const trimmed = Array.from(new Set(args.themes.map((t) => t.trim()).filter((t) => t.length > 0)));
+  if (trimmed.length === 0) return;
+
+  const rows = trimmed.map((name) => ({
+    id: `t-${randomUUID()}`,
+    userId: args.userId,
+    documentId: args.documentId,
+    chunkId: args.chunkId,
+    name,
+  }));
+  await db.insert(kbTheme).values(rows).onConflictDoNothing();
+}
+
+// ponytail: theme alignment LLM pass (entity-alignment-node.ts) feeds
+// these mappings in. For each `{canonical, aliases}`, all matching
+// `kb_theme.name` rows in this `(user_id, document_id)` get renamed
+// in place to the canonical form. After the renames complete, a
+// per-(chunk_id, name) dedup pass kills any row collisions (multiple
+// aliases collapsing to the same canonical can leave a single chunk
+// with two rows of the same name, violating UNIQUE(chunk_id, name)).
+//
+// Why in-place: storing `canonical_name` would mean read paths
+// COALESCE everywhere + a schema migration. Theme names are LLM-
+// generated tokens that the user never quotes back verbatim — losing
+// the original variant on alignment is fine.
+export async function applyThemeAlignment(args: {
+  userId: string;
+  documentId: string;
+  mappings: ReadonlyArray<{ canonical: string; aliases: readonly string[] }>;
+}): Promise<{ updated: number; deduped: number }> {
+  let updated = 0;
+  for (const mapping of args.mappings) {
+    const aliases = mapping.aliases.filter((a) => a !== mapping.canonical);
+    if (aliases.length === 0) continue;
+    // Pre-format the alias set as a Postgres array literal — the
+    // same drizzle sql tag gotcha as elsewhere (js arrays don't auto-
+    // bind as pg text[]). Each alias is double-quote-escaped.
+    const literal = `{${aliases
+      .map((a) => `"${a.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+      .join(",")}}`;
+    const result = await db.execute(sql`
+      WITH updated_rows AS (
+        UPDATE kb_theme
+        SET name = ${mapping.canonical}
+        WHERE user_id = ${args.userId}
+          AND document_id = ${args.documentId}
+          AND name = ANY(${literal}::text[])
+        RETURNING id
+      )
+      SELECT COUNT(*)::int AS n FROM updated_rows
+    `);
+    updated += Number((result as unknown as { n: number }[])[0]?.n ?? 0);
+  }
+
+  // ponytail: dedup collisions — keep one row per (chunk_id, name)
+  // group, drop the rest. ROW_NUMBER over (chunk_id, name) ORDER BY id
+  // (UUIDs are random, so any row is equivalent for our purpose).
+  const dupResult = await db.execute(sql`
+    WITH ranked AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY chunk_id, name ORDER BY id
+      ) AS rn
+      FROM kb_theme
+      WHERE user_id = ${args.userId}
+        AND document_id = ${args.documentId}
+    ),
+    deleted AS (
+      DELETE FROM kb_theme
+      WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+      RETURNING id
+    )
+    SELECT COUNT(*)::int AS n FROM deleted
+  `);
+  const deduped = Number((dupResult as unknown as { n: number }[])[0]?.n ?? 0);
+  return { updated, deduped };
+}
+
+// ponytail: bulk-read all themes that reference ANY chunk in
+// `chunkIds`. Returns one flat array dedup'd per chunk via Map
+// downstream — the caller is responsible for splitting by chunk.
+// Used by entityEmbedNode to prepend macro themes into the entity's
+// embed text (audit §13b line 456).
+export async function findKbThemesByChunkIds(
+  userId: string,
+  chunkIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (chunkIds.length === 0) return out;
+  // ponytail: pre-formatted text[] literal — drizzle's sql tag doesn't
+  // auto-bind a JS array as pg text[] without an explicit driver hint,
+  // so we interpolate the literal instead of relying on parameter
+  // inference. Same pattern as chunkIdArrayLiteral in the doc-detail
+  // and folder-detail joins above.
+  const literal = `{${chunkIds
+    .map((id) => `"${id.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+    .join(",")}}`;
+  const rows = await db.execute<{ chunk_id: string; name: string }>(sql`
+    SELECT chunk_id, name
+    FROM kb_theme
+    WHERE user_id = ${userId}
+      AND chunk_id = ANY(${literal}::text[])
+  `);
+  for (const r of rows) {
+    const bucket = out.get(r.chunk_id) ?? [];
+    if (!bucket.includes(r.name)) bucket.push(r.name);
+    out.set(r.chunk_id, bucket);
+  }
+  return out;
 }
 
 export async function deleteKbDocumentForUser(

@@ -1,19 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunnableConfig } from "@langchain/core/runnables";
 
-const { mockFindCanonicalEntities, mockFindCanonicalRelationships, mockDbUpdate, mockInvoke } =
-  vi.hoisted(() => ({
-    mockFindCanonicalEntities: vi.fn(),
-    mockFindCanonicalRelationships: vi.fn(),
-    mockDbUpdate: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([{ id: "d-1", status: "success" }]),
-        }),
+const {
+  mockFindCanonicalEntities,
+  mockFindCanonicalRelationships,
+  mockDbUpdate,
+  mockDbExecute,
+  mockInvoke,
+} = vi.hoisted(() => ({
+  mockFindCanonicalEntities: vi.fn(),
+  mockFindCanonicalRelationships: vi.fn(),
+  mockDbUpdate: vi.fn().mockReturnValue({
+    set: vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([{ id: "d-1", status: "success" }]),
       }),
     }),
-    mockInvoke: vi.fn(),
-  }));
+  }),
+  // db.execute(sql`...RETURNING...`) used by applyThemeAlignment.
+  // Default: no rows updated / deduped — tests that exercise the
+  // alignment path mock the resolved counts here.
+  mockDbExecute: vi.fn(),
+  mockInvoke: vi.fn(),
+}));
 
 vi.mock("@/lib/kb/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/kb/queries")>()),
@@ -24,6 +33,7 @@ vi.mock("@/lib/kb/queries", async (importOriginal) => ({
 vi.mock("@/db/client", () => ({
   db: {
     update: mockDbUpdate,
+    execute: mockDbExecute,
   },
 }));
 
@@ -67,32 +77,47 @@ beforeEach(() => {
   mockFindCanonicalEntities.mockReset();
   mockFindCanonicalRelationships.mockReset();
   mockDbUpdate.mockClear();
+  mockDbExecute.mockReset();
   mockInvoke.mockReset();
   mockFindCanonicalEntities.mockResolvedValue([]);
   mockFindCanonicalRelationships.mockResolvedValue([]);
+  // Default: db.execute returns a row with `n = 0` so applyThemeAlignment
+  // exits cleanly without hitting a real DB.
+  mockDbExecute.mockResolvedValue([{ n: 0 }]);
 });
 
 describe("resolveEntityAliasesForDoc", () => {
-  it("does not invoke the LLM when doc has no canonical entities", async () => {
+  // ponytail: post theme-alignment, the LLM is invoked on every doc
+  // (themes can have duplicates even when entities are sparse), so
+  // the previous "skip LLM when ≤1 entity" path is gone. These tests
+  // now assert the LLM IS called and that theme alignment runs.
+
+  it("invokes the LLM even when doc has no canonical entities (theme alignment may still apply)", async () => {
     mockFindCanonicalEntities.mockResolvedValueOnce([]);
+    mockInvoke.mockResolvedValueOnce({ entityAliases: [], themeAliases: [] });
+
     await resolveEntityAliasesForDoc({
       userId: USER,
       docId: DOC,
       documentTitle: "doc",
     });
-    expect(mockInvoke).not.toHaveBeenCalled();
-    expect(mockDbUpdate).not.toHaveBeenCalled();
+
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockDbUpdate).toHaveBeenCalled();
   });
 
-  it("does not invoke the LLM when there is only 1 unique entity", async () => {
+  it("invokes the LLM when there is only 1 unique entity", async () => {
     mockFindCanonicalEntities.mockResolvedValueOnce([makeEntity("e-1", "AWS")]);
+    mockInvoke.mockResolvedValueOnce({ entityAliases: [], themeAliases: [] });
+
     await resolveEntityAliasesForDoc({
       userId: USER,
       docId: DOC,
       documentTitle: "doc",
     });
-    expect(mockInvoke).not.toHaveBeenCalled();
-    expect(mockDbUpdate).not.toHaveBeenCalled();
+
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockDbUpdate).toHaveBeenCalled();
   });
 
   it("invokes LLM and renames entities per LLM mapping", async () => {
@@ -191,5 +216,109 @@ describe("resolveEntityAliasesForDoc", () => {
 
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  // ponytail: theme alignment runs in the same LLM pass as entity
+  // alignment and applies in-place via applyThemeAlignment → db.execute.
+
+  it("applies themeAliases from LLM output via db.execute (UPDATE kb_theme SET name = canonical)", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [],
+      themeAliases: [
+        {
+          canonicalName: "AI Application",
+          aliases: ["AI 应用", "AI App"],
+        },
+      ],
+    });
+    mockDbExecute.mockResolvedValueOnce([{ n: 3 }]); // 3 rows renamed
+    mockDbExecute.mockResolvedValueOnce([{ n: 1 }]); // 1 dedup collision
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // ponytail: applyThemeAlignment calls db.execute twice (rename +
+    // dedup). The SQL template objects aren't easy to .toMatch()
+    // because drizzle wraps them in a SQL chunk — assert the call
+    // count and the order instead.
+    expect(mockDbExecute).toHaveBeenCalledTimes(2);
+    // Resolve the rename call's promise so we can read the row count
+    // back through the wrapper that returns `[{ n: number }]`.
+    const renameResult = (await mockDbExecute.mock.results[0]?.value) as [{ n: number }];
+    const dedupResult = (await mockDbExecute.mock.results[1]?.value) as [{ n: number }];
+    expect(renameResult[0]?.n).toBe(3);
+    expect(dedupResult[0]?.n).toBe(1);
+  });
+
+  it("does NOT touch db.execute when LLM emits empty themeAliases", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [],
+      themeAliases: [],
+    });
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // db.update (updateKbDocumentStatus) runs; db.execute (theme
+    // alignment rename + dedup) does NOT.
+    expect(mockDbUpdate).toHaveBeenCalled();
+    expect(mockDbExecute).not.toHaveBeenCalled();
+  });
+
+  it("filters themeAliases whose aliases array contains only the canonical (no-op group)", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "AWS"),
+      makeEntity("e-2", "S3"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      entityAliases: [],
+      themeAliases: [
+        { canonicalName: "Frontend", aliases: ["Frontend", "Frontend"] }, // all = canonical
+      ],
+    });
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // Nothing left to rename → no db.execute calls.
+    expect(mockDbExecute).not.toHaveBeenCalled();
+  });
+
+  it("accepts legacy `{original, canonical}` entityAlias shape and normalises it", async () => {
+    mockFindCanonicalEntities.mockResolvedValueOnce([
+      makeEntity("e-1", "Amazon Web Services"),
+      makeEntity("e-2", "AWS"),
+    ]);
+    mockInvoke.mockResolvedValueOnce({
+      mappings: [{ original: "AWS", canonical: "Amazon Web Services" }],
+    });
+
+    await resolveEntityAliasesForDoc({
+      userId: USER,
+      docId: DOC,
+      documentTitle: "doc",
+    });
+
+    // Function resolves without throwing; entity mapping was parsed
+    // from the legacy shape (no theme aliases → no execute call).
+    expect(mockInvoke).toHaveBeenCalled();
+    expect(mockDbUpdate).toHaveBeenCalled();
   });
 });

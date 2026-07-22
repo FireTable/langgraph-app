@@ -4,9 +4,34 @@ import { getEmbeddingModel } from "@/backend/model";
 import {
   findCanonicalEntitiesByDocId,
   findCanonicalRelationshipsByDocId,
+  findKbThemesByChunkIds,
   upsertEntityEmbedding,
   upsertRelationshipEmbedding,
 } from "@/lib/kb/queries";
+
+// ponytail: prepend this chunk's macro themes into the entity /
+// relationship embed text (audit §13b 456). Themes live flat on
+// kb_theme now (single source of truth); the embed path reads them
+// per chunk instead of relying on a per-entity themes column.
+function withThemesSuffix(base: string, themes: readonly string[]): string {
+  if (themes.length === 0) return base;
+  return `${base} ${themes.join(" ")}`;
+}
+
+// ponytail: union-dedup themes that any of `chunkIds` carry. Order
+// preserved (insertion order from the Map).
+function themesForChunkIds(
+  themesByChunk: Map<string, string[]>,
+  chunkIds: readonly string[],
+): string[] {
+  const out: string[] = [];
+  for (const cid of chunkIds) {
+    for (const t of themesByChunk.get(cid) ?? []) {
+      if (!out.includes(t)) out.push(t);
+    }
+  }
+  return out;
+}
 
 export async function entityEmbedNode(
   state: KbAgentStateShape,
@@ -32,7 +57,18 @@ export async function entityEmbedNode(
         const entities = await findCanonicalEntitiesByDocId(userId, docId);
         const entitiesToEmbed = entities.filter((e) => !e.embedding);
         if (entitiesToEmbed.length > 0) {
-          const texts = entitiesToEmbed.map((e) => `${e.name} (${e.type}): ${e.description ?? ""}`);
+          const sourceChunkIds = Array.from(
+            new Set(entitiesToEmbed.flatMap((e) => e.sourceChunkIds ?? [])),
+          );
+          const themesByChunk =
+            sourceChunkIds.length > 0
+              ? await findKbThemesByChunkIds(userId, sourceChunkIds)
+              : new Map<string, string[]>();
+          const texts = entitiesToEmbed.map((e) => {
+            const themes = themesForChunkIds(themesByChunk, e.sourceChunkIds ?? []);
+            const base = `${e.name} (${e.type}): ${e.description ?? ""}`;
+            return withThemesSuffix(base, themes);
+          });
           const vectors = await embedder.embedDocuments(texts);
           for (let i = 0; i < entitiesToEmbed.length; i++) {
             await upsertEntityEmbedding(entitiesToEmbed[i].id, vectors[i]);
@@ -43,9 +79,18 @@ export async function entityEmbedNode(
         const relationships = await findCanonicalRelationshipsByDocId(userId, docId);
         const relsToEmbed = relationships.filter((r) => !r.embedding);
         if (relsToEmbed.length > 0) {
-          const texts = relsToEmbed.map(
-            (r) => `${r.source} -> ${r.relation} -> ${r.target}: ${r.description ?? ""}`,
+          const sourceChunkIds = Array.from(
+            new Set(relsToEmbed.flatMap((r) => r.sourceChunkIds ?? [])),
           );
+          const themesByChunk =
+            sourceChunkIds.length > 0
+              ? await findKbThemesByChunkIds(userId, sourceChunkIds)
+              : new Map<string, string[]>();
+          const texts = relsToEmbed.map((r) => {
+            const themes = themesForChunkIds(themesByChunk, r.sourceChunkIds ?? []);
+            const base = `${r.source} -> ${r.relation} -> ${r.target}: ${r.description ?? ""}`;
+            return withThemesSuffix(base, themes);
+          });
           const vectors = await embedder.embedDocuments(texts);
           for (let i = 0; i < relsToEmbed.length; i++) {
             await upsertRelationshipEmbedding(relsToEmbed[i].id, vectors[i]);

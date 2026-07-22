@@ -20,6 +20,7 @@ Source of truth: `db/migrations/0000_*.sql` (drizzle-kit generated). This doc de
 | `kb_chunk`         | app   | Chunks with `vector(1024)` pgvector embedding (BAAI/bge-m3 via apimart) + GIN-indexed tsvector (`'simple'` config, multilingual); HNSW index over `embedding` (vector_cosine_ops) |
 | `kb_entity`        | app   | Canonical extracted entities per `(user_id, document_id, name)` with 1024-dim embedding for GraphRAG ANN entrypoint (audit §8, migration `0012_blue_steve_rogers.sql`)            |
 | `kb_relationship`  | app   | Directed entity→entity edges with 1024-dim embedding for global ANN, weight + `source_chunk_ids` for chunk provenance (audit §7, migration `0012_blue_steve_rogers.sql`)          |
+| `kb_theme`         | app   | Per-chunk macro themes — one row per `(chunk_id, name)`, replacing the earlier `kb_entity.themes` / `kb_relationship.themes` fan-out (migration `0014_bright_norrin_radd.sql`)    |
 
 ## Cascade behavior
 
@@ -220,7 +221,7 @@ The hybrid search function (`lib/kb/search.ts`) runs RRF (k=60) over three legs 
 | `kb_chunk_tsv_idx`                 | GIN          | `kw` (`tsv @@ websearch_to_tsquery`)      | Postgres built-in BM25-style. `tsv` is a `GENERATED ALWAYS AS to_tsvector('simple', content) STORED` column (language-neutral, post-migration 0012). |
 | `kb_entity_embedding_idx`          | HNSW         | `entity` (B phase, GraphRAG local)        | `kb_entity.embedding <=> qvec` ANN entrypoint for entity-leg. B phase only.                                                                          |
 | `kb_relationship_embedding_idx`    | HNSW         | `rel` (B phase, GraphRAG global)          | `kb_relationship.embedding <=> qvec` ANN entrypoint for relation-leg. B phase only.                                                                  |
-| `kb_entity_user_doc_name_idx`      | unique btree | Canonical entity dedup                    | Composite `(user_id, document_id, name)`; `ON CONFLICT` on upsert accumulates `source_chunk_ids` + union-merges `themes`.                            |
+| `kb_entity_user_doc_name_idx`      | unique btree | Canonical entity dedup                    | Composite `(user_id, document_id, name)`; `ON CONFLICT` on upsert appends to `source_chunk_ids`.                                                     |
 | `kb_relationship_user_doc_str_idx` | unique btree | Canonical edge dedup                      | Composite `(user_id, document_id, source, target, relation)`; `ON CONFLICT` increments `weight`.                                                     |
 | `kb_entity_user_name_idx`          | btree        | Cross-doc entity lookups                  | Composite `(user_id, name)` — supports `expandFromEntities` BFS traversal.                                                                           |
 | `kb_relationship_user_source_idx`  | btree        | Graph hop 1 lookup                        | `(user_id, document_id, source)` — `WHERE source = $entity` edge scan.                                                                               |
@@ -230,6 +231,10 @@ The hybrid search function (`lib/kb/search.ts`) runs RRF (k=60) over three legs 
 | `kb_document_user_attachment_idx`  | btree        | Backup dedup path                         | Composite `(user_id, attachment_id)`; covers the case where two PDFs collide on sha256 (rare but cheap to defend).                                   |
 | `kb_document_user_created_idx`     | btree        | `list_documents` ordering                 | Composite `(user_id, created_at DESC)`; covers the Settings → KB tab list.                                                                           |
 | `kb_document_folder_idx`           | btree        | Folder-scoped queries                     | `(folder_id)`; the per-folder doc list inside `kbAgent` and the Settings folder filter.                                                              |
+| `kb_theme_chunk_name_idx`          | unique btree | Per-chunk theme dedup                     | Composite `(chunk_id, name)`; lets `replaceChunkThemes` use `ON CONFLICT DO NOTHING` for idempotent retries.                                         |
+| `kb_theme_user_name_idx`           | btree        | Reverse theme lookup                      | Composite `(user_id, name)`; supports "all chunks referencing theme X" scans without going through `kb_entity`.                                      |
+| `kb_theme_user_document_idx`       | btree        | Per-doc theme rollup                      | Composite `(user_id, document_id)`; backs the folder / doc-detail JOIN used by `findKbChunks*`.                                                      |
+| `kb_theme_chunk_idx`               | btree        | Forward chunk→themes                      | `(chunk_id)`; the single-row trigger in `findKbThemesByChunkIds` (`entity-embed-node.ts`).                                                           |
 | `kb_folder_user_name_idx`          | unique btree | Default-folder bootstrap                  | Composite `(user_id, name)`; lets the "Attachments" folder be auto-created idempotently on first upload.                                             |
 | `kb_folder_user_idx`               | btree        | Folder list                               | `(user_id)`; covers the Settings sidebar.                                                                                                            |
 
@@ -275,7 +280,7 @@ Indexes: `kb_document_user_contenthash_idx` `(user_id, content_hash)` UNIQUE, `k
 
 ## `kb_chunk`
 
-One row per text chunk emitted by `backend/node/kb/entity-extract-node.ts` (formerly `kbAgent.chunkEmbedStoreNode`). Embeddings stored as `pgvector` (`vector(1024)` for BAAI/bge-m3 via apimart). `tsv` is a generated **language-neutral** tsvector (`'simple'` config — multilingual SaaS; English stemming is unsafe for CJK / 法语 / 德语 content) used by the BM25 leg. Per-chunk **entity / relationship / theme data lives on `kb_entity` and `kb_relationship`**, not on this row — the legacy `entities` / `relationships` jsonB columns and `themes text[]` were dropped in migration `0012_blue_steve_rogers.sql` to break the chunk-row write hot path and prepare for the B-phase graph legs.
+One row per text chunk emitted by `backend/node/kb/entity-extract-node.ts` (formerly `kbAgent.chunkEmbedStoreNode`). Embeddings stored as `pgvector` (`vector(1024)` for BAAI/bge-m3 via apimart). `tsv` is a generated **language-neutral** tsvector (`'simple'` config — multilingual SaaS; English stemming is unsafe for CJK / 法语 / 德语 content) used by the BM25 leg. Per-chunk **entity / relationship data lives on `kb_entity` / `kb_relationship`**; themes live on `kb_theme`. The legacy `entities` / `relationships` jsonB columns on `kb_chunk` were dropped in migration `0012_blue_steve_rogers.sql`; the redundant `kb_entity.themes` / `kb_relationship.themes` columns were dropped in `0014_bright_norrin_radd.sql` in favour of the flat `kb_theme` table.
 
 > **Image requirement** — the `vector` extension must be installed before migration `0005_past_grey_gargoyle.sql` runs. The repo's postgres service is `pgvector/pgvector:pg16` (not stock `postgres:16-alpine`); the official pgvector image bundles the extension and inherits all upstream postgres wire format. CI services (`build` + `test` jobs) and the docker-compose deploy service all use the same tag.
 
@@ -293,25 +298,24 @@ One row per text chunk emitted by `backend/node/kb/entity-extract-node.ts` (form
 
 Indexes: `kb_chunk_embedding_idx` HNSW `(embedding vector_cosine_ops)`, `kb_chunk_tsv_idx` GIN `(tsv)`, `kb_chunk_document_ordinal_idx` `(document_id, ordinal)`.
 
-> The `kb_chunk_entities_idx` and `kb_chunk_themes_idx` GIN indexes over the now-dropped jsonB columns are also gone (migration 0012). Graph data lives in `kb_entity` / `kb_relationship` below — query via `source_chunk_ids && ARRAY[chunkId]` instead of a per-chunk column scan.
+> The `kb_chunk_entities_idx` and `kb_chunk_themes_idx` GIN indexes over the now-dropped jsonB columns are also gone (migration 0012). Graph data lives in `kb_entity` / `kb_relationship` below (JOIN via `source_chunk_ids && ARRAY[chunkId]`); themes live in `kb_theme` (JOIN via `chunk_id`).
 
 ## `kb_entity`
 
-One row per canonical extracted entity per `(user_id, document_id, name)` (audit §8). Populated by `backend/node/kb/entity-extract-node.ts` per chunk + `resolveEntityAliasesForDoc` for cross-chunk canonical alignment. The 1024-dim embedding (BAAI/bge-m3) powers the `entityLeg` B-phase ANN entrypoint in `lib/kb/search/entity-leg.ts`. `themes` is an entity-level property (not chunk-level) — union-deduped on upsert conflict.
+One row per canonical extracted entity per `(user_id, document_id, name)` (audit §8). Populated by `backend/node/kb/entity-extract-node.ts` per chunk + `resolveEntityAliasesForDoc` for cross-chunk canonical alignment. The 1024-dim embedding (BAAI/bge-m3) powers the `entityLeg` B-phase ANN entrypoint in `lib/kb/search/entity-leg.ts`. Themes live flat on `kb_theme` below (single source of truth) and are JOINed into entity / relationship `embedding` text by `entity-embed-node.ts`.
 
-| Column             | Type                | Notes                                                                                                                                                   |
-| ------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`               | text PK             | `e-<uuid>`                                                                                                                                              |
-| `user_id`          | text FK→user        | CASCADE on user delete                                                                                                                                  |
-| `document_id`      | text FK→kb_document | CASCADE on doc delete                                                                                                                                   |
-| `name`             | text                | Canonical entity name (post-`appLevelCanonical` NFKC + trim + lower-unify; post-`resolveEntityAliasesForDoc` LLM alignment when it runs)                |
-| `type`             | text                | LLM-supplied category (Organization / Person / Concept / etc.)                                                                                          |
-| `description`      | text                | LLM-supplied short description                                                                                                                          |
-| `source_chunk_ids` | `text[]`            | All chunks that surfaced this entity (canonical merge accumulates the union). Drives `findKbChunksContentByDocumentId` rehydrate for the doc-detail UI. |
-| `themes`           | `text[]`            | Hashtag-style themes; default `'{}'::text[]`. Entity-level property — `themes` on `kb_chunk` was migrated here (audit §8, migration `0013_*.sql`).      |
-| `embedding`        | `vector(1024)` NULL | Populated by `backend/node/kb/entity-embed-node.ts` (B phase; entityEmbedNode is a no-op when `KB_GRAPH_ENABLED=false`)                                 |
-| `created_at`       | timestamptz         |                                                                                                                                                         |
-| `updated_at`       | timestamptz         |                                                                                                                                                         |
+| Column             | Type                | Notes                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------ | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`               | text PK             | `e-<uuid>`                                                                                                                                                                                                                                                                                                                                               |
+| `user_id`          | text FK→user        | CASCADE on user delete                                                                                                                                                                                                                                                                                                                                   |
+| `document_id`      | text FK→kb_document | CASCADE on doc delete                                                                                                                                                                                                                                                                                                                                    |
+| `name`             | text                | Canonical entity name (post-`appLevelCanonical` NFKC + trim + lower-unify; post-`resolveEntityAliasesForDoc` LLM alignment when it runs)                                                                                                                                                                                                                 |
+| `type`             | text                | LLM-supplied category (Organization / Person / Concept / etc.)                                                                                                                                                                                                                                                                                           |
+| `description`      | text                | LLM-supplied short description                                                                                                                                                                                                                                                                                                                           |
+| `source_chunk_ids` | `text[]`            | All chunks that surfaced this entity (canonical merge accumulates the union). Drives `findKbChunksContentByDocumentId` rehydrate for the doc-detail UI.                                                                                                                                                                                                  |
+| `embedding`        | `vector(1024)` NULL | Populated by `backend/node/kb/entity-embed-node.ts`. Embed text also concatenates this chunk's `kb_theme` rows for theme-aware ANN recall (audit §13b 456). The leg is always run (the legacy `KB_GRAPH_ENABLED` gate was retired — relation-leg / entity-leg participate on every search; they just return zero hits when no rows exist for the scope). |
+| `created_at`       | timestamptz         |                                                                                                                                                                                                                                                                                                                                                          |
+| `updated_at`       | timestamptz         |                                                                                                                                                                                                                                                                                                                                                          |
 
 Indexes: `kb_entity_user_doc_name_idx` UNIQUE `(user_id, document_id, name)`, `kb_entity_embedding_idx` HNSW `(embedding vector_cosine_ops)`, `kb_entity_user_name_idx` `(user_id, name)`, `kb_entity_document_idx` `(document_id)`.
 
@@ -319,23 +323,43 @@ Indexes: `kb_entity_user_doc_name_idx` UNIQUE `(user_id, document_id, name)`, `k
 
 Directed `source → relation → target` edges per `(user_id, document_id, source, target, relation)` (audit §7). Populated alongside `kb_entity` by `entity-extract-node.ts`; alignment in `resolveEntityAliasesForDoc` rewrites `source` / `target` to canonical names. `embedding` powers the `relationLeg` B-phase ANN entrypoint (global mode); `weight` increments on each upsert conflict (more chunks surfacing the same edge → higher confidence).
 
-| Column             | Type                | Notes                                                           |
-| ------------------ | ------------------- | --------------------------------------------------------------- |
-| `id`               | text PK             | `r-<uuid>`                                                      |
-| `user_id`          | text FK→user        | CASCADE on user delete                                          |
-| `document_id`      | text FK→kb_document | CASCADE on doc delete                                           |
-| `source`           | text                | Canonical source entity name                                    |
-| `target`           | text                | Canonical target entity name                                    |
-| `relation`         | text                | Edge label (`PARTNERED_WITH`, `ACQUIRED`, etc.)                 |
-| `description`      | text                | LLM-supplied short description of the edge                      |
-| `source_chunk_ids` | `text[]`            | Chunks that surfaced this edge — same purpose as on `kb_entity` |
-| `themes`           | `text[]`            | Edge-level themes; default `'{}'::text[]`                       |
-| `weight`           | integer             | `DEFAULT 1`; `+1` per upsert conflict                           |
-| `embedding`        | `vector(1024)` NULL | Populated by `entity-embed-node.ts` (B phase)                   |
-| `created_at`       | timestamptz         |                                                                 |
-| `updated_at`       | timestamptz         |                                                                 |
+| Column             | Type                | Notes                                                                                                                                       |
+| ------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`               | text PK             | `r-<uuid>`                                                                                                                                  |
+| `user_id`          | text FK→user        | CASCADE on user delete                                                                                                                      |
+| `document_id`      | text FK→kb_document | CASCADE on doc delete                                                                                                                       |
+| `source`           | text                | Canonical source entity name                                                                                                                |
+| `target`           | text                | Canonical target entity name                                                                                                                |
+| `relation`         | text                | Edge label (`PARTNERED_WITH`, `ACQUIRED`, etc.)                                                                                             |
+| `description`      | text                | LLM-supplied short description of the edge                                                                                                  |
+| `source_chunk_ids` | `text[]`            | Chunks that surfaced this edge — same purpose as on `kb_entity`                                                                             |
+| `weight`           | integer             | `DEFAULT 1`; `+1` per upsert conflict                                                                                                       |
+| `embedding`        | `vector(1024)` NULL | Populated by `entity-embed-node.ts`. Embed text also concatenates this chunk's `kb_theme` rows for theme-aware ANN recall (audit §13b 456). |
+| `created_at`       | timestamptz         |                                                                                                                                             |
+| `updated_at`       | timestamptz         |                                                                                                                                             |
 
 Indexes: `kb_relationship_user_doc_str_idx` UNIQUE `(user_id, document_id, source, target, relation)`, `kb_relationship_embedding_idx` HNSW `(embedding vector_cosine_ops)`, `kb_relationship_user_source_idx` `(user_id, document_id, source)`, `kb_relationship_user_target_idx` `(user_id, document_id, target)`, `kb_relationship_document_idx` `(document_id)`. The source/target indexes support `expandFromEntities` BFS in `lib/kb/search/graph-context.ts` (1-2 hop graph traversal, hops from `KB_GRAPH_HOPS`).
+
+## `kb_theme`
+
+One row per `(chunk_id, name)` — per-chunk macro themes emitted once per chunk by the LLM in the `themes: string[]` top-level field of `lightRagSchema` (system prompt §4: "Themes should be macroscopic abstractions or key topics summarizing the chunk's intent"). Single source of truth — replaces the earlier fan-out into `kb_entity.themes` / `kb_relationship.themes`. Populated by `replaceChunkThemes` in `lib/kb/queries.ts` from `entity-extract-node.ts`, after entity / relationship upserts (chunk-without-entities still carries its macro themes).
+
+Themes surface in three places:
+
+1. **doc-detail UI** — `findKbChunksContentByDocumentId` JOINs `kb_theme WHERE chunk_id = ANY(...)` and the per-chunk themes land in `chunks[i].themes` (frontend reads it transparently; wire shape unchanged from pre-`kb_theme`).
+2. **entity / relationship embedding text** — `entity-embed-node.ts` JOINs `kb_theme` for each entity's `source_chunk_ids` and concatenates `themes.join(' ')` onto the embed string so the BAAI/bge-m3 ANN vector carries the chunk's macro topics (audit §13b 456).
+3. **reverse lookups** — `kb_theme_user_name_idx` supports "all chunks referencing theme X" without scanning `kb_entity`.
+
+| Column        | Type                | Notes                                                      |
+| ------------- | ------------------- | ---------------------------------------------------------- |
+| `id`          | text PK             | `t-<uuid>`                                                 |
+| `user_id`     | text FK→user        | CASCADE on user delete                                     |
+| `document_id` | text FK→kb_document | CASCADE on doc delete                                      |
+| `chunk_id`    | text FK→kb_chunk    | CASCADE on chunk delete                                    |
+| `name`        | text NOT NULL       | Trimmed, deduped theme string (e.g. "Funding", "Frontend") |
+| `created_at`  | timestamptz         |                                                            |
+
+Indexes: `kb_theme_chunk_name_idx` UNIQUE `(chunk_id, name)` — `replaceChunkThemes` reuses it for `ON CONFLICT DO NOTHING` on retry; `kb_theme_user_name_idx` `(user_id, name)`; `kb_theme_user_document_idx` `(user_id, document_id)`; `kb_theme_chunk_idx` `(chunk_id)`.
 
 ## Code → table map
 
