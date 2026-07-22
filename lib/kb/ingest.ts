@@ -157,7 +157,7 @@ export async function fireIngestionRun({
   // POST /api/kb/documents/[id]/reprocess) return 202 immediately so
   // their caller can poll the row.
   //
-  // ponytail: multitaskStrategy:'interrupt' makes a fresh reprocess
+  // ponytail: multitaskStrategy:'rollback' makes a fresh reprocess
   // cancel any in-flight run on the same thread (same docId → same
   // thread). Without this, the second reprocess queues behind the
   // first and the user clicks "reprocess" again, sees nothing change
@@ -168,6 +168,6 @@ export async function fireIngestionRun({
     input,
     config,
     metadata,
-    multitaskStrategy: "interrupt",
+    multitaskStrategy: "rollback",
   });
 }

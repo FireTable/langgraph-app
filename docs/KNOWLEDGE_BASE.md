@@ -176,7 +176,7 @@ Upload ─▶ parse ────┤
 4. **Entity Extraction** — For each chunk, the LLM extracts entities
    (`{name, type, description}[]`), relationships
    (`{source, target, relation, description}[]`), and themes
-   (`text[]`). Stored in dedicated `kb_entity` / `kb_relationship`
+   (`text[]`) via `graphRagSchema` in `chunk-extract-node.ts`. Stored in dedicated `kb_entity` / `kb_relationship`
    tables (rows link back to chunks via `source_chunk_ids: text[]`)
    and `kb_theme` (one row per `(chunk_id, name)`). The tag leg
    reads entities / themes; the Folder Graph dedupes per chunk.
@@ -368,11 +368,11 @@ The Settings → KB row actions expose four reprocess modes via
 [`docs/APIS.md`](./APIS.md#kb) for the request/response contract; this
 section is the design rationale.
 
-| Mode                | When to pick it                              | Re-runs                                     | Doc status during                |
-| :------------------ | :------------------------------------------- | :------------------------------------------ | :------------------------------- |
-| `full` (default)    | OCR / chunking is stale or wrong             | PDF render + OCR + chunk + embed + extract  | `parsing` → `success` / `failed` |
-| `chunksOnly`        | pages cache is good, chunks are stale        | chunk + embed + extract on the cached pages | stays `success`                  |
-| `retryFailed`       | some pages failed OCR                        | failed pages only + full re-chunk           | flips to `parsing`               |
+| Mode                | When to pick it                             | Re-runs                                     | Doc status during                |
+| :------------------ | :------------------------------------------ | :------------------------------------------ | :------------------------------- |
+| `full` (default)    | OCR / chunking is stale or wrong            | PDF render + OCR + chunk + embed + extract  | `parsing` → `success` / `failed` |
+| `chunksOnly`        | pages cache is good, chunks are stale       | chunk + embed + extract on the cached pages | stays `success`                  |
+| `retryFailed`       | some pages failed OCR                       | failed pages only + full re-chunk           | flips to `parsing`               |
 | `retryFailedChunks` | chunk-extract failed on a handful of chunks | failed chunks only (in-place UPDATE)        | **stays `success`**              |
 
 Key invariant: `retryFailedChunks` does **not** touch `doc.status` and
