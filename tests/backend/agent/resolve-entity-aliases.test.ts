@@ -5,6 +5,7 @@ const {
   mockFindCanonicalEntities,
   mockFindCanonicalRelationships,
   mockDbUpdate,
+  mockDbDelete,
   mockDbExecute,
   mockInvoke,
 } = vi.hoisted(() => ({
@@ -16,6 +17,13 @@ const {
         returning: vi.fn().mockResolvedValue([{ id: "d-1", status: "success" }]),
       }),
     }),
+  }),
+  // ponytail: rewrite of applyEntityAliases (9233424 → 63679f8)
+  // uses drizzle's db.delete for the loser rows in the same tx as
+  // db.update. Mock the chain enough to record that delete() was
+  // invoked; we don't care about the resolved value.
+  mockDbDelete: vi.fn().mockReturnValue({
+    where: vi.fn().mockResolvedValue([]),
   }),
   // db.execute(sql`...RETURNING...`) used by applyThemeAlignment.
   // Default: no rows updated / deduped — tests that exercise the
@@ -33,6 +41,7 @@ vi.mock("@/lib/kb/queries", async (importOriginal) => ({
 vi.mock("@/db/client", () => ({
   db: {
     update: mockDbUpdate,
+    delete: mockDbDelete,
     execute: mockDbExecute,
   },
 }));
@@ -77,6 +86,7 @@ beforeEach(() => {
   mockFindCanonicalEntities.mockReset();
   mockFindCanonicalRelationships.mockReset();
   mockDbUpdate.mockClear();
+  mockDbDelete.mockClear();
   mockDbExecute.mockReset();
   mockInvoke.mockReset();
   mockFindCanonicalEntities.mockResolvedValue([]);
@@ -281,11 +291,15 @@ describe("resolveEntityAliasesForDoc", () => {
 
   // ponytail: entity aliases used to be computed-and-discarded; the
   // audit caught the gap. applyEntityAliases now runs alongside
-  // applyThemeAlignment in the same LLM pass — it does 3 db.execute
-  // calls per mapping (entity UPDATE + rel.source UPDATE +
-  // rel.target UPDATE), each returning { renamed_count, merged_count }.
+  // applyThemeAlignment in the same LLM pass. The current implementation
+  // reads via findCanonicalEntitiesByDocId + findCanonicalRelationshipsByDocId,
+  // dedups in JS, and writes via withKbTx (drizzle db.transaction →
+  // tx.update / tx.delete). theme alignment still uses db.execute
+  // (rename + dedup CTE). Asserting tx-level writes here would require
+  // a transaction-aware mock; the integration test in
+  // tests/lib/kb/queries-graph.test.ts covers the actual SQL.
 
-  it("applies entityAliases via applyEntityAliases — 3 db.execute calls per mapping", async () => {
+  it("applies entityAliases via applyEntityAliases — readers + theme path run", async () => {
     mockFindCanonicalEntities.mockResolvedValueOnce([
       makeEntity("e-1", "AWS"),
       makeEntity("e-2", "Amazon Web Services"),
@@ -295,9 +309,6 @@ describe("resolveEntityAliasesForDoc", () => {
       entityAliases: [{ canonicalName: "Amazon Web Services", aliases: ["AWS"] }],
       themeAliases: [],
     });
-    // Default mockDbExecute returns [{ n: 0 }] — applyEntityAliases
-    // calls don't need a special handler, but we still want exactly 3
-    // calls (one per query in the function).
 
     await resolveEntityAliasesForDoc({
       userId: USER,
@@ -305,9 +316,11 @@ describe("resolveEntityAliasesForDoc", () => {
       documentTitle: "doc",
     });
 
-    // entity UPDATE + rel.source UPDATE + rel.target UPDATE = 3 calls.
-    // The status update goes through db.update (not execute).
-    expect(mockDbExecute).toHaveBeenCalledTimes(3);
+    // applyEntityAliases pulls both entity + relationship readers.
+    // themeAliases is empty so theme alignment skips db.execute.
+    expect(mockFindCanonicalEntities).toHaveBeenCalled();
+    expect(mockFindCanonicalRelationships).toHaveBeenCalled();
+    expect(mockDbExecute).not.toHaveBeenCalled();
   });
 
   it("does NOT touch db.execute when entityAliases is empty AND themeAliases is empty", async () => {
@@ -347,16 +360,18 @@ describe("resolveEntityAliasesForDoc", () => {
       documentTitle: "doc",
     });
 
-    // The legacy filter (lines 95-98) drops groups where every alias
-    // already equals the canonical — applyEntityAliases never fires.
+    // The legacy filter drops groups where every alias already equals
+    // the canonical — applyEntityAliases' mapping has no alias keys,
+    // so the function returns early without touching the DB.
     expect(mockDbExecute).not.toHaveBeenCalled();
   });
 
-  it("runs both entity and theme alignment in the same LLM pass (3 + 2 = 5 calls)", async () => {
+  it("runs both entity and theme alignment in the same LLM pass", async () => {
     mockFindCanonicalEntities.mockResolvedValueOnce([
       makeEntity("e-1", "AWS"),
       makeEntity("e-2", "Amazon Web Services"),
     ]);
+    mockFindCanonicalRelationships.mockResolvedValueOnce([makeRelationship("r-1", "AWS", "S3")]);
     mockInvoke.mockResolvedValueOnce({
       entityAliases: [{ canonicalName: "Amazon Web Services", aliases: ["AWS"] }],
       themeAliases: [{ canonicalName: "AI Application", aliases: ["AI 应用", "AI App"] }],
@@ -370,9 +385,10 @@ describe("resolveEntityAliasesForDoc", () => {
       documentTitle: "doc",
     });
 
-    // theme alignment = 2 calls (rename + dedup)
-    // entity alignment = 3 calls (entity + rel.source + rel.target)
-    expect(mockDbExecute).toHaveBeenCalledTimes(5);
+    // theme alignment runs 2 db.execute calls (rename + dedup CTE).
+    // entity alignment runs alongside, in the same LLM pass.
+    expect(mockDbExecute).toHaveBeenCalledTimes(2);
+    expect(mockFindCanonicalRelationships).toHaveBeenCalled();
   });
 
   it("filters themeAliases whose aliases array contains only the canonical (no-op group)", async () => {

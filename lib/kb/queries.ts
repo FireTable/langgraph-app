@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { PgTransaction } from "drizzle-orm/pg-core";
 import { randomUUID } from "node:crypto";
 
@@ -1111,23 +1111,30 @@ export async function applyThemeAlignment(args: {
 // function now actually folds alias variants into one canonical
 // row per (user_id, document_id, name).
 //
-// Per mapping:
-//  1. kb_entity — worklist = rows matching canonical ∪ aliases.
-//     Existing canonical row wins as the kept row; if none, the
-//     lowest-id alias row is the kept row. The kept row gets merged
-//     `description` (joined with "; ") and merged `source_chunk_ids`
-//     (array distinct union). All other worklist rows DELETE.
-//  2. kb_relationship.source — same strategy: existing canonical edge
-//     wins, lowest-id alias edge otherwise. Kept edge sums `weight`
-//     and unions `source_chunk_ids`. Other worklist rows DELETE.
-//     Guards against dangling graph references after an entity rename.
-//  3. kb_relationship.target — same as 2.
+// Algorithm — pull all rows once, dedup in JS, write back per-row:
+//  1. SELECT kb_entity + kb_relationship for the doc (2 round-trips).
+//  2. Build alias → canonical rename map from the mappings.
+//  3. Group entities by post-rename `name`. Each group:
+//     - kept row = existing-canonical row if present, else lowest-id
+//       alias row (id is UUID, stable ordering for ties)
+//     - UPDATE kept with merged description (`;`-joined) and merged
+//       source_chunk_ids (array distinct union)
+//     - DELETE all losers (worklist in CTE)
+//     - "renamed" = groups where any source name ≠ canonical name
+//     - "merged" = groups with >1 input row
+//  4. Apply the same rename to relationships, then group by
+//     (post-rename source, post-rename target, relation). Each group
+//     gets the same kept-row strategy + UPDATE (sum weight, union
+//     source_chunk_ids) + DELETE losers.
+//  5. Single withKbTx wraps the writes so a mid-flight failure rolls
+//     back the whole rename.
 //
-// No canonical_name column — same trade-off as applyThemeAlignment.
-// LLM-generated entity tokens lose the original variant on alignment;
-// read paths stay trivial. UNIQUE (user, doc, name) on kb_entity and
-// UNIQUE (user, doc, source, target, relation) on kb_relationship
-// are preserved because kept/losers are disjoint within one CTE.
+// Why this is clearer than the SQL-only version: the rename + dedup
+// logic lives in plain JS where it's testable as a function. The SQL
+// does only the bulk read + per-row UPDATE/DELETE, so each round-trip
+// is one statement. Adding invariant checks (e.g. "every rel target
+// resolves to an entity row") becomes a JS assertion in step 3, not
+// a 60-line CTE.
 export async function applyEntityAliases(args: {
   userId: string;
   documentId: string;
@@ -1140,178 +1147,237 @@ export async function applyEntityAliases(args: {
   relTargetsRenamed: number;
   relTargetsMerged: number;
 }> {
+  const empty = {
+    entitiesRenamed: 0,
+    entitiesMerged: 0,
+    relSourcesRenamed: 0,
+    relSourcesMerged: 0,
+    relTargetsRenamed: 0,
+    relTargetsMerged: 0,
+  };
+  if (args.mappings.length === 0) return empty;
+
+  // ponytail: build alias → canonical rename map once. Aliases list
+  // may contain the canonical itself (LLM sometimes echoes it back);
+  // filter those out so a row already named canonical doesn't get
+  // "renamed" to itself. Empty aliases → skip the whole mapping.
+  const renameMap = new Map<string, string>();
+  for (const m of args.mappings) {
+    for (const alias of m.aliases) {
+      if (alias !== m.canonical) renameMap.set(alias, m.canonical);
+    }
+  }
+  if (renameMap.size === 0) return empty;
+
+  const [entities, relationships] = await Promise.all([
+    findCanonicalEntitiesByDocId(args.userId, args.documentId),
+    findCanonicalRelationshipsByDocId(args.userId, args.documentId),
+  ]);
+
+  // ---- entities ----
+  // Group by canonical name. Kept row = existing-canonical row if one
+  // exists in this group (avoids UPDATE-into-UNIQUE-collision against
+  // an already-canonical row), else the lowest-id alias row.
+  type EntityGroup = {
+    canonical: string;
+    rows: typeof entities;
+    kept: (typeof entities)[number];
+    mergedDesc: string;
+    mergedChunkIds: string[];
+    needsRename: boolean;
+  };
+  const entityGroupsByCanonical = new Map<string, EntityGroup>();
+  for (const e of entities) {
+    const canonical = renameMap.get(e.name) ?? e.name;
+    let group = entityGroupsByCanonical.get(canonical);
+    if (!group) {
+      group = {
+        canonical,
+        rows: [],
+        kept: e,
+        mergedDesc: e.description ?? "",
+        mergedChunkIds: [...(e.sourceChunkIds ?? [])],
+        needsRename: e.name !== canonical,
+      };
+      entityGroupsByCanonical.set(canonical, group);
+    }
+    group.rows.push(e);
+    // ponytail: existing-canonical row always wins — even if it
+    // sorts after the alias in the input order. This keeps UPDATE
+    // targets stable against pre-seeded fixture / reprocess rows.
+    if (e.name === canonical && group.kept.name !== canonical) {
+      group.kept = e;
+      group.mergedDesc = e.description ?? "";
+      group.mergedChunkIds = [...(e.sourceChunkIds ?? [])];
+      group.needsRename = false;
+    } else if (e.name !== canonical && group.kept.name !== canonical) {
+      // both alias rows: tiebreak by lowest id
+      if (e.id < group.kept.id) group.kept = e;
+    }
+    if (e.description) {
+      if (group.mergedDesc.length === 0) group.mergedDesc = e.description;
+      else if (!group.mergedDesc.includes(e.description)) {
+        group.mergedDesc = `${group.mergedDesc}; ${e.description}`;
+      }
+    }
+    for (const cid of e.sourceChunkIds ?? []) {
+      if (!group.mergedChunkIds.includes(cid)) group.mergedChunkIds.push(cid);
+    }
+    if (e.name !== canonical) group.needsRename = true;
+  }
+
   let entitiesRenamed = 0;
   let entitiesMerged = 0;
+  const entityUpdates: Array<{
+    id: string;
+    name: string;
+    description: string;
+    sourceChunkIds: string[];
+  }> = [];
+  const entityDeletes: string[] = [];
+  for (const group of entityGroupsByCanonical.values()) {
+    if (group.rows.length === 1 && !group.needsRename) continue;
+    if (group.rows.length > 1) entitiesMerged += 1;
+    if (group.needsRename || group.rows.length > 1) entitiesRenamed += 1;
+    // ponytail: DELETE losers FIRST (drizzle tx runs statements in
+    // order). If we UPDATE kept to canonical while alias rows still
+    // exist with their old name, no collision — but if kept is an
+    // alias row being renamed to canonical and a pre-existing
+    // canonical row sat in the group... that's filtered above by
+    // picking canonical as kept. Losers are always alias rows that
+    // never collide with kept's post-update name.
+    entityDeletes.push(...group.rows.filter((r) => r.id !== group.kept.id).map((r) => r.id));
+    entityUpdates.push({
+      id: group.kept.id,
+      name: group.canonical,
+      description: group.mergedDesc,
+      sourceChunkIds: group.mergedChunkIds,
+    });
+  }
+
+  // ---- relationships ----
+  // Apply rename to source / target, then dedup by (source, target,
+  // relation). Track whether a group needed source-rename and/or
+  // target-rename separately so the counters stay distinct.
+  type RelGroup = {
+    key: string;
+    rows: typeof relationships;
+    kept: (typeof relationships)[number];
+    sourceRenamed: boolean;
+    targetRenamed: boolean;
+    mergedChunkIds: string[];
+    totalWeight: number;
+  };
+  const relGroupsByKey = new Map<string, RelGroup>();
+  for (const r of relationships) {
+    const newSource = renameMap.get(r.source) ?? r.source;
+    const newTarget = renameMap.get(r.target) ?? r.target;
+    const key = `${newSource}::${r.relation}::${newTarget}`;
+    const sourceRenamed = newSource !== r.source;
+    const targetRenamed = newTarget !== r.target;
+    let group = relGroupsByKey.get(key);
+    if (!group) {
+      group = {
+        key,
+        rows: [],
+        kept: r,
+        sourceRenamed,
+        targetRenamed,
+        mergedChunkIds: [...(r.sourceChunkIds ?? [])],
+        totalWeight: 0,
+      };
+      relGroupsByKey.set(key, group);
+    }
+    group.rows.push(r);
+    // ponytail: same kept-row strategy — existing-canonical edge
+    // (no rename on either side) wins. Among same-shape edges, pick
+    // the lowest id.
+    const keptIsCanonical = group.kept.source === newSource && group.kept.target === newTarget;
+    const rIsCanonical = sourceRenamed === false && targetRenamed === false;
+    if (rIsCanonical && !keptIsCanonical) {
+      group.kept = r;
+      group.mergedChunkIds = [...(r.sourceChunkIds ?? [])];
+    } else if (keptIsCanonical && rIsCanonical && r.id < group.kept.id) {
+      group.kept = r;
+    } else if (!keptIsCanonical && !rIsCanonical && r.id < group.kept.id) {
+      group.kept = r;
+    }
+    if (sourceRenamed) group.sourceRenamed = true;
+    if (targetRenamed) group.targetRenamed = true;
+    for (const cid of r.sourceChunkIds ?? []) {
+      if (!group.mergedChunkIds.includes(cid)) group.mergedChunkIds.push(cid);
+    }
+    group.totalWeight += r.weight;
+  }
+
   let relSourcesRenamed = 0;
   let relSourcesMerged = 0;
   let relTargetsRenamed = 0;
   let relTargetsMerged = 0;
-
-  if (args.mappings.length === 0) {
-    return {
-      entitiesRenamed,
-      entitiesMerged,
-      relSourcesRenamed,
-      relSourcesMerged,
-      relTargetsRenamed,
-      relTargetsMerged,
-    };
+  const relUpdates: Array<{
+    id: string;
+    source: string;
+    target: string;
+    weight: number;
+    sourceChunkIds: string[];
+  }> = [];
+  const relDeletes: string[] = [];
+  for (const group of relGroupsByKey.values()) {
+    if (group.sourceRenamed) relSourcesRenamed += 1;
+    if (group.targetRenamed) relTargetsRenamed += 1;
+    if (group.rows.length > 1) {
+      if (group.sourceRenamed) relSourcesMerged += 1;
+      if (group.targetRenamed) relTargetsMerged += 1;
+    }
+    relDeletes.push(...group.rows.filter((r) => r.id !== group.kept.id).map((r) => r.id));
+    const keptRow = group.kept;
+    const newSource = renameMap.get(keptRow.source) ?? keptRow.source;
+    const newTarget = renameMap.get(keptRow.target) ?? keptRow.target;
+    relUpdates.push({
+      id: keptRow.id,
+      source: newSource,
+      target: newTarget,
+      weight: group.totalWeight,
+      sourceChunkIds: group.mergedChunkIds,
+    });
   }
 
-  // ponytail: alias set → Postgres text[] literal. drizzle's sql tag
-  // doesn't auto-bind a JS array as pg text[] without a driver hint,
-  // so we interpolate the literal. Each alias is double-quote-escaped.
-  // Same pattern as applyThemeAlignment above.
-  const escapeLiteral = (names: readonly string[]) =>
-    `{${names.map((a) => `"${a.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
-
-  for (const mapping of args.mappings) {
-    const aliases = mapping.aliases.filter((a) => a !== mapping.canonical);
-    if (aliases.length === 0) continue;
-    const literal = escapeLiteral(aliases);
-    const canonical = mapping.canonical;
-
-    // 1. kb_entity: pick existing-canonical row first (priority 1),
-    //    then lowest-id alias row. UPDATE kept, DELETE losers. Merges
-    //    description + source_chunk_ids onto the kept row.
-    const entRes = await db.execute<{ renamed_count: number; merged_count: number }>(sql`
-      WITH worklist AS (
-        SELECT id, name, description, source_chunk_ids,
-          ROW_NUMBER() OVER (
-            ORDER BY (name = ${canonical})::int DESC, id ASC
-          ) AS rn
-        FROM kb_entity
-        WHERE user_id = ${args.userId}
-          AND document_id = ${args.documentId}
-          AND (name = ${canonical} OR name = ANY(${literal}::text[]))
-      ),
-      deleted AS (
-        DELETE FROM kb_entity
-        WHERE id IN (SELECT id FROM worklist WHERE rn > 1)
-        RETURNING id
-      ),
-      updated AS (
-        UPDATE kb_entity
-        SET name = ${canonical},
-            description = COALESCE(
-              (SELECT STRING_AGG(description, '; ' ORDER BY id) FROM worklist),
-              description
-            ),
-            source_chunk_ids = COALESCE(
-              (
-                SELECT array_agg(DISTINCT sid)
-                FROM (SELECT unnest(source_chunk_ids) AS sid FROM worklist) t
-              ),
-              source_chunk_ids
-            ),
-            updated_at = NOW()
-        WHERE id = (SELECT id FROM worklist WHERE rn = 1)
-        RETURNING id
-      )
-      SELECT
-        (SELECT COUNT(*) FROM updated)::int AS renamed_count,
-        (SELECT COUNT(*) FROM deleted)::int AS merged_count
-    `);
-    const entRow = (entRes as unknown as { renamed_count: number; merged_count: number }[])[0] ?? {
-      renamed_count: 0,
-      merged_count: 0,
-    };
-    entitiesRenamed += Number(entRow.renamed_count ?? 0);
-    entitiesMerged += Number(entRow.merged_count ?? 0);
-
-    // 2. kb_relationship.source: kept edge wins by existing-canonical
-    //    priority, else lowest-id. Sums weight + unions source_chunk_ids
-    //    so semantic "edge strength" survives the merge. Worklist
-    //    includes the canonical-named row too — without it, alias rows
-    //    get UPDATED to canonical and collide with the pre-existing
-    //    edge on UNIQUE (user, doc, source, target, relation).
-    const srcRes = await db.execute<{ renamed_count: number; merged_count: number }>(sql`
-      WITH worklist AS (
-        SELECT id, source, target, relation, source_chunk_ids, weight,
-          ROW_NUMBER() OVER (
-            ORDER BY (source = ${canonical})::int DESC, id ASC
-          ) AS rn
-        FROM kb_relationship
-        WHERE user_id = ${args.userId}
-          AND document_id = ${args.documentId}
-          AND (source = ${canonical} OR source = ANY(${literal}::text[]))
-      ),
-      deleted AS (
-        DELETE FROM kb_relationship
-        WHERE id IN (SELECT id FROM worklist WHERE rn > 1)
-        RETURNING id
-      ),
-      updated AS (
-        UPDATE kb_relationship
-        SET source = ${canonical},
-            source_chunk_ids = COALESCE(
-              (
-                SELECT array_agg(DISTINCT sid)
-                FROM (SELECT unnest(source_chunk_ids) AS sid FROM worklist) t
-              ),
-              source_chunk_ids
-            ),
-            weight = COALESCE((SELECT SUM(weight) FROM worklist), weight),
-            updated_at = NOW()
-        WHERE id = (SELECT id FROM worklist WHERE rn = 1)
-        RETURNING id
-      )
-      SELECT
-        (SELECT COUNT(*) FROM updated)::int AS renamed_count,
-        (SELECT COUNT(*) FROM deleted)::int AS merged_count
-    `);
-    const srcRow = (srcRes as unknown as { renamed_count: number; merged_count: number }[])[0] ?? {
-      renamed_count: 0,
-      merged_count: 0,
-    };
-    relSourcesRenamed += Number(srcRow.renamed_count ?? 0);
-    relSourcesMerged += Number(srcRow.merged_count ?? 0);
-
-    // 3. kb_relationship.target: mirror of step 2 — worklist must
-    //    include the canonical-named row to avoid a UNIQUE collision
-    //    when an existing canonical edge already lives in the scope.
-    const tgtRes = await db.execute<{ renamed_count: number; merged_count: number }>(sql`
-      WITH worklist AS (
-        SELECT id, source, target, relation, source_chunk_ids, weight,
-          ROW_NUMBER() OVER (
-            ORDER BY (target = ${canonical})::int DESC, id ASC
-          ) AS rn
-        FROM kb_relationship
-        WHERE user_id = ${args.userId}
-          AND document_id = ${args.documentId}
-          AND (target = ${canonical} OR target = ANY(${literal}::text[]))
-      ),
-      deleted AS (
-        DELETE FROM kb_relationship
-        WHERE id IN (SELECT id FROM worklist WHERE rn > 1)
-        RETURNING id
-      ),
-      updated AS (
-        UPDATE kb_relationship
-        SET target = ${canonical},
-            source_chunk_ids = COALESCE(
-              (
-                SELECT array_agg(DISTINCT sid)
-                FROM (SELECT unnest(source_chunk_ids) AS sid FROM worklist) t
-              ),
-              source_chunk_ids
-            ),
-            weight = COALESCE((SELECT SUM(weight) FROM worklist), weight),
-            updated_at = NOW()
-        WHERE id = (SELECT id FROM worklist WHERE rn = 1)
-        RETURNING id
-      )
-      SELECT
-        (SELECT COUNT(*) FROM updated)::int AS renamed_count,
-        (SELECT COUNT(*) FROM deleted)::int AS merged_count
-    `);
-    const tgtRow = (tgtRes as unknown as { renamed_count: number; merged_count: number }[])[0] ?? {
-      renamed_count: 0,
-      merged_count: 0,
-    };
-    relTargetsRenamed += Number(tgtRow.renamed_count ?? 0);
-    relTargetsMerged += Number(tgtRow.merged_count ?? 0);
-  }
+  // ---- write back ----
+  // ponytail: one tx wraps the whole rename. Per-row UPDATE / DELETE
+  // are simple — drizzle's update() / delete() don't need a custom
+  // CTE to keep things atomic. 100 rows × 2 round-trips is fine for
+  // the doc sizes we see (KB entity / rel counts stay under ~300 each).
+  await withKbTx(async (tx) => {
+    for (const u of entityUpdates) {
+      await tx
+        .update(kbEntity)
+        .set({
+          name: u.name,
+          description: u.description,
+          sourceChunkIds: u.sourceChunkIds,
+          updatedAt: new Date(),
+        })
+        .where(eq(kbEntity.id, u.id));
+    }
+    if (entityDeletes.length > 0) {
+      await tx.delete(kbEntity).where(inArray(kbEntity.id, entityDeletes));
+    }
+    for (const u of relUpdates) {
+      await tx
+        .update(kbRelationship)
+        .set({
+          source: u.source,
+          target: u.target,
+          weight: u.weight,
+          sourceChunkIds: u.sourceChunkIds,
+          updatedAt: new Date(),
+        })
+        .where(eq(kbRelationship.id, u.id));
+    }
+    if (relDeletes.length > 0) {
+      await tx.delete(kbRelationship).where(inArray(kbRelationship.id, relDeletes));
+    }
+  });
 
   return {
     entitiesRenamed,
