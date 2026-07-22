@@ -5,6 +5,8 @@ import { fireIngestionRun } from "@/lib/kb/ingest";
 import { getAttachmentForUser } from "@/lib/attachments/queries";
 import {
   deleteKbChunksByDocumentId,
+  deleteKbEntitiesByDocumentId,
+  deleteKbRelationshipsByDocumentId,
   findKbDocumentById,
   markFailedKbChunksRetryingByDocumentId,
   resetKbDocumentForReprocess,
@@ -91,9 +93,15 @@ export const POST = withAuth<Params>(async (req, { user, params }) => {
       }
     }
 
-    // ponytail: wipe chunks inside one tx
+    // ponytail: wipe chunks + entity / relationship rows inside one tx.
+    // kb_theme cascades from chunks; entity / relationship DELETEs run
+    // here for the same reason as full mode — chunk re-extraction
+    // produces new chunkIds, and the old source_chunk_ids arrays would
+    // otherwise accumulate forever with dangling references.
     await withKbTx(async (tx) => {
       await deleteKbChunksByDocumentId(tx, doc.id);
+      await deleteKbEntitiesByDocumentId(tx, doc.id);
+      await deleteKbRelationshipsByDocumentId(tx, doc.id);
     });
 
     if (mode === "retryFailed") {
@@ -207,12 +215,18 @@ export const POST = withAuth<Params>(async (req, { user, params }) => {
     return NextResponse.json({ code: "ATTACHMENT_MISSING" }, { status: 409 });
   }
 
-  // ponytail: full reprocess — clear stale chunks + flip the doc
+  // ponytail: full reprocess — clear stale chunks + entities +
+  // relationships (kb_theme cascades from chunks) and flip the doc
   // row's status back to "pending" inside one tx so the Settings UI
   // sees a clean state if the deletion succeeds but the dispatch
-  // step below fails.
+  // step below fails. Entity / relationship rows are wiped instead
+  // of left for upsert-accumulation — otherwise source_chunk_ids
+  // arrays grow forever and old chunkIds become dangling pointers
+  // after the new chunk set lands.
   await withKbTx(async (tx) => {
     await deleteKbChunksByDocumentId(tx, doc.id);
+    await deleteKbEntitiesByDocumentId(tx, doc.id);
+    await deleteKbRelationshipsByDocumentId(tx, doc.id);
     await resetKbDocumentForReprocess(user.id, doc.id);
   });
 

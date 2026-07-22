@@ -25,6 +25,7 @@ import { eq, and as aAnd, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { attachments, kbChunk, kbDocument, kbFolder, user } from "@/db/schema";
+import { kbEntity, kbRelationship } from "@/lib/kb/schema";
 import { setCurrentUser } from "@/tests/helpers/session";
 
 import { POST } from "@/app/api/kb/documents/[id]/reprocess/route";
@@ -56,6 +57,8 @@ async function seedUser(u: { id: string; email: string }) {
 }
 
 beforeEach(async () => {
+  await db.delete(kbRelationship);
+  await db.delete(kbEntity);
   await db.delete(kbChunk);
   await db.delete(kbDocument);
   await db.delete(kbFolder);
@@ -193,6 +196,113 @@ describe("POST /api/kb/documents/[id]/reprocess", () => {
     expect(payload.metadata.source).toBe("kb-reprocess");
     expect(payload.metadata.docId).toBe("d-1");
     void _threadId;
+  });
+
+  // ponytail: full-mode reprocess wipes stale graph rows for the
+  // same reason as chunks — chunk re-extraction produces new chunk
+  // ids, and the old (user_id, document_id, name) entity rows and
+  // (user_id, document_id, source, target, relation) relationship
+  // rows would survive `ON CONFLICT DO UPDATE`, appending the new
+  // chunkId onto the stale source_chunk_ids array and growing
+  // weight. The dangling chunkIds in those arrays would otherwise
+  // live forever and confuse the chunk leg's graph-context lookup.
+  it("full reprocess also wipes kb_entity and kb_relationship rows for the doc", async () => {
+    await seedFolder(USER_A.id);
+    await seedAttachment(USER_A.id);
+    await seedDoc({ userId: USER_A.id, status: "failed" });
+
+    await db.execute(
+      sql`INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, status)
+          VALUES ('c-old-1', 'd-1', 0, 'old', ${embeddingLiteral}, 'success')`,
+    );
+    await db.insert(kbEntity).values({
+      id: "e-old-1",
+      userId: USER_A.id,
+      documentId: "d-1",
+      name: "Acme",
+      type: "Organization",
+      description: "old",
+      sourceChunkIds: ["c-old-1"],
+    });
+    await db.insert(kbRelationship).values({
+      id: "r-old-1",
+      userId: USER_A.id,
+      documentId: "d-1",
+      source: "Acme",
+      target: "Beta",
+      relation: "PARTNERED",
+      description: "old",
+      sourceChunkIds: ["c-old-1"],
+      weight: 5,
+    });
+
+    const res = await POST(newRequest(), ctxModel("d-1"));
+    expect(res.status).toBe(202);
+
+    const remainingChunks = await db.query.kbChunk.findMany({
+      where: eq(kbChunk.documentId, "d-1"),
+    });
+    const remainingEntities = await db.query.kbEntity.findMany({
+      where: eq(kbEntity.documentId, "d-1"),
+    });
+    const remainingRels = await db.query.kbRelationship.findMany({
+      where: eq(kbRelationship.documentId, "d-1"),
+    });
+    expect(remainingChunks).toHaveLength(0);
+    expect(remainingEntities).toHaveLength(0);
+    expect(remainingRels).toHaveLength(0);
+  });
+
+  // ponytail: chunksOnly mode wipes chunks + graph inside one tx
+  // too — same dangling-chunkId rationale. doc.status stays at its
+  // terminal value (here 'success') since chunksOnly skips OCR.
+  it("chunksOnly reprocess wipes chunks + kb_entity + kb_relationship, leaves doc.status='success'", async () => {
+    await seedFolder(USER_A.id);
+    await seedAttachment(USER_A.id);
+    await seedDoc({ userId: USER_A.id, status: "success" });
+
+    // pages[] must carry markdown for chunksOnly NOT_READY guard to pass.
+    await db
+      .update(kbDocument)
+      .set({
+        pages: [{ pageIndex: 0, markdown: "page md", imageUrl: null, status: "success" }],
+      })
+      .where(eq(kbDocument.id, "d-1"));
+
+    await db.execute(
+      sql`INSERT INTO kb_chunk (id, document_id, ordinal, content, embedding, status)
+          VALUES ('c-old-1', 'd-1', 0, 'old', ${embeddingLiteral}, 'success')`,
+    );
+    await db.insert(kbEntity).values({
+      id: "e-old-1",
+      userId: USER_A.id,
+      documentId: "d-1",
+      name: "Acme",
+      type: "Organization",
+      description: "old",
+      sourceChunkIds: ["c-old-1"],
+    });
+
+    const res = await POST(
+      new Request("http://localhost?chunksOnly=true", { method: "POST" }),
+      ctxModel("d-1"),
+    );
+    expect(res.status).toBe(202);
+
+    expect(await db.query.kbChunk.findMany({ where: eq(kbChunk.documentId, "d-1") })).toHaveLength(
+      0,
+    );
+    expect(
+      await db.query.kbEntity.findMany({ where: eq(kbEntity.documentId, "d-1") }),
+    ).toHaveLength(0);
+    expect(
+      await db.query.kbRelationship.findMany({ where: eq(kbRelationship.documentId, "d-1") }),
+    ).toHaveLength(0);
+
+    // ponytail: doc.status stays at its terminal value (here 'success')
+    // — chunksOnly flips status only for retryFailed.
+    const row = await db.query.kbDocument.findFirst({ where: eq(kbDocument.id, "d-1") });
+    expect(row?.status).toBe("success");
   });
 
   // ponytail: retryFailedChunks mode — only retry chunks where

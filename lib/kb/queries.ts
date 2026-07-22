@@ -188,6 +188,23 @@ export async function deleteKbChunksByDocumentId(tx: PgTx, docId: string): Promi
   await tx.delete(kbChunk).where(eq(kbChunk.documentId, docId));
 }
 
+// ponytail: reprocess wipes stale graph rows for the same reason as
+// chunks — the new entity-extract pass will upsert fresh rows keyed
+// on (user_id, document_id, name) / (user_id, document_id, source,
+// target, relation). Without these DELETEs the old rows survive
+// upsert-on-conflict-no-op: the source_chunk_ids array just keeps
+// growing (new chunk_id appended to old array), so old chunkIds
+// become permanent dangling pointers and the embedding text carries
+// stale graph metadata. Reset to first-ingest state — caller wraps
+// in the same tx as deleteKbChunksByDocumentId so it's atomic.
+export async function deleteKbEntitiesByDocumentId(tx: PgTx, docId: string): Promise<void> {
+  await tx.delete(kbEntity).where(eq(kbEntity.documentId, docId));
+}
+
+export async function deleteKbRelationshipsByDocumentId(tx: PgTx, docId: string): Promise<void> {
+  await tx.delete(kbRelationship).where(eq(kbRelationship.documentId, docId));
+}
+
 // ponytail: retryFailedChunks reprocess — UPDATE failed chunk rows
 // in place rather than DELETE+INSERT. The DELETE+INSERT design had
 // a race: if the IIFE inside generateChunkEmbedNode fails to reach
