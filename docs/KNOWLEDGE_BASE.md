@@ -316,7 +316,7 @@ The composer renders two KB directive tokens via assistant-ui's
 - `:kb-folder[label]{folderId=<UUID>}` — mention a folder (the
   popover's first item per folder)
 
-The brace-group key **matches the `search_kb` / `list_documents`
+The brace-group key **matches the `search_KB` / `list_documents`
 parameter name** so the LLM can copy the value verbatim into the
 tool call — no ambiguity, no resolver in the loop.
 
@@ -324,22 +324,22 @@ The directive survives the SDK wire and lands in
 `HumanMessage.content` as a plain string. From there the LLM does
 the work:
 
-- `:kb-document[…]` → `search_kb({ documentId: "<UUID>", query: <user's question> })`
+- `:kb-document[…]` → `search_KB({ documentId: "<UUID>", query: <user's question> })`
   (or `list_documents({ documentId: "<UUID>" })` to inspect the doc)
-- `:kb-folder[…]` → `search_kb({ folderId: "<UUID>", query: <user's question> })`
+- `:kb-folder[…]` → `search_KB({ folderId: "<UUID>", query: <user's question> })`
   or `list_documents({ folderId: "<UUID>" })` to enumerate
 
 The system prompt
 (`backend/prompt/system.ts`, `[KNOWLEDGE BASE]` clause) names the
 two directive forms and tells the LLM to copy the id into the
-matching tool arg. `search_kb` itself enforces per-user scoping,
+matching tool arg. `search_KB` itself enforces per-user scoping,
 so cross-user mentions return empty rather than leaking.
 
 `backend/node/prepare-data-node.ts` is now a pass-through — no
 pre-LLM resolver. The KB agent's `tool-loop` handles the full flow:
 
 1. LLM reads the directive from `HumanMessage.content`
-2. LLM calls `search_kb` (or `list_documents`) with the right filter
+2. LLM calls `search_KB` (or `list_documents`) with the right filter
 3. The tool returns the content; the LLM reasons over it
 
 The chip survives the assistant-ui SDK wire because the SDK's
@@ -464,7 +464,7 @@ shared singletons):
 | Env variable              | Default | Purpose                                               |
 | :------------------------ | :------ | :---------------------------------------------------- |
 | `KB_CHUNK_MAX_CHARS`      | `2000`  | Max character length of a single text chunk.          |
-| `KB_HYBRID_TOPK_DEFAULT`  | `8`     | Default top-K returned by `search_kb`.                |
+| `KB_HYBRID_TOPK_DEFAULT`  | `8`     | Default top-K returned by `search_KB`.                |
 | `KB_HYBRID_TOPK_MAX`      | `20`    | Clamp on user-supplied `topK`.                        |
 | `KB_RERANK_MIN_SCORE`     | `0.4`   | Threshold filter for the Reranker stage.              |
 | `KB_MENTION_TOPK_DEFAULT` | `5`     | Per-mention top-K under Meta mode.                    |

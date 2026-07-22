@@ -101,17 +101,17 @@ payload the `SaveMemoryCard` renders as a per-row diff.
 
 ## Knowledge base (issue #13 v3)
 
-Two tools for the user's personal KB. `search_kb` is gated on the
+Two tools for the user's personal KB. `search_KB` is gated on the
 Postgres `vector` extension; `list_documents` is unconditional.
 
 | Tool             | Backend file | Frontend card                                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ---------------- | ------------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `search_kb`      | `kb.ts`      | `components/tool-ui/kb/search-kb-card.tsx`      | Hybrid RRF (k=60) over three legs: BM25 (`tsv` GIN), pgvector cosine (`embedding` HNSW), and entity-tag overlap (`entities` GIN). Optional `folderId` / `documentId` filters add `WHERE` clauses inside the same SQL. Empty `query` falls back to ordinal-sorted chunks for the filtered scope (lets the LLM "summarize @doc.pdf" without a keyword). When a Reranker model is registered, the candidate pool is widened to `max(50, topK * 5)` and the Reranker rescores; results below `KB_RERANK_MIN_SCORE` are filtered out before the final `topK` trim. Returns structured JSON: `{ content, documents[], empty }`. `content` embeds `[1] [2] [3]` markers; `documents[]` carries `chunkId`/`docId`/`rrfScore`/`legsHit` for UI. |
+| `search_KB`      | `kb.ts`      | `components/tool-ui/kb/search-kb-card.tsx`      | Hybrid RRF (k=60) over three legs: BM25 (`tsv` GIN), pgvector cosine (`embedding` HNSW), and entity-tag overlap (`entities` GIN). Optional `folderId` / `documentId` filters add `WHERE` clauses inside the same SQL. Empty `query` falls back to ordinal-sorted chunks for the filtered scope (lets the LLM "summarize @doc.pdf" without a keyword). When a Reranker model is registered, the candidate pool is widened to `max(50, topK * 5)` and the Reranker rescores; results below `KB_RERANK_MIN_SCORE` are filtered out before the final `topK` trim. Returns structured JSON: `{ content, documents[], empty }`. `content` embeds `[1] [2] [3]` markers; `documents[]` carries `chunkId`/`docId`/`rrfScore`/`legsHit` for UI. |
 | `list_documents` | `kb.ts`      | `components/tool-ui/kb/list-documents-card.tsx` | Paginated list of the user's KB docs. Filters: `folderId`, `status` (default `success`), `titleQuery` (ILIKE), `page` (default 1), `pageSize` (default 20, max 100). Strict filtering — no soft warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### ToolMessage shape
 
-`search_kb` returns a JSON string with two top-level keys:
+`search_KB` returns a JSON string with two top-level keys:
 
 - `content` — the LLM-facing string with `[1]`, `[2]`, ... markers baked
   in. The model emits inline citations by copying these markers. **No
@@ -122,7 +122,7 @@ Postgres `vector` extension; `list_documents` is unconditional.
 
 ### Lazy registration
 
-`search_kb` is always registered with the agent so the tool surface is
+`search_KB` is always registered with the agent so the tool surface is
 stable, but the implementation throws a clear error when `SELECT 1 FROM
 pg_extension WHERE extname='vector'` returns empty. This is a small
 departure from the `... (tool ? [tool] : [])` pattern used elsewhere
@@ -134,10 +134,10 @@ that errors on call.
 
 See `lib/kb/env.ts`. Defaults match the community survey in `.claude/13-kb-v3.md`:
 
-- `KB_HYBRID_TOPK_DEFAULT=8` — fused topK for `search_kb`.
+- `KB_HYBRID_TOPK_DEFAULT=8` — fused topK for `search_KB`.
 - `KB_HYBRID_TOPK_MAX=20` — upper bound.
 - `KB_CHUNK_MAX_CHARS=2000` — per-chunk truncation before stuffing into the LLM prompt (~512 tokens).
-- `KB_RERANK_MIN_SCORE=0.4` — minimum Reranker relevance score for `search_kb` to keep a candidate. Candidates below this are dropped after Reranker scoring, before the final `topK` trim. Set to `0` to disable the threshold (always keep everything the Reranker ranked).
+- `KB_RERANK_MIN_SCORE=0.4` — minimum Reranker relevance score for `search_KB` to keep a candidate. Candidates below this are dropped after Reranker scoring, before the final `topK` trim. Set to `0` to disable the threshold (always keep everything the Reranker ranked).
 - `KB_MENTION_TOPK_DEFAULT=5` — chunks per single `@`-mention (used by the resolver, not the tool).
 - `KB_MENTION_TOPK_MAX=20`.
 - `KB_MENTION_TOKEN_BUDGET=8192` — total token cap across multi-mention turns.

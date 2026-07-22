@@ -266,4 +266,57 @@ describe("Step 4 · multi-query fusion (audit §2b)", () => {
     expect(res.chunks.length).toBeGreaterThan(0);
     expect(embedSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("rerankChunks: performs Max-Score fusion across rewriteQuery and originalQuery", async () => {
+    const { rerankChunks } = await import("@/lib/kb/search/rerank");
+    const mockReranker = {
+      rerank: vi.fn(async (q: string, _docs: string[]) => {
+        if (q === "Original User Query") {
+          return [{ index: 0, score: 0.95 }, { index: 1, score: 0.20 }];
+        }
+        return [{ index: 0, score: 0.30 }, { index: 1, score: 0.85 }];
+      }),
+    };
+
+    const registry = await import("@/lib/provider/model-registry");
+    vi.spyOn(registry, "getRerankModelFromDB").mockResolvedValueOnce(mockReranker as any);
+
+    const sampleChunks = [
+      {
+        chunkId: "c1",
+        documentId: "d1",
+        docTitle: "Doc1",
+        pageNumbers: [1],
+        content: "Text 1",
+        score: 0.5,
+        scoreKind: "rrf" as const,
+        legsHit: ["vec" as const],
+      },
+      {
+        chunkId: "c2",
+        documentId: "d1",
+        docTitle: "Doc1",
+        pageNumbers: [1],
+        content: "Text 2",
+        score: 0.4,
+        scoreKind: "rrf" as const,
+        legsHit: ["kw" as const],
+      },
+    ];
+
+    const result = await rerankChunks({
+      chunks: sampleChunks,
+      query: "Rewrite LLM Query",
+      originalQuery: "Original User Query",
+      topK: 10,
+    });
+
+    expect(mockReranker.rerank).toHaveBeenCalledTimes(2);
+    // Chunk c1 gets Max(0.30, 0.95) = 0.95 from originalQuery
+    // Chunk c2 gets Max(0.85, 0.20) = 0.85 from rewriteQuery
+    expect(result[0].chunkId).toBe("c1");
+    expect(result[0].score).toBe(0.95);
+    expect(result[1].chunkId).toBe("c2");
+    expect(result[1].score).toBe(0.85);
+  });
 });

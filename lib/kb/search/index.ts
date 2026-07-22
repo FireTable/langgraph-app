@@ -127,12 +127,12 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
     }),
     hasOriginalDense
       ? denseLeg({
-          userId: args.userId,
-          rewriteQuery: args.originalQuery!.trim(),
-          scope: args.scope,
-          topK: entryTopK,
-          qvec: qvecOriginal ?? undefined,
-        })
+        userId: args.userId,
+        rewriteQuery: args.originalQuery!.trim(),
+        scope: args.scope,
+        topK: entryTopK,
+        qvec: qvecOriginal ?? undefined,
+      })
       : Promise.resolve({ legs: [], hits: [] }),
     tagLeg({
       userId: args.userId,
@@ -201,6 +201,7 @@ export async function hybridSearch(args: HybridSearchArgs): Promise<HybridSearch
   const finalChunks = await rerankChunks({
     chunks: fusedChunks,
     query: queryText,
+    originalQuery: hasOriginalDense ? args.originalQuery?.trim() : undefined,
     topK: chunkTopK,
   });
 

@@ -3,7 +3,7 @@ import {
   type Unstable_DirectiveSegment,
 } from "@assistant-ui/react";
 
-// ponytail: the key in the brace group matches the search_kb /
+// ponytail: the key in the brace group matches the search_KB /
 // list_documents parameter name so the LLM can copy the value
 // directly into the tool call. Doc directive: {documentId=…};
 // folder directive: {folderId=…}. No more generic {id=…} — the

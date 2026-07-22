@@ -139,7 +139,7 @@ describe("backend/tool/kb — gating", () => {
 
   it("tool throws a clear error when pgvector is unavailable", async () => {
     _resetPgVectorCache(false);
-    // search_kb is now registered unconditionally — the gate is inside.
+    // search_KB is now registered unconditionally — the gate is inside.
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
     await expect(tool.invoke({ rewriteQuery: "Acme" })).rejects.toThrow(
       /pgvector extension is not installed/,
@@ -147,7 +147,7 @@ describe("backend/tool/kb — gating", () => {
   });
 });
 
-describe("backend/tool/kb — search_kb ToolMessage shape", () => {
+describe("backend/tool/kb — search_KB ToolMessage shape", () => {
   it("returns structured JSON with content (numbered) + documents array", async () => {
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
     const raw = await tool.invoke({ rewriteQuery: "Acme" });
@@ -475,7 +475,7 @@ describe("backend/tool/kb — LIST_DOCUMENTS_STATUSES", () => {
   });
 });
 
-describe("backend/tool/kb — search_kb improvements", () => {
+describe("backend/tool/kb — search_KB improvements", () => {
   it("filters search results by documentId", async () => {
     const tool = searchKbTool as unknown as { invoke: (args: unknown) => Promise<string> };
     const raw = await tool.invoke({ rewriteQuery: "Acme", documentId: DOC_A_ID });

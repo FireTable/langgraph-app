@@ -1,5 +1,5 @@
 // KB tool result shapes returned by backend/tool/kb.ts. Shared between
-// search_kb (chunks) and list_documents (folder-grouped row list).
+// search_KB (chunks) and list_documents (folder-grouped row list).
 
 export type KbDocument = {
   chunkId: string;

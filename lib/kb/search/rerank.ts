@@ -5,6 +5,11 @@ import type { HybridSearchChunk } from "./types";
 export interface RerankInput {
   chunks: HybridSearchChunk[];
   query: string;
+  // ponytail: Max-Score fusion across rewriteQuery + originalQuery
+  // (audit §2b). Rerank each query separately, then take the per-chunk
+  // max so a chunk that wins on either formulation surfaces. omit when
+  // there's no second dense sub-leg.
+  originalQuery?: string;
   topK: number;
 }
 
@@ -18,19 +23,39 @@ export async function rerankChunks(input: RerankInput): Promise<HybridSearchChun
     if (reranker) {
       if (typeof reranker.rerank === "function") {
         const docTexts = input.chunks.map((c) => c.content);
-        const rerankedIndexes = (await reranker.rerank(input.query, docTexts)) as Array<{
-          index: number;
-          score: number;
-        }>;
+        const queries: string[] = [input.query];
+        if (
+          input.originalQuery &&
+          input.originalQuery.trim() !== "" &&
+          input.originalQuery.trim() !== input.query.trim()
+        ) {
+          queries.push(input.originalQuery);
+        }
 
-        if (Array.isArray(rerankedIndexes) && rerankedIndexes.length > 0) {
-          const res: HybridSearchChunk[] = [];
+        // ponytail: index → max score across the query fan-out.
+        const scoreByIndex = new Map<number, number>();
+        for (const q of queries) {
+          const rerankedIndexes = (await reranker.rerank(q, docTexts)) as Array<{
+            index: number;
+            score: number;
+          }>;
+          if (!Array.isArray(rerankedIndexes)) continue;
           for (const item of rerankedIndexes) {
-            const chunk = input.chunks[item.index];
+            const cur = scoreByIndex.get(item.index);
+            if (cur === undefined || item.score > cur) {
+              scoreByIndex.set(item.index, item.score);
+            }
+          }
+        }
+
+        if (scoreByIndex.size > 0) {
+          const res: HybridSearchChunk[] = [];
+          for (const [idx, score] of scoreByIndex) {
+            const chunk = input.chunks[idx];
             if (chunk) {
               res.push({
                 ...chunk,
-                score: item.score,
+                score,
                 scoreKind: "rerank",
               });
             }

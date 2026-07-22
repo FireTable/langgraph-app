@@ -252,12 +252,11 @@ export async function chunkExtractNode(
                 markdown: string;
               }>;
 
-              const pages =
-                dbPages.length > 0 && dbPages.some((p) => (p.markdown ?? "").trim().length > 0)
-                  ? dbPages
-                  : statePages.length > 0
-                    ? statePages
-                    : dbPages;
+              const pages = dbPages.some((p) => (p.markdown ?? "").trim().length > 0)
+                ? dbPages
+                : statePages.length > 0
+                  ? statePages
+                  : dbPages;
 
               const fullMarkdown = pages
                 .map((p) => p.markdown)
