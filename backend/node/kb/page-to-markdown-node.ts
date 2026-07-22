@@ -37,13 +37,36 @@ export async function pageToMarkdownNode(
 
   const queue = new PQueue({ concurrency: KB_OCR_CONCURRENCY });
 
-  const newDocs = state.processedFiles.filter(
+  const updatedPagesByDocId: Record<string, PageResult[]> = { ...state.pagesByDocId };
+  const updatedProcessed = state.processedFiles.map((p) => ({ ...p }));
+
+  // ponytail: guard against files marked "new" that have no pages or empty pages
+  for (const pf of state.processedFiles) {
+    if (pf.pipelineStatus === "new" && pf.docId) {
+      const pages = state.pagesByDocId[pf.docId];
+      if (!pages || pages.length === 0) {
+        const idx = updatedProcessed.findIndex((p) => p.docId === pf.docId);
+        if (idx >= 0) {
+          updatedProcessed[idx] = {
+            ...updatedProcessed[idx],
+            pipelineStatus: "failed",
+            errorMessage: "Document has no pages to OCR",
+          };
+        }
+        if (state.userId && pf.docId) {
+          await updateKbDocumentStatus(state.userId, pf.docId, {
+            status: "failed",
+            errorMessage: "Document has no pages to OCR",
+          }).catch(() => {});
+        }
+      }
+    }
+  }
+
+  const newDocs = updatedProcessed.filter(
     (p) =>
       p.pipelineStatus === "new" && p.docId !== null && state.pagesByDocId[p.docId] !== undefined,
   );
-
-  const updatedPagesByDocId: Record<string, PageResult[]> = { ...state.pagesByDocId };
-  const updatedProcessed = state.processedFiles.map((p) => ({ ...p }));
 
   const results = await Promise.allSettled(
     newDocs.map((pf) =>
@@ -147,7 +170,7 @@ export async function pageToMarkdownNode(
                 ?.errorMessage ?? "OCR failed on one or more pages")
             : "empty markdown";
 
-          const idx = state.processedFiles.indexOf(pf);
+          const idx = updatedProcessed.findIndex((p) => p.docId === pf.docId);
           if (idx >= 0) {
             updatedProcessed[idx] = {
               ...updatedProcessed[idx],

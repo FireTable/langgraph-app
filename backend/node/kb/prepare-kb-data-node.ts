@@ -250,6 +250,7 @@ export async function prepareKBDataNode(
   if (!hasValid) {
     return {
       userId,
+      mode,
       processedFiles: processed,
       status: "failed",
       errorMessage: "no PDF could be processed",
@@ -258,6 +259,7 @@ export async function prepareKBDataNode(
 
   return {
     userId,
+    mode,
     processedFiles: processed,
     status: "parsing",
   };

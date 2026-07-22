@@ -16,6 +16,7 @@ import {
   markKbChunkSuccess,
   replaceChunkThemes,
   updateKbChunkForFailure,
+  updateKbDocumentStatus,
   upsertKbEntity,
   upsertKbRelationship,
   withKbTx,
@@ -240,20 +241,41 @@ export async function chunkExtractNode(
                 return;
               }
             } else {
-              const pages = (doc.pages ?? []) as Array<{
+              const dbPages = (doc.pages ?? []) as Array<{
                 pageIndex: number;
                 imageUrl: string;
                 markdown: string;
               }>;
+              const statePages = (state.pagesByDocId?.[docId] ?? []) as Array<{
+                pageIndex: number;
+                imageUrl: string;
+                markdown: string;
+              }>;
+
+              const pages =
+                dbPages.length > 0 && dbPages.some((p) => (p.markdown ?? "").trim().length > 0)
+                  ? dbPages
+                  : statePages.length > 0
+                    ? statePages
+                    : dbPages;
+
               const fullMarkdown = pages
                 .map((p) => p.markdown)
-                .filter((m) => m && m.length > 0)
+                .filter((m) => m && m.trim().length > 0)
                 .join("\n\n");
+
               console.log(
                 `[kbAgent] Background task: loaded docId=${docId}, pages count=${pages.length}, fullMarkdown length=${fullMarkdown.length}`,
               );
               if (!fullMarkdown) {
-                throw new Error(`Document ${docId} has no markdown content extracted yet`);
+                console.error(
+                  `[kbAgent] chunkExtractNode: Document ${docId} has no markdown content extracted yet`,
+                );
+                await updateKbDocumentStatus(userId, docId, {
+                  status: "failed",
+                  errorMessage: "No markdown content extracted from document",
+                });
+                return;
               }
 
               // ponytail: chunk rows are inserted with embedding=NULL —
@@ -313,8 +335,8 @@ export async function chunkExtractNode(
                   const systemMessage = new SystemMessage(KB_ENTITY_EXTRACTION_SYSTEM_PROMPT);
                   const humanMessage = new HumanMessage(
                     `Context Document Title: [${docTitle}]\n` +
-                      `Chunk: [${ordinal + 1} / ${totalChunksForPrompt}]\n\n` +
-                      `Text to extract:\n${text}`,
+                    `Chunk: [${ordinal + 1} / ${totalChunksForPrompt}]\n\n` +
+                    `Text to extract:\n${text}`,
                   );
 
                   try {

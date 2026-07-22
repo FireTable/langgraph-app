@@ -26,14 +26,30 @@ export async function splitFileToPageNode(
         contentType: pf.contentType!,
       });
       pagesByDocId[pf.docId!] = pages;
-      if (state.userId && pf.docId) {
+
+      if (pages.length === 0) {
+        const idx = updatedProcessed.findIndex((p) => p.docId === pf.docId);
+        if (idx >= 0) {
+          updatedProcessed[idx] = {
+            ...updatedProcessed[idx],
+            pipelineStatus: "failed",
+            errorMessage: "Document produced 0 pages during parsing",
+          };
+        }
+        if (state.userId && pf.docId) {
+          await updateKbDocumentStatus(state.userId, pf.docId, {
+            status: "failed",
+            errorMessage: "Document produced 0 pages during parsing",
+          });
+        }
+      } else if (state.userId && pf.docId) {
         await updateKbDocumentStatus(state.userId, pf.docId, {
           status: "parsing",
           pages,
         });
       }
     } catch (err) {
-      const idx = state.processedFiles.indexOf(pf);
+      const idx = updatedProcessed.findIndex((p) => p.docId === pf.docId);
       if (idx >= 0) {
         updatedProcessed[idx] = {
           ...updatedProcessed[idx],
