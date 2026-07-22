@@ -80,9 +80,13 @@ export async function resolveEntityAliasesForDoc(args: {
   );
 
   const humanMessage = new HumanMessage(
-    `Document Title: [${documentTitle}]\n\n` +
-      `Extracted Entities (${rawEntities.length}):\n${entityLines.join("\n")}\n\n` +
-      `Extracted Relationships (${rawRelationships.length}):\n${relLines.join("\n")}`,
+    `# Target Document for Alignment\n` +
+      `**Title**: ${documentTitle}\n\n` +
+      `## Extracted Entities (${rawEntities.length})\n` +
+      `${entityLines.length > 0 ? entityLines.join("\n") : "(No entities extracted)"}\n\n` +
+      `--- \n\n` +
+      `## Extracted Relationships (${rawRelationships.length})\n` +
+      `${relLines.length > 0 ? relLines.join("\n") : "(No relationships extracted)"}`,
   );
 
   try {

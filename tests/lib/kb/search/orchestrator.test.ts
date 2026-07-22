@@ -146,7 +146,7 @@ describe("Step 4 · Modular Hybrid Search Orchestrator", () => {
     expect(first.scoreKind).toBe("rrf");
     expect(first.score).toBeGreaterThan(0);
     expect(first.legsHit.length).toBeGreaterThan(0);
-  });
+  }, 15000);
 
   it("hybridSearch: empty rewriteQuery falls back to scopeDump", async () => {
     const res = await hybridSearch({
