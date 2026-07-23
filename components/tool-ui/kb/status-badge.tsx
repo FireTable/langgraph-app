@@ -80,14 +80,14 @@ export function DocStatusBadge({
     <Badge
       variant={variant}
       className={cn(
-        "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none whitespace-nowrap",
+        "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none whitespace-nowrap min-w-0 max-w-full",
         className,
       )}
     >
       <span className="inline-flex items-center justify-center shrink-0 leading-none">
         <StatusIcon status={status} />
       </span>
-      <span className="leading-none">{label}</span>
+      <span className="leading-none truncate min-w-0">{label}</span>
     </Badge>
   );
 
@@ -142,12 +142,12 @@ export function ChunksStatusBadge({
       <Badge
         variant="muted"
         className={cn(
-          "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none whitespace-nowrap",
+          "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none whitespace-nowrap min-w-0 max-w-full",
           className,
         )}
       >
-        <Database className="size-3" />
-        <span className="leading-none">Not Indexed</span>
+        <Database className="size-3 shrink-0" />
+        <span className="leading-none truncate min-w-0">Not Indexed</span>
       </Badge>
     );
   } else if (docStatus === "pending" || docStatus === "parsing") {
@@ -156,12 +156,12 @@ export function ChunksStatusBadge({
       <Badge
         variant="muted"
         className={cn(
-          "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none whitespace-nowrap",
+          "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none whitespace-nowrap min-w-0 max-w-full",
           className,
         )}
       >
-        <Loader2 className="size-3 animate-spin" />
-        <span className="leading-none">Pending</span>
+        <Loader2 className="size-3 animate-spin shrink-0" />
+        <span className="leading-none truncate min-w-0">Pending</span>
       </Badge>
     );
   } else {
@@ -177,12 +177,12 @@ export function ChunksStatusBadge({
         <Badge
           variant="muted"
           className={cn(
-            "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none text-muted-foreground border-dashed whitespace-nowrap",
+            "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none text-muted-foreground border-dashed whitespace-nowrap min-w-0 max-w-full",
             className,
           )}
         >
-          <Database className="size-3" />
-          <span className="leading-none">No Chunks</span>
+          <Database className="size-3 shrink-0" />
+          <span className="leading-none truncate min-w-0">No Chunks</span>
         </Badge>
       );
     } else {
@@ -277,14 +277,14 @@ export function ChunksStatusBadge({
         <Badge
           variant={variant}
           className={cn(
-            "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none whitespace-nowrap",
+            "inline-flex items-center gap-1.5 py-0.5 font-medium leading-none whitespace-nowrap min-w-0 max-w-full",
             className,
           )}
         >
           <span className="inline-flex items-center justify-center shrink-0 leading-none">
             {iconElement}
           </span>
-          <span className="leading-none">{label}</span>
+          <span className="leading-none truncate min-w-0">{label}</span>
         </Badge>
       );
     }
