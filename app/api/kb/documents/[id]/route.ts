@@ -35,12 +35,12 @@ export const GET = withAuth<{ id: string }>(async (_req, { user, params }) => {
       .select({ n: sql<number>`count(*)::int` })
       .from(kbEntity)
       .where(and(eq(kbEntity.documentId, doc.id), eq(kbEntity.userId, user.id)))
-      .then((rows) => rows[0]?.n ?? 0),
+      .then((rows) => rows[0]!.n),
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(kbRelationship)
       .where(and(eq(kbRelationship.documentId, doc.id), eq(kbRelationship.userId, user.id)))
-      .then((rows) => rows[0]?.n ?? 0),
+      .then((rows) => rows[0]!.n),
   ]);
 
   return NextResponse.json({

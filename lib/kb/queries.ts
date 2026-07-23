@@ -1527,6 +1527,12 @@ export async function deleteKbFolderForUser(
 
       for (const doc of docs) {
         const threadId = doc.id.replace(/^d-/, "");
+        // ponytail: thread cleanup precedes the kb_document delete on
+        // purpose. If a child cascade fails midway (an unenforced FK
+        // surfaces), the transaction rolls back — the threads stay
+        // attached to their docId strings and the next attempt re-runs
+        // safely. Reversing the order would orphan a thread pointing at
+        // a doc that's about to disappear.
         await tx.delete(threads).where(and(eq(threads.id, threadId), eq(threads.kind, "kb")));
         // ponytail: drop the attachment row alongside the doc — see the
         // note in deleteKbDocumentForUser. R2 objects stay.

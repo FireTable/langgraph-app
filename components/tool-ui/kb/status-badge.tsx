@@ -199,7 +199,14 @@ export function ChunksStatusBadge({
       // graph state explicitly.
       const terminal = success + failed + embeddingPending;
       const isCompleted = success === total;
-      const isFailed = failed > 0 && terminal === total;
+      // ponytail: "X failed" only fires when every non-failed chunk has
+      // actually finished OCR + embedding. If `embeddingPending > 0`,
+      // those chunks are still in flight (vector hasn't landed yet) —
+      // collapsing them into the "failed" bucket would render an
+      // "X failed" badge for a doc that's really "X failed, Y still
+      // embedding" and the user can't reconcile the count with the
+      // tooltip breakdown.
+      const isFailed = failed > 0 && embeddingPending === 0 && terminal === total;
       const hasInflightChunks = pending > 0 || parsing > 0;
       const hasInflightExtraction = entities === 0 && relationships === 0;
       const isInProgress = !isCompleted && !isFailed;

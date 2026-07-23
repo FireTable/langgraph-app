@@ -27,7 +27,12 @@ export async function pageToMarkdownNode(
     // markdown; only failed chunks (per-chunk UPDATE pre-applied by the
     // route) need re-extraction. `retryFailed` is intentionally NOT in
     // this list — its whole point is to re-OCR the failed pages, so this
-    // node has to run.
+    // node has to run. The per-page OCR skip below (markdown.trim() > 0
+    // AND no errorMessage) preserves successful pages while re-running
+    // OCR on any page with empty markdown OR a prior errorMessage,
+    // regardless of `status` — so `retryFailed`'s mixed-status
+    // pagesByDocId (some success, some failed) lands in the right lane
+    // per page.
     return {
       pagesByDocId: state.pagesByDocId,
       processedFiles: state.processedFiles,

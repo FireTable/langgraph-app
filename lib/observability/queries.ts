@@ -164,6 +164,18 @@ export async function findLatestParentMessageId(threadId: string): Promise<strin
   }
 }
 
+// ponytail: bound the state-fallback lookup so a stuck dev server
+// (or a test env with no dev server) can't block the End hook past
+// 500ms. The end-hook caller (handleChainEnd) awaits this whole
+// INSERT before returning — a long hang here is directly visible as
+// chat-turn latency. Returning null on timeout lets the row persist
+// with `parent_message_id IS NULL`; the per-turn panel 404s for that
+// span, which the design intentionally accepts (it surfaces "missing
+// parent_message_id" instead of guessing).
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([p, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
+}
+
 // ponytail: for each row whose parent_message_id column is null, ask
 // findLatestParentMessageId (which now reads thread state via
 // langGraphClient) for the latest HumanMessage id on that thread and
@@ -173,21 +185,26 @@ async function backfillParentMessageIds(rows: NewObservabilitySpanRow[]): Promis
   const missingThreads = new Set<string>();
   for (const r of rows) {
     if (r.parentMessageId == null) {
-      if (typeof r.meta?.parent_message_id === "string") {
-        r.parentMessageId = r.meta?.parent_message_id as string;
-      } else {
-        missingThreads.add(r.threadId);
-      }
+      missingThreads.add(r.threadId);
     }
   }
 
-  for (const tid of missingThreads) {
-    const latest = await findLatestParentMessageId(tid);
-    if (!latest) continue;
-    for (const r of rows) {
-      if (r.threadId === tid && r.parentMessageId == null) {
-        r.parentMessageId = latest;
-      }
+  // ponytail: parallelize the per-thread state lookups + 500ms cap each
+  // so a worst-case batch with N distinct missing threads adds at most
+  // ~500ms to the End hook (not N × RTT). Stale fetches resolve as null
+  // and the rows stay pmid-less; the per-turn panel 404s those rows
+  // by design.
+  const latestByThread = new Map<string, string | null>();
+  await Promise.all(
+    [...missingThreads].map(async (tid) => {
+      latestByThread.set(tid, await withTimeout(findLatestParentMessageId(tid), 500));
+    }),
+  );
+
+  for (const r of rows) {
+    const latest = latestByThread.get(r.threadId);
+    if (r.parentMessageId == null && latest) {
+      r.parentMessageId = latest;
     }
   }
 }

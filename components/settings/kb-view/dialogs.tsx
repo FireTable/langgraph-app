@@ -443,7 +443,8 @@ export function FolderDeleteDialog({
                 Clear and delete all documents inside
               </Label>
               <p className="text-[11px] text-muted-foreground">
-                Also destroys all documents, chunks, and vector embeddings in this folder
+                Also destroys all documents, chunks, and vector embeddings in this folder. Source
+                PDFs + rendered page images stay in R2 until the retention sweep.
               </p>
             </div>
             <Switch

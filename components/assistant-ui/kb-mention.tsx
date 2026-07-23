@@ -288,7 +288,7 @@ export const KbMentionPopover = memo(function KbMentionPopover() {
       <ComposerPrimitive.Unstable_TriggerPopover
         char="@"
         adapter={bundle.adapter}
-        className="aui-composer-trigger-popover bg-popover text-popover-foreground absolute bottom-full left-0 z-50 mb-4 w-72 max-h-68 overflow-y-auto rounded-xl border bg-background px-1 shadow-lg flex flex-col gap-0.5 pb-1"
+        className="aui-composer-trigger-popover bg-popover text-popover-foreground absolute bottom-full left-0 z-50 mb-4 w-72 max-h-72 overflow-y-auto rounded-xl border bg-background px-1 shadow-lg flex flex-col gap-0.5 pb-1"
       >
         <PopoverOpenWatcher onOpen={refetch} />
         {/* Directive must always be mounted so the popover can open when @ is typed */}
