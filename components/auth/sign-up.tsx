@@ -69,9 +69,11 @@ export function SignUp({ className, socialLayout, socialPosition = "bottom" }: S
   const [confirmPassword, setConfirmPassword] = useState("");
 
   const { mutate: signUpEmail, isPending: signUpEmailPending } = useSignUpEmail(authClient, {
-    onError: () => {
+    onError: (error) => {
       setPassword("");
       setConfirmPassword("");
+      const message = error?.error?.message || error?.message || "Sign-up failed";
+      toast.error(message);
       resetFetchOptions();
     },
     onSuccess: (_data, { email }) => {

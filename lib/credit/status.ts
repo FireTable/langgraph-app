@@ -13,6 +13,14 @@ export type CreditStatus = {
   resetAt: string;
   unlimited: boolean;
   roleName: string;
+  todayCredits?: number;
+  todayInputTokens?: number;
+  todayOutputTokens?: number;
+  todayTokens?: number;
+  totalCredits?: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  totalTokens?: number;
 };
 
 const CACHE_TTL_MS = 1_000;

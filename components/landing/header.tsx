@@ -38,12 +38,6 @@ export const Header: FC<HeaderProps> = ({ signedIn }) => (
         aria-label={`${APP_NAME} — home`}
         className="text-foreground/90 hover:text-foreground flex items-center gap-2 text-sm font-semibold tracking-tight transition-colors"
       >
-        {/* <span
-          aria-hidden
-          className="bg-foreground/90 inline-flex size-5 items-center justify-center rounded-md text-[11px] font-bold text-background"
-        >
-          L
-        </span> */}
         {APP_NAME}
       </Link>
 

@@ -58,14 +58,8 @@ export function SignIn({ className, socialLayout, socialPosition = "bottom" }: S
     onError: (error, { email }) => {
       setPassword("");
 
-      // ponytail: belt-and-suspenders — ErrorToaster (mutationCache hook)
-      // should already toast this, but it sometimes doesn't fire when the
-      // mutation has its own onError in react-query v5. Surface the message
-      // here too so the user always sees WHY the signin failed (banned,
-      // wrong password, etc.). EMAIL_NOT_VERIFIED is special-cased below
-      // to redirect instead of toast.
       if (error.error?.code !== "EMAIL_NOT_VERIFIED") {
-        const message = error.error?.message || error.message || "Sign-in failed";
+        const message = error.error?.message || error.message || "Invalid email or password";
         toast.error(message);
       }
 

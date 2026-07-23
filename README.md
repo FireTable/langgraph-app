@@ -1,6 +1,12 @@
-# LangGraph App
+<p align="center">
+  <img src="public/logo.png" width="160" alt="LangGraph App Logo" />
+</p>
 
-A self-hostable chat app (this repo: `langgraph-app`) that streams tokens from a [LangGraph](https://langchain-ai.github.io/langgraphjs/) `StateGraph` agent into an [assistant-ui](https://github.com/assistant-ui/assistant-ui) React thread, with persistent threads and checkpointed conversations stored in Postgres.
+<h1 align="center">LangGraph App</h1>
+
+<p align="center">
+  A self-hostable chat app (this repo: <code>langgraph-app</code>) that streams tokens from a <a href="https://langchain-ai.github.io/langgraphjs/">LangGraph</a> <code>StateGraph</code> agent into an <a href="https://github.com/assistant-ui/assistant-ui">assistant-ui</a> React thread, with persistent threads and checkpointed conversations stored in Postgres.
+</p>
 
 ## Features
 

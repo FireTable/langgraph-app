@@ -3,90 +3,196 @@
 import { useEffect, useState } from "react";
 import { Infinity as InfinityIcon } from "lucide-react";
 
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent } from "@/components/ui/card";
 import { creditTierClass, creditTierFor } from "@/components/credit/credit-progress";
 import { loadCreditStatus, peekCachedStatus, type CreditStatus } from "@/lib/credit/status";
 
-// ponytail: 4-card stat grid + thin progress bar, rendered as a
-// standalone section on the settings/credit page (above call
-// history, NOT nested inside it). Same /api/credit/status source
-// as the UserButton slot — shared cache in lib/credit/status.ts
-// means the two surfaces share a network round-trip when both
-// are mounted.
-//
-// Limited accounts: 4 stat cards in a 1/2/4 column grid + a thin
-// progress bar. Admin (unlimited) accounts render a single
-// full-width card so the row doesn't look broken.
 function formatCredits(n: number): string {
   return Number.isInteger(n) ? n.toLocaleString() : n.toFixed(2);
 }
 
 function formatHours(h: number): string {
-  return h === 1 ? "1 hour" : `${h} hours`;
+  return h === 1 ? "1h" : `${h}h`;
 }
 
-type StatCardProps = {
-  label: string;
-  value: string;
-  hint?: string;
-};
+function WindowQuotaCard({ status }: { status: CreditStatus }) {
+  const { used, limit, windowHours, unlimited } = status;
 
-function StatCard({ label, value, hint }: StatCardProps) {
+  if (unlimited || limit == null || windowHours == null) {
+    return (
+      <Card className="bg-transparent py-3 flex flex-col justify-between">
+        <CardContent className="flex flex-col gap-1.5 px-3">
+          <div className="flex items-center justify-between">
+            <div className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+              Window Quota
+            </div>
+            <span className="text-muted-foreground/70 font-mono text-[10px]">Unmetered</span>
+          </div>
+
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-foreground text-lg font-semibold tabular-nums">Unlimited</span>
+            <span className="text-muted-foreground text-[11px]">credits</span>
+          </div>
+
+          <div className="mt-1 flex flex-col gap-1">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-primary/20 flex">
+              <div className="w-full bg-primary h-full" />
+            </div>
+            <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+              <div className="flex items-center gap-1">
+                <span className="size-1.5 rounded-full bg-primary inline-block shrink-0" />
+                <span>Status: Active</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span>No cap</span>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const remaining = Math.max(0, limit - used);
+  const pct = Math.min(100, Math.round((used / limit) * 100));
+  const tier = creditTierFor(pct);
+
   return (
-    <Card className="bg-transparent py-3">
-      <CardContent className="flex flex-col gap-1 px-3">
-        <div className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
-          {label}
+    <Card className="bg-transparent py-3 flex flex-col justify-between">
+      <CardContent className="flex flex-col gap-1.5 px-3">
+        <div className="flex items-center justify-between">
+          <div className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+            Window Quota
+          </div>
+          <span className="text-muted-foreground/70 font-mono text-[10px]">
+            {formatHours(windowHours)} rolling
+          </span>
         </div>
+
         <div className="flex items-baseline gap-1.5">
-          <span className="text-foreground text-lg font-semibold tabular-nums">{value}</span>
-          {hint ? <span className="text-muted-foreground text-[11px]">{hint}</span> : null}
+          <span className="text-foreground text-lg font-semibold tabular-nums">
+            {formatCredits(remaining)}
+          </span>
+          <span className="text-muted-foreground text-[11px]">remaining</span>
+        </div>
+
+        <div className="mt-1 flex flex-col gap-1">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="bg-muted-foreground/15 h-2 w-full overflow-hidden rounded-full cursor-pointer flex">
+                  <div
+                    className={`h-full rounded-full transition-all ${creditTierClass(tier)}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs font-mono flex flex-col gap-0.5">
+                <div>
+                  used: {formatCredits(used)} ({pct}%)
+                </div>
+                <div>limit: {formatCredits(limit)} credits</div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+            <div className="flex items-center gap-1">
+              <span className="size-1.5 rounded-full bg-primary inline-block shrink-0" />
+              <span>
+                Used: {formatCredits(used)} ({pct}%)
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span>Limit: {formatCredits(limit)}</span>
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function LimitedView({ status }: { status: CreditStatus }) {
-  const { used, limit, windowHours } = status;
-  if (limit == null || windowHours == null) return null;
-  const remaining = Math.max(0, limit - used);
-  const pct = Math.min(100, Math.round((used / limit) * 100));
-  const tier = creditTierFor(pct);
+function UsageStatCard({
+  title,
+  credits,
+  inputTokens,
+  outputTokens,
+}: {
+  title: string;
+  credits: number;
+  inputTokens: number;
+  outputTokens: number;
+}) {
+  const totalTokens = inputTokens + outputTokens;
+  const inputPct = totalTokens > 0 ? (inputTokens / totalTokens) * 100 : 0;
+  const outputPct = totalTokens > 0 ? 100 - inputPct : 0;
 
   return (
-    <>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Used" value={formatCredits(used)} hint="credits" />
-        <StatCard label="Remaining" value={formatCredits(remaining)} hint="credits" />
-        <StatCard label="Used Percent" value={`${pct}%`} />
-        <StatCard label="Window" value={formatHours(windowHours)} hint="rolling" />
-      </div>
-      <div
-        className="bg-muted-foreground/15 relative mt-3 h-1.5 overflow-hidden rounded-full"
-        role="progressbar"
-        aria-valuenow={pct}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={`${pct}% of ${formatCredits(limit)} credits used in the last ${formatHours(windowHours)}`}
-      >
-        <div
-          className={`h-full rounded-full transition-all ${creditTierClass(tier)}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </>
-  );
-}
+    <Card className="bg-transparent py-3 flex flex-col justify-between">
+      <CardContent className="flex flex-col gap-1.5 px-3">
+        <div className="flex items-center justify-between">
+          <div className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+            {title}
+          </div>
+          <span className="text-muted-foreground/70 font-mono text-[10px]">
+            {totalTokens.toLocaleString()} tok
+          </span>
+        </div>
 
-function UnlimitedView() {
-  return (
-    <Card className="bg-transparent py-3">
-      <CardContent className="flex items-center gap-3 px-3">
-        <InfinityIcon className="text-muted-foreground size-5" aria-hidden />
-        <div className="flex flex-col">
-          <div className="text-sm font-medium">No cap on this account</div>
-          <div className="text-muted-foreground text-xs">All calls flow through unmetered.</div>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-foreground text-lg font-semibold tabular-nums">
+            {credits.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
+          </span>
+          <span className="text-muted-foreground text-[11px]">credit</span>
+        </div>
+
+        <div className="mt-1 flex flex-col gap-1">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted flex cursor-pointer">
+                  {totalTokens > 0 ? (
+                    <>
+                      <div
+                        style={{ width: `${inputPct}%` }}
+                        className="bg-primary h-full transition-all duration-300"
+                      />
+                      <div
+                        style={{ width: `${outputPct}%` }}
+                        className="bg-emerald-500/80 h-full transition-all duration-300"
+                      />
+                    </>
+                  ) : (
+                    <div className="w-full bg-muted-foreground/15 h-full" />
+                  )}
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs font-mono flex flex-col gap-0.5">
+                <div>
+                  input: {inputTokens.toLocaleString()} tok ({inputPct.toFixed(1)}%)
+                </div>
+                <div>
+                  output: {outputTokens.toLocaleString()} tok ({outputPct.toFixed(1)}%)
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+            <div className="flex items-center gap-1">
+              <span className="size-1.5 rounded-full bg-primary inline-block shrink-0" />
+              <span>In: {inputTokens.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="size-1.5 rounded-full bg-emerald-500/80 inline-block shrink-0" />
+              <span>Out: {outputTokens.toLocaleString()}</span>
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -114,8 +220,20 @@ export function CreditSummaryCard(): React.JSX.Element | null {
   if (!status) return null;
 
   return (
-    <div className="flex flex-col gap-3">
-      {status.unlimited ? <UnlimitedView /> : <LimitedView status={status} />}
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <WindowQuotaCard status={status} />
+      <UsageStatCard
+        title="Today's Usage"
+        credits={status.todayCredits ?? 0}
+        inputTokens={status.todayInputTokens ?? 0}
+        outputTokens={status.todayOutputTokens ?? 0}
+      />
+      <UsageStatCard
+        title="Total Usage"
+        credits={status.totalCredits ?? 0}
+        inputTokens={status.totalInputTokens ?? 0}
+        outputTokens={status.totalOutputTokens ?? 0}
+      />
     </div>
   );
 }

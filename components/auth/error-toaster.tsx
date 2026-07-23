@@ -1,5 +1,4 @@
-import { authMutationKeys, authQueryKeys } from "@better-auth-ui/core";
-import { matchMutation, matchQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import type { BetterFetchError } from "better-auth/react";
 import { useEffect } from "react";
 import { toast } from "sonner";
@@ -14,11 +13,10 @@ export function ErrorToaster() {
     queryCache.config.onError = (error, query) => {
       previousQueryOnError?.(error, query);
 
-      if (!matchQuery({ queryKey: authQueryKeys.all }, query)) return;
-
       const err = error as BetterFetchError;
       if (err?.error?.code === "EMAIL_NOT_VERIFIED") return;
-      if (err?.error) toast.error(err.error.message);
+      const message = err?.error?.message || err?.message;
+      if (message) toast.error(message);
     };
 
     const mutationCache = queryClient.getMutationCache();
@@ -27,13 +25,11 @@ export function ErrorToaster() {
     mutationCache.config.onError = (error, variables, onMutateResult, mutation, context) => {
       previousMutationOnError?.(error, variables, onMutateResult, mutation, context);
 
-      if (!matchMutation({ mutationKey: authMutationKeys.all }, mutation)) {
-        return;
-      }
-
       const err = error as BetterFetchError;
-      if (err.error?.code === "EMAIL_NOT_VERIFIED") return;
-      toast.error(err.error?.message || err.message);
+      if (err?.error?.code === "EMAIL_NOT_VERIFIED") return;
+      const message =
+        err?.error?.message || err?.message || (typeof error === "string" ? error : null);
+      if (message) toast.error(message);
     };
 
     return () => {

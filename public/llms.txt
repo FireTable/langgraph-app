@@ -1,0 +1,20 @@
+# LangGraph App
+
+> Self-hostable chat application streaming LangGraph StateGraph agents into an assistant-ui thread, with persistent threads in Postgres, per-LLM-call credit quotas, Knowledge Base (Hybrid + GraphRAG), cross-conversation memory, and observability waterfall.
+
+## Overview
+LangGraph App provides an enterprise-ready, open-source AI agent platform built with Next.js, LangGraph, Drizzle ORM, and PostgreSQL (pgvector). It features dual-graph background execution, real-time token streaming, tool composition, and multi-model provider management.
+
+## Core Features
+- **LangGraph StateGraph Engine**: Stream agent output, execution states, tool calls, and subgraph checkpoints.
+- **Knowledge Base (KB v3)**: Hybrid vector & keyword search (pgvector + BM25) coupled with GraphRAG entity-relationship search.
+- **Credit Quota & Metering**: Granular per-user, per-role, and per-model credit limits with real-time token usage tracking.
+- **Cross-Conversation Memory**: Persistent profile memory and automated thread summarization.
+- **Observability Waterfall**: OpenTelemetry-style trace visualization for every LLM invocation and tool step.
+- **Multi-Modal R2 Attachments**: Direct-to-storage presigned uploads for PDFs, images, and text files with in-memory extraction.
+- **Admin Management Console**: Manage providers, API keys, models, user roles, and ban status with live token statistics.
+
+## Links & API Contracts
+- [Full LLM Specification](/llms-full.txt): Complete technical architecture, database schemas, and API documentation.
+- [GitHub Repository](https://github.com/FireTable/langgraph-app): Source code, setup instructions, and issue tracker.
+- [Public Site](https://ai.firetable.tech): Live demo and administration interface.

@@ -1,0 +1,94 @@
+# LangGraph App — Full Technical Documentation
+
+> Complete architecture, API specification, database schemas, Knowledge Base engine, and deployment guide.
+
+---
+
+## 1. System Architecture
+
+LangGraph App is a full-stack Next.js 15 (App Router) application integrating LangGraph for agent orchestration and Better Auth for authentication.
+
+- **Frontend**: Next.js 15, React 19, TailwindCSS, `@assistant-ui/react`, Radix UI, Lucide icons.
+- **Backend / Agent Engine**: `@langchain/langgraph`, `@langchain/openai`, custom tool registry, dual-graph architecture (Foreground streaming graph + Background async subgraphs).
+- **Database & Storage**: PostgreSQL with `pgvector` extension for vector embeddings, Drizzle ORM, S3/Cloudflare R2 for object storage.
+- **Observability**: Custom span collector, trace waterfall UI, and memory profile inspectability.
+
+---
+
+## 2. API Specification
+
+### Authentication & User Management
+- `POST /api/auth/[...all]`: Better Auth endpoints (email/password, Web3 wallet auth, session management).
+- `GET /api/admin/users`: List all users with role snapshots, avatar images, and token/credit usage.
+- `PATCH /api/admin/users/[id]`: Update user role or toggle ban status (revokes active sessions immediately).
+- `DELETE /api/admin/users/[id]`: Delete user and cascade threads, checkpoints, memory profiles, and attachments.
+
+### Threads & Assistant Streaming
+- `GET /api/threads`: List threads for current authenticated user.
+- `POST /api/threads`: Create a new thread.
+- `GET /api/threads/[id]`: Fetch thread message history.
+- `DELETE /api/threads/[id]`: Delete thread and associated checkpointer state.
+- `POST /api/threads/[id]/stream`: Stream assistant response via Server-Sent Events (SSE).
+
+### Knowledge Base (KB v3)
+- `GET /api/kb/folders`: List Knowledge Base folders and documents.
+- `POST /api/kb/folders`: Create a new Knowledge Base folder.
+- `DELETE /api/kb/folders/[id]`: Delete folder and cascade inner documents, vector chunks, and entity graph triples.
+- `POST /api/kb/documents`: Upload document to Knowledge Base folder.
+- `POST /api/kb/search`: Perform Hybrid (Vector + Keyword) & GraphRAG (Entity-Relationship) search.
+
+### Credit & Quotas
+- `GET /api/credit/status`: Fetch current user's credit usage, window limit, and reset timestamp.
+- `GET /api/credit/history`: Paginated LLM invocation log with token counts and calculated credits.
+
+---
+
+## 3. Knowledge Base & Search Engine
+
+The Knowledge Base uses a multi-stage retrieval architecture:
+
+1. **Hybrid Dense/Sparse Search**:
+   - Dense vector similarity via `pgvector` (`cosine` distance over 1536d / 1024d embeddings).
+   - Sparse keyword matching over full-text tsvector indexes.
+2. **GraphRAG Entity Expansion**:
+   - Automatic entity & relationship extraction during document processing.
+   - Graph leg traversal connecting related entities to retrieve multi-hop context.
+3. **Reciprocal Rank Fusion (RRF)**:
+   - Combines vector, keyword, and entity graph rankings into a unified relevance score.
+
+---
+
+## 4. Credit & Quota System
+
+- **Calculation**: Credits are computed per LLM call using model-specific input/output pricing (`inputPer1k`, `outputPer1k`).
+- **Enforcement**: Checked before LLM invocation (`checkCredit`). If window usage exceeds role limit, `CreditExceededError` halts execution gracefully.
+- **Admin Quotas**: Roles can have custom `creditLimit` (integers) and `windowHours` (e.g. 24h rolling window). Admin role carries `creditLimit = null` (unlimited).
+
+---
+
+## 5. Deployment Guide
+
+### Prerequisites
+- Node.js >= 20.x
+- PostgreSQL 16+ with `pgvector` extension enabled
+- S3 or Cloudflare R2 bucket for file attachments
+
+### Environment Variables
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/langgraph_db
+BETTER_AUTH_SECRET=your-32-byte-secret
+NEXT_PUBLIC_APP_URL=https://ai.firetable.tech
+OPENAI_API_KEY=sk-...
+```
+
+### Migration & Build Commands
+```bash
+# Run database migrations
+pnpm db:migrate
+
+# Build production bundle
+pnpm build
+
+# Start production server
+pnpm start
+```

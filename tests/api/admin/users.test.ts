@@ -19,6 +19,7 @@ const mockDeleteMemoryDoc = vi.mocked(deleteMemoryDoc);
 
 import { db } from "@/db/client";
 import { role, session, user } from "@/lib/auth/schema";
+import { creditUsageLog } from "@/lib/credit/schema";
 import { threads } from "@/lib/threads/schema";
 import { setCurrentUser } from "@/tests/helpers/session";
 import { TEST_USER } from "@/tests/helpers/auth";
@@ -61,6 +62,7 @@ async function seedRoles() {
 beforeEach(async () => {
   await seedRoles();
   await db.delete(threads);
+  await db.delete(creditUsageLog);
   mockCheckpointDelete.mockClear();
   mockDeleteMemoryDoc.mockClear();
   setCurrentUser(ADMIN);
@@ -102,6 +104,59 @@ describe("GET /api/admin/users", () => {
     const alice = body.users.find((u: { id: string }) => u.id === "alice");
     expect(alice.roleName).toBe("User");
     expect(alice.banned).toBe(false);
+  });
+
+  it("returns avatar image and credit/token usage statistics", async () => {
+    const today = new Date();
+    const yesterday = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
+    await db.insert(user).values({
+      id: "bob",
+      email: "bob@test.local",
+      name: "Bob",
+      image: "https://example.com/avatar.png",
+      roleId: "user",
+    });
+
+    await db.insert(creditUsageLog).values([
+      {
+        id: "log-1",
+        userId: "bob",
+        providerId: "openai",
+        modelName: "gpt-4o-mini",
+        agentName: "chat",
+        inputTokens: 100,
+        outputTokens: 50,
+        credits: "1.5000",
+        status: "success",
+        createdAt: today,
+      },
+      {
+        id: "log-2",
+        userId: "bob",
+        providerId: "openai",
+        modelName: "gpt-4o-mini",
+        agentName: "chat",
+        inputTokens: 200,
+        outputTokens: 100,
+        credits: "3.0000",
+        status: "success",
+        createdAt: yesterday,
+      },
+    ]);
+
+    const res = await GET(new Request("http://localhost"), ctx);
+    const body = await res.json();
+    const bob = body.users.find((u: { id: string }) => u.id === "bob");
+    expect(bob.image).toBe("https://example.com/avatar.png");
+    expect(bob.todayCredits).toBe(1.5);
+    expect(bob.todayInputTokens).toBe(100);
+    expect(bob.todayOutputTokens).toBe(50);
+    expect(bob.todayTokens).toBe(150);
+    expect(bob.totalCredits).toBe(4.5);
+    expect(bob.totalInputTokens).toBe(300);
+    expect(bob.totalOutputTokens).toBe(150);
+    expect(bob.totalTokens).toBe(450);
   });
 });
 

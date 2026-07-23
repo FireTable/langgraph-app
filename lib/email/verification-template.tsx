@@ -45,10 +45,10 @@ export const VerificationEmail = ({
             <Section className="bg-bg border-stroke rounded-[8px] border">
               <Section className="mobile:px-6! px-10 pt-16">
                 <Img
-                  src={`${baseUrl}/email/collage-image-1.png`}
-                  alt=""
-                  width={148}
-                  height={111}
+                  src={`${baseUrl}/email/logo.png`}
+                  alt="LangGraph App Logo"
+                  width={120}
+                  height={120}
                   className="block border-none"
                 />
               </Section>

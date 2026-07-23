@@ -33,6 +33,9 @@ export const metadata: Metadata = {
   publisher: "FireTable",
   alternates: {
     canonical: "/",
+    types: {
+      "text/markdown": "/llms.txt",
+    },
   },
   robots: {
     index: true,
@@ -43,6 +46,13 @@ export const metadata: Metadata = {
       "max-image-preview": "large",
       "max-snippet": -1,
     },
+  },
+  icons: {
+    icon: [
+      { url: "/icon.png", type: "image/png" },
+      { url: "/logo.png", type: "image/png" },
+    ],
+    apple: "/logo.png",
   },
   openGraph: {
     title: APP_NAME,
@@ -71,6 +81,8 @@ const jsonLd = {
   name: APP_NAME,
   description: DESCRIPTION,
   url: SITE_URL,
+  image: `${SITE_URL}/logo.png`,
+  logo: `${SITE_URL}/logo.png`,
   applicationCategory: "DeveloperApplication",
   operatingSystem: "Any",
   offers: {
@@ -78,7 +90,7 @@ const jsonLd = {
     price: "0",
     priceCurrency: "USD",
   },
-  author: { "@type": "Organization", name: "FireTable" },
+  author: { "@type": "Organization", name: "FireTable", logo: `${SITE_URL}/logo.png` },
   license: "https://opensource.org/licenses/MIT",
   codeRepository: "https://github.com/FireTable/langgraph-app",
 };
