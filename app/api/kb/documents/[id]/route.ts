@@ -22,26 +22,26 @@ export const GET = withAuth<{ id: string }>(async (_req, { user, params }) => {
     return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   }
 
-  const [chunks, graphCounts] = await Promise.all([
+  const [chunks, entityCount, relationshipCount] = await Promise.all([
     doc.status === "success"
       ? findKbChunksContentByDocumentId(user.id, doc.id)
       : Promise.resolve([] as KbChunkPreview[]),
     // ponytail: parallel counts for the doc-detail badge so the
     // "Indexed" check can require entity/relationship rows in addition
-    // to embeddings (hybrid-search third leg).
+    // to embeddings (hybrid-search third leg). Two separate queries
+    // (not a leftJoin) — joining two one-to-many tables would cartesian
+    // the rows and inflate both counts.
     db
-      .select({
-        entityCount: sql<number>`count(${kbEntity.id})::int`.as("entity_count"),
-        relationshipCount: sql<number>`count(${kbRelationship.id})::int`.as("relationship_count"),
-      })
+      .select({ n: sql<number>`count(*)::int` })
       .from(kbEntity)
-      .leftJoin(kbRelationship, eq(kbEntity.documentId, kbRelationship.documentId))
       .where(and(eq(kbEntity.documentId, doc.id), eq(kbEntity.userId, user.id)))
-      .groupBy(kbEntity.documentId),
+      .then((rows) => rows[0]?.n ?? 0),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(kbRelationship)
+      .where(and(eq(kbRelationship.documentId, doc.id), eq(kbRelationship.userId, user.id)))
+      .then((rows) => rows[0]?.n ?? 0),
   ]);
-
-  const entityCount = graphCounts[0]?.entityCount ?? 0;
-  const relationshipCount = graphCounts[0]?.relationshipCount ?? 0;
 
   return NextResponse.json({
     doc: {

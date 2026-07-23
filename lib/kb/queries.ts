@@ -1496,6 +1496,16 @@ export async function deleteKbDocumentForUser(
       .where(and(eq(kbDocument.id, docId), eq(kbDocument.userId, userId)))
       .returning();
     if (row) {
+      // ponytail: drop the attachment row too — same attachmentId can't be
+      // reused for another upload (sha-keyed dedup already prevents that),
+      // so leaving it behind would just be an orphan pointer to R2. R2
+      // objects themselves stay (sha-keyed, reference-counted by future
+      // uploads with the same content — see CLAUDE.md / docs/ATTACHMENTS.md).
+      if (row.attachmentId) {
+        await tx
+          .delete(attachments)
+          .where(and(eq(attachments.id, row.attachmentId), eq(attachments.userId, userId)));
+      }
       const threadId = docId.replace(/^d-/, "");
       await tx.delete(threads).where(and(eq(threads.id, threadId), eq(threads.kind, "kb")));
     }
@@ -1512,12 +1522,19 @@ export async function deleteKbFolderForUser(
     if (options?.deleteAllDocs) {
       const docs = await tx.query.kbDocument.findMany({
         where: and(eq(kbDocument.userId, userId), eq(kbDocument.folderId, folderId)),
-        columns: { id: true },
+        columns: { id: true, attachmentId: true },
       });
 
       for (const doc of docs) {
         const threadId = doc.id.replace(/^d-/, "");
         await tx.delete(threads).where(and(eq(threads.id, threadId), eq(threads.kind, "kb")));
+        // ponytail: drop the attachment row alongside the doc — see the
+        // note in deleteKbDocumentForUser. R2 objects stay.
+        if (doc.attachmentId) {
+          await tx
+            .delete(attachments)
+            .where(and(eq(attachments.id, doc.attachmentId), eq(attachments.userId, userId)));
+        }
       }
 
       await tx

@@ -26,16 +26,35 @@ async function seedFolderRow(userId: string, id: string, name = "Folder") {
   await db.insert(kbFolder).values({ id, userId, name });
 }
 
-async function seedDocRow(userId: string, folderId: string, id: string, title = "doc.pdf") {
+async function seedDocRow(
+  userId: string,
+  folderId: string,
+  id: string,
+  title = "doc.pdf",
+  attachmentId: string | null = null,
+) {
   await db.insert(kbDocument).values({
     id,
     userId,
     folderId,
-    attachmentId: null,
+    attachmentId,
     title,
     contentType: "application/pdf",
     contentHash: `h-${id}`,
     status: "success",
+  });
+}
+
+async function seedAttachment(userId: string, id: string, r2Key: string) {
+  await db.insert(attachments).values({
+    id,
+    userId,
+    r2Key,
+    name: `${id}.pdf`,
+    contentType: "application/pdf",
+    sizeBytes: 1024,
+    status: "uploaded",
+    sha256: `sha-${id}`,
   });
 }
 
@@ -170,5 +189,26 @@ describe("DELETE /api/kb/folders/[id]", () => {
       where: eq(kbFolder.id, "f-1"),
     });
     expect(folderRow).toBeUndefined();
+  });
+
+  it("deletes attachment rows for every doc when deleteAll=true (R2 objects stay)", async () => {
+    setCurrentUser(USER_A);
+    await seedAttachment(USER_A.id, "att-1", "u/user-a/upload/sha-att-1.pdf");
+    await seedAttachment(USER_A.id, "att-2", "u/user-a/upload/sha-att-2.pdf");
+    await seedFolderRow(USER_A.id, "f-1", "Folder 1");
+    await seedDocRow(USER_A.id, "f-1", "d-1", "doc1.pdf", "att-1");
+    await seedDocRow(USER_A.id, "f-1", "d-2", "doc2.pdf", "att-2");
+
+    const req = new Request("http://localhost/api/kb/folders/f-1?deleteAll=true", {
+      method: "DELETE",
+    });
+    const res = await DELETE(req, ctxFor("f-1"));
+    expect(res.status).toBe(204);
+
+    // Attachment rows for both docs are gone (no orphan pointers).
+    const remainingAttachments = await db.query.attachments.findMany({
+      where: eq(attachments.userId, USER_A.id),
+    });
+    expect(remainingAttachments).toHaveLength(0);
   });
 });
