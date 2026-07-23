@@ -44,7 +44,8 @@ export async function prepareKBDataNode(
   if (!userId) return makeError("user not provided");
 
   const source = config?.configurable?.source ?? "chat";
-  const parentMessageId = lastHumanMessageId(state.messages);
+  const parentMessageId =
+    config?.configurable?.parent_message_id ?? lastHumanMessageId(state.messages);
   if (!parentMessageId) {
     return makeError("kbAgent prepareKBDataNode: no HumanMessage to anchor parent_message_id on");
   }

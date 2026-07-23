@@ -6,7 +6,7 @@ import { db } from "@/db/client";
 import { attachments, kbChunk, kbDocument, kbFolder, user } from "@/db/schema";
 import { setCurrentUser } from "@/tests/helpers/session";
 
-import { GET } from "@/app/api/kb/folders/[id]/route";
+import { DELETE, GET } from "@/app/api/kb/folders/[id]/route";
 
 // ponytail: GET /api/kb/folders/[id] returns the folder shape plus the
 // content + entities + status of every chunk across every doc in the
@@ -132,5 +132,43 @@ describe("GET /api/kb/folders/[id]", () => {
     const contents = body.chunks.map((c: { content: string }) => c.content).sort();
     expect(contents).toEqual(["alpha intro", "beta intro"]);
     expect(body.chunks).toHaveLength(2);
+  });
+});
+
+describe("DELETE /api/kb/folders/[id]", () => {
+  it("returns 409 NON_EMPTY when folder has docs and deleteAll is false", async () => {
+    setCurrentUser(USER_A);
+    await seedFolderRow(USER_A.id, "f-1", "Folder 1");
+    await seedDocRow(USER_A.id, "f-1", "d-1", "doc1.pdf");
+
+    const req = new Request("http://localhost/api/kb/folders/f-1", { method: "DELETE" });
+    const res = await DELETE(req, ctxFor("f-1"));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("NON_EMPTY");
+    expect(body.docCount).toBe(1);
+  });
+
+  it("deletes folder and all its documents when deleteAll=true", async () => {
+    setCurrentUser(USER_A);
+    await seedFolderRow(USER_A.id, "f-1", "Folder 1");
+    await seedDocRow(USER_A.id, "f-1", "d-1", "doc1.pdf");
+    await seedDocRow(USER_A.id, "f-1", "d-2", "doc2.pdf");
+
+    const req = new Request("http://localhost/api/kb/folders/f-1?deleteAll=true", {
+      method: "DELETE",
+    });
+    const res = await DELETE(req, ctxFor("f-1"));
+    expect(res.status).toBe(204);
+
+    const remainingDocs = await db.query.kbDocument.findMany({
+      where: eq(kbDocument.folderId, "f-1"),
+    });
+    expect(remainingDocs).toHaveLength(0);
+
+    const folderRow = await db.query.kbFolder.findFirst({
+      where: eq(kbFolder.id, "f-1"),
+    });
+    expect(folderRow).toBeUndefined();
   });
 });

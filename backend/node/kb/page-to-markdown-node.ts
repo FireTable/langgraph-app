@@ -21,7 +21,11 @@ export const ocrPageSchema = z.object({
 export async function pageToMarkdownNode(
   state: KbAgentStateShape,
 ): Promise<Partial<KbAgentStateShape>> {
-  if (state.mode === "chunksOnly") {
+  if (
+    state.mode === "chunksOnly" ||
+    state.mode === "retryFailed" ||
+    state.mode === "retryFailedChunks"
+  ) {
     return {
       pagesByDocId: state.pagesByDocId,
       processedFiles: state.processedFiles,

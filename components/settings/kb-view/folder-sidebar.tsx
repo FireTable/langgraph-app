@@ -169,9 +169,10 @@ export function FolderSidebar({
 
       <FolderDeleteDialog
         folder={deleteTarget}
-        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        onOpenChange={(o) => {
+          if (!o) setDeleteTarget(null);
+        }}
         onDeleted={() => {
-          setDeleteTarget(null);
           void onRefresh();
         }}
       />
@@ -179,9 +180,10 @@ export function FolderSidebar({
         mode="edit"
         folder={editTarget}
         open={editTarget !== null}
-        onOpenChange={(o) => !o && setEditTarget(null)}
+        onOpenChange={(o) => {
+          if (!o) setEditTarget(null);
+        }}
         onSaved={() => {
-          setEditTarget(null);
           void onRefresh();
         }}
       />
