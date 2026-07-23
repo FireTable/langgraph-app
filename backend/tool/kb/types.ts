@@ -60,9 +60,12 @@ export type ListDocumentsDoc = {
   pendingPages: number;
   totalChunks: number;
   successChunks: number;
+  embeddingPendingChunks: number;
   failedChunks: number;
   pendingChunks: number;
   parsingChunks: number;
+  entityCount: number;
+  relationshipCount: number;
 };
 
 export type ListDocumentsFolder = {

@@ -277,10 +277,22 @@ export function DocDetailDialog({
   if (!d) return null;
 
   const totalChunks = d.chunks.length;
-  const successChunks = d.chunks.filter((c) => c.status === "success").length;
+  // ponytail: successChunks now means status='success' AND hasEmbedding —
+  // a chunk with status='success' but no pgvector vector isn't queryable
+  // by hybrid search, so it shouldn't count toward "Indexed". Those land
+  // in embeddingPendingChunks instead and show as "Embedding" in the UI.
+  const successChunks = d.chunks.filter((c) => c.status === "success" && c.hasEmbedding).length;
+  const embeddingPendingChunks = d.chunks.filter(
+    (c) => c.status === "success" && !c.hasEmbedding,
+  ).length;
   const failedChunks = d.chunks.filter((c) => c.status === "failed").length;
   const pendingChunks = d.chunks.filter((c) => c.status === "pending").length;
   const parsingChunks = d.chunks.filter((c) => c.status === "parsing").length;
+  // ponytail: doc-detail gets these from the API route (parallel count
+  // query alongside the chunks fetch); the badge requires the third leg
+  // of hybrid search to be populated before showing "Indexed".
+  const entityCount = d.doc.entityCount ?? 0;
+  const relationshipCount = d.doc.relationshipCount ?? 0;
 
   // ponytail: derive page-level counts the same way chunksStatusBadge
   // does. When pages carry an explicit `status` mirror it; legacy rows
@@ -352,9 +364,12 @@ export function DocDetailDialog({
               <ChunksStatusBadge
                 totalChunks={totalChunks}
                 successChunks={successChunks}
+                embeddingPendingChunks={embeddingPendingChunks}
                 failedChunks={failedChunks}
                 pendingChunks={pendingChunks}
                 parsingChunks={parsingChunks}
+                entityCount={entityCount}
+                relationshipCount={relationshipCount}
                 docStatus={d.doc.status}
               />
               <span className="size-1 rounded-full bg-muted-foreground/30 shrink-0" aria-hidden />
@@ -363,7 +378,7 @@ export function DocDetailDialog({
                 variant="outline"
                 className="border-none bg-transparent text-muted-foreground shadow-none px-0 py-0.5 font-normal leading-none"
               >
-                <span>{mimeShortLabel(d.doc.contentType)}</span>
+                <span className="lowercase">{mimeShortLabel(d.doc.contentType)}</span>
               </Badge>
 
               {d.doc.pages &&

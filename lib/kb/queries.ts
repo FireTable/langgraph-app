@@ -293,10 +293,22 @@ export async function listKbDocumentsByFolder(
 export type KbDocumentWithAttachment = KbDocument & {
   attachmentUrl: string | null;
   totalChunks?: number;
+  // ponytail: successChunks now means "status='success' AND embedding IS NOT NULL"
+  // — the state that's actually queryable by hybrid search. Chunks that
+  // reached status='success' but are missing the embedding vector sit in
+  // embeddingPendingChunks and show as "Embedding" in the UI, not "Indexed".
   successChunks?: number;
+  embeddingPendingChunks?: number;
   failedChunks?: number;
   pendingChunks?: number;
   parsingChunks?: number;
+  // ponytail: kbEntity / kbRelationship row counts per doc. Hybrid search
+  // has three legs (BM25/tsv, pgvector/embedding, entity-tag overlap) —
+  // a doc is "Indexed" only when ALL THREE are populated. Vectors can
+  // arrive before entity/relationship extraction finishes; the UI shows
+  // "Embedding" until either count is > 0.
+  entityCount?: number;
+  relationshipCount?: number;
   totalPages?: number;
   failedPages?: number;
   pendingPages?: number;
@@ -325,9 +337,19 @@ export async function listKbDocumentsByFolderWithAttachment(
     .select({
       documentId: kbChunk.documentId,
       totalChunks: sql<number>`count(${kbChunk.id})::int`.as("total_chunks"),
-      successChunks: sql<number>`count(case when ${kbChunk.status} = 'success' then 1 end)::int`.as(
-        "success_chunks",
-      ),
+      // ponytail: successChunks = status='success' AND embedding IS NOT NULL.
+      // The status='success' flag alone doesn't mean the chunk is queryable;
+      // pgvector needs the vector. Chunks that finished the embed step but
+      // somehow ended up with a NULL vector (rare, but possible — embedder
+      // network blip, batch partial failure) land in embeddingPendingChunks.
+      successChunks:
+        sql<number>`count(case when ${kbChunk.status} = 'success' and ${kbChunk.embedding} is not null then 1 end)::int`.as(
+          "success_chunks",
+        ),
+      embeddingPendingChunks:
+        sql<number>`count(case when ${kbChunk.status} = 'success' and ${kbChunk.embedding} is null then 1 end)::int`.as(
+          "embedding_pending_chunks",
+        ),
       failedChunks: sql<number>`count(case when ${kbChunk.status} = 'failed' then 1 end)::int`.as(
         "failed_chunks",
       ),
@@ -342,15 +364,42 @@ export async function listKbDocumentsByFolderWithAttachment(
     .groupBy(kbChunk.documentId)
     .as("chunk_counts");
 
+  // ponytail: separate subquery for the entity / relationship graph counts
+  // (kb_entity + kb_relationship rows grouped by document_id). Kept apart
+  // from chunksSubquery because they live in different tables — combining
+  // them in one GROUP BY would require a UNION, which loses the join
+  // semantics we want (each subquery's null side stays null, the outer
+  // coalesce handles docs that have zero rows in either table).
+  const entitySubquery = db
+    .select({
+      documentId: kbEntity.documentId,
+      entityCount: sql<number>`count(${kbEntity.id})::int`.as("entity_count"),
+    })
+    .from(kbEntity)
+    .groupBy(kbEntity.documentId)
+    .as("entity_counts");
+
+  const relationshipSubquery = db
+    .select({
+      documentId: kbRelationship.documentId,
+      relationshipCount: sql<number>`count(${kbRelationship.id})::int`.as("relationship_count"),
+    })
+    .from(kbRelationship)
+    .groupBy(kbRelationship.documentId)
+    .as("relationship_counts");
+
   const rows = await db
     .select({
       doc: kbDocument,
       r2Key: attachments.r2Key,
       totalChunks: sql<number>`coalesce(${chunksSubquery.totalChunks}, 0)::int`,
       successChunks: sql<number>`coalesce(${chunksSubquery.successChunks}, 0)::int`,
+      embeddingPendingChunks: sql<number>`coalesce(${chunksSubquery.embeddingPendingChunks}, 0)::int`,
       failedChunks: sql<number>`coalesce(${chunksSubquery.failedChunks}, 0)::int`,
       pendingChunks: sql<number>`coalesce(${chunksSubquery.pendingChunks}, 0)::int`,
       parsingChunks: sql<number>`coalesce(${chunksSubquery.parsingChunks}, 0)::int`,
+      entityCount: sql<number>`coalesce(${entitySubquery.entityCount}, 0)::int`,
+      relationshipCount: sql<number>`coalesce(${relationshipSubquery.relationshipCount}, 0)::int`,
       totalPages: sql<number>`coalesce(jsonb_array_length(${kbDocument.pages}), 0)::int`,
       // ponytail: each page carries an explicit `status` mirror of
       // kbChunkStatusEnum written by kb-agent's pageToMarkdownNode.
@@ -375,6 +424,8 @@ export async function listKbDocumentsByFolderWithAttachment(
     .from(kbDocument)
     .leftJoin(attachments, eq(kbDocument.attachmentId, attachments.id))
     .leftJoin(chunksSubquery, eq(kbDocument.id, chunksSubquery.documentId))
+    .leftJoin(entitySubquery, eq(kbDocument.id, entitySubquery.documentId))
+    .leftJoin(relationshipSubquery, eq(kbDocument.id, relationshipSubquery.documentId))
     .where(and(eq(kbDocument.userId, userId), eq(kbDocument.folderId, folderId)))
     .orderBy(desc(kbDocument.createdAt))
     .limit(limit);
@@ -384,9 +435,12 @@ export async function listKbDocumentsByFolderWithAttachment(
     attachmentUrl: r.r2Key && base ? `${base}/${r.r2Key}` : null,
     totalChunks: r.totalChunks,
     successChunks: r.successChunks,
+    embeddingPendingChunks: r.embeddingPendingChunks,
     failedChunks: r.failedChunks,
     pendingChunks: r.pendingChunks,
     parsingChunks: r.parsingChunks,
+    entityCount: r.entityCount,
+    relationshipCount: r.relationshipCount,
     totalPages: r.totalPages,
     failedPages: r.failedPages,
     pendingPages: r.pendingPages,
@@ -513,6 +567,12 @@ export type KbChunkPreview = {
   content: string;
   status: "pending" | "parsing" | "success" | "failed";
   errorMessage: string | null;
+  // ponytail: whether pgvector has the vector for this chunk. status='success'
+  // doesn't imply this — embedder can drop a vector (network blip, batch
+  // partial failure). The doc-detail badge uses this to surface the
+  // "Embedding" intermediate state, same as the list endpoint's
+  // embeddingPendingChunks count.
+  hasEmbedding: boolean;
   entities: Array<{ name: string; type: string; description: string }>;
   relationships: Array<{ source: string; target: string; relation: string; description: string }>;
   themes: string[];
@@ -529,6 +589,7 @@ export async function findKbChunksContentByDocumentId(
       content: kbChunk.content,
       status: kbChunk.status,
       errorMessage: kbChunk.errorMessage,
+      hasEmbedding: sql<boolean>`${kbChunk.embedding} is not null`.as("has_embedding"),
     })
     .from(kbChunk)
     .innerJoin(kbDocument, eq(kbChunk.documentId, kbDocument.id))
@@ -628,6 +689,7 @@ export async function findKbChunksContentByDocumentId(
     content: c.content,
     status: c.status,
     errorMessage: c.errorMessage,
+    hasEmbedding: c.hasEmbedding,
     entities: entitiesByChunk.get(c.id) ?? [],
     relationships: relsByChunk.get(c.id) ?? [],
     themes: themesByChunk.get(c.id) ?? [],
@@ -706,6 +768,7 @@ export async function findKbChunksByFolderId(
       content: kbChunk.content,
       status: kbChunk.status,
       errorMessage: kbChunk.errorMessage,
+      hasEmbedding: sql<boolean>`${kbChunk.embedding} is not null`.as("has_embedding"),
     })
     .from(kbChunk)
     .innerJoin(kbDocument, eq(kbChunk.documentId, kbDocument.id))
@@ -803,6 +866,7 @@ export async function findKbChunksByFolderId(
     content: c.content,
     status: c.status,
     errorMessage: c.errorMessage,
+    hasEmbedding: c.hasEmbedding,
     entities: entitiesByChunk.get(c.id) ?? [],
     relationships: relsByChunk.get(c.id) ?? [],
     themes: themesByChunk.get(c.id) ?? [],
@@ -1442,12 +1506,31 @@ export async function deleteKbDocumentForUser(
 export async function deleteKbFolderForUser(
   userId: string,
   folderId: string,
+  options?: { deleteAllDocs?: boolean },
 ): Promise<KbFolder | null> {
-  const [row] = await db
-    .delete(kbFolder)
-    .where(and(eq(kbFolder.id, folderId), eq(kbFolder.userId, userId)))
-    .returning();
-  return row ?? null;
+  return db.transaction(async (tx) => {
+    if (options?.deleteAllDocs) {
+      const docs = await tx.query.kbDocument.findMany({
+        where: and(eq(kbDocument.userId, userId), eq(kbDocument.folderId, folderId)),
+        columns: { id: true },
+      });
+
+      for (const doc of docs) {
+        const threadId = doc.id.replace(/^d-/, "");
+        await tx.delete(threads).where(and(eq(threads.id, threadId), eq(threads.kind, "kb")));
+      }
+
+      await tx
+        .delete(kbDocument)
+        .where(and(eq(kbDocument.userId, userId), eq(kbDocument.folderId, folderId)));
+    }
+
+    const [row] = await tx
+      .delete(kbFolder)
+      .where(and(eq(kbFolder.id, folderId), eq(kbFolder.userId, userId)))
+      .returning();
+    return row ?? null;
+  });
 }
 
 export async function updateKbFolderNameForUser(

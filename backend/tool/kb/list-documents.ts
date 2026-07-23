@@ -58,9 +58,12 @@ function toListDoc(row: {
   pendingPages?: number;
   totalChunks?: number;
   successChunks?: number;
+  embeddingPendingChunks?: number;
   failedChunks?: number;
   pendingChunks?: number;
   parsingChunks?: number;
+  entityCount?: number;
+  relationshipCount?: number;
 }): ListDocumentsDoc {
   const totalPages = row.totalPages ?? 0;
   const pending = row.pendingPages ?? 0;
@@ -80,9 +83,12 @@ function toListDoc(row: {
     pendingPages: pending,
     totalChunks: row.totalChunks ?? 0,
     successChunks: row.successChunks ?? 0,
+    embeddingPendingChunks: row.embeddingPendingChunks ?? 0,
     failedChunks: row.failedChunks ?? 0,
     pendingChunks: row.pendingChunks ?? 0,
     parsingChunks: row.parsingChunks ?? 0,
+    entityCount: row.entityCount ?? 0,
+    relationshipCount: row.relationshipCount ?? 0,
   };
 }
 

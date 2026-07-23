@@ -40,9 +40,12 @@ function makeDoc(folderId: string, i: number): ListDocumentsDoc {
     pendingPages: 0,
     totalChunks: 24,
     successChunks: 24,
+    embeddingPendingChunks: 0,
     failedChunks: 0,
     pendingChunks: 0,
     parsingChunks: 0,
+    entityCount: 12,
+    relationshipCount: 5,
   };
 }
 

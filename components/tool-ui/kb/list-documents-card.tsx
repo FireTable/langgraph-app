@@ -127,9 +127,12 @@ function DocRow({ d }: { d: ListDocumentsFolder["documents"][number] }) {
         <ChunksStatusBadge
           totalChunks={d.totalChunks}
           successChunks={d.successChunks}
+          embeddingPendingChunks={d.embeddingPendingChunks}
           failedChunks={d.failedChunks}
           pendingChunks={d.pendingChunks}
           parsingChunks={d.parsingChunks}
+          entityCount={d.entityCount}
+          relationshipCount={d.relationshipCount}
           docStatus={d.status}
           className="text-[10px]"
         />

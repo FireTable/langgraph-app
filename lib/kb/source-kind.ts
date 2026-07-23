@@ -70,7 +70,7 @@ export function mimeShortLabel(mimeType: string): string {
   const office = OFFICE_LABEL[mt];
   if (office) return office;
   const subtype = mt.split("/")[1] ?? "";
-  return TYPE_LABEL[subtype] ?? (subtype.toUpperCase() || mimeType);
+  return TYPE_LABEL[subtype] ?? mimeType;
 }
 
 // ponytail: turn `R2_ALLOWED_CONTENT_TYPES` (comma-separated mimes)

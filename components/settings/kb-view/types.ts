@@ -20,9 +20,12 @@ export type KbDocument = {
   updatedAt: string;
   totalChunks?: number;
   successChunks?: number;
+  embeddingPendingChunks?: number;
   failedChunks?: number;
   pendingChunks?: number;
   parsingChunks?: number;
+  entityCount?: number;
+  relationshipCount?: number;
   totalPages?: number;
   failedPages?: number;
   pendingPages?: number;
@@ -43,6 +46,10 @@ export type KbChunkPreviewLocal = {
   themes: string[];
   status: "pending" | "parsing" | "success" | "failed";
   errorMessage: string | null;
+  // ponytail: mirrors lib/kb/queries.ts KbChunkPreview. Used by the
+  // doc-detail badge to detect status='success' chunks that haven't
+  // received a pgvector embedding yet ("Embedding" intermediate state).
+  hasEmbedding: boolean;
 };
 
 export type KbDocDetail = {

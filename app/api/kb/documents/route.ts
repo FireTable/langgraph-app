@@ -31,9 +31,12 @@ type GroupedDoc = {
   updatedAt: string;
   totalChunks?: number;
   successChunks?: number;
+  embeddingPendingChunks?: number;
   failedChunks?: number;
   pendingChunks?: number;
   parsingChunks?: number;
+  entityCount?: number;
+  relationshipCount?: number;
   totalPages?: number;
   failedPages?: number;
   pendingPages?: number;
@@ -98,9 +101,12 @@ export const GET = withAuth(async (req: Request, { user }) => {
             updatedAt: d.updatedAt.toISOString(),
             totalChunks: d.totalChunks,
             successChunks: d.successChunks,
+            embeddingPendingChunks: d.embeddingPendingChunks,
             failedChunks: d.failedChunks,
             pendingChunks: d.pendingChunks,
             parsingChunks: d.parsingChunks,
+            entityCount: d.entityCount,
+            relationshipCount: d.relationshipCount,
             totalPages: d.totalPages,
             failedPages: d.failedPages,
             pendingPages: d.pendingPages,

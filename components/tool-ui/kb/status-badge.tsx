@@ -104,17 +104,32 @@ export function DocStatusBadge({
 export function ChunksStatusBadge({
   totalChunks,
   successChunks,
+  embeddingPendingChunks,
   failedChunks,
   pendingChunks,
   parsingChunks,
+  entityCount,
+  relationshipCount,
   docStatus,
   className,
 }: {
   totalChunks?: number;
   successChunks?: number;
+  // ponytail: chunks whose status='success' but embedding IS NULL — OCR
+  // is done but pgvector hasn't received the vector yet. Distinct from
+  // pending/parsing (chunks not yet OCR'd). Distinct from failed.
+  embeddingPendingChunks?: number;
   failedChunks?: number;
   pendingChunks?: number;
   parsingChunks?: number;
+  // ponytail: hybrid-search has three legs (BM25/tsv, pgvector/embedding,
+  // entity-tag overlap). "Indexed" requires at least one of entity or
+  // relationship rows to exist — otherwise the doc is queryable by vector
+  // but the entity-leg of hybrid search has nothing to score against.
+  // entity/relationship counts drive the third intermediate "Embedding"
+  // state (chunks all vectored but extraction still running).
+  entityCount?: number;
+  relationshipCount?: number;
   docStatus: KbStatus;
   className?: string;
 }) {
@@ -171,10 +186,21 @@ export function ChunksStatusBadge({
         </Badge>
       );
     } else {
-      const terminal = success + failed;
-      const isCompleted = success === total;
+      const embeddingPending = embeddingPendingChunks ?? 0;
+      const entities = entityCount ?? 0;
+      const relationships = relationshipCount ?? 0;
+      const hasGraph = entities > 0 || relationships > 0;
+      // ponytail: terminal = chunks that finished OCR (success + embedPending)
+      // or hit a terminal failure. "Indexed" needs ALL THREE pipeline
+      // outputs ready: vector + entity/relationship. If chunks all have
+      // vectors but no entities/relationships yet, that's still "Embedding"
+      // — the entity-leg of hybrid search has nothing to score against.
+      const terminal = success + failed + embeddingPending;
+      const isCompleted = success === total && hasGraph;
       const isFailed = failed > 0 && terminal === total;
-      const isIndexing = !isCompleted && !isFailed;
+      const hasInflightChunks = pending > 0 || parsing > 0;
+      const hasInflightExtraction = !hasGraph; // vectors done but no graph rows yet
+      const isInProgress = !isCompleted && !isFailed;
 
       let variant: "success" | "destructive" | "muted" = "muted";
       if (isFailed) {
@@ -186,9 +212,31 @@ export function ChunksStatusBadge({
       let label = "Indexed";
       let iconElement = <CheckCircle2 className="size-3" />;
 
-      if (isIndexing) {
-        label = `Indexing (${success}/${total})`;
-        tooltipText = `Indexing Status: ${success} chunks embedded, ${parsing} chunks in LLM extraction, ${pending} chunks queued, ${failed} chunks failed`;
+      if (isInProgress) {
+        // ponytail: three in-flight lanes collapse into two visible
+        // labels — "Extracting" (chunks still being created by OCR /
+        // chunk split) vs "Embedding" (chunks done but vector or
+        // graph-extract still running). The X/Y numerator is the count
+        // of chunks that have reached the *current lane's entry point*,
+        // not just the fully-embedded ones — otherwise the label/total
+        // don't sum to `total` and the user can't reconcile the badge
+        // with the tooltip breakdown.
+        if (hasInflightChunks) {
+          // OCR / chunk-split in flight. X = OCR'd chunks = success +
+          // embeddingPending. Y = total. Sums match the tooltip.
+          const ocrDone = success + embeddingPending;
+          label = `Extracting (${ocrDone}/${total})`;
+          tooltipText = `Indexing Status: ${success} chunks embedded, ${embeddingPending} chunks awaiting vector, ${parsing} chunks in extraction, ${pending} chunks queued, ${failed} chunks failed`;
+        } else {
+          // OCR done; vector and/or graph extraction in flight. X =
+          // embedded chunks. Y = total.
+          label = `Embedding (${success}/${total})`;
+          const vecBit = `${success} chunks embedded${embeddingPending > 0 ? `, ${embeddingPending} awaiting vector` : ""}`;
+          const extBit = hasInflightExtraction
+            ? `entity/relationship extraction in progress (${entities} entities, ${relationships} relationships so far)`
+            : "";
+          tooltipText = `Indexing Status: ${vecBit}${extBit ? ", " + extBit : ""}`;
+        }
         const radius = 4.5;
         const circumference = 2 * Math.PI * radius;
         const pct = total > 0 ? success / total : 0;

@@ -253,9 +253,12 @@ export function DocRow({
         <ChunksStatusBadge
           totalChunks={doc.totalChunks}
           successChunks={doc.successChunks}
+          embeddingPendingChunks={doc.embeddingPendingChunks}
           failedChunks={doc.failedChunks}
           pendingChunks={doc.pendingChunks}
           parsingChunks={doc.parsingChunks}
+          entityCount={doc.entityCount}
+          relationshipCount={doc.relationshipCount}
           docStatus={doc.status}
         />
       </div>
@@ -314,9 +317,12 @@ export function DocRow({
           <ChunksStatusBadge
             totalChunks={doc.totalChunks}
             successChunks={doc.successChunks}
+            embeddingPendingChunks={doc.embeddingPendingChunks}
             failedChunks={doc.failedChunks}
             pendingChunks={doc.pendingChunks}
             parsingChunks={doc.parsingChunks}
+            entityCount={doc.entityCount}
+            relationshipCount={doc.relationshipCount}
             docStatus={doc.status}
             className="w-[120px] justify-center"
           />
@@ -324,31 +330,23 @@ export function DocRow({
         <div className="flex items-center justify-end gap-0.5">{actions}</div>
       </div>
 
-      {previewOpen && (
-        <DocDetailDialog docId={doc.id} open={previewOpen} onOpenChange={setPreviewOpen} />
-      )}
-      {deleteOpen && (
-        <DocDeleteDialog
-          doc={doc}
-          open={deleteOpen}
-          onOpenChange={setDeleteOpen}
-          onDeleted={() => {
-            setDeleteOpen(false);
-            void onRefresh();
-          }}
-        />
-      )}
-      {reprocessOpen && (
-        <DocReprocessDialog
-          doc={doc}
-          open={reprocessOpen}
-          onOpenChange={setReprocessOpen}
-          onReprocessed={() => {
-            setReprocessOpen(false);
-            void onRefresh();
-          }}
-        />
-      )}
+      <DocDetailDialog docId={doc.id} open={previewOpen} onOpenChange={setPreviewOpen} />
+      <DocDeleteDialog
+        doc={doc}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onDeleted={() => {
+          void onRefresh();
+        }}
+      />
+      <DocReprocessDialog
+        doc={doc}
+        open={reprocessOpen}
+        onOpenChange={setReprocessOpen}
+        onReprocessed={() => {
+          void onRefresh();
+        }}
+      />
     </div>
   );
 }
