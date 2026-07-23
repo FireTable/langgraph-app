@@ -189,17 +189,19 @@ export function ChunksStatusBadge({
       const embeddingPending = embeddingPendingChunks ?? 0;
       const entities = entityCount ?? 0;
       const relationships = relationshipCount ?? 0;
-      const hasGraph = entities > 0 || relationships > 0;
-      // ponytail: terminal = chunks that finished OCR (success + embedPending)
-      // or hit a terminal failure. "Indexed" needs ALL THREE pipeline
-      // outputs ready: vector + entity/relationship. If chunks all have
-      // vectors but no entities/relationships yet, that's still "Embedding"
-      // — the entity-leg of hybrid search has nothing to score against.
+      // ponytail: hybrid-search has three legs (BM25/tsv, pgvector,
+      // entity-tag overlap). "Indexed" is gated on vectors being
+      // complete (success === total) — the graph leg is supplementary
+      // and may legitimately produce zero rows for plain-text docs.
+      // Forcing `hasGraph` here would leave such docs stuck on
+      // "Embedding" forever with no terminal signal. The tooltip still
+      // surfaces the entity/relationship counts so the user sees the
+      // graph state explicitly.
       const terminal = success + failed + embeddingPending;
-      const isCompleted = success === total && hasGraph;
+      const isCompleted = success === total;
       const isFailed = failed > 0 && terminal === total;
       const hasInflightChunks = pending > 0 || parsing > 0;
-      const hasInflightExtraction = !hasGraph; // vectors done but no graph rows yet
+      const hasInflightExtraction = entities === 0 && relationships === 0;
       const isInProgress = !isCompleted && !isFailed;
 
       let variant: "success" | "destructive" | "muted" = "muted";
@@ -269,7 +271,13 @@ export function ChunksStatusBadge({
         tooltipText = `Indexing Status: Vector database ingestion failed for ${failed} out of ${total} chunks`;
         iconElement = <AlertCircle className="size-3" />;
       } else {
-        tooltipText = `Indexing Status: Successfully indexed all ${total} chunks to vector database`;
+        // ponytail: surface the graph counts in the tooltip even when
+        // the doc is "Indexed" — some docs legitimately produce zero
+        // entities/relationships (plain text, sparse pages) and the
+        // user should see that explicitly rather than wonder if the
+        // extraction is still running.
+        const graphBit = `${entities} entities, ${relationships} relationships`;
+        tooltipText = `Indexing Status: Successfully indexed all ${total} chunks to vector database (${graphBit})`;
         iconElement = <Database className="size-3" />;
       }
 

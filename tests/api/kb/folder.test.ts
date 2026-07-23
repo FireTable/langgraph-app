@@ -1,9 +1,18 @@
 import "@/tests/helpers/session";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
-import { attachments, kbChunk, kbDocument, kbFolder, user } from "@/db/schema";
+import {
+  attachments,
+  kbChunk,
+  kbDocument,
+  kbEntity,
+  kbFolder,
+  kbRelationship,
+  threads,
+  user,
+} from "@/db/schema";
 import { setCurrentUser } from "@/tests/helpers/session";
 
 import { DELETE, GET } from "@/app/api/kb/folders/[id]/route";
@@ -63,9 +72,12 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
+  await db.delete(kbRelationship);
+  await db.delete(kbEntity);
   await db.delete(kbChunk);
   await db.delete(kbDocument);
   await db.delete(kbFolder);
+  await db.delete(threads);
   await db.delete(attachments);
   await db.delete(user).where(eq(user.id, USER_A.id));
   await db.delete(user).where(eq(user.id, USER_B.id));
@@ -210,5 +222,72 @@ describe("DELETE /api/kb/folders/[id]", () => {
       where: eq(attachments.userId, USER_A.id),
     });
     expect(remainingAttachments).toHaveLength(0);
+  });
+
+  it("cascades: kb_chunk + kb_entity + kb_relationship rows gone, kb_thread rows deleted", async () => {
+    // ponytail: P1 follow-up from Greptile on PR #47. The earlier
+    // cascade test only verified the folder + kb_document rows went
+    // away; the turbo-button UX is one click away from "did the
+    // cascades actually run?" — add coverage for the per-doc kb_thread
+    // row + child rows on kb_chunk / kb_entity / kb_relationship.
+    setCurrentUser(USER_A);
+    await seedFolderRow(USER_A.id, "f-1", "Folder 1");
+    await seedDocRow(USER_A.id, "f-1", "d-1", "doc1.pdf");
+
+    // Seed child rows directly (FK cascades do the work).
+    await db.insert(kbEntity).values({
+      id: "e-1",
+      userId: USER_A.id,
+      documentId: "d-1",
+      name: "Alice",
+      type: "person",
+      description: "",
+    });
+    await db.insert(kbRelationship).values({
+      id: "r-1",
+      userId: USER_A.id,
+      documentId: "d-1",
+      source: "Alice",
+      target: "Bob",
+      relation: "knows",
+      description: "",
+    });
+    // kb_chunk.tsv is a GENERATED ALWAYS column — raw INSERT skips the
+    // generated field that Drizzle insists on populating.
+    await db.execute(
+      sql`INSERT INTO kb_chunk (id, document_id, ordinal, content, status) VALUES ('c-1', 'd-1', 0, 'hello', 'success')`,
+    );
+    // Per-doc kb thread (kind='kb') — deleteKbFolderForUser explicitly
+    // removes this in the cascade path; the single-doc DELETE does the
+    // same. Both are part of the FK CASCADE contract.
+    await db
+      .insert(threads)
+      .values({ id: "d-1".replace(/^d-/, ""), userId: USER_A.id, kind: "kb" });
+
+    const req = new Request("http://localhost/api/kb/folders/f-1?deleteAll=true", {
+      method: "DELETE",
+    });
+    const res = await DELETE(req, ctxFor("f-1"));
+    expect(res.status).toBe(204);
+
+    // FK cascades do the child-row work.
+    const remainingChunks = await db.query.kbChunk.findMany({
+      where: eq(kbChunk.documentId, "d-1"),
+    });
+    expect(remainingChunks).toHaveLength(0);
+    const remainingEntities = await db.query.kbEntity.findMany({
+      where: eq(kbEntity.documentId, "d-1"),
+    });
+    expect(remainingEntities).toHaveLength(0);
+    const remainingRelationships = await db.query.kbRelationship.findMany({
+      where: eq(kbRelationship.documentId, "d-1"),
+    });
+    expect(remainingRelationships).toHaveLength(0);
+
+    // Explicit thread cleanup by deleteKbFolderForUser.
+    const remainingThreads = await db.query.threads.findMany({
+      where: eq(threads.userId, USER_A.id),
+    });
+    expect(remainingThreads).toHaveLength(0);
   });
 });

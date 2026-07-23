@@ -303,7 +303,7 @@ Rename a folder. Race-safe against concurrent renames — if two tabs race to th
 
 Delete a folder. By default, Postgres refuses via `ON DELETE RESTRICT` on `kb_document.folder_id` if any docs still belong to the folder; we surface that as 409 `NON_EMPTY` with a `docCount` so the UI can prompt "delete its N docs first".
 
-With `?deleteAll=true`, the server cascades through every doc in the folder (each `DELETE` against `/api/kb/documents/[id]` semantics — chunks, embeddings, R2 records) before deleting the folder itself. The confirmation lives in the Settings → KB folder-delete dialog: a switch + a typed-confirmation of `delete all` is required before the request fires.
+With `?deleteAll=true`, the server cascades through every doc in the folder (each doc's `kb_chunk` rows, via `ON DELETE CASCADE`) before deleting the folder itself; the `attachment` rows / R2 objects backing those docs are NOT deleted (same retention as the single-doc `DELETE /api/kb/documents/[id]` semantics). The confirmation lives in the Settings → KB folder-delete dialog: a switch + a typed-confirmation of `delete all` is required before the request fires.
 
 |               |                                                                                                                                                                      |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -111,13 +111,16 @@ function toCapturedSpan(row: typeof observabilitySpans.$inferSelect): CapturedSp
 export async function bulkInsertSpans(spans: CapturedSpan[]): Promise<number> {
   if (spans.length === 0) return 0;
   const rows = spans.map((s) => toRow(redactForbidden(s)));
-  // ponytail: parent_message_id backfill. Before INSERT, look up the
-  // column (not the meta key — the column is the canonical source) for
-  // any thread whose rows still have parent_message_id null. This is
-  // what the capture handler can't reach (race between outermost
-  // start()'s async DB lookup and bulkInsertSpans firing on End).
-  // Reads use the column so a row written by an earlier invoke but
-  // persisted without parent_message_id still drives the fill here.
+  // ponytail: parent_message_id backfill. The capture handler resolves
+  // pmid per-call from `metadata.parent_message_id` (LangGraph
+  // surfaces the `metadata` arg passed to `runs.create` on every LC
+  // callback) with `lastHumanMessageId(inputs.messages)` as the
+  // fallback — but `findLatestParentMessageId` is still useful for
+  // spans where both paths miss (cold-start threads, interrupt
+  // resumes whose capture preceded the metadata write). It calls
+  // `langGraphClient.threads.getState(threadId)` and parses
+  // `state.values.messages` via `lastHumanMessageId`; we never read
+  // the `observability_spans` column for the fill.
   await backfillParentMessageIds(rows);
   // ponytail: finalize any prior `status: "waiting"` interrupt spans on
   // the same thread before this batch's INSERTs. The handler used to
@@ -126,11 +129,6 @@ export async function bulkInsertSpans(spans: CapturedSpan[]): Promise<number> {
   // race-free and survives restart: any tool span arriving for the
   // thread implicitly closes the wait gap that opened on the previous
   // tool's interrupt.
-
-  console.warn(
-    2222,
-    rows.map((item) => ({ threadId: item.threadId, parentMessageId: item.parentMessageId })),
-  );
 
   await backfillWaitingInterruptSpans(rows);
   // ponytail: ON CONFLICT DO NOTHING makes the write idempotent — the
