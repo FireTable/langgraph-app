@@ -1,7 +1,9 @@
-import { and, desc, eq, isNotNull, lt, sql } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { observabilitySpans, type NewObservabilitySpanRow } from "./schema";
 import type { CapturedSpan } from "@/lib/observability/callback";
+import { langGraphClient } from "@/lib/langgraph/client";
+import { lastHumanMessageId } from "@/lib/langgraph/last-human-message-id";
 
 // ponytail: FORBIDDEN regex flags fields that often hold secrets
 // (api_key, baseURL, organization, Bearer tokens). Spec FR-009 bans
@@ -124,6 +126,12 @@ export async function bulkInsertSpans(spans: CapturedSpan[]): Promise<number> {
   // race-free and survives restart: any tool span arriving for the
   // thread implicitly closes the wait gap that opened on the previous
   // tool's interrupt.
+
+  console.warn(
+    2222,
+    rows.map((item) => ({ threadId: item.threadId, parentMessageId: item.parentMessageId })),
+  );
+
   await backfillWaitingInterruptSpans(rows);
   // ponytail: ON CONFLICT DO NOTHING makes the write idempotent — the
   // same runId can fire bulkInsertSpans twice (parent chain end +
@@ -136,32 +144,45 @@ export async function bulkInsertSpans(spans: CapturedSpan[]): Promise<number> {
   return inserted.length;
 }
 
-// ponytail: latest non-null parent_message_id for the thread. Reads
-// the column directly — meta->>'parent_message_id' jsonb path was
-// dropped because the column is now the canonical store. Used both
-// from CapturingHandler.start() (outermost-resume path) and from
-// bulkInsertSpans' backfill (pre-INSERT gap-fill).
+// ponytail: resolve the latest HumanMessage id from the canonical
+// LangGraph thread state. State is the source of truth for "which
+// message is current on this thread right now" — better than reading
+// the spans column, where any prior turn could have written a row with
+// a later started_at that pollutes earlier spans (e.g. kb-upload inner
+// spans stealing the pmid of the next user message). Returns null on
+// fetch error so bulkInsertSpans can proceed with null pmids rather
+// than crash the run.
 export async function findLatestParentMessageId(threadId: string): Promise<string | null> {
-  const [row] = await db
-    .select({ pmid: observabilitySpans.parentMessageId })
-    .from(observabilitySpans)
-    .where(
-      and(eq(observabilitySpans.threadId, threadId), isNotNull(observabilitySpans.parentMessageId)),
-    )
-    .orderBy(desc(observabilitySpans.startedAt))
-    .limit(1);
-  const value = row?.pmid;
-  return typeof value === "string" && value.length > 0 ? value : null;
+  try {
+    const state = await langGraphClient.threads.getState(threadId);
+    const messages = (state as { values?: { messages?: unknown } } | null)?.values?.messages;
+    return lastHumanMessageId(messages);
+  } catch (err) {
+    console.warn(
+      `[observability] findLatestParentMessageId state fallback failed for thread ${threadId}:`,
+      err,
+    );
+    return null;
+  }
 }
 
-// ponytail: for each row whose parent_message_id column is null, look
-// up the most recent non-null value on that thread and fill it in.
-// One DB call per thread (deduplicated). Mutates the rows in place.
+// ponytail: for each row whose parent_message_id column is null, ask
+// findLatestParentMessageId (which now reads thread state via
+// langGraphClient) for the latest HumanMessage id on that thread and
+// stamp it in. One state call per thread (deduplicated). Mutates rows
+// in place.
 async function backfillParentMessageIds(rows: NewObservabilitySpanRow[]): Promise<void> {
   const missingThreads = new Set<string>();
   for (const r of rows) {
-    if (r.parentMessageId == null) missingThreads.add(r.threadId);
+    if (r.parentMessageId == null) {
+      if (typeof r.meta?.parent_message_id === "string") {
+        r.parentMessageId = r.meta?.parent_message_id as string;
+      } else {
+        missingThreads.add(r.threadId);
+      }
+    }
   }
+
   for (const tid of missingThreads) {
     const latest = await findLatestParentMessageId(tid);
     if (!latest) continue;
