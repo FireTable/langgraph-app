@@ -70,7 +70,10 @@ export function mimeShortLabel(mimeType: string): string {
   const office = OFFICE_LABEL[mt];
   if (office) return office;
   const subtype = mt.split("/")[1] ?? "";
-  return TYPE_LABEL[subtype] ?? (subtype.toUpperCase() || mimeType);
+  // ponytail: fall back to upper-cased subtype (e.g. "application/json" → "JSON")
+  // rather than the raw mime, so unmapped types still render readably. Empty
+  // subtype (malformed mime) falls through to the mime itself.
+  return TYPE_LABEL[subtype] ?? (subtype ? subtype.toUpperCase() : mimeType);
 }
 
 // ponytail: turn `R2_ALLOWED_CONTENT_TYPES` (comma-separated mimes)

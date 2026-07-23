@@ -250,14 +250,13 @@ export class CapturingHandler extends BaseCallbackHandler {
   // ticking until something else updates it.
   private actualParent = new Map<string, string | null>();
 
-  // ponytail: per-invoke last HumanMessage id. Set by the outermost
-  // handleChainStart from `inputs.messages`, inherited unchanged by
-  // nested spans in the same invoke. May be null when the run is a
-  // resume / regen / cold-start invoke with empty inputs — null is
-  // fine because bulkInsertSpans backfills from DB before INSERT,
-  // so spans in interrupted-or-recovered turns still tag with the
-  // thread's most recent non-null parent_message_id.
-  private currentParentMessageId: string | null = null;
+  // ponytail: parent_message_id is resolved per-call in start() from
+  // each span's own `partial.input.messages`. No instance-level cache,
+  // so concurrent invokes on the same handler (e.g. main chat + a
+  // background_agent dispatched mid-turn) can't clobber each other.
+  // Spans without messages in their input (inner LLM/tool nodes, or
+  // any background run that wasn't passed messages) get null here —
+  // bulkInsertSpans' state-fallback backfill fills them at INSERT time.
 
   constructor() {
     super();
@@ -268,25 +267,31 @@ export class CapturingHandler extends BaseCallbackHandler {
     chain: Serialized,
     inputs: Record<string, unknown>,
     runId: string,
-    runType?: string,
+    _runType?: string,
     tags?: string[],
     metadata?: Record<string, unknown>,
     runName?: string,
     parentRunId?: string,
   ) {
-    // ponytail: outermost call only — overwrite `currentParentMessageId`
-    // with the last HumanMessage id from `inputs.messages`. Null is OK
-    // for resume / regen / cold-start turns — bulkInsertSpans backfills
-    // from DB before INSERT.
-    if (!runType) {
-      this.currentParentMessageId = lastHumanMessageId((inputs as { messages?: unknown }).messages);
-    }
+    // ponytail: prefer metadata.parent_message_id (stamped by runs.create
+    // on kbAgent / background_agent dispatches) — it's per-run and won't
+    // be clobbered by concurrent invokes the way an instance field
+    // would. Fall back to parsing inputs.messages for the chat streaming
+    // path where metadata isn't set.
+    const metaPmid = metadata?.parent_message_id;
+    const fromMessages = lastHumanMessageId((inputs as { messages?: unknown }).messages);
+    const parentMessageId =
+      typeof metaPmid === "string" && metaPmid.length > 0 ? metaPmid : fromMessages;
 
     this.start(runId, parentRunId ?? null, {
       kind: "chain",
       name: runName ?? chain.id?.[chain.id.length - 1] ?? "chain",
       input: deepUnwrapLC(inputs),
-      meta: { ...metadata, ...(tags?.length ? { tags } : {}) },
+      meta: {
+        ...metadata,
+        parent_message_id: parentMessageId,
+        ...(tags?.length ? { tags } : {}),
+      },
     });
   }
 
@@ -528,18 +533,20 @@ export class CapturingHandler extends BaseCallbackHandler {
     //   tags for nostream/etc., model name for header, and the TTFT.
     const meta = trimMeta(partial.meta);
     meta.time_to_first_token_ms ??= null;
-    meta.parent_message_id = this.currentParentMessageId;
-
-    // ponytail: when `currentParentMessageId` is null at the outermost
-    // span (interrupt resume / regenerate / cold start — `inputs.messages`
-    // had no HumanMessage), the span gets stamped null here on purpose.
-    // Don't fire a DB lookup from this synchronous Start hook — the
-    // promise would resolve after handleChainEnd has already triggered
-    // bulkInsertSpans, and the `.then()` patch would land on a span
-    // that's been INSERTed (or about to be). The backfill in
-    // `bulkInsertSpans` reads the column at INSERT time and fills every
-    // null row in one pass — single source of truth, race-free by
-    // construction.
+    // ponytail: pmid fallback. handleChainStart pre-resolves from
+    // metadata.parent_message_id (per-run, set by runs.create) with a
+    // lastHumanMessageId(inputs.messages) fallback; the result is
+    // passed in via partial.meta.parent_message_id and we only run the
+    // message-array parse here when the caller didn't supply one.
+    // Inner LLM / tool / chain spans don't receive per-run metadata, so
+    // they end up with null — bulkInsertSpans' state-fallback backfill
+    // fills them at INSERT time. No instance-level cache: concurrent
+    // invokes can't clobber each other.
+    if (meta.parent_message_id == null) {
+      meta.parent_message_id = lastHumanMessageId(
+        (partial.input as { messages?: unknown } | null)?.messages,
+      );
+    }
 
     this.spans.set(runId, {
       span_id: runId,

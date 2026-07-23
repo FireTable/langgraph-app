@@ -1,6 +1,20 @@
 import "@/tests/helpers/session";
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { eq } from "drizzle-orm";
+
+// ponytail: see tests/api/threads/observability.test.ts for the why —
+// bulkInsertSpans → backfillParentMessageIds hits
+// langGraphClient.threads.getState, which hangs in CI without a dev
+// server. Stub the HTTP call so the wiring test stays fast + deterministic.
+vi.mock("@/lib/langgraph/client", () => ({
+  langGraphClient: {
+    threads: {
+      getState: async () => ({ values: { messages: [] } }),
+      create: async () => ({}),
+    },
+    runs: { create: async () => ({ run_id: "test" }) },
+  },
+}));
 import { db } from "@/db/client";
 import { threads } from "@/lib/threads/schema";
 import { observabilitySpans } from "@/lib/observability/schema";

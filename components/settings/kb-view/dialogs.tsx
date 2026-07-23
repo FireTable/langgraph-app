@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Check, Copy, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { TOAST_DESCRIPTION_CLASS, getModeInfo, type ReprocessMode } from "./helpers";
 import { KbDocument, KbFolder } from "./types";
@@ -40,6 +41,7 @@ export function DocDeleteDialog({
           descriptionClassName: TOAST_DESCRIPTION_CLASS,
           description: `「${doc.title}」was removed from this folder.`,
         });
+        onOpenChange(false);
         onDeleted();
         return;
       }
@@ -53,7 +55,7 @@ export function DocDeleteDialog({
     } finally {
       setSubmitting(false);
     }
-  }, [doc.id, onDeleted]);
+  }, [doc.id, doc.title, onDeleted, onOpenChange]);
 
   return (
     <Dialog
@@ -73,8 +75,10 @@ export function DocDeleteDialog({
                 errors. Slot merges text-sm + text-muted-foreground
                 from DialogDescription onto the div. */}
             <div className="space-y-2">
-              <p>
-                This permanently removes <span className="font-medium">{doc.title}</span> and:
+              <p className="break-all [overflow-wrap:anywhere]">
+                This permanently removes{" "}
+                <span className="font-medium break-all [overflow-wrap:anywhere]">{doc.title}</span>{" "}
+                and:
               </p>
               <ol className="list-decimal pl-5 space-y-1">
                 <li>The document row + all parsed chunks (embeddings, BM25 index, entity graph)</li>
@@ -186,6 +190,7 @@ export function DocReprocessDialog({
           descriptionClassName: TOAST_DESCRIPTION_CLASS,
           description: toastDesc,
         });
+        onOpenChange(false);
         onReprocessed();
         return;
       }
@@ -216,7 +221,7 @@ export function DocReprocessDialog({
     } finally {
       setSubmitting(false);
     }
-  }, [doc.id, doc.title, mode, onReprocessed]);
+  }, [doc.id, doc.title, mode, onOpenChange, onReprocessed]);
 
   return (
     <Dialog
@@ -229,9 +234,9 @@ export function DocReprocessDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Reprocess document?</DialogTitle>
-          <DialogDescription>
-            <span className="font-medium">{doc.title}</span> - existing chunks are wiped before
-            re-running. Choose a reprocess mode.
+          <DialogDescription className="break-all [overflow-wrap:anywhere]">
+            <span className="font-medium break-all [overflow-wrap:anywhere]">{doc.title}</span> -
+            existing chunks are wiped before re-running. Choose a reprocess mode.
           </DialogDescription>
         </DialogHeader>
 
@@ -339,66 +344,155 @@ export function FolderDeleteDialog({
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteAll, setDeleteAll] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     setError(null);
+    setDeleteAll(false);
+    setConfirmText("");
+    setCopied(false);
   }, [folder]);
+
+  const handleCopyClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    void navigator.clipboard.writeText("delete all").catch(() => {});
+    toast.success("Copied 'delete all' to clipboard");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, []);
 
   const submit = useCallback(async () => {
     if (!folder) return;
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/kb/folders/${folder.id}`, { method: "DELETE" });
+      const url = `/api/kb/folders/${folder.id}${deleteAll ? "?deleteAll=true" : ""}`;
+      const res = await fetch(url, { method: "DELETE" });
       if (res.status === 204) {
         toast.success("Folder deleted", {
           descriptionClassName: TOAST_DESCRIPTION_CLASS,
-          description: `「${folder.name}」was removed. Documents inside were kept.`,
+          description: deleteAll
+            ? `「${folder.name}」 and all its documents were permanently deleted.`
+            : `「${folder.name}」 was removed.`,
         });
+        onOpenChange(false);
         onDeleted();
         return;
       }
       if (res.status === 404) {
         toast.success("Folder deleted", {
           descriptionClassName: TOAST_DESCRIPTION_CLASS,
-          description: `「${folder.name}」was already removed.`,
+          description: `「${folder.name}」 was already removed.`,
         });
+        onOpenChange(false);
         onDeleted();
         return;
       }
       if (res.status === 409) {
         const body = (await res.json().catch(() => ({}))) as { docCount?: number };
         setError(
-          `Folder still has ${body.docCount ?? "some"} document${body.docCount === 1 ? "" : "s"} — delete them first.`,
+          `Folder contains ${body.docCount ?? "some"} document${body.docCount === 1 ? "" : "s"}. Turn on the switch below to force clear and delete.`,
         );
         return;
       }
-      setError(`Failed (${res.status})`);
+      setError(`Failed to delete folder (${res.status})`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSubmitting(false);
     }
-  }, [folder, onDeleted]);
+  }, [folder, deleteAll, onDeleted, onOpenChange]);
+
+  const isDeleteDisabled =
+    submitting || (deleteAll && confirmText.trim().toLowerCase() !== "delete all");
 
   return (
     <Dialog
       open={folder !== null}
       onOpenChange={(o) => {
         onOpenChange(o);
-        if (!o) setError(null);
+        if (!o) {
+          setError(null);
+          setDeleteAll(false);
+          setConfirmText("");
+        }
       }}
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Delete folder?</DialogTitle>
-          <DialogDescription>
-            This permanently removes the <span className="font-medium">{folder?.name}</span> folder.
-            Folders that still contain documents can&apos;t be deleted — empty the folder first.
+          <DialogDescription className="break-all [overflow-wrap:anywhere]">
+            Are you sure you want to delete{" "}
+            <span className="font-medium text-foreground">{folder?.name}</span>?
           </DialogDescription>
         </DialogHeader>
-        {error && <p className="text-destructive text-xs">{error}</p>}
-        <DialogFooter>
+
+        <div className="space-y-4 py-1">
+          {error && (
+            <div className="rounded-md bg-destructive/10 p-2.5 text-xs text-destructive">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between rounded-lg border p-3 shadow-xs">
+            <div className="space-y-0.5 pr-2">
+              <Label htmlFor="delete-all-switch" className="text-xs font-medium cursor-pointer">
+                Clear and delete all documents inside
+              </Label>
+              <p className="text-[11px] text-muted-foreground">
+                Also destroys all documents, chunks, and vector embeddings in this folder. Source
+                PDFs + rendered page images stay in R2 until the retention sweep.
+              </p>
+            </div>
+            <Switch
+              id="delete-all-switch"
+              checked={deleteAll}
+              onCheckedChange={(c) => {
+                setDeleteAll(c);
+                if (!c) setConfirmText("");
+              }}
+            />
+          </div>
+
+          {deleteAll && (
+            <div className="space-y-2 rounded-lg border border-destructive/20 bg-destructive/5 p-3">
+              <Label
+                htmlFor="delete-all-input"
+                className="flex flex-wrap items-center gap-1 text-xs font-normal text-muted-foreground cursor-pointer"
+              >
+                <span>Type</span>
+                <span className="inline-flex items-center gap-1.5 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 font-mono text-xs font-semibold text-destructive">
+                  delete all
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded p-0.5 hover:bg-destructive/20 transition-colors cursor-pointer"
+                    onClick={handleCopyClick}
+                    title="Copy 'delete all'"
+                  >
+                    {copied ? (
+                      <Check className="size-3 text-green-600" />
+                    ) : (
+                      <Copy className="size-3 text-destructive" />
+                    )}
+                  </button>
+                </span>
+                <span>to confirm:</span>
+              </Label>
+              <Input
+                id="delete-all-input"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="delete all"
+                className="h-8 font-mono text-xs"
+              />
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-0">
           <Button
             variant="ghost"
             className="w-full sm:w-auto"
@@ -410,7 +504,7 @@ export function FolderDeleteDialog({
           <Button
             className="w-full sm:w-auto"
             onClick={() => void submit()}
-            disabled={submitting}
+            disabled={isDeleteDisabled}
             variant="destructive"
           >
             {submitting ? <Loader2 className="size-3.5 animate-spin" /> : "Delete"}

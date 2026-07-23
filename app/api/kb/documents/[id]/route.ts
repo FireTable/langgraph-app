@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { withAuth } from "@/lib/auth/with-auth";
+import { db } from "@/db/client";
 import {
   deleteKbDocumentForUser,
   findKbChunksContentByDocumentId,
   findKbDocumentById,
   type KbChunkPreview,
 } from "@/lib/kb/queries";
+import { kbEntity, kbRelationship } from "@/lib/kb/schema";
+import { and, eq, sql } from "drizzle-orm";
 
 // ponytail: Settings → KB → doc detail (right pane). Returns the
 // kb_document row + slim chunk preview (no 1536-dim embedding, no
@@ -19,8 +22,26 @@ export const GET = withAuth<{ id: string }>(async (_req, { user, params }) => {
     return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   }
 
-  const chunks: KbChunkPreview[] =
-    doc.status === "success" ? await findKbChunksContentByDocumentId(user.id, doc.id) : [];
+  const [chunks, entityCount, relationshipCount] = await Promise.all([
+    doc.status === "success"
+      ? findKbChunksContentByDocumentId(user.id, doc.id)
+      : Promise.resolve([] as KbChunkPreview[]),
+    // ponytail: parallel counts for the doc-detail badge so the
+    // "Indexed" check can require entity/relationship rows in addition
+    // to embeddings (hybrid-search third leg). Two separate queries
+    // (not a leftJoin) — joining two one-to-many tables would cartesian
+    // the rows and inflate both counts.
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(kbEntity)
+      .where(and(eq(kbEntity.documentId, doc.id), eq(kbEntity.userId, user.id)))
+      .then((rows) => rows[0]!.n),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(kbRelationship)
+      .where(and(eq(kbRelationship.documentId, doc.id), eq(kbRelationship.userId, user.id)))
+      .then((rows) => rows[0]!.n),
+  ]);
 
   return NextResponse.json({
     doc: {
@@ -35,6 +56,8 @@ export const GET = withAuth<{ id: string }>(async (_req, { user, params }) => {
       pages: doc.pages,
       createdAt: doc.createdAt.toISOString(),
       updatedAt: doc.updatedAt.toISOString(),
+      entityCount,
+      relationshipCount,
     },
     chunks,
   });

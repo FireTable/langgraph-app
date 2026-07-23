@@ -1,7 +1,9 @@
-import { and, desc, eq, isNotNull, lt, sql } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { observabilitySpans, type NewObservabilitySpanRow } from "./schema";
 import type { CapturedSpan } from "@/lib/observability/callback";
+import { langGraphClient } from "@/lib/langgraph/client";
+import { lastHumanMessageId } from "@/lib/langgraph/last-human-message-id";
 
 // ponytail: FORBIDDEN regex flags fields that often hold secrets
 // (api_key, baseURL, organization, Bearer tokens). Spec FR-009 bans
@@ -109,13 +111,16 @@ function toCapturedSpan(row: typeof observabilitySpans.$inferSelect): CapturedSp
 export async function bulkInsertSpans(spans: CapturedSpan[]): Promise<number> {
   if (spans.length === 0) return 0;
   const rows = spans.map((s) => toRow(redactForbidden(s)));
-  // ponytail: parent_message_id backfill. Before INSERT, look up the
-  // column (not the meta key — the column is the canonical source) for
-  // any thread whose rows still have parent_message_id null. This is
-  // what the capture handler can't reach (race between outermost
-  // start()'s async DB lookup and bulkInsertSpans firing on End).
-  // Reads use the column so a row written by an earlier invoke but
-  // persisted without parent_message_id still drives the fill here.
+  // ponytail: parent_message_id backfill. The capture handler resolves
+  // pmid per-call from `metadata.parent_message_id` (LangGraph
+  // surfaces the `metadata` arg passed to `runs.create` on every LC
+  // callback) with `lastHumanMessageId(inputs.messages)` as the
+  // fallback — but `findLatestParentMessageId` is still useful for
+  // spans where both paths miss (cold-start threads, interrupt
+  // resumes whose capture preceded the metadata write). It calls
+  // `langGraphClient.threads.getState(threadId)` and parses
+  // `state.values.messages` via `lastHumanMessageId`; we never read
+  // the `observability_spans` column for the fill.
   await backfillParentMessageIds(rows);
   // ponytail: finalize any prior `status: "waiting"` interrupt spans on
   // the same thread before this batch's INSERTs. The handler used to
@@ -124,6 +129,7 @@ export async function bulkInsertSpans(spans: CapturedSpan[]): Promise<number> {
   // race-free and survives restart: any tool span arriving for the
   // thread implicitly closes the wait gap that opened on the previous
   // tool's interrupt.
+
   await backfillWaitingInterruptSpans(rows);
   // ponytail: ON CONFLICT DO NOTHING makes the write idempotent — the
   // same runId can fire bulkInsertSpans twice (parent chain end +
@@ -136,39 +142,69 @@ export async function bulkInsertSpans(spans: CapturedSpan[]): Promise<number> {
   return inserted.length;
 }
 
-// ponytail: latest non-null parent_message_id for the thread. Reads
-// the column directly — meta->>'parent_message_id' jsonb path was
-// dropped because the column is now the canonical store. Used both
-// from CapturingHandler.start() (outermost-resume path) and from
-// bulkInsertSpans' backfill (pre-INSERT gap-fill).
+// ponytail: resolve the latest HumanMessage id from the canonical
+// LangGraph thread state. State is the source of truth for "which
+// message is current on this thread right now" — better than reading
+// the spans column, where any prior turn could have written a row with
+// a later started_at that pollutes earlier spans (e.g. kb-upload inner
+// spans stealing the pmid of the next user message). Returns null on
+// fetch error so bulkInsertSpans can proceed with null pmids rather
+// than crash the run.
 export async function findLatestParentMessageId(threadId: string): Promise<string | null> {
-  const [row] = await db
-    .select({ pmid: observabilitySpans.parentMessageId })
-    .from(observabilitySpans)
-    .where(
-      and(eq(observabilitySpans.threadId, threadId), isNotNull(observabilitySpans.parentMessageId)),
-    )
-    .orderBy(desc(observabilitySpans.startedAt))
-    .limit(1);
-  const value = row?.pmid;
-  return typeof value === "string" && value.length > 0 ? value : null;
+  try {
+    const state = await langGraphClient.threads.getState(threadId);
+    const messages = (state as { values?: { messages?: unknown } } | null)?.values?.messages;
+    return lastHumanMessageId(messages);
+  } catch (err) {
+    console.warn(
+      `[observability] findLatestParentMessageId state fallback failed for thread ${threadId}:`,
+      err,
+    );
+    return null;
+  }
 }
 
-// ponytail: for each row whose parent_message_id column is null, look
-// up the most recent non-null value on that thread and fill it in.
-// One DB call per thread (deduplicated). Mutates the rows in place.
+// ponytail: bound the state-fallback lookup so a stuck dev server
+// (or a test env with no dev server) can't block the End hook past
+// 500ms. The end-hook caller (handleChainEnd) awaits this whole
+// INSERT before returning — a long hang here is directly visible as
+// chat-turn latency. Returning null on timeout lets the row persist
+// with `parent_message_id IS NULL`; the per-turn panel 404s for that
+// span, which the design intentionally accepts (it surfaces "missing
+// parent_message_id" instead of guessing).
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([p, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
+}
+
+// ponytail: for each row whose parent_message_id column is null, ask
+// findLatestParentMessageId (which now reads thread state via
+// langGraphClient) for the latest HumanMessage id on that thread and
+// stamp it in. One state call per thread (deduplicated). Mutates rows
+// in place.
 async function backfillParentMessageIds(rows: NewObservabilitySpanRow[]): Promise<void> {
   const missingThreads = new Set<string>();
   for (const r of rows) {
-    if (r.parentMessageId == null) missingThreads.add(r.threadId);
+    if (r.parentMessageId == null) {
+      missingThreads.add(r.threadId);
+    }
   }
-  for (const tid of missingThreads) {
-    const latest = await findLatestParentMessageId(tid);
-    if (!latest) continue;
-    for (const r of rows) {
-      if (r.threadId === tid && r.parentMessageId == null) {
-        r.parentMessageId = latest;
-      }
+
+  // ponytail: parallelize the per-thread state lookups + 500ms cap each
+  // so a worst-case batch with N distinct missing threads adds at most
+  // ~500ms to the End hook (not N × RTT). Stale fetches resolve as null
+  // and the rows stay pmid-less; the per-turn panel 404s those rows
+  // by design.
+  const latestByThread = new Map<string, string | null>();
+  await Promise.all(
+    [...missingThreads].map(async (tid) => {
+      latestByThread.set(tid, await withTimeout(findLatestParentMessageId(tid), 500));
+    }),
+  );
+
+  for (const r of rows) {
+    const latest = latestByThread.get(r.threadId);
+    if (r.parentMessageId == null && latest) {
+      r.parentMessageId = latest;
     }
   }
 }

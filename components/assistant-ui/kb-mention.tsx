@@ -226,7 +226,7 @@ const KbMentionPopoverHeader = () => {
 
   if (scope.activeCategoryId) {
     return (
-      <ComposerPrimitive.Unstable_TriggerPopoverBack className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-[10px] font-bold capitalize tracking-wider text-muted-foreground/60 border-b border-border/40 mb-1 hover:text-foreground transition-colors cursor-pointer sticky top-0 bg-popover z-10 shrink-0">
+      <ComposerPrimitive.Unstable_TriggerPopoverBack className="flex w-full items-center gap-1.5 px-2.5 py-2 text-[10px] font-bold capitalize tracking-wider text-muted-foreground/60 border-b border-border/40 mb-1 hover:text-foreground transition-colors cursor-pointer sticky top-0 bg-popover z-10 shrink-0">
         <ChevronLeftIcon className="size-3" />
         <span>{"Back"}</span>
       </ComposerPrimitive.Unstable_TriggerPopoverBack>
@@ -234,7 +234,7 @@ const KbMentionPopoverHeader = () => {
   }
 
   return (
-    <div className="px-2.5 py-1.5 text-[10px] font-bold capitalize tracking-wider text-muted-foreground/60 border-b border-border/40 mb-1 sticky top-0 bg-popover z-10 shrink-0">
+    <div className="px-2.5 py-2 text-[10px] font-bold capitalize tracking-wider text-muted-foreground/60 border-b border-border/40 mb-1 sticky top-0 bg-popover z-10 shrink-0">
       Knowledge Base
     </div>
   );
@@ -288,7 +288,7 @@ export const KbMentionPopover = memo(function KbMentionPopover() {
       <ComposerPrimitive.Unstable_TriggerPopover
         char="@"
         adapter={bundle.adapter}
-        className="aui-composer-trigger-popover bg-popover text-popover-foreground absolute bottom-full left-0 z-50 mb-4 w-72 max-h-72 overflow-y-auto rounded-xl border bg-background p-1 shadow-lg flex flex-col gap-0.5"
+        className="aui-composer-trigger-popover bg-popover text-popover-foreground absolute bottom-full left-0 z-50 mb-4 w-72 max-h-72 overflow-y-auto rounded-xl border bg-background px-1 shadow-lg flex flex-col gap-0.5 pb-1"
       >
         <PopoverOpenWatcher onOpen={refetch} />
         {/* Directive must always be mounted so the popover can open when @ is typed */}

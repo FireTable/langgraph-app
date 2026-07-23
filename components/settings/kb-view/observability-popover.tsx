@@ -74,7 +74,6 @@ export function ObservabilityPopover({ docId }: { docId: string }) {
   }, [open, data, loading, docId]);
 
   const handleRunClick = (run: ObservabilityRun) => {
-    setOpen(false);
     // ponytail: each row carries its own threadId — chat uploads
     // open against the chat thread, standalone against the
     // docId-derived thread. parentMessageId is the synthetic

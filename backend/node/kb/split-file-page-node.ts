@@ -5,6 +5,17 @@ import { updateKbDocumentStatus } from "@/lib/kb/queries";
 export async function splitFileToPageNode(
   state: KbAgentStateShape,
 ): Promise<Partial<KbAgentStateShape>> {
+  if (
+    state.mode === "chunksOnly" ||
+    state.mode === "retryFailed" ||
+    state.mode === "retryFailedChunks"
+  ) {
+    return {
+      pagesByDocId: state.pagesByDocId,
+      processedFiles: state.processedFiles,
+    };
+  }
+
   const newDocs = state.processedFiles.filter(
     (p) => p.pipelineStatus === "new" && p.docId !== null && p.r2Key !== null,
   );

@@ -1,5 +1,5 @@
 import "@/tests/helpers/session";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db/client";
@@ -13,6 +13,14 @@ import {
   deleteSpansOlderThan,
   findLatestParentMessageId,
 } from "@/lib/observability/queries";
+
+const { mockGetState } = vi.hoisted(() => ({
+  mockGetState: vi.fn<() => Promise<{ values?: { messages?: unknown } } | null>>(),
+}));
+
+vi.mock("@/lib/langgraph/client", () => ({
+  langGraphClient: { threads: { getState: mockGetState } },
+}));
 import { TEST_USER, ensureTestUser } from "@/tests/helpers/auth";
 import type { CapturedSpan } from "@/lib/observability/callback";
 
@@ -208,6 +216,46 @@ describe("bulkInsertSpans", () => {
     const [fetched] = await getSpansByThreadId("t-roundtrip");
     expect(fetched?.meta.parent_message_id).toBe("msg-from-column-only");
   });
+
+  // ponytail: backfill asks langGraphClient for the latest HumanMessage
+  // id on the thread and stamps every null-pmid row in the batch with
+  // it. Rows that already carry a pmid are left alone. State is the
+  // canonical source — better than "latest in DB", which could be a
+  // later, unrelated turn.
+  it("backfill stamps every null-pmid row with the state's latest HumanMessage id", async () => {
+    await seedThread("t-x");
+    mockGetState.mockResolvedValueOnce({
+      values: {
+        messages: [
+          { type: "human", id: "msg-1" },
+          { type: "ai", id: "ai-1" },
+          { type: "human", id: "msg-2" },
+        ],
+      },
+    });
+
+    await bulkInsertSpans([
+      makeSpan({
+        span_id: "wrapper",
+        meta: { langgraph_thread_id: "t-x", parent_message_id: "msg-1" }, // already set
+      }),
+      makeSpan({
+        span_id: "inner-a",
+        meta: { langgraph_thread_id: "t-x" }, // null pmid — backfilled from state
+      }),
+      makeSpan({
+        span_id: "inner-b",
+        meta: { langgraph_thread_id: "t-x" }, // null pmid — backfilled from state
+      }),
+    ]);
+
+    const all = await getSpansByThreadId("t-x");
+    // wrapper keeps its explicit pmid (not overwritten by state)
+    expect(all.find((s) => s.span_id === "wrapper")?.meta.parent_message_id).toBe("msg-1");
+    // null-pmid rows get the state's latest HumanMessage id
+    expect(all.find((s) => s.span_id === "inner-a")?.meta.parent_message_id).toBe("msg-2");
+    expect(all.find((s) => s.span_id === "inner-b")?.meta.parent_message_id).toBe("msg-2");
+  });
 });
 
 describe("getSpansByThreadId", () => {
@@ -340,48 +388,32 @@ describe("ON DELETE CASCADE — thread lifecycle", () => {
   });
 });
 
-describe("findLatestParentMessageId (DB fallback)", () => {
-  // ponytail: this is what the collector's start() calls at the
-  // outermost span when currentParentMessageId is null. The most
-  // recent non-null parent_message_id on the thread is reused so a
-  // resumed / regen / cold-start invoke still tags with the right
-  // turn id.
-  it("returns the most recent parent_message_id for the thread", async () => {
-    await seedThread("t-fl");
-    const base = Date.now();
-    await bulkInsertSpans([
-      makeSpan({
-        span_id: "older",
-        started_at: base + 10,
-        meta: { langgraph_thread_id: "t-fl", parent_message_id: "msg-A" },
-      }),
-      makeSpan({
-        span_id: "newer",
-        started_at: base + 20,
-        meta: { langgraph_thread_id: "t-fl", parent_message_id: "msg-B" },
-      }),
-      makeSpan({
-        span_id: "no-pmid",
-        started_at: base + 30,
-        meta: { langgraph_thread_id: "t-fl" },
-      }),
-    ]);
-    expect(await findLatestParentMessageId("t-fl")).toBe("msg-B");
+describe("findLatestParentMessageId (state fallback)", () => {
+  beforeEach(() => {
+    mockGetState.mockReset();
   });
 
-  it("returns null when the thread has no prior parent_message_id", async () => {
-    await seedThread("t-empty");
-    await bulkInsertSpans([
-      makeSpan({
-        span_id: "no-pmid-1",
-        meta: { langgraph_thread_id: "t-empty" },
-      }),
-    ]);
-    expect(await findLatestParentMessageId("t-empty")).toBeNull();
+  it("returns the last HumanMessage id from langGraphClient thread state", async () => {
+    mockGetState.mockResolvedValueOnce({
+      values: {
+        messages: [
+          { type: "human", id: "msg-X" },
+          { type: "ai", id: "ai-1" },
+          { type: "human", id: "msg-Y" },
+        ],
+      },
+    });
+    expect(await findLatestParentMessageId("t-fb")).toBe("msg-Y");
   });
 
-  it("returns null for an unknown thread", async () => {
-    expect(await findLatestParentMessageId("ghost-thread")).toBeNull();
+  it("returns null when state fetch fails", async () => {
+    mockGetState.mockRejectedValueOnce(new Error("network down"));
+    expect(await findLatestParentMessageId("t-err")).toBeNull();
+  });
+
+  it("returns null when state has no messages", async () => {
+    mockGetState.mockResolvedValueOnce({ values: {} });
+    expect(await findLatestParentMessageId("t-nomsgs")).toBeNull();
   });
 });
 

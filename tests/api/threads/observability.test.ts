@@ -1,6 +1,24 @@
 import "@/tests/helpers/session";
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { eq } from "drizzle-orm";
+
+// ponytail: spans with `langgraph_thread_id` but no `parent_message_id`
+// trigger bulkInsertSpans → backfillParentMessageIds →
+// findLatestParentMessageId → langGraphClient.threads.getState. In CI
+// (no langgraph dev server) that call hangs. The bulkInsertSpans
+// path has a 500ms timeout on the state fetch, but the test env wants
+// a fast deterministic answer — stub the HTTP call so it returns null
+// immediately and the row persists pmid-less (the panel 404s those by
+// design).
+vi.mock("@/lib/langgraph/client", () => ({
+  langGraphClient: {
+    threads: {
+      getState: async () => ({ values: { messages: [] } }),
+      create: async () => ({}),
+    },
+    runs: { create: async () => ({ run_id: "test" }) },
+  },
+}));
 
 import { db } from "@/db/client";
 import { threads } from "@/lib/threads/schema";

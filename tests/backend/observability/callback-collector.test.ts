@@ -128,7 +128,14 @@ describe("CapturingHandler — bulkInsert wiring", () => {
 });
 
 describe("CapturingHandler — parent_message_id extraction", () => {
-  it("tags every span with the last HumanMessage id from the outermost chain's inputs", async () => {
+  it("outermost chain span resolves pmid from inputs.messages; inner LLM span stays null (backfill handles it)", async () => {
+    // ponytail: no shared instance state — the outermost chain span
+    // resolves pmid from its own inputs.messages via lastHumanMessageId.
+    // Inner LLM / tool spans don't receive the outermost messages in
+    // their input and don't get per-run metadata propagated by LangChain,
+    // so they get null at capture time. bulkInsertSpans' state-fallback
+    // backfill fills them at INSERT time from langGraphClient.threads.
+    // getState.
     const handler = makeHandler();
     handler.handleChainStart(
       fakeSerialized("CompiledStateGraph"),
@@ -155,14 +162,15 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     handler.handleLLMEnd({ generations: [[]] } as never, "llm-1");
     handler.handleChainEnd({ ok: true }, "outer");
 
-    // ponytail: bulkInsert fires once per End hook. LLMEnd for llm-1
-    // comes first → mock.calls[0] is [llm-1 span]. ChainEnd for outer
-    // comes second → mock.calls[1] is [outer span]. Both should carry
-    // the same parent_message_id since they're in the same invoke.
+    // bulkInsert fires once per End hook. LLMEnd for llm-1 first
+    // (mock.calls[0] = [llm-1 span]), then ChainEnd for outer
+    // (mock.calls[1] = [outer span]).
     const llmCall = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
     const chainCall = (bulkInsertSpansMock.mock.calls[1] as unknown as [CapturedSpan[]])[0];
     expect(llmCall[0]?.span_id).toBe("llm-1");
-    expect(llmCall[0]?.meta.parent_message_id).toBe("h-2");
+    // inner span: no messages in its input, no per-run metadata → null
+    expect(llmCall[0]?.meta.parent_message_id).toBeNull();
+    // outermost chain: parsed from inputs.messages
     expect(chainCall[0]?.span_id).toBe("outer");
     expect(chainCall[0]?.meta.parent_message_id).toBe("h-2");
   });
@@ -241,6 +249,66 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     expect(callA[0]?.meta.parent_message_id).toBe("h-A");
     // Second call: outer-B end → span meta has h-B (not stuck on h-A)
     const callB = (bulkInsertSpansMock.mock.calls[1] as unknown as [CapturedSpan[]])[0];
+    expect(callB[0]?.meta.parent_message_id).toBe("h-B");
+  });
+
+  // ponytail: kb-upload / background_agent dispatches stamp
+  // metadata.parent_message_id via runs.create. The handler should
+  // honor that even if inputs.messages would resolve to a different
+  // value — metadata is the per-run trigger reference, the messages
+  // array may have been augmented by a later write.
+  it("metadata.parent_message_id wins over lastHumanMessageId(inputs.messages)", async () => {
+    const handler = makeHandler();
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      {
+        messages: [new HumanMessage({ content: "user-msg", id: "h-from-messages" })],
+      },
+      "outer-bg",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-bg", parent_message_id: "h-from-metadata" },
+    );
+    handler.handleChainEnd({ ok: true }, "outer-bg");
+    const flushed = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    expect(flushed[0]?.meta.parent_message_id).toBe("h-from-metadata");
+  });
+
+  // ponytail: the actual bug we're guarding against. Two concurrent
+  // invokes on the same handler instance — outer spans interleave
+  // before either ends. Pre-fix, the instance field
+  // `currentParentMessageId` would be overwritten by whichever
+  // handleChainStart ran last, polluting the other's spans. Post-fix
+  // there's no shared state; each handleChainStart resolves from its
+  // own inputs.messages.
+  it("concurrent invokes don't clobber each other's parent_message_id", async () => {
+    const handler = makeHandler();
+    // invoke A: outermost h-A
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      { messages: [new HumanMessage({ content: "a", id: "h-A" })] },
+      "outer-A",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-conc" },
+    );
+    // invoke B arrives before A ends: outermost h-B overwrites the
+    // instance field (pre-fix), but A's pmid is already stamped on its
+    // span via the per-call resolve.
+    handler.handleChainStart(
+      fakeSerialized("CompiledStateGraph"),
+      { messages: [new HumanMessage({ content: "b", id: "h-B" })] },
+      "outer-B",
+      undefined,
+      undefined,
+      { langgraph_thread_id: "t-conc" },
+    );
+    handler.handleChainEnd({ ok: true }, "outer-A");
+    handler.handleChainEnd({ ok: true }, "outer-B");
+
+    const callA = (bulkInsertSpansMock.mock.calls[0] as unknown as [CapturedSpan[]])[0];
+    const callB = (bulkInsertSpansMock.mock.calls[1] as unknown as [CapturedSpan[]])[0];
+    expect(callA[0]?.meta.parent_message_id).toBe("h-A"); // not h-B
     expect(callB[0]?.meta.parent_message_id).toBe("h-B");
   });
 });

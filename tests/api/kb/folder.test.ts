@@ -1,12 +1,21 @@
 import "@/tests/helpers/session";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db/client";
-import { attachments, kbChunk, kbDocument, kbFolder, user } from "@/db/schema";
+import {
+  attachments,
+  kbChunk,
+  kbDocument,
+  kbEntity,
+  kbFolder,
+  kbRelationship,
+  threads,
+  user,
+} from "@/db/schema";
 import { setCurrentUser } from "@/tests/helpers/session";
 
-import { GET } from "@/app/api/kb/folders/[id]/route";
+import { DELETE, GET } from "@/app/api/kb/folders/[id]/route";
 
 // ponytail: GET /api/kb/folders/[id] returns the folder shape plus the
 // content + entities + status of every chunk across every doc in the
@@ -26,16 +35,35 @@ async function seedFolderRow(userId: string, id: string, name = "Folder") {
   await db.insert(kbFolder).values({ id, userId, name });
 }
 
-async function seedDocRow(userId: string, folderId: string, id: string, title = "doc.pdf") {
+async function seedDocRow(
+  userId: string,
+  folderId: string,
+  id: string,
+  title = "doc.pdf",
+  attachmentId: string | null = null,
+) {
   await db.insert(kbDocument).values({
     id,
     userId,
     folderId,
-    attachmentId: null,
+    attachmentId,
     title,
     contentType: "application/pdf",
     contentHash: `h-${id}`,
     status: "success",
+  });
+}
+
+async function seedAttachment(userId: string, id: string, r2Key: string) {
+  await db.insert(attachments).values({
+    id,
+    userId,
+    r2Key,
+    name: `${id}.pdf`,
+    contentType: "application/pdf",
+    sizeBytes: 1024,
+    status: "uploaded",
+    sha256: `sha-${id}`,
   });
 }
 
@@ -44,9 +72,12 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
+  await db.delete(kbRelationship);
+  await db.delete(kbEntity);
   await db.delete(kbChunk);
   await db.delete(kbDocument);
   await db.delete(kbFolder);
+  await db.delete(threads);
   await db.delete(attachments);
   await db.delete(user).where(eq(user.id, USER_A.id));
   await db.delete(user).where(eq(user.id, USER_B.id));
@@ -132,5 +163,131 @@ describe("GET /api/kb/folders/[id]", () => {
     const contents = body.chunks.map((c: { content: string }) => c.content).sort();
     expect(contents).toEqual(["alpha intro", "beta intro"]);
     expect(body.chunks).toHaveLength(2);
+  });
+});
+
+describe("DELETE /api/kb/folders/[id]", () => {
+  it("returns 409 NON_EMPTY when folder has docs and deleteAll is false", async () => {
+    setCurrentUser(USER_A);
+    await seedFolderRow(USER_A.id, "f-1", "Folder 1");
+    await seedDocRow(USER_A.id, "f-1", "d-1", "doc1.pdf");
+
+    const req = new Request("http://localhost/api/kb/folders/f-1", { method: "DELETE" });
+    const res = await DELETE(req, ctxFor("f-1"));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("NON_EMPTY");
+    expect(body.docCount).toBe(1);
+  });
+
+  it("deletes folder and all its documents when deleteAll=true", async () => {
+    setCurrentUser(USER_A);
+    await seedFolderRow(USER_A.id, "f-1", "Folder 1");
+    await seedDocRow(USER_A.id, "f-1", "d-1", "doc1.pdf");
+    await seedDocRow(USER_A.id, "f-1", "d-2", "doc2.pdf");
+
+    const req = new Request("http://localhost/api/kb/folders/f-1?deleteAll=true", {
+      method: "DELETE",
+    });
+    const res = await DELETE(req, ctxFor("f-1"));
+    expect(res.status).toBe(204);
+
+    const remainingDocs = await db.query.kbDocument.findMany({
+      where: eq(kbDocument.folderId, "f-1"),
+    });
+    expect(remainingDocs).toHaveLength(0);
+
+    const folderRow = await db.query.kbFolder.findFirst({
+      where: eq(kbFolder.id, "f-1"),
+    });
+    expect(folderRow).toBeUndefined();
+  });
+
+  it("deletes attachment rows for every doc when deleteAll=true (R2 objects stay)", async () => {
+    setCurrentUser(USER_A);
+    await seedAttachment(USER_A.id, "att-1", "u/user-a/upload/sha-att-1.pdf");
+    await seedAttachment(USER_A.id, "att-2", "u/user-a/upload/sha-att-2.pdf");
+    await seedFolderRow(USER_A.id, "f-1", "Folder 1");
+    await seedDocRow(USER_A.id, "f-1", "d-1", "doc1.pdf", "att-1");
+    await seedDocRow(USER_A.id, "f-1", "d-2", "doc2.pdf", "att-2");
+
+    const req = new Request("http://localhost/api/kb/folders/f-1?deleteAll=true", {
+      method: "DELETE",
+    });
+    const res = await DELETE(req, ctxFor("f-1"));
+    expect(res.status).toBe(204);
+
+    // Attachment rows for both docs are gone (no orphan pointers).
+    const remainingAttachments = await db.query.attachments.findMany({
+      where: eq(attachments.userId, USER_A.id),
+    });
+    expect(remainingAttachments).toHaveLength(0);
+  });
+
+  it("cascades: kb_chunk + kb_entity + kb_relationship rows gone, kb_thread rows deleted", async () => {
+    // ponytail: P1 follow-up from Greptile on PR #47. The earlier
+    // cascade test only verified the folder + kb_document rows went
+    // away; the turbo-button UX is one click away from "did the
+    // cascades actually run?" — add coverage for the per-doc kb_thread
+    // row + child rows on kb_chunk / kb_entity / kb_relationship.
+    setCurrentUser(USER_A);
+    await seedFolderRow(USER_A.id, "f-1", "Folder 1");
+    await seedDocRow(USER_A.id, "f-1", "d-1", "doc1.pdf");
+
+    // Seed child rows directly (FK cascades do the work).
+    await db.insert(kbEntity).values({
+      id: "e-1",
+      userId: USER_A.id,
+      documentId: "d-1",
+      name: "Alice",
+      type: "person",
+      description: "",
+    });
+    await db.insert(kbRelationship).values({
+      id: "r-1",
+      userId: USER_A.id,
+      documentId: "d-1",
+      source: "Alice",
+      target: "Bob",
+      relation: "knows",
+      description: "",
+    });
+    // kb_chunk.tsv is a GENERATED ALWAYS column — raw INSERT skips the
+    // generated field that Drizzle insists on populating.
+    await db.execute(
+      sql`INSERT INTO kb_chunk (id, document_id, ordinal, content, status) VALUES ('c-1', 'd-1', 0, 'hello', 'success')`,
+    );
+    // Per-doc kb thread (kind='kb') — deleteKbFolderForUser explicitly
+    // removes this in the cascade path; the single-doc DELETE does the
+    // same. Both are part of the FK CASCADE contract.
+    await db
+      .insert(threads)
+      .values({ id: "d-1".replace(/^d-/, ""), userId: USER_A.id, kind: "kb" });
+
+    const req = new Request("http://localhost/api/kb/folders/f-1?deleteAll=true", {
+      method: "DELETE",
+    });
+    const res = await DELETE(req, ctxFor("f-1"));
+    expect(res.status).toBe(204);
+
+    // FK cascades do the child-row work.
+    const remainingChunks = await db.query.kbChunk.findMany({
+      where: eq(kbChunk.documentId, "d-1"),
+    });
+    expect(remainingChunks).toHaveLength(0);
+    const remainingEntities = await db.query.kbEntity.findMany({
+      where: eq(kbEntity.documentId, "d-1"),
+    });
+    expect(remainingEntities).toHaveLength(0);
+    const remainingRelationships = await db.query.kbRelationship.findMany({
+      where: eq(kbRelationship.documentId, "d-1"),
+    });
+    expect(remainingRelationships).toHaveLength(0);
+
+    // Explicit thread cleanup by deleteKbFolderForUser.
+    const remainingThreads = await db.query.threads.findMany({
+      where: eq(threads.userId, USER_A.id),
+    });
+    expect(remainingThreads).toHaveLength(0);
   });
 });

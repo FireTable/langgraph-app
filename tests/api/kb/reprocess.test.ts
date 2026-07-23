@@ -103,6 +103,7 @@ async function seedDoc(opts: {
   docId?: string;
   status?: "pending" | "parsing" | "success" | "failed";
   errorMessage?: string | null;
+  pages?: unknown[];
 }) {
   const docId = opts.docId ?? "d-1";
   await db.insert(kbDocument).values({
@@ -115,6 +116,7 @@ async function seedDoc(opts: {
     contentHash: "h-1",
     status: opts.status ?? "success",
     errorMessage: opts.errorMessage ?? null,
+    pages: opts.pages ?? null,
   });
   return docId;
 }
@@ -406,5 +408,49 @@ describe("POST /api/kb/documents/[id]/reprocess", () => {
     // ponytail: failed dispatch would be the WORST UX — flip
     // nothing and silently ignore.
     expect(mockRunsCreate).not.toHaveBeenCalled();
+  });
+
+  it("retryFailedChunks: prepareKBDataNode -> splitFileToPageNode -> pageToMarkdownNode pipeline skips OCR and preserves doc.status='success'", async () => {
+    const { prepareKBDataNode, splitFileToPageNode, pageToMarkdownNode } =
+      await import("@/backend/node/kb");
+    await seedFolder(USER_A.id);
+    await seedAttachment(USER_A.id);
+    await seedDoc({
+      userId: USER_A.id,
+      status: "success",
+      pages: [{ pageIndex: 0, imageUrl: "http://x", markdown: "hello" }],
+    });
+
+    const initialInput = {
+      messages: [{ id: "m-1", type: "human", content: "ingest" }],
+    };
+
+    const prepOut = await prepareKBDataNode(initialInput as never, {
+      configurable: {
+        userId: USER_A.id,
+        docId: "d-1",
+        mode: "retryFailedChunks",
+        source: "kb-reprocess",
+        parent_message_id: "m-1",
+      },
+    });
+
+    expect(prepOut.status).toBe("success");
+    expect(prepOut.pagesByDocId?.["d-1"]).toHaveLength(1);
+
+    const mergedStateAfterPrep = { ...initialInput, ...prepOut };
+
+    const splitOut = await splitFileToPageNode(mergedStateAfterPrep as never);
+    expect(splitOut.pagesByDocId?.["d-1"]).toHaveLength(1);
+
+    const mergedStateAfterSplit = { ...mergedStateAfterPrep, ...splitOut };
+
+    const ocrOut = await pageToMarkdownNode(mergedStateAfterSplit as never);
+    expect(ocrOut.pagesByDocId?.["d-1"]).toHaveLength(1);
+
+    const docInDb = await db.query.kbDocument.findFirst({
+      where: aAnd(eq(kbDocument.id, "d-1"), eq(kbDocument.userId, USER_A.id)),
+    });
+    expect(docInDb?.status).toBe("success");
   });
 });

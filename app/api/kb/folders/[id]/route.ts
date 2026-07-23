@@ -84,16 +84,23 @@ export const PATCH = withAuth<{ id: string }>(async (req, { user, params }) => {
 // folder that still has docs. We surface that as 409 NON_EMPTY with
 // a doc count, so the UI can render "delete its 3 docs first" instead
 // of a generic FK-violation message.
-export const DELETE = withAuth<{ id: string }>(async (_req, { user, params }) => {
+export const DELETE = withAuth<{ id: string }>(async (req, { user, params }) => {
   const folder = await findKbFolderById(user.id, params.id);
   if (!folder) {
     return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   }
-  const docs = await listKbDocumentsByFolder(user.id, folder.id);
-  if (docs.length > 0) {
-    return NextResponse.json({ code: "NON_EMPTY", docCount: docs.length }, { status: 409 });
+
+  const url = new URL(req.url);
+  const deleteAll = url.searchParams.get("deleteAll") === "true";
+
+  if (!deleteAll) {
+    const docs = await listKbDocumentsByFolder(user.id, folder.id);
+    if (docs.length > 0) {
+      return NextResponse.json({ code: "NON_EMPTY", docCount: docs.length }, { status: 409 });
+    }
   }
-  const deleted = await deleteKbFolderForUser(user.id, folder.id);
+
+  const deleted = await deleteKbFolderForUser(user.id, folder.id, { deleteAllDocs: deleteAll });
   if (!deleted) {
     return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
   }
