@@ -17,6 +17,21 @@ type InFlightRun = {
   name: string;
 };
 
+// Explicit list of known Agent node names across all 4 LangGraph graphs
+const KNOWN_AGENTS = new Set([
+  "chatAgent",
+  "routerAgent",
+  "weatherAgent",
+  "cryptoAgent",
+  "codeAgent",
+  "threadSummarizeAgent",
+  "renameThreadAgent",
+  "kbOcrAgent",
+  "kbEntityExtractAgent",
+  "kbEntityAlignAgent",
+  "evalJudgeAgent",
+]);
+
 export class EvalCallbackHandler extends BaseCallbackHandler {
   name = "eval_callback";
   private runs = new Map<string, InFlightRun>();
@@ -33,8 +48,13 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
   ) {
     const metaPmid = metadata?.parent_message_id;
     const fromMessages = lastHumanMessageId((inputs as { messages?: unknown }).messages);
-    const parentMessageId =
+    let parentMessageId =
       typeof metaPmid === "string" && metaPmid.length > 0 ? metaPmid : fromMessages;
+
+    // Fallback: inherit parentMessageId from parent chain if missing locally
+    if (!parentMessageId && parentRunId && this.runs.has(parentRunId)) {
+      parentMessageId = this.runs.get(parentRunId)!.parentMessageId;
+    }
 
     const meta = (metadata ?? {}) as Record<string, any>;
     const configurable = (meta.configurable ?? {}) as Record<string, any>;
@@ -44,12 +64,14 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
       (meta.threadId as string) ??
       (configurable.thread_id as string) ??
       (configurable.threadId as string) ??
+      (parentRunId && this.runs.get(parentRunId)?.threadId) ??
       null;
     const userId =
       (meta.user_id as string) ??
       (meta.userId as string) ??
       (configurable.user_id as string) ??
       (configurable.userId as string) ??
+      (parentRunId && this.runs.get(parentRunId)?.userId) ??
       null;
     const templateId =
       (meta.templateId as string) ?? (configurable.templateId as string) ?? "tmpl_chat_v1";
@@ -57,7 +79,7 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
       (meta.variantId as string) ?? (configurable.variantId as string) ?? "var_chat_default";
 
     // Track the chain name (e.g. mainAgent, chatAgent, routerAgent)
-    const name = runName ?? chain.id?.[chain.id.length - 1] ?? "agent";
+    const rawName = runName ?? chain.id?.[chain.id.length - 1] ?? "agent";
 
     this.runs.set(runId, {
       startedAt: Date.now(),
@@ -69,7 +91,7 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
       variantId,
       inputTokens: 0,
       outputTokens: 0,
-      name,
+      name: rawName,
     });
   }
 
@@ -89,13 +111,11 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
     const run = this.runs.get(runId);
     if (!run) return;
 
-    // Filter out anonymous RunnableSequence / inner wrappers — only capture named graph agents or root mainAgent
-    const isNamedAgent =
-      run.name && run.name !== "RunnableSequence" && run.name !== "chain" && run.name !== "agent";
+    // Capture ONLY true Agent nodes (or fallback root if name matches chatAgent)
+    const isTargetAgent =
+      KNOWN_AGENTS.has(run.name) || (run.parentRunId === null && run.name === "chatAgent");
 
-    const isRootOrTarget = run.parentRunId === null || isNamedAgent;
-
-    if (isRootOrTarget && run.name !== "RunnableSequence") {
+    if (isTargetAgent) {
       const endedAt = Date.now();
       const totalMs = Math.max(1, endedAt - run.startedAt);
 
@@ -106,7 +126,7 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
         await recordEvalRun({
           threadId: finalThreadId,
           userId: finalUserId,
-          agent: run.name || "chatAgent",
+          agent: run.name,
           templateId: run.templateId,
           variantId: run.variantId,
           parentMessageId: run.parentMessageId,
@@ -128,12 +148,10 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
     const run = this.runs.get(runId);
     if (!run) return;
 
-    const isNamedAgent =
-      run.name && run.name !== "RunnableSequence" && run.name !== "chain" && run.name !== "agent";
+    const isTargetAgent =
+      KNOWN_AGENTS.has(run.name) || (run.parentRunId === null && run.name === "chatAgent");
 
-    const isRootOrTarget = run.parentRunId === null || isNamedAgent;
-
-    if (isRootOrTarget && run.name !== "RunnableSequence") {
+    if (isTargetAgent) {
       const endedAt = Date.now();
       const totalMs = Math.max(1, endedAt - run.startedAt);
       const finalThreadId = run.threadId || "dev-thread";
@@ -142,7 +160,7 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
       recordEvalRun({
         threadId: finalThreadId,
         userId: finalUserId,
-        agent: run.name || "chatAgent",
+        agent: run.name,
         templateId: run.templateId,
         variantId: run.variantId,
         parentMessageId: run.parentMessageId,

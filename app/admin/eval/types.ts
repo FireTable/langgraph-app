@@ -39,6 +39,7 @@ export type RecentRun = {
   parentMessageId?: string;
   inputTokens?: number;
   outputTokens?: number;
+  judgment?: Judgment;
 };
 
 export type UserAssignment = {

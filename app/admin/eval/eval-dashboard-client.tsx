@@ -5,7 +5,9 @@ import { Activity, Clock, Layers, Scale, UserCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { useOpenObservabilitySheet } from "@/components/observability/sheet-context";
 import { UserAssignmentsTab } from "./assignments";
+import { AgentBenchmarkTab } from "./benchmark/agent-benchmark-tab";
 import { ExecutionLogsTab, TraceDetailDialog } from "./logs";
 import {
   AddCohortVariantDialog,
@@ -30,6 +32,7 @@ import {
 } from "./types";
 
 export function EvalDashboardClient() {
+  const openObservabilitySheet = useOpenObservabilitySheet();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [variants, setVariants] = useState<Variant[]>([]);
   const [stats, setStats] = useState<VariantStat[]>([]);
@@ -497,7 +500,7 @@ export function EvalDashboardClient() {
 
         {/* 4 Main Sub-Tabs Navigation */}
         <Tabs value={subTab} onValueChange={setSubTab}>
-          <TabsList className="grid grid-cols-2 md:grid-cols-4 h-11 w-full bg-muted/60 p-1 rounded-xl">
+          <TabsList className="grid grid-cols-1 md:grid-cols-3 h-11 w-full bg-muted/60 p-1 rounded-xl">
             <TabsTrigger
               value="prompts"
               className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs"
@@ -517,21 +520,12 @@ export function EvalDashboardClient() {
               </Badge>
             </TabsTrigger>
             <TabsTrigger
-              value="logs"
+              value="benchmark"
               className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs"
             >
-              <Clock className="size-4 text-primary" /> Execution Logs & Traces
+              <Scale className="size-4 text-primary" /> Agent Benchmark & Evaluation
               <Badge variant="secondary" className="ml-auto text-[10px] font-mono px-1.5 py-0">
                 {recentRuns.length}
-              </Badge>
-            </TabsTrigger>
-            <TabsTrigger
-              value="rubric"
-              className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs"
-            >
-              <Scale className="size-4 text-primary" /> Rubric & AI Judgments
-              <Badge variant="secondary" className="ml-auto text-[10px] font-mono px-1.5 py-0">
-                {judgments.length}
               </Badge>
             </TabsTrigger>
           </TabsList>
@@ -570,16 +564,27 @@ export function EvalDashboardClient() {
         />
       )}
 
-      {subTab === "logs" && (
-        <ExecutionLogsTab
+      {subTab === "benchmark" && (
+        <AgentBenchmarkTab
           recentRuns={recentRuns}
-          onTriggerJudge={triggerAIJudge}
+          rubrics={rubrics}
+          judgments={judgments}
+          variants={variants}
+          collapsedGroups={collapsedGroups}
+          toggleGroupCollapse={toggleGroupCollapse}
+          onOpenTrace={(run) => {
+            if (openObservabilitySheet && run.threadId) {
+              openObservabilitySheet({
+                threadId: run.threadId,
+                parentMessageId: run.parentMessageId ?? null,
+              });
+            }
+          }}
+          onRunJudge={(run) => triggerAIJudge(run.id)}
+          onRefresh={fetchData}
           evaluating={evaluating}
-          onOpenTraceDetail={openTraceDetail}
         />
       )}
-
-      {subTab === "rubric" && <RubricJudgmentsTab rubrics={rubrics} judgments={judgments} />}
 
       {/* Dialog Modals */}
       <DeployPromptDialog
