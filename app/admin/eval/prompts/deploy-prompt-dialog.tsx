@@ -13,6 +13,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { LANGGRAPH_GROUPS } from "../types";
 
 interface DeployPromptDialogProps {
@@ -43,19 +45,19 @@ export function DeployPromptDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Add prompt version</DialogTitle>
-          <DialogDescription className="text-xs">
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
+        <DialogHeader className="p-6 pb-4 border-b border-border/60">
+          <DialogTitle className="text-base sm:text-lg">Add prompt version</DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground">
             Create a new System Prompt template version for node{" "}
             <span className="font-mono font-semibold text-foreground">{targetAgent}</span>.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3.5 text-xs py-2">
+        <div className="p-6 overflow-y-auto max-h-[60vh] flex flex-col gap-4 text-xs">
           {/* Read-only Target Agent Node Display */}
           <div className="flex flex-col gap-1.5">
-            <span className="font-medium text-foreground">Target Agent Node</span>
+            <Label className="text-xs font-semibold text-foreground">Target Agent Node</Label>
             <div className="flex items-center justify-between bg-muted/40 border border-border/60 rounded-lg px-3 py-2">
               <div className="flex items-center gap-2">
                 <GitBranch className="size-4 text-primary shrink-0" />
@@ -74,28 +76,28 @@ export function DeployPromptDialog({
             </div>
           </div>
 
-          <label className="flex flex-col gap-1">
-            <span className="font-medium text-foreground">Version Notes / Rationale</span>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-semibold text-foreground">Version Notes / Rationale</Label>
             <Input
               value={notes}
               onChange={(e) => onNotesChange(e.target.value)}
               placeholder="e.g. Optimized RAG instructions & concise tone"
               className="h-9 text-xs"
             />
-          </label>
+          </div>
 
-          <label className="flex flex-col gap-1">
-            <span className="font-medium text-foreground">System Prompt Template</span>
-            <textarea
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-semibold text-foreground">System Prompt Template</Label>
+            <Textarea
               value={content}
               onChange={(e) => onContentChange(e.target.value)}
               placeholder="You are an AI assistant..."
-              className="bg-background border-border min-h-[180px] rounded-md border p-2.5 font-mono text-xs focus:outline-hidden leading-relaxed"
+              className="min-h-[220px] max-h-[360px] overflow-y-auto font-mono text-xs leading-relaxed resize-y"
             />
-          </label>
+          </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="p-4 border-t border-border/60 bg-muted/20">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

@@ -23,6 +23,7 @@ export const POST = withAuth(async (req, { user }) => {
     const body = (await req.json()) as {
       action?:
         | "create_template"
+        | "create_cohort_variant"
         | "create_variant"
         | "update_variant_weight"
         | "batch_update_weights";
@@ -70,6 +71,42 @@ export const POST = withAuth(async (req, { user }) => {
         })
         .returning();
       return NextResponse.json({ template: created[0] });
+    }
+
+    if (body.action === "create_cohort_variant") {
+      const cohortBody = body as unknown as {
+        label: string;
+        trafficWeight: number;
+        bindings: Record<string, string>;
+      };
+
+      if (!cohortBody.label || typeof cohortBody.trafficWeight !== "number") {
+        return NextResponse.json(
+          { error: "label and trafficWeight are required" },
+          { status: 400 },
+        );
+      }
+
+      const bindings = cohortBody.bindings || {};
+      const createdVariants = [];
+
+      for (const [agent, tmplId] of Object.entries(bindings)) {
+        if (!tmplId) continue;
+        const id = `var_${generateId()}`;
+        const [created] = await db
+          .insert(promptVariant)
+          .values({
+            id,
+            templateId: tmplId,
+            label: cohortBody.label.trim(),
+            trafficWeight: cohortBody.trafficWeight,
+            enabled: true,
+          })
+          .returning();
+        createdVariants.push(created);
+      }
+
+      return NextResponse.json({ variants: createdVariants });
     }
 
     if (body.action === "create_variant") {

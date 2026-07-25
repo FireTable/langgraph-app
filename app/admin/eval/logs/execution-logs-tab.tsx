@@ -4,6 +4,14 @@ import React from "react";
 import { CheckCircle2, ThumbsDown, ThumbsUp, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { RecentRun } from "../types";
 
 interface ExecutionLogsTabProps {
@@ -35,32 +43,32 @@ export function ExecutionLogsTab({
       </div>
 
       <div className="border-border/80 overflow-hidden rounded-xl border bg-card text-card-foreground shadow-xs">
-        <table className="w-full text-left text-xs">
-          <thead className="bg-muted/50 border-b text-muted-foreground font-medium uppercase text-[10px]">
-            <tr>
-              <th className="px-4 py-3">Run ID</th>
-              <th className="px-4 py-3">Agent Node</th>
-              <th className="px-4 py-3">Variant</th>
-              <th className="px-4 py-3 text-center">Status</th>
-              <th className="px-4 py-3 text-right">Latency</th>
-              <th className="px-4 py-3 text-center">User Rating</th>
-              <th className="px-4 py-3 text-center">AI Judge Status</th>
-              <th className="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
+        <Table className="text-xs">
+          <TableHeader className="bg-muted/50 uppercase text-[10px]">
+            <TableRow>
+              <TableHead>Run ID</TableHead>
+              <TableHead>Agent Node</TableHead>
+              <TableHead>Variant</TableHead>
+              <TableHead className="text-center">Status</TableHead>
+              <TableHead className="text-right">Latency</TableHead>
+              <TableHead className="text-center">User Rating</TableHead>
+              <TableHead className="text-center">AI Judge Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {recentRuns.map((run) => (
-              <tr key={run.id} className="hover:bg-muted/20 transition-colors">
-                <td className="px-4 py-3 font-mono text-[11px] font-medium text-foreground">
+              <TableRow key={run.id}>
+                <TableCell className="font-mono text-[11px] font-medium text-foreground">
                   {run.id}
-                </td>
-                <td className="px-4 py-3 font-mono text-muted-foreground">{run.agent}</td>
-                <td className="px-4 py-3">
+                </TableCell>
+                <TableCell className="font-mono text-muted-foreground">{run.agent}</TableCell>
+                <TableCell>
                   <Badge variant="outline" className="font-mono text-[10px]">
                     {run.label || run.variantId}
                   </Badge>
-                </td>
-                <td className="px-4 py-3 text-center">
+                </TableCell>
+                <TableCell className="text-center">
                   {run.status === "success" ? (
                     <span className="inline-flex items-center gap-1 text-emerald-500 font-medium text-[11px]">
                       <CheckCircle2 className="size-3" /> success
@@ -70,9 +78,9 @@ export function ExecutionLogsTab({
                       <XCircle className="size-3" /> {run.status}
                     </span>
                   )}
-                </td>
-                <td className="px-4 py-3 text-right font-mono tabular-nums">{run.totalMs} ms</td>
-                <td className="px-4 py-3 text-center font-medium">
+                </TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{run.totalMs} ms</TableCell>
+                <TableCell className="text-center font-medium">
                   {run.userRating === 5 ? (
                     <span className="inline-flex items-center gap-1 text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded-full text-[10px]">
                       <ThumbsUp className="size-3" /> 5 (Up)
@@ -86,8 +94,8 @@ export function ExecutionLogsTab({
                   ) : (
                     <span className="text-muted-foreground/50">—</span>
                   )}
-                </td>
-                <td className="px-4 py-3 text-center">
+                </TableCell>
+                <TableCell className="text-center">
                   <Button
                     type="button"
                     variant="outline"
@@ -97,8 +105,8 @@ export function ExecutionLogsTab({
                   >
                     {evaluating ? "Scoring..." : "Run AI judge"}
                   </Button>
-                </td>
-                <td className="px-4 py-3 text-right">
+                </TableCell>
+                <TableCell className="text-right">
                   <Button
                     type="button"
                     variant="ghost"
@@ -107,18 +115,18 @@ export function ExecutionLogsTab({
                   >
                     View trace
                   </Button>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
             {recentRuns.length === 0 && (
-              <tr>
-                <td colSpan={8} className="text-muted-foreground px-4 py-8 text-center text-xs">
+              <TableRow>
+                <TableCell colSpan={8} className="text-muted-foreground px-4 py-8 text-center text-xs">
                   No execution runs recorded yet. Invocations will log latency and tokens here.
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

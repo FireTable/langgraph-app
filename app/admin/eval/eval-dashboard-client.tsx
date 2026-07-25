@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { UserAssignmentsTab } from "./assignments";
 import { ExecutionLogsTab, TraceDetailDialog } from "./logs";
 import {
-  AddVariantDialog,
+  AddCohortVariantDialog,
   DeletePromptDialog,
   DeployPromptDialog,
   EditPromptDialog,
@@ -47,10 +47,17 @@ export function EvalDashboardClient() {
   const [loadingTrace, setLoadingTrace] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
 
-  // New Prompt Variant Dialog
-  const [addingVariantTmplId, setAddingVariantTmplId] = useState<string | null>(null);
-  const [newVarLabel, setNewVarLabel] = useState("");
-  const [newVarWeight, setNewVarWeight] = useState("50");
+  // New / Edit Experiment Cohort Dialog State
+  const [addCohortDialogOpen, setAddCohortDialogOpen] = useState(false);
+  const [editingCohortData, setEditingCohortData] = useState<{
+    label: string;
+    trafficWeight: number;
+    bindings: Record<string, string>;
+  } | null>(null);
+  const [submittingCohort, setSubmittingCohort] = useState(false);
+
+  // User Assignment Override State
+  const [overridingUserId, setOverridingUserId] = useState<string | null>(null);
 
   // Deploy Prompt Version Dialog State
   const [deployModalOpen, setDeployModalOpen] = useState(false);
@@ -82,6 +89,87 @@ export function EvalDashboardClient() {
 
   const toggleGroupCollapse = (groupId: string) => {
     setCollapsedGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
+
+  const handleOpenEditCohort = (
+    label: string,
+    weight: number,
+    bindings: Record<string, string>,
+  ) => {
+    setEditingCohortData({ label, trafficWeight: weight, bindings });
+    setAddCohortDialogOpen(true);
+  };
+
+  const handleCreateCohortVariant = async (cohortData: {
+    label: string;
+    trafficWeight: number;
+    bindings: Record<string, string>;
+  }) => {
+    setSubmittingCohort(true);
+    try {
+      const res = await fetch("/api/eval/prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create_cohort_variant",
+          ...cohortData,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save variant");
+      toast.success(
+        editingCohortData
+          ? `Updated variant "${cohortData.label}"`
+          : `Created variant "${cohortData.label}"`,
+      );
+      setAddCohortDialogOpen(false);
+      setEditingCohortData(null);
+      fetchData();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error saving variant");
+    } finally {
+      setSubmittingCohort(false);
+    }
+  };
+
+  const handleOverrideUserCohort = async (userId: string, cohortLabel: string) => {
+    setOverridingUserId(userId);
+    try {
+      const res = await fetch("/api/eval/assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          cohortLabel,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to override assignment");
+      toast.success(`User variant assigned to "${cohortLabel}"`);
+      fetchData();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error overriding assignment");
+    } finally {
+      setOverridingUserId(null);
+    }
+  };
+
+  const handleDeleteCohort = async (cohortLabel: string) => {
+    if (cohortLabel.toLowerCase() === "default") {
+      toast.error("Default variant cannot be deleted");
+      return;
+    }
+    if (!confirm(`Are you sure you want to delete variant "${cohortLabel}"?`)) {
+      return;
+    }
+    try {
+      const cohortVariants = variants.filter((v) => v.label === cohortLabel);
+      for (const v of cohortVariants) {
+        await fetch(`/api/eval/prompts?id=${v.id}`, { method: "DELETE" });
+      }
+      toast.success(`Variant "${cohortLabel}" deleted`);
+      fetchData();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error deleting variant");
+    }
   };
 
   const openTrafficModal = (agentId: string) => {
@@ -260,32 +348,6 @@ export function EvalDashboardClient() {
     fetchData();
   }, []);
 
-  const handleAddVariant = async () => {
-    if (!addingVariantTmplId || !newVarLabel.trim()) return;
-    try {
-      const res = await fetch("/api/eval/prompts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "create_variant",
-          templateId: addingVariantTmplId,
-          label: newVarLabel.trim(),
-          trafficWeight: parseInt(newVarWeight) || 50,
-        }),
-      });
-      if (res.ok) {
-        toast.success("New variant added");
-        setAddingVariantTmplId(null);
-        setNewVarLabel("");
-        fetchData();
-      } else {
-        toast.error("Failed to create variant");
-      }
-    } catch (err) {
-      console.error("Failed to create variant:", err);
-    }
-  };
-
   const handleCreateTemplate = async () => {
     if (!newPromptContent.trim()) {
       toast.error("Prompt content cannot be empty");
@@ -445,19 +507,27 @@ export function EvalDashboardClient() {
           collapsedGroups={collapsedGroups}
           toggleGroupCollapse={toggleGroupCollapse}
           openTrafficModal={openTrafficModal}
-          setAddingVariantTmplId={setAddingVariantTmplId}
+          openAddCohortDialog={() => {
+            setEditingCohortData(null);
+            setAddCohortDialogOpen(true);
+          }}
+          openEditCohortDialog={handleOpenEditCohort}
           openDeployDialogForAgent={openDeployDialogForAgent}
           copyToClipboard={copyToClipboard}
           openEditModal={openEditModal}
           openDeleteModal={openDeleteModal}
+          onDeleteCohort={handleDeleteCohort}
         />
       )}
 
       {subTab === "assignments" && (
         <UserAssignmentsTab
           assignments={assignments}
+          variants={variants}
           userSearch={userSearch}
           onSearchChange={setUserSearch}
+          onOverrideCohort={handleOverrideUserCohort}
+          overridingUserId={overridingUserId}
         />
       )}
 
@@ -488,14 +558,16 @@ export function EvalDashboardClient() {
         loading={creatingTmpl}
       />
 
-      <AddVariantDialog
-        templateId={addingVariantTmplId}
-        onOpenChange={(o) => !o && setAddingVariantTmplId(null)}
-        label={newVarLabel}
-        onLabelChange={setNewVarLabel}
-        weight={newVarWeight}
-        onWeightChange={setNewVarWeight}
-        onSubmit={handleAddVariant}
+      <AddCohortVariantDialog
+        open={addCohortDialogOpen}
+        onOpenChange={(o) => {
+          setAddCohortDialogOpen(o);
+          if (!o) setEditingCohortData(null);
+        }}
+        templates={templates}
+        initialCohort={editingCohortData}
+        onSubmit={handleCreateCohortVariant}
+        submitting={submittingCohort}
       />
 
       <TrafficSplitDialog

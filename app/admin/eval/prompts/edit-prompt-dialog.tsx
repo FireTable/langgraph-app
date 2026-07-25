@@ -12,6 +12,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Template } from "../types";
 
 interface EditPromptDialogProps {
@@ -37,40 +39,41 @@ export function EditPromptDialog({
 }: EditPromptDialogProps) {
   return (
     <Dialog open={Boolean(template)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Edit3 className="size-4 text-primary" /> Edit Prompt Template
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
+        <DialogHeader className="p-6 pb-4 border-b border-border/60">
+          <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+            <Edit3 className="size-5 text-primary" /> Edit Prompt Template
           </DialogTitle>
-          <DialogDescription className="text-xs">
+          <DialogDescription className="text-xs text-muted-foreground">
             Template ID:{" "}
             <span className="font-mono font-semibold text-foreground">{template?.id}</span> (Target
             Node: {template?.agent})
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3.5 text-xs py-2">
-          <label className="flex flex-col gap-1">
-            <span className="font-medium text-foreground">Version Notes / Rationale</span>
+        <div className="p-6 overflow-y-auto max-h-[60vh] flex flex-col gap-4 text-xs">
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-semibold text-foreground">Version Notes / Rationale</Label>
             <Input
               value={notes}
               onChange={(e) => onNotesChange(e.target.value)}
               placeholder="e.g. Updated system prompt for better JSON formatting"
               className="h-9 text-xs"
             />
-          </label>
+          </div>
 
-          <label className="flex flex-col gap-1">
-            <span className="font-medium text-foreground">System Prompt Content</span>
-            <textarea
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs font-semibold text-foreground">System Prompt Content</Label>
+            <Textarea
               value={content}
               onChange={(e) => onContentChange(e.target.value)}
-              className="bg-background border-border min-h-[200px] rounded-md border p-2.5 font-mono text-xs focus:outline-hidden leading-relaxed"
+              placeholder="You are an AI assistant..."
+              className="min-h-[220px] max-h-[360px] overflow-y-auto font-mono text-xs leading-relaxed resize-y"
             />
-          </label>
+          </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="p-4 border-t border-border/60 bg-muted/20">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

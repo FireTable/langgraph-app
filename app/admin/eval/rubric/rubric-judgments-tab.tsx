@@ -4,6 +4,14 @@ import React from "react";
 import { Bot, Scale, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Judgment, Rubric } from "../types";
 
 interface RubricJudgmentsTabProps {
@@ -75,54 +83,54 @@ export function RubricJudgmentsTab({ rubrics, judgments }: RubricJudgmentsTabPro
         </div>
 
         <div className="border-border/80 overflow-hidden rounded-xl border bg-card text-card-foreground shadow-xs">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-muted/50 border-b text-muted-foreground font-medium uppercase text-[10px]">
-              <tr>
-                <th className="px-4 py-3">Run ID</th>
-                <th className="px-4 py-3">Target Agent</th>
-                <th className="px-4 py-3">Rubric ID</th>
-                <th className="px-4 py-3 text-center">Overall Score</th>
-                <th className="px-4 py-3">Judge Reasoning Rationale</th>
-                <th className="px-4 py-3 text-right">Evaluated Date</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
+          <Table className="text-xs">
+            <TableHeader className="bg-muted/50 uppercase text-[10px]">
+              <TableRow>
+                <TableHead>Run ID</TableHead>
+                <TableHead>Target Agent</TableHead>
+                <TableHead>Rubric ID</TableHead>
+                <TableHead className="text-center">Overall Score</TableHead>
+                <TableHead>Judge Reasoning Rationale</TableHead>
+                <TableHead className="text-right">Evaluated Date</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {judgments.map((j) => {
                 const overall = j.scores.overall ?? 85;
                 return (
-                  <tr key={j.id} className="hover:bg-muted/20 transition-colors">
-                    <td className="px-4 py-3 font-mono text-[11px] font-medium text-foreground">
+                  <TableRow key={j.id}>
+                    <TableCell className="font-mono text-[11px] font-medium text-foreground">
                       {j.runId}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-muted-foreground">{j.agent || "—"}</td>
-                    <td className="px-4 py-3 font-mono text-xs">{j.rubricId}</td>
-                    <td className="px-4 py-3 text-center">
+                    </TableCell>
+                    <TableCell className="font-mono text-muted-foreground">{j.agent || "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">{j.rubricId}</TableCell>
+                    <TableCell className="text-center">
                       <Badge
                         variant={overall >= 80 ? "default" : "destructive"}
                         className="font-mono text-xs"
                       >
                         {overall} / 100
                       </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground text-[11px] max-w-md truncate">
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-[11px] max-w-md truncate">
                       {j.reasoning}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-muted-foreground">
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">
                       {new Date(j.createdAt).toLocaleDateString()}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
               {judgments.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="text-muted-foreground px-4 py-8 text-center text-xs">
+                <TableRow>
+                  <TableCell colSpan={6} className="text-muted-foreground px-4 py-8 text-center text-xs">
                     No AI Judge evaluation history recorded yet. Trigger AI Judge on an execution
                     run to generate scores!
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </section>
     </div>
