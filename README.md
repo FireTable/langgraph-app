@@ -251,6 +251,9 @@ Owned by `lib/<module>/schema.ts` (re-exported from `db/schema.ts`). See [`docs/
 - **`role`** — per-tier credit cap (`credit_limit`, `window_hours`). Seeded with `guest`, `user`, `admin` (migration `0003`).
 - **`provider`** — LLM registry (encrypted API keys + per-model rates). Seeded with `default` (migration `0003`).
 - **`credit_usage_log`** — append-only per-LLM-call log. Source of truth for the cap check + the user-facing history. Composite index `(user_id, created_at)` covers both workloads.
+- **`eval_rubric`** — per-agent evaluation criteria definitions for LLM-as-a-Judge (keyed directly by `id = "rubric_${agentId}"`).
+- **`eval_benchmark`** — admin-defined offline benchmark test cases per agent (`id`, `agent`, `title`, `input_prompt`, `expected_output`).
+- **`eval_judgment`** — assessment scores and reasoning outputs emitted by `evalAgent`, with `judge_thread_id` tracking AI Judge execution traces.
 
 ### 2. LangGraph checkpoints
 
