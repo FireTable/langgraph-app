@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentGroupCard } from "../components/agent-group-card";
 import { LANGGRAPH_GROUPS, Template, Variant } from "../types";
 
 function truncateId(id: string, front = 3, back = 8): string {
@@ -297,244 +298,204 @@ export function PromptsStudioTab({
             );
 
             return (
-              <Card
+              <AgentGroupCard
                 key={group.id}
-                className="overflow-hidden border-border/80 py-0 gap-0 shadow-2xs"
+                id={group.id}
+                label={group.label}
+                description={group.description}
+                icon={Icon}
+                isCollapsed={isGroupCollapsed}
+                onToggleCollapse={() => toggleGroupCollapse(group.id)}
               >
-                {/* Graph Group Card Header */}
-                <CardHeader className="p-6 border-b border-border/60">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <Icon className="size-4 text-primary shrink-0" />
-                        <CardTitle className="text-base font-semibold">{group.label}</CardTitle>
-                        <Badge variant="outline" className="font-mono text-[10px]">
-                          {group.id}
-                        </Badge>
-                      </div>
-                      <CardDescription className="text-xs text-muted-foreground">
-                        {group.description}
-                      </CardDescription>
-                    </div>
+                {/* SINGLE CONSOLIDATED TABLE PER GRAPH GROUP */}
+                <div className="border border-border/60 overflow-hidden rounded-xl bg-card">
+                  <Table className="text-xs">
+                    <TableHeader className="bg-muted/50 uppercase text-[10px]">
+                      <TableRow>
+                        <TableHead className="w-[260px]">Target Node / Template ID</TableHead>
+                        <TableHead>Notes / Rationale</TableHead>
+                        <TableHead className="w-[200px]">Bound Cohort Variants</TableHead>
+                        <TableHead className="w-[120px]">Created Date</TableHead>
+                        <TableHead className="text-right w-[200px]">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {group.agents.map((agentObj) => {
+                        const agentId = agentObj.id;
+                        const isAgentCollapsed = collapsedAgents[agentId];
+                        const agentTemplates = groupTemplates.filter((t) => t.agent === agentId);
+                        const agentTmplIds = new Set(agentTemplates.map((t) => t.id));
+                        const agentVariants = variants.filter((v) =>
+                          agentTmplIds.has(v.templateId),
+                        );
 
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => toggleGroupCollapse(group.id)}
-                        className="gap-1.5"
-                      >
-                        <span>{isGroupCollapsed ? "Expand" : "Collapse"}</span>
-                        <ChevronDown
-                          className={`size-3.5 transition-transform duration-200 ${
-                            isGroupCollapsed ? "-rotate-90" : "rotate-0"
-                          }`}
-                        />
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-
-                <div
-                  className={`grid transition-all duration-300 ease-in-out ${
-                    isGroupCollapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
-                  }`}
-                >
-                  <div className="overflow-hidden">
-                    <CardContent className="p-6">
-                      {/* SINGLE CONSOLIDATED TABLE PER GRAPH GROUP */}
-                      <div className="border border-border/60 overflow-hidden rounded-xl bg-card">
-                        <Table className="text-xs">
-                          <TableHeader className="bg-muted/50 uppercase text-[10px]">
-                            <TableRow>
-                              <TableHead className="w-[260px]">Target Node / Template ID</TableHead>
-                              <TableHead>Notes / Rationale</TableHead>
-                              <TableHead className="w-[200px]">Bound Cohort Variants</TableHead>
-                              <TableHead className="w-[120px]">Created Date</TableHead>
-                              <TableHead className="text-right w-[200px]">Actions</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {group.agents.map((agentObj) => {
-                              const agentId = agentObj.id;
-                              const isAgentCollapsed = collapsedAgents[agentId];
-                              const agentTemplates = groupTemplates.filter(
-                                (t) => t.agent === agentId,
-                              );
-                              const agentTmplIds = new Set(agentTemplates.map((t) => t.id));
-                              const agentVariants = variants.filter((v) =>
-                                agentTmplIds.has(v.templateId),
-                              );
-
-                              return (
-                                <React.Fragment key={agentId}>
-                                  {/* PARENT ROW: Agent Node Row (Clickable to Expand/Collapse) */}
-                                  <TableRow
+                        return (
+                          <React.Fragment key={agentId}>
+                            {/* Parent Row: Agent Node */}
+                            <TableRow className="bg-muted/20 hover:bg-muted/30 font-medium">
+                              <TableCell colSpan={2} className="py-2.5">
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-6 text-muted-foreground hover:text-foreground shrink-0"
                                     onClick={() => toggleAgentCollapse(agentId)}
-                                    className="bg-muted/30 hover:bg-muted/50 cursor-pointer select-none font-medium border-t border-b border-border/60"
                                   >
-                                    <TableCell colSpan={4} className="py-3">
-                                      <div className="flex items-center gap-2">
-                                        {isAgentCollapsed ? (
-                                          <ChevronRight className="size-4 text-muted-foreground shrink-0" />
-                                        ) : (
-                                          <ChevronDown className="size-4 text-primary shrink-0" />
+                                    <ChevronDown
+                                      className={`size-3.5 transition-transform duration-200 ${
+                                        isAgentCollapsed ? "-rotate-90" : "rotate-0"
+                                      }`}
+                                    />
+                                  </Button>
+                                  <span className="font-semibold text-foreground font-mono text-xs">
+                                    {agentObj.name} ({agentId})
+                                  </span>
+                                  <span className="text-muted-foreground font-normal text-xs border-l pl-2">
+                                    {agentObj.desc}
+                                  </span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="py-2.5">
+                                <Badge variant="secondary" className="font-mono text-[10px]">
+                                  {agentVariants.length} variants bound
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="py-2.5 text-muted-foreground font-mono text-[11px]">
+                                {agentTemplates.length} templates
+                              </TableCell>
+                              <TableCell className="text-right py-2.5">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="xs"
+                                  className="gap-1 font-medium"
+                                  onClick={() => openDeployDialogForAgent(agentId)}
+                                >
+                                  <Plus className="size-3" /> Add prompt
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+
+                            {/* Child Rows: Prompt Templates for this Agent Node */}
+                            {!isAgentCollapsed &&
+                              (agentTemplates.length === 0 ? (
+                                <TableRow className="hover:bg-transparent">
+                                  <TableCell
+                                    colSpan={5}
+                                    className="text-muted-foreground/60 italic text-xs py-3 pl-10"
+                                  >
+                                    No prompt templates deployed for this node yet. Click "+ Add
+                                    prompt" to create one.
+                                  </TableCell>
+                                </TableRow>
+                              ) : (
+                                agentTemplates.map((tmpl) => {
+                                  const boundVariants = variants.filter(
+                                    (v) => v.templateId === tmpl.id,
+                                  );
+
+                                  return (
+                                    <TableRow key={tmpl.id} className="hover:bg-muted/10">
+                                      <TableCell className="font-mono text-xs font-medium pl-10">
+                                        <div className="flex items-center gap-2">
+                                          <CornerDownRight className="size-3 text-muted-foreground shrink-0" />
+                                          <span className="text-foreground">{tmpl.id}</span>
+                                          {!tmpl.userId && (
+                                            <Badge
+                                              variant="secondary"
+                                              className="text-[9px] font-mono px-1.5 py-0"
+                                            >
+                                              SYSTEM DEFAULT
+                                            </Badge>
+                                          )}
+                                        </div>
+                                      </TableCell>
+
+                                      <TableCell className="max-w-xs truncate text-muted-foreground text-xs font-sans">
+                                        {tmpl.notes || (
+                                          <span className="italic text-muted-foreground/50">
+                                            No notes provided
+                                          </span>
                                         )}
-                                        <GitBranch className="size-4 text-primary shrink-0" />
-                                        <Badge
-                                          variant="secondary"
-                                          className="font-mono text-[10px] px-1.5 py-0.5"
-                                        >
-                                          {agentTemplates.length}
-                                        </Badge>
-                                        <span className="font-mono text-sm font-semibold text-foreground">
-                                          {agentId}
-                                        </span>
-                                      </div>
-                                    </TableCell>
-                                    <TableCell className="py-3 text-right">
-                                      <Button
-                                        type="button"
-                                        variant="default"
-                                        size="xs"
-                                        className="gap-1.5 font-medium"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          openDeployDialogForAgent(agentId);
-                                        }}
-                                      >
-                                        <Plus className="size-3.5" />
-                                        <span>Add prompt</span>
-                                      </Button>
-                                    </TableCell>
-                                  </TableRow>
+                                      </TableCell>
 
-                                  {/* CHILD ROWS: Prompt Template Rows */}
-                                  {!isAgentCollapsed &&
-                                    (agentTemplates.length === 0 ? (
-                                      <TableRow className="hover:bg-muted/10">
-                                        <TableCell
-                                          colSpan={5}
-                                          className="px-8 py-3 text-muted-foreground italic text-[11px]"
-                                        >
-                                          <div className="flex items-center gap-2">
-                                            <CornerDownRight className="size-3.5 text-muted-foreground/60 shrink-0" />
-                                            <span>
-                                              No prompt template deployed for {agentId} yet. Click
-                                              "Add prompt" to create one.
+                                      <TableCell className="font-mono text-[11px]">
+                                        <div className="flex flex-wrap gap-1">
+                                          {boundVariants.map((v) => (
+                                            <Badge
+                                              key={v.id}
+                                              variant="outline"
+                                              className="text-[10px] uppercase font-mono px-1.5 py-0"
+                                            >
+                                              {v.label} ({v.trafficWeight}%)
+                                            </Badge>
+                                          ))}
+                                          {boundVariants.length === 0 && (
+                                            <span className="text-muted-foreground/50 text-xs font-sans italic">
+                                              Unbound
                                             </span>
-                                          </div>
-                                        </TableCell>
-                                      </TableRow>
-                                    ) : (
-                                      agentTemplates.map((tmpl) => {
-                                        const boundVariants = agentVariants.filter(
-                                          (v) => v.templateId === tmpl.id,
-                                        );
-                                        const isSystemPrompt = !tmpl.userId;
+                                          )}
+                                        </div>
+                                      </TableCell>
 
-                                        return (
-                                          <TableRow
-                                            key={tmpl.id}
-                                            className="hover:bg-muted/20 bg-background/50"
+                                      <TableCell className="text-muted-foreground font-mono text-[11px]">
+                                        {new Date(tmpl.createdAt).toLocaleDateString()}
+                                      </TableCell>
+
+                                      <TableCell className="text-right">
+                                        <div className="flex items-center justify-end gap-1">
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="xs"
+                                            onClick={() => copyToClipboard(tmpl.content)}
+                                            title="Copy Full Prompt Content"
                                           >
-                                            <TableCell className="py-3 font-mono font-medium text-foreground">
-                                              <div className="flex items-center gap-2 pl-6">
-                                                <CornerDownRight className="size-3.5 text-muted-foreground/60 shrink-0" />
-                                                <div className="flex items-center gap-1.5">
-                                                  <span>{tmpl.id}</span>
-                                                  {isSystemPrompt && (
-                                                    <Badge
-                                                      variant="outline"
-                                                      className="text-[9px] px-1 py-0 font-sans text-muted-foreground bg-muted/40"
-                                                    >
-                                                      System
-                                                    </Badge>
-                                                  )}
-                                                </div>
-                                              </div>
-                                            </TableCell>
-                                            <TableCell className="py-3 text-muted-foreground text-[11px]">
-                                              {tmpl.notes || "—"}
-                                            </TableCell>
-                                            <TableCell className="py-3">
-                                              {boundVariants.length > 0 ? (
-                                                <div className="flex flex-wrap gap-1">
-                                                  {boundVariants.map((bv) => (
-                                                    <Badge
-                                                      key={bv.id}
-                                                      variant="secondary"
-                                                      className="font-mono text-[10px]"
-                                                    >
-                                                      {bv.label} ({bv.trafficWeight}%)
-                                                    </Badge>
-                                                  ))}
-                                                </div>
-                                              ) : (
-                                                <span className="text-muted-foreground/60 text-[11px] italic">
-                                                  Unbound
-                                                </span>
-                                              )}
-                                            </TableCell>
-                                            <TableCell className="py-3 font-mono text-[11px] text-muted-foreground">
-                                              {new Date(tmpl.createdAt).toLocaleDateString()}
-                                            </TableCell>
-                                            <TableCell className="py-3 text-right">
-                                              <div className="flex justify-end gap-1">
-                                                <Button
-                                                  type="button"
-                                                  variant="outline"
-                                                  size="xs"
-                                                  onClick={() => copyToClipboard(tmpl.content)}
-                                                  title="Copy Prompt Content"
-                                                >
-                                                  <Copy className="size-3 mr-1" /> Copy
-                                                </Button>
-                                                <Button
-                                                  type="button"
-                                                  variant="outline"
-                                                  size="xs"
-                                                  onClick={() => openEditModal(tmpl)}
-                                                  title="Edit Prompt Template"
-                                                >
-                                                  <Edit3 className="size-3 mr-1" /> Edit
-                                                </Button>
-                                                <Button
-                                                  type="button"
-                                                  variant="outline"
-                                                  size="xs"
-                                                  onClick={() => openDeleteModal(tmpl)}
-                                                  disabled={isSystemPrompt}
-                                                  title={
-                                                    isSystemPrompt
-                                                      ? "System default prompts cannot be deleted"
-                                                      : "Delete Prompt"
-                                                  }
-                                                  className={
-                                                    isSystemPrompt
-                                                      ? "opacity-50 cursor-not-allowed text-muted-foreground"
-                                                      : "text-rose-500 hover:text-rose-600 hover:bg-rose-500/10"
-                                                  }
-                                                >
-                                                  <Trash2 className="size-3 mr-1" /> Delete
-                                                </Button>
-                                              </div>
-                                            </TableCell>
-                                          </TableRow>
-                                        );
-                                      })
-                                    ))}
-                                </React.Fragment>
-                              );
-                            })}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </CardContent>
-                  </div>
+                                            <Copy className="size-3 mr-1" /> Copy
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="xs"
+                                            onClick={() => openEditModal(tmpl)}
+                                            title="Edit Prompt Notes & Content"
+                                          >
+                                            <Edit3 className="size-3 mr-1" /> Edit
+                                          </Button>
+
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="xs"
+                                            disabled={!tmpl.userId}
+                                            title={
+                                              !tmpl.userId
+                                                ? "System default prompts cannot be deleted"
+                                                : "Delete Prompt Template"
+                                            }
+                                            onClick={() => openDeleteModal(tmpl)}
+                                            className={
+                                              !tmpl.userId
+                                                ? "opacity-40 cursor-not-allowed text-muted-foreground"
+                                                : "text-rose-500 hover:text-rose-600 hover:bg-rose-500/10"
+                                            }
+                                          >
+                                            <Trash2 className="size-3 mr-1" /> Delete
+                                          </Button>
+                                        </div>
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })
+                              ))}
+                          </React.Fragment>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
                 </div>
-              </Card>
+              </AgentGroupCard>
             );
           })}
         </div>
