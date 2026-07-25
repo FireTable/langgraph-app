@@ -25,18 +25,15 @@ import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 // the parent graph never sees the iteration. write_code's editor card
 // (components/tool-ui/code) is the user-side approval point.
 
+import { getAgentPrompt } from "@/backend/prompt/loader";
+
 async function codeModelNode({ messages }: { messages: BaseMessage[] }, config?: RunnableConfig) {
-  // ponytail: same load+trim pattern as chatAgent — read the
-  // thread's compressed history, inject as <earlier_conversation>,
-  // and drop the original turns from the input array. state.messages
-  // is NEVER touched.
   const threads = await loadThreadSummariesForPrompt(config);
-  const history = await prepareMessagesForInvoke(
-    messages,
-    threads?.summaries ?? [],
-    extractUserId(config) ?? undefined,
-  );
-  const sysMsg = await buildSystemMessageWithMemory(CODE_AGENT_PROMPT, config, threads);
+  const userId = extractUserId(config) ?? undefined;
+  const history = await prepareMessagesForInvoke(messages, threads?.summaries ?? [], userId);
+  const promptInfo = await getAgentPrompt("codeAgent", userId);
+  const sysMsg = await buildSystemMessageWithMemory(promptInfo.content, config, threads);
+
   const response = await (
     await getChatModel()
   )

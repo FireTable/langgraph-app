@@ -1,7 +1,8 @@
 import { START, END, StateGraph } from "@langchain/langgraph";
 import { HumanMessage } from "@langchain/core/messages";
 import { triggerBackgroundAgentNode } from "@/backend/node/trigger-background-agent-node";
-import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
+import { capturingHandler, creditTrackingHandler, evalCallbackHandler } from "@/backend/callbacks";
+
 import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 import { prepareDataNode } from "@/backend/node/prepare-data-node";
 import { weatherAgent } from "@/backend/agent/weather-agent";
@@ -155,6 +156,6 @@ export const builder = new StateGraph(RouterAgentState)
 const compiled = builder.compile({ checkpointer, store, name: "mainAgent" });
 type WithConfigPregel = (config: Record<string, unknown>) => typeof compiled;
 export const graph = (compiled.withConfig as unknown as WithConfigPregel)({
-  callbacks: [capturingHandler, creditTrackingHandler],
+  callbacks: [capturingHandler, creditTrackingHandler, evalCallbackHandler],
   subgraphs: true,
 });

@@ -18,9 +18,25 @@ import type { BaseMessage } from "@langchain/core/messages";
 // router-loop edge (kbAgent → routerAgent) bypasses this node by
 // design — we don't want to re-inject after kbAgent has stamped
 // `kb_ref` onto the PDF.
+import { assignPromptVariant } from "@/lib/eval/queries";
+
 export async function prepareDataNode(
   state: { messages: BaseMessage[] },
-  _config?: RunnableConfig,
-): Promise<{ messages: BaseMessage[] }> {
-  return { messages: state.messages };
+  config?: RunnableConfig,
+): Promise<{ messages: BaseMessage[]; templateId?: string; variantId?: string }> {
+  const userId = (config?.configurable?.user_id as string | undefined) ?? null;
+  if (!userId) {
+    return { messages: state.messages };
+  }
+
+  try {
+    const assigned = await assignPromptVariant(userId, "chatAgent");
+    return {
+      messages: state.messages,
+      templateId: assigned.templateId,
+      variantId: assigned.variantId,
+    };
+  } catch (_err) {
+    return { messages: state.messages };
+  }
 }

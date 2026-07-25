@@ -7,8 +7,10 @@ import { ROUTER_AGENT_PROMPT } from "@/backend/prompt/system";
 import { hasUnprocessedFile, stripFileParts } from "@/lib/kb/extract";
 import { prepareMessagesForInvoke } from "@/backend/memory/template";
 import { extractUserId } from "@/backend/memory/recall";
+import { getAgentPrompt } from "@/backend/prompt/loader";
 
 // ponytail: v3 router. Two short-circuits and a fallback:
+
 //   1. ANY HumanMessage has an unprocessed PDF → route to kbAgent.
 //   2. Otherwise → resolve kb_refs + trim, ask the LLM.
 //
@@ -48,8 +50,10 @@ export async function routerAgentNode(
     return { routerDecision: { next: "kbAgent" } };
   }
 
-  const system = new SystemMessage(ROUTER_AGENT_PROMPT);
   const userId = extractUserId(config);
+
+  const promptInfo = await getAgentPrompt("routerAgent", userId ?? undefined);
+  const system = new SystemMessage(promptInfo.content);
   const trimmed = await prepareMessagesForInvoke(state.messages, [], userId ?? undefined);
 
   const trimmedClean = trimmed.map(stripFileParts);

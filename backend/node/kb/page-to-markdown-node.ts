@@ -6,6 +6,7 @@ import { getOcrModel } from "@/backend/model";
 import { KB_OCR_PAGE_PROMPT } from "@/backend/prompt/system";
 import { updateKbDocumentStatus } from "@/lib/kb/queries";
 import { KB_OCR_CONCURRENCY } from "@/lib/constants";
+import { getAgentPrompt } from "@/backend/prompt/loader";
 
 export const ocrPageSchema = z.object({
   markdown: z
@@ -40,7 +41,9 @@ export async function pageToMarkdownNode(
   }
 
   const ocrModel = await getOcrModel();
-  const system = new SystemMessage(KB_OCR_PAGE_PROMPT);
+  const promptInfo = await getAgentPrompt("kbOcrAgent");
+  const system = new SystemMessage(promptInfo.content);
+
   const structured = ocrModel.withStructuredOutput(ocrPageSchema, {
     method: "jsonSchema",
     strict: true,

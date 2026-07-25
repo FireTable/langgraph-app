@@ -7,6 +7,8 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import type { KbAgentStateShape } from "@/backend/state";
 import { getExtractModel } from "@/backend/model";
 import { KB_ENTITY_EXTRACTION_SYSTEM_PROMPT } from "@/backend/prompt/system";
+import { getAgentPrompt } from "@/backend/prompt/loader";
+
 import {
   findKbDocumentById,
   findKbChunksByDocumentId,
@@ -331,7 +333,9 @@ export async function chunkExtractNode(
                   const ordinal = chunk.ordinal;
                   const text = chunk.content;
 
-                  const systemMessage = new SystemMessage(KB_ENTITY_EXTRACTION_SYSTEM_PROMPT);
+                  const extractPromptInfo = await getAgentPrompt("kbEntityExtractAgent", userId);
+                  const systemMessage = new SystemMessage(extractPromptInfo.content);
+
                   const humanMessage = new HumanMessage(
                     `Context Document Title: [${docTitle}]\n` +
                       `Chunk: [${ordinal + 1} / ${totalChunksForPrompt}]\n\n` +

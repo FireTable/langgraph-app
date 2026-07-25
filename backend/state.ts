@@ -12,6 +12,8 @@ import type { FilePart } from "@/lib/kb/extract";
 // hits `afterAgent`.
 export const RouterAgentState = new StateSchema({
   messages: MessagesValue,
+  templateId: z.string().optional(),
+  variantId: z.string().optional(),
   routerDecision: z.object({
     next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent", "kbAgent"]),
   }),
@@ -19,6 +21,8 @@ export const RouterAgentState = new StateSchema({
 
 export const CommonAgentState = new StateSchema({
   messages: MessagesValue,
+  templateId: z.string().optional(),
+  variantId: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------

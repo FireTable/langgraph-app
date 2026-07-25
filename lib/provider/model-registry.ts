@@ -127,6 +127,19 @@ export async function getExtractModelFromDB(opts: GetModelOpts = {}): Promise<Ba
 }
 
 /**
+ * Eval = chat-capable model used for LLM-as-a-Judge evaluation.
+ * Filter on `kind.includes("eval")`. If no tuple has `eval` in its
+ * `kind` list, falls back to the chat pool.
+ */
+export async function getEvalModelFromDB(opts: GetModelOpts = {}): Promise<BaseChatModel> {
+  try {
+    return (await getModelFromDB({ ...opts, kind: "eval" })) as BaseChatModel;
+  } catch (_err) {
+    return (await getModelFromDB({ ...opts, kind: "chat" })) as BaseChatModel;
+  }
+}
+
+/**
  * Embeddings return type narrows — `embedDocuments` / `embedQuery`,
  * not `.invoke`. Today every embed model is OpenAIEmbeddings (text-
  * embedding-3-small etc.); the wrapper instantiates the right class

@@ -224,6 +224,36 @@ Status codes:
 | 401    | no session                                                                             | `{ code: "UNAUTHORIZED" }` |
 | 404    | thread missing or owned by another, OR span not in this turn, OR span not found at all | `{ code: "NOT_FOUND" }`    |
 
+## Evaluation & A/B Testing (`/api/eval/*`)
+
+Routes for online user feedback, prompt versioning, and A/B performance metrics. All routes are `withAuth`-wrapped and execute on `runtime = "nodejs"`.
+
+### `POST /api/eval/feedback`
+
+Submits online user feedback or admin rating (1-5 integer).
+
+- **Body**: `{ runId: string, rating: number, source?: string, reason?: string }`
+- **Status Codes**: 200 / 400 / 401 / 500
+
+### `GET /api/eval/prompts`
+
+Returns all prompt templates and variants.
+
+- **Status Codes**: 200 / 401 / 500
+
+### `POST /api/eval/prompts`
+
+Admin action to create templates/variants or update traffic weights.
+
+- **Body**: `{ action: "create_template" | "create_variant" | "update_variant_weight", ... }`
+- **Status Codes**: 200 / 400 / 401 / 500
+
+### `GET /api/eval/runs/compare`
+
+Returns aggregated A/B variant metrics (total runs, average latency, ratings) and recent run logs.
+
+- **Status Codes**: 200 / 401 / 500
+
 ## Memory
 
 Backed by the LangGraph `PostgresStore` (per-user, cross-thread long-term memory). Every route is `withAuth`-wrapped and isolation is by namespace prefix `[userId, ...]`. Storage detail: `lib/memory/queries.ts`; schema (RFC 6902 patches, store): `lib/memory/validators.ts`; size guard: `backend/memory/profile-size.ts`. Read counterpart of `save_memory` (see "Graph tools").

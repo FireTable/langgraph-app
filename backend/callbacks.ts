@@ -29,6 +29,8 @@
 // move to prod checkpointing.
 import { CapturingHandler } from "@/lib/observability/callback";
 import { CreditTrackingHandler } from "@/lib/credit/callback";
+import { EvalCallbackHandler } from "@/lib/eval/callback";
 
 export const capturingHandler = new CapturingHandler();
 export const creditTrackingHandler = new CreditTrackingHandler();
+export const evalCallbackHandler = new EvalCallbackHandler();
