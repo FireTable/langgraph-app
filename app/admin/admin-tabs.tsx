@@ -5,6 +5,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProvidersPanel } from "@/app/admin/providers/providers-client";
 import { RolesPanel } from "@/app/admin/roles/roles-client";
 import { UsersPanel } from "@/app/admin/users/users-client";
+import { ObservabilitySheet } from "@/components/observability/sheet";
+import { ObservabilitySheetProvider } from "@/components/observability/sheet-context";
 import { EvalDashboardClient } from "@/app/admin/eval/eval-dashboard-client";
 import type { PublicProviderRow, RoleRow, UserRow } from "@/app/admin/types";
 
@@ -50,7 +52,10 @@ export function AdminTabs({
       </TabsContent>
       <TabsContent value="eval">
         <div className="pt-2">
-          <EvalDashboardClient />
+          <ObservabilitySheetProvider>
+            <EvalDashboardClient />
+            <ObservabilitySheet />
+          </ObservabilitySheetProvider>
         </div>
       </TabsContent>
     </Tabs>

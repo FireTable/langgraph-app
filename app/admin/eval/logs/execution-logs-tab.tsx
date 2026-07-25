@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { CheckCircle2, ThumbsDown, ThumbsUp, XCircle } from "lucide-react";
+import { Activity, CheckCircle2, ThumbsDown, ThumbsUp, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useOpenObservabilitySheet } from "@/components/observability/sheet-context";
 import { RecentRun } from "../types";
 
 interface ExecutionLogsTabProps {
@@ -27,6 +28,7 @@ export function ExecutionLogsTab({
   evaluating,
   onOpenTraceDetail,
 }: ExecutionLogsTabProps) {
+  const openSheet = useOpenObservabilitySheet();
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -79,7 +81,9 @@ export function ExecutionLogsTab({
                     </span>
                   )}
                 </TableCell>
-                <TableCell className="text-right font-mono tabular-nums">{run.totalMs} ms</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">
+                  {run.totalMs} ms
+                </TableCell>
                 <TableCell className="text-center font-medium">
                   {run.userRating === 5 ? (
                     <span className="inline-flex items-center gap-1 text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded-full text-[10px]">
@@ -110,17 +114,27 @@ export function ExecutionLogsTab({
                   <Button
                     type="button"
                     variant="ghost"
-                    size="xs"
-                    onClick={() => onOpenTraceDetail(run.id)}
+                    size="icon"
+                    className="size-7 text-muted-foreground hover:text-foreground"
+                    title="Open Observability Spans"
+                    onClick={() => {
+                      openSheet({
+                        threadId: run.threadId || run.id,
+                        parentMessageId: run.parentMessageId ?? null,
+                      });
+                    }}
                   >
-                    View trace
+                    <Activity className="size-4 text-primary" />
                   </Button>
                 </TableCell>
               </TableRow>
             ))}
             {recentRuns.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="text-muted-foreground px-4 py-8 text-center text-xs">
+                <TableCell
+                  colSpan={8}
+                  className="text-muted-foreground px-4 py-8 text-center text-xs"
+                >
                   No execution runs recorded yet. Invocations will log latency and tokens here.
                 </TableCell>
               </TableRow>

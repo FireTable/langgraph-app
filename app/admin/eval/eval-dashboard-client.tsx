@@ -190,10 +190,7 @@ export function EvalDashboardClient() {
 
   const openTrafficModal = () => {
     // Extract unique variant labels across all agent nodes
-    const cohortMap = new Map<
-      string,
-      { label: string; weight: number; enabled: boolean }
-    >();
+    const cohortMap = new Map<string, { label: string; weight: number; enabled: boolean }>();
 
     for (const v of variants) {
       const existing = cohortMap.get(v.label) || {
@@ -206,18 +203,16 @@ export function EvalDashboardClient() {
       cohortMap.set(v.label, existing);
     }
 
-    const items: TrafficItem[] = Array.from(cohortMap.entries()).map(
-      ([label, info]) => {
-        const rep = variants.find((v) => v.label === label);
-        return {
-          variantId: rep?.id || label,
-          label,
-          templateId: rep?.templateId || label,
-          weight: info.weight,
-          enabled: info.enabled,
-        };
-      },
-    );
+    const items: TrafficItem[] = Array.from(cohortMap.entries()).map(([label, info]) => {
+      const rep = variants.find((v) => v.label === label);
+      return {
+        variantId: rep?.id || label,
+        label,
+        templateId: rep?.templateId || label,
+        weight: info.weight,
+        enabled: info.enabled,
+      };
+    });
 
     setTrafficItems(items);
     setTrafficModalAgent("all");
@@ -584,9 +579,7 @@ export function EvalDashboardClient() {
         />
       )}
 
-      {subTab === "rubric" && (
-        <RubricJudgmentsTab rubrics={rubrics} judgments={judgments} />
-      )}
+      {subTab === "rubric" && <RubricJudgmentsTab rubrics={rubrics} judgments={judgments} />}
 
       {/* Dialog Modals */}
       <DeployPromptDialog
@@ -647,15 +640,6 @@ export function EvalDashboardClient() {
         onOpenChange={(o) => !o && setDeleteVariantLabel(null)}
         onConfirm={handleConfirmDeleteVariant}
         deleting={deletingVariant}
-      />
-
-      <TraceDetailDialog
-        runId={selectedRunId}
-        onOpenChange={(o) => !o && setSelectedRunId(null)}
-        loading={loadingTrace}
-        traceDetail={traceDetail}
-        onTriggerJudge={triggerAIJudge}
-        evaluating={evaluating}
       />
     </div>
   );

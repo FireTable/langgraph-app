@@ -31,6 +31,8 @@ export const GET = withAuth(async () => {
         status: evalRun.status,
         createdAt: evalRun.createdAt,
         userRating: evalFeedback.rating,
+        threadId: evalRun.threadId,
+        parentMessageId: evalRun.parentMessageId,
       })
       .from(evalRun)
       .leftJoin(promptVariant, eq(evalRun.variantId, promptVariant.id))

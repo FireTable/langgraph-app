@@ -209,16 +209,13 @@ export async function assignPromptVariant(
   };
 }
 
-/**
- * Record an eval run for a completed turn.
- */
 export async function recordEvalRun(data: {
   id?: string;
   threadId: string;
   userId: string;
   agent: string;
-  templateId: string;
-  variantId: string;
+  templateId?: string;
+  variantId?: string;
   branchId?: string | null;
   parentMessageId?: string | null;
   inputTokens?: number | null;
@@ -229,13 +226,55 @@ export async function recordEvalRun(data: {
   kbDocumentIds?: string[] | null;
 }): Promise<EvalRunRow> {
   const id = data.id ?? generateId();
+
+  let finalTemplateId = data.templateId;
+  let finalVariantId = data.variantId;
+
+  // Verify or resolve valid template_id and variant_id from DB for this agent
+  if (
+    !finalTemplateId ||
+    !finalVariantId ||
+    finalVariantId === "var_chat_default" ||
+    finalVariantId.startsWith("fallback_")
+  ) {
+    const validVariant = await db
+      .select({
+        variantId: promptVariant.id,
+        templateId: promptVariant.templateId,
+      })
+      .from(promptVariant)
+      .innerJoin(promptTemplate, eq(promptVariant.templateId, promptTemplate.id))
+      .where(and(eq(promptTemplate.agent, data.agent), eq(promptVariant.enabled, true)))
+      .limit(1);
+
+    if (validVariant.length > 0) {
+      finalTemplateId = validVariant[0].templateId;
+      finalVariantId = validVariant[0].variantId;
+    } else {
+      // Fallback to chatAgent default if target agent has no custom variant
+      const chatVariant = await db
+        .select({
+          variantId: promptVariant.id,
+          templateId: promptVariant.templateId,
+        })
+        .from(promptVariant)
+        .where(eq(promptVariant.id, "var_chat_control"))
+        .limit(1);
+
+      if (chatVariant.length > 0) {
+        finalTemplateId = chatVariant[0].templateId;
+        finalVariantId = chatVariant[0].variantId;
+      }
+    }
+  }
+
   const values = {
     id,
     threadId: data.threadId,
     userId: data.userId,
     agent: data.agent,
-    templateId: data.templateId,
-    variantId: data.variantId,
+    templateId: finalTemplateId!,
+    variantId: finalVariantId!,
     branchId: data.branchId ?? null,
     parentMessageId: data.parentMessageId ?? null,
     inputTokens: data.inputTokens ?? null,

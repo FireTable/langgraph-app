@@ -14,6 +14,7 @@ type InFlightRun = {
   variantId: string;
   inputTokens: number;
   outputTokens: number;
+  name: string;
 };
 
 export class EvalCallbackHandler extends BaseCallbackHandler {
@@ -21,13 +22,13 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
   private runs = new Map<string, InFlightRun>();
 
   handleChainStart(
-    _chain: Serialized,
+    chain: Serialized,
     inputs: Record<string, unknown>,
     runId: string,
     _runType?: string,
-    _tags?: string[],
+    tags?: string[],
     metadata?: Record<string, unknown>,
-    _runName?: string,
+    runName?: string,
     parentRunId?: string,
   ) {
     const metaPmid = metadata?.parent_message_id;
@@ -38,12 +39,25 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
     const meta = (metadata ?? {}) as Record<string, any>;
     const configurable = (meta.configurable ?? {}) as Record<string, any>;
 
-    const threadId = (meta.thread_id as string) ?? (configurable.thread_id as string) ?? null;
-    const userId = (meta.user_id as string) ?? (configurable.user_id as string) ?? null;
+    const threadId =
+      (meta.thread_id as string) ??
+      (meta.threadId as string) ??
+      (configurable.thread_id as string) ??
+      (configurable.threadId as string) ??
+      null;
+    const userId =
+      (meta.user_id as string) ??
+      (meta.userId as string) ??
+      (configurable.user_id as string) ??
+      (configurable.userId as string) ??
+      null;
     const templateId =
       (meta.templateId as string) ?? (configurable.templateId as string) ?? "tmpl_chat_v1";
     const variantId =
       (meta.variantId as string) ?? (configurable.variantId as string) ?? "var_chat_default";
+
+    // Track the chain name (e.g. mainAgent, chatAgent, routerAgent)
+    const name = runName ?? chain.id?.[chain.id.length - 1] ?? "agent";
 
     this.runs.set(runId, {
       startedAt: Date.now(),
@@ -55,6 +69,7 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
       variantId,
       inputTokens: 0,
       outputTokens: 0,
+      name,
     });
   }
 
@@ -74,16 +89,24 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
     const run = this.runs.get(runId);
     if (!run) return;
 
-    // Only record for root outer chain invocation that has a valid threadId and userId
-    if (run.parentRunId === null && run.threadId && run.userId) {
+    // Record when it is root chain OR an agent chain (like mainAgent, chatAgent)
+    const isTargetAgent =
+      run.parentRunId === null ||
+      ["mainAgent", "chatAgent", "routerAgent", "kbAgent"].includes(run.name);
+
+    if (isTargetAgent) {
       const endedAt = Date.now();
       const totalMs = Math.max(1, endedAt - run.startedAt);
 
+      // Fallback threadId & userId for single-user dev testing if missing
+      const finalThreadId = run.threadId || "dev-thread";
+      const finalUserId = run.userId || "dev-user";
+
       try {
         await recordEvalRun({
-          threadId: run.threadId,
-          userId: run.userId,
-          agent: "chatAgent",
+          threadId: finalThreadId,
+          userId: finalUserId,
+          agent: run.name || "chatAgent",
           templateId: run.templateId,
           variantId: run.variantId,
           parentMessageId: run.parentMessageId,
@@ -92,6 +115,7 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
           totalMs,
           status: "success",
         });
+        console.log(`[EvalCallbackHandler] Recorded eval_run for ${run.name} (${runId})`);
       } catch (err) {
         console.error("[EvalCallbackHandler] Error recording eval run:", err);
       }
@@ -104,14 +128,20 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
     const run = this.runs.get(runId);
     if (!run) return;
 
-    if (run.parentRunId === null && run.threadId && run.userId) {
+    const isTargetAgent =
+      run.parentRunId === null ||
+      ["mainAgent", "chatAgent", "routerAgent", "kbAgent"].includes(run.name);
+
+    if (isTargetAgent) {
       const endedAt = Date.now();
       const totalMs = Math.max(1, endedAt - run.startedAt);
+      const finalThreadId = run.threadId || "dev-thread";
+      const finalUserId = run.userId || "dev-user";
 
       recordEvalRun({
-        threadId: run.threadId,
-        userId: run.userId,
-        agent: "chatAgent",
+        threadId: finalThreadId,
+        userId: finalUserId,
+        agent: run.name || "chatAgent",
         templateId: run.templateId,
         variantId: run.variantId,
         parentMessageId: run.parentMessageId,
