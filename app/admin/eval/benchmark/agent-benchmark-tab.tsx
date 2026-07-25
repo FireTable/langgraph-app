@@ -149,18 +149,8 @@ export function AgentBenchmarkTab({
                   const agentId = agentObj.id;
                   const isAgentCollapsed = collapsedAgents[agentId];
 
-                  // Filter runs belonging to this agent (or match root/chatAgent)
-                  const agentRuns = enrichedRuns.filter(
-                    (r) =>
-                      r.agent === agentId ||
-                      (agentId === "chatAgent" &&
-                        [
-                          "chatAgent",
-                          "mainAgent",
-                          "RunnableSequence",
-                          "CompiledStateGraph",
-                        ].includes(r.agent)),
-                  );
+                  // Filter runs belonging strictly to this agent node
+                  const agentRuns = enrichedRuns.filter((r) => r.agent === agentObj.id);
 
                   return (
                     <div

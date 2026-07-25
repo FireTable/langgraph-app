@@ -66,11 +66,11 @@ function chatModelRoute(state: { messages: BaseMessage[] }) {
 const chatToolNode = new ToolNode(CHAT_TOOLS);
 
 const builder = new StateGraph(CommonAgentState)
-  .addNode("chatModel", chatModelNode)
+  .addNode("chatAgent", chatModelNode)
   .addNode("chatTools", chatToolNode)
-  .addEdge(START, "chatModel")
-  .addConditionalEdges("chatModel", chatModelRoute, ["chatTools", END])
-  .addEdge("chatTools", "chatModel");
+  .addEdge(START, "chatAgent")
+  .addConditionalEdges("chatAgent", chatModelRoute, ["chatTools", END])
+  .addEdge("chatTools", "chatAgent");
 
 export const chatAgent = builder.compile({
   ...subgraphCheckpointerConfig,
