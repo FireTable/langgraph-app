@@ -81,7 +81,7 @@ export async function seedInitialPrompts(): Promise<void> {
 
     if (existing.length === 0) {
       const tmplId = `tmpl_${agentName}_v1`;
-      const varId = `var_${agentName}_control`;
+      const varId = `var_${agentName}_default`;
       await db.insert(promptTemplate).values({
         id: tmplId,
         group: groupName,
@@ -93,7 +93,7 @@ export async function seedInitialPrompts(): Promise<void> {
       await db.insert(promptVariant).values({
         id: varId,
         templateId: tmplId,
-        label: "control",
+        label: "default",
         trafficWeight: 100,
         enabled: true,
       });
@@ -103,6 +103,14 @@ export async function seedInitialPrompts(): Promise<void> {
         .update(promptTemplate)
         .set({ group: groupName })
         .where(eq(promptTemplate.agent, agentName));
+
+      // Update existing control label to default
+      await db
+        .update(promptVariant)
+        .set({ label: "default" })
+        .where(
+          and(eq(promptVariant.templateId, existing[0].id), eq(promptVariant.label, "control")),
+        );
     }
   }
 

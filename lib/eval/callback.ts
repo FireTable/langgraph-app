@@ -43,7 +43,7 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
     const templateId =
       (meta.templateId as string) ?? (configurable.templateId as string) ?? "tmpl_chat_v1";
     const variantId =
-      (meta.variantId as string) ?? (configurable.variantId as string) ?? "var_chat_control";
+      (meta.variantId as string) ?? (configurable.variantId as string) ?? "var_chat_default";
 
     this.runs.set(runId, {
       startedAt: Date.now(),

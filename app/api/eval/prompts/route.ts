@@ -21,7 +21,11 @@ export const GET = withAuth(async () => {
 export const POST = withAuth(async (req, { user }) => {
   try {
     const body = (await req.json()) as {
-      action?: "create_template" | "create_variant" | "update_variant_weight";
+      action?:
+        | "create_template"
+        | "create_variant"
+        | "update_variant_weight"
+        | "batch_update_weights";
       agent?: string;
       content?: string;
       notes?: string;
@@ -30,6 +34,7 @@ export const POST = withAuth(async (req, { user }) => {
       label?: string;
       trafficWeight?: number;
       enabled?: boolean;
+      updates?: Array<{ variantId: string; trafficWeight: number; enabled?: boolean }>;
     };
 
     if (body.action === "create_template") {
@@ -107,7 +112,73 @@ export const POST = withAuth(async (req, { user }) => {
       return NextResponse.json({ variant: updated[0] });
     }
 
+    if (body.action === "batch_update_weights") {
+      if (!Array.isArray(body.updates)) {
+        return NextResponse.json({ error: "updates array is required" }, { status: 400 });
+      }
+      for (const update of body.updates) {
+        if (update.variantId && typeof update.trafficWeight === "number") {
+          await db
+            .update(promptVariant)
+            .set({
+              trafficWeight: update.trafficWeight,
+              enabled: update.enabled !== undefined ? update.enabled : true,
+              updatedAt: new Date(),
+            })
+            .where(eq(promptVariant.id, update.variantId));
+        }
+      }
+      return NextResponse.json({ success: true });
+    }
+
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Internal error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+});
+
+export const PUT = withAuth(async (req) => {
+  try {
+    const body = (await req.json()) as { id?: string; content?: string; notes?: string };
+    if (!body.id) {
+      return NextResponse.json({ error: "Template id is required" }, { status: 400 });
+    }
+    const [updated] = await db
+      .update(promptTemplate)
+      .set({
+        ...(body.content !== undefined ? { content: body.content } : {}),
+        ...(body.notes !== undefined ? { notes: body.notes } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(promptTemplate.id, body.id))
+      .returning();
+    return NextResponse.json({ template: updated });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Internal error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+});
+
+export const DELETE = withAuth(async (req) => {
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ error: "id parameter is required" }, { status: 400 });
+    }
+
+    const [tmpl] = await db.select().from(promptTemplate).where(eq(promptTemplate.id, id));
+    if (!tmpl) {
+      return NextResponse.json({ error: "Template not found" }, { status: 404 });
+    }
+
+    if (!tmpl.userId) {
+      return NextResponse.json({ error: "System templates cannot be deleted" }, { status: 403 });
+    }
+
+    await db.delete(promptTemplate).where(eq(promptTemplate.id, id));
+    return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: message }, { status: 500 });

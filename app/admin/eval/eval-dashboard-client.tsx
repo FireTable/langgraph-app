@@ -13,6 +13,7 @@ import {
   Copy,
   Cpu,
   Database,
+  Edit3,
   GitBranch,
   Layers,
   Plus,
@@ -23,6 +24,7 @@ import {
   Sparkles,
   ThumbsDown,
   ThumbsUp,
+  Trash2,
   UserCheck,
   Workflow,
   XCircle,
@@ -56,6 +58,7 @@ type Template = {
   agent: string;
   content: string;
   notes?: string;
+  userId?: string | null;
   createdAt: string;
 };
 
@@ -231,6 +234,25 @@ export function EvalDashboardClient() {
   const [newPromptNotes, setNewPromptNotes] = useState("");
   const [creatingTmpl, setCreatingTmpl] = useState(false);
 
+  // Traffic Split Allocation Modal State
+  const [trafficModalAgent, setTrafficModalAgent] = useState<string | null>(null);
+  const [trafficItems, setTrafficItems] = useState<
+    Array<{
+      variantId: string;
+      label: string;
+      templateId: string;
+      weight: number;
+      enabled: boolean;
+    }>
+  >([]);
+  const [savingTraffic, setSavingTraffic] = useState(false);
+
+  // Edit Prompt Template Modal State
+  const [editModalTemplate, setEditModalTemplate] = useState<Template | null>(null);
+  const [editNotes, setEditNotes] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+
   // User Filter for Assignments
   const [userSearch, setUserSearch] = useState("");
 
@@ -239,6 +261,132 @@ export function EvalDashboardClient() {
 
   const toggleGroupCollapse = (groupId: string) => {
     setCollapsedGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
+
+  const openTrafficModal = (agentId: string) => {
+    const agentTemplates = templates.filter((t) => t.agent === agentId);
+    const agentTmplIds = new Set(agentTemplates.map((t) => t.id));
+    const agentVars = variants.filter((v) => agentTmplIds.has(v.templateId));
+
+    const items = agentVars.map((v) => ({
+      variantId: v.id,
+      label: v.label,
+      templateId: v.templateId,
+      weight: v.trafficWeight,
+      enabled: v.enabled,
+    }));
+
+    setTrafficItems(items);
+    setTrafficModalAgent(agentId);
+  };
+
+  const handleAutoBalanceTraffic = () => {
+    const enabledItems = trafficItems.filter((i) => i.enabled);
+    if (enabledItems.length === 0) return;
+    const equalShare = Math.floor(100 / enabledItems.length);
+    const remainder = 100 - equalShare * enabledItems.length;
+
+    setTrafficItems((prev) => {
+      let enabledCount = 0;
+      return prev.map((item) => {
+        if (!item.enabled) return { ...item, weight: 0 };
+        enabledCount++;
+        const weight = equalShare + (enabledCount === 1 ? remainder : 0);
+        return { ...item, weight };
+      });
+    });
+  };
+
+  const handleSaveTrafficWeights = async () => {
+    const activeSum = trafficItems
+      .filter((i) => i.enabled)
+      .reduce((s, i) => s + (i.weight || 0), 0);
+    if (activeSum !== 100 && trafficItems.some((i) => i.enabled)) {
+      toast.error("The sum of enabled traffic weights must equal exactly 100%");
+      return;
+    }
+
+    setSavingTraffic(true);
+    try {
+      const res = await fetch("/api/eval/prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "batch_update_weights",
+          agent: trafficModalAgent,
+          variants: trafficItems.map((i) => ({
+            id: i.variantId,
+            trafficWeight: i.enabled ? i.weight : 0,
+            enabled: i.enabled,
+          })),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save traffic split");
+      toast.success("Traffic weight allocation updated successfully!");
+      setTrafficModalAgent(null);
+      fetchData();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error saving traffic split");
+    } finally {
+      setSavingTraffic(false);
+    }
+  };
+
+  const openEditModal = (tmpl: Template) => {
+    setEditModalTemplate(tmpl);
+    setEditNotes(tmpl.notes || "");
+    setEditContent(tmpl.content || "");
+  };
+
+  const handleSaveEditTemplate = async () => {
+    if (!editModalTemplate) return;
+    if (!editContent.trim()) {
+      toast.error("Prompt content cannot be empty");
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const res = await fetch("/api/eval/prompts", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editModalTemplate.id,
+          content: editContent.trim(),
+          notes: editNotes.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to update template");
+      toast.success("Prompt template updated successfully!");
+      setEditModalTemplate(null);
+      fetchData();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error updating template");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (tmpl: Template) => {
+    if (!tmpl.userId) {
+      toast.error("System default prompts cannot be deleted");
+      return;
+    }
+    if (!confirm(`Are you sure you want to delete prompt template "${tmpl.id}"?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/eval/prompts?id=${tmpl.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to delete template");
+      }
+      toast.success(`Prompt template "${tmpl.id}" deleted`);
+      fetchData();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Error deleting template");
+    }
   };
 
   const fetchData = async () => {
@@ -447,14 +595,6 @@ export function EvalDashboardClient() {
               LLM-as-a-Judge scoring.
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => openDeployDialogForAgent("chatAgent")}
-          >
-            Add prompt
-          </Button>
         </div>
 
         {/* 4 Main Sub-Tabs Navigation */}
@@ -501,7 +641,7 @@ export function EvalDashboardClient() {
       </div>
 
       {/* ========================================================================= */}
-      {/* TAB 1: Prompts & A/B Studio (targetGroupName Cards with Prompts Sub-Table) */}
+      {/* TAB 1: Prompts & A/B Studio (Decoupled A/B Traffic & Prompt Repository) */}
       {/* ========================================================================= */}
       {subTab === "prompts" && (
         <div className="flex flex-col gap-6">
@@ -515,8 +655,12 @@ export function EvalDashboardClient() {
             );
 
             return (
-              <Card key={group.id} className="overflow-hidden border-border/80 py-0 gap-0">
-                <CardHeader className={isCollapsed ? "p-6" : "pt-6 px-6 pb-3"}>
+              <Card
+                key={group.id}
+                className="overflow-hidden border-border/80 py-0 gap-0 shadow-2xs"
+              >
+                {/* Group Card Header */}
+                <CardHeader className="p-6 border-b border-border/60">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
@@ -526,21 +670,14 @@ export function EvalDashboardClient() {
                           {group.id}
                         </Badge>
                       </div>
-                      <CardDescription className="text-xs">
+                      <CardDescription className="text-xs text-muted-foreground">
                         <span className="font-mono">{group.entrypoint}</span>
                         <span className="mx-1.5">·</span>
                         {group.description}
                       </CardDescription>
                     </div>
+
                     <div className="flex items-center gap-1.5">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openDeployDialogForAgent(group.agents[0]!.id)}
-                      >
-                        Add prompt
-                      </Button>
                       <Button
                         type="button"
                         variant="outline"
@@ -565,177 +702,277 @@ export function EvalDashboardClient() {
                   }`}
                 >
                   <div className="overflow-hidden">
-                    <CardContent className="px-6 pb-6 pt-0 flex flex-col gap-4">
-                      <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-                          Prompts ({groupTemplates.length} Template versions)
-                        </span>
-                      </div>
+                    <CardContent className="p-6 flex flex-col gap-8">
+                      {group.agents.map((agentObj, agentIdx) => {
+                        const agentId = agentObj.id;
+                        const agentTemplates = groupTemplates.filter((t) => t.agent === agentId);
+                        const agentTmplIds = new Set(agentTemplates.map((t) => t.id));
+                        const agentVariants = variants.filter((v) =>
+                          agentTmplIds.has(v.templateId),
+                        );
+                        const totalAgentWeight = agentVariants.reduce(
+                          (s, v) => s + (v.enabled ? Math.max(0, v.trafficWeight) : 0),
+                          0,
+                        );
 
-                      <div className="border-border/60 overflow-hidden rounded-lg border bg-card text-card-foreground">
-                        <table className="w-full text-left text-xs">
-                          <thead className="bg-muted/40 border-b text-muted-foreground font-medium uppercase text-[10px]">
-                            <tr>
-                              <th className="px-4 py-2.5">Target Node (targetName)</th>
-                              <th className="px-4 py-2.5">Template ID</th>
-                              <th className="px-4 py-2.5">Notes / Rationale</th>
-                              <th className="px-4 py-2.5">Active Variants & Traffic Weights</th>
-                              <th className="px-4 py-2.5 text-right">Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y">
-                            {group.agents.map((agentObj) => {
-                              const agentId = agentObj.id;
-                              const agentTemplates = groupTemplates.filter(
-                                (t) => t.agent === agentId,
-                              );
+                        return (
+                          <div key={agentId} className="flex flex-col gap-4">
+                            {agentIdx > 0 && <Separator className="mb-2" />}
 
-                              if (agentTemplates.length === 0) {
-                                return (
-                                  <tr key={agentId} className="hover:bg-muted/20 transition-colors">
-                                    <td className="px-4 py-3 font-mono font-semibold text-foreground align-top">
-                                      <div className="flex items-center gap-1.5">
-                                        <GitBranch className="size-3.5 text-primary shrink-0" />
-                                        <span>{agentId}</span>
-                                      </div>
-                                      <span className="text-[10px] text-muted-foreground block mt-0.5 font-normal font-sans">
-                                        {agentObj.name}
-                                      </span>
-                                    </td>
-                                    <td
-                                      colSpan={3}
-                                      className="px-4 py-3 text-muted-foreground italic text-[11px] align-top"
+                            {/* Agent Node Header Bar */}
+                            <div className="flex items-center justify-between bg-muted/30 p-3 rounded-lg border border-border/60">
+                              <div className="flex items-center gap-2">
+                                <GitBranch className="size-4 text-primary shrink-0" />
+                                <span className="font-mono text-sm font-semibold text-foreground">
+                                  {agentId}
+                                </span>
+                                <span className="text-xs text-muted-foreground font-normal">
+                                  ({agentObj.name})
+                                </span>
+                                <span className="mx-1 text-muted-foreground/40">·</span>
+                                <span className="text-[11px] text-muted-foreground italic">
+                                  {agentObj.desc}
+                                </span>
+                              </div>
+                              <Badge variant="secondary" className="font-mono text-[10px]">
+                                {agentTemplates.length} Template
+                                {agentTemplates.length === 1 ? "" : "s"}
+                              </Badge>
+                            </div>
+
+                            {/* SECTION 1: A/B Traffic & Variants */}
+                            <div className="flex flex-col gap-2.5 pl-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                  <Sliders className="size-3.5 text-primary" /> A/B Traffic Variants
+                                  ({agentVariants.length})
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="xs"
+                                    className="gap-1.5 font-medium"
+                                    onClick={() => openTrafficModal(agentId)}
+                                  >
+                                    <Sliders className="size-3.5 text-primary" />
+                                    <span>Set traffic</span>
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="xs"
+                                    className="text-[11px] h-7 px-2 text-muted-foreground hover:text-foreground"
+                                    onClick={() => {
+                                      if (agentTemplates.length === 0) {
+                                        toast.error(
+                                          "Please deploy a prompt template first before adding variants",
+                                        );
+                                        return;
+                                      }
+                                      setAddingVariantTmplId(agentTemplates[0]!.id);
+                                    }}
+                                  >
+                                    + Add Variant
+                                  </Button>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {agentVariants.map((v) => {
+                                  const boundTmpl = templates.find((t) => t.id === v.templateId);
+                                  const pct =
+                                    totalAgentWeight > 0 && v.enabled
+                                      ? Math.round((v.trafficWeight / totalAgentWeight) * 100)
+                                      : 0;
+
+                                  return (
+                                    <div
+                                      key={v.id}
+                                      className="flex flex-col justify-between gap-2 bg-card border border-border/70 rounded-lg p-3 shadow-2xs"
                                     >
-                                      No prompt template deployed yet.
-                                    </td>
-                                    <td className="px-4 py-3 text-right align-top">
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="xs"
-                                        onClick={() => openDeployDialogForAgent(agentId)}
-                                      >
-                                        Add prompt
-                                      </Button>
-                                    </td>
-                                  </tr>
-                                );
-                              }
-
-                              return agentTemplates.map((tmpl, index) => {
-                                const tmplVariants = variants.filter(
-                                  (v) => v.templateId === tmpl.id,
-                                );
-                                const totalW = tmplVariants.reduce(
-                                  (s, v) => s + Math.max(0, v.trafficWeight),
-                                  0,
-                                );
-
-                                return (
-                                  <tr key={tmpl.id} className="hover:bg-muted/20 transition-colors">
-                                    {index === 0 ? (
-                                      <td
-                                        rowSpan={agentTemplates.length}
-                                        className="px-4 py-3 align-top font-mono font-semibold text-foreground border-r border-border/40"
-                                      >
+                                      <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-1.5">
-                                          <GitBranch className="size-3.5 text-primary shrink-0" />
-                                          <span>{agentId}</span>
+                                          <span className="font-semibold text-xs text-foreground">
+                                            {v.label}
+                                          </span>
+                                          <span className="font-mono text-[10px] text-muted-foreground">
+                                            ({v.id})
+                                          </span>
                                         </div>
-                                        <span className="text-[10px] text-muted-foreground block mt-0.5 font-normal font-sans">
-                                          {agentObj.name}
+                                        <Badge
+                                          variant={v.enabled ? "default" : "secondary"}
+                                          className="font-mono text-[10px] px-1.5 py-0"
+                                        >
+                                          {v.enabled ? `${pct}% TRAFFIC` : "DISABLED"}
+                                        </Badge>
+                                      </div>
+
+                                      <div className="flex items-center justify-between bg-muted/40 border border-border/40 rounded-md px-2.5 py-1 text-[11px]">
+                                        <span className="text-muted-foreground">
+                                          Bound Template:
                                         </span>
-                                      </td>
-                                    ) : null}
-                                    <td className="px-4 py-3 font-mono font-medium text-foreground align-top">
-                                      {tmpl.id}
-                                    </td>
-                                    <td className="px-4 py-3 align-top text-muted-foreground text-[11px]">
-                                      {tmpl.notes || "—"}
-                                    </td>
-                                    <td className="px-4 py-3 align-top">
-                                      <div className="flex flex-col gap-2 max-w-sm">
-                                        {tmplVariants.map((v) => {
-                                          const pct =
-                                            totalW > 0
-                                              ? Math.round((v.trafficWeight / totalW) * 100)
-                                              : 0;
-                                          return (
-                                            <div
-                                              key={v.id}
-                                              className="flex flex-col gap-1 bg-muted/30 p-2 rounded-md"
-                                            >
-                                              <div className="flex items-center justify-between text-[11px]">
-                                                <span className="font-semibold text-foreground">
-                                                  {v.label} ({v.id})
-                                                </span>
+                                        <span className="font-mono font-medium text-foreground">
+                                          {boundTmpl ? boundTmpl.id : v.templateId}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+
+                                {agentVariants.length === 0 && (
+                                  <div className="col-span-full py-3 text-center text-muted-foreground italic text-xs bg-muted/20 border border-dashed rounded-lg">
+                                    No A/B variants configured for {agentId} yet.
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* SECTION 2: Prompt Templates Repository */}
+                            <div className="flex flex-col gap-2.5 pl-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                  <Layers className="size-3.5 text-primary" /> Prompt Templates
+                                  Repository ({agentTemplates.length})
+                                </span>
+                                <Button
+                                  type="button"
+                                  variant="default"
+                                  size="xs"
+                                  className="gap-1.5 font-medium"
+                                  onClick={() => openDeployDialogForAgent(agentId)}
+                                >
+                                  <Plus className="size-3.5" />
+                                  <span>Add prompt</span>
+                                </Button>
+                              </div>
+
+                              <div className="border border-border/60 overflow-hidden rounded-lg bg-card">
+                                <table className="w-full text-left text-xs">
+                                  <thead className="bg-muted/40 border-b text-muted-foreground font-medium uppercase text-[10px]">
+                                    <tr>
+                                      <th className="px-4 py-2.5 w-[200px]">Template ID</th>
+                                      <th className="px-4 py-2.5">Notes / Rationale</th>
+                                      <th className="px-4 py-2.5 w-[180px]">
+                                        Bound Variant Status
+                                      </th>
+                                      <th className="px-4 py-2.5 w-[110px]">Created Date</th>
+                                      <th className="px-4 py-2.5 text-right w-[190px]">Actions</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y">
+                                    {agentTemplates.map((tmpl) => {
+                                      const boundVariants = agentVariants.filter(
+                                        (v) => v.templateId === tmpl.id,
+                                      );
+                                      const isSystemPrompt = !tmpl.userId;
+
+                                      return (
+                                        <tr
+                                          key={tmpl.id}
+                                          className="hover:bg-muted/20 transition-colors"
+                                        >
+                                          <td className="px-4 py-3 align-middle font-mono font-medium text-foreground">
+                                            <div className="flex items-center gap-1.5">
+                                              <span>{tmpl.id}</span>
+                                              {isSystemPrompt && (
                                                 <Badge
                                                   variant="outline"
-                                                  className="font-mono text-[10px]"
+                                                  className="text-[9px] px-1 py-0 font-sans text-muted-foreground bg-muted/40"
                                                 >
-                                                  {pct}% Traffic
+                                                  System
                                                 </Badge>
-                                              </div>
-                                              <div className="flex items-center gap-2">
-                                                <input
-                                                  type="range"
-                                                  min="0"
-                                                  max="100"
-                                                  value={v.trafficWeight}
-                                                  onChange={(e) =>
-                                                    handleUpdateWeight(
-                                                      v.id,
-                                                      parseInt(e.target.value),
-                                                    )
-                                                  }
-                                                  className="h-1.5 flex-1 cursor-pointer accent-primary rounded-lg bg-muted"
-                                                />
-                                                <span className="font-mono text-[10px] w-6 text-right">
-                                                  {v.trafficWeight}
-                                                </span>
-                                              </div>
+                                              )}
                                             </div>
-                                          );
-                                        })}
-                                        <Button
-                                          type="button"
-                                          variant="outline"
-                                          size="xs"
-                                          className="w-fit mt-0.5"
-                                          onClick={() => setAddingVariantTmplId(tmpl.id)}
+                                          </td>
+                                          <td className="px-4 py-3 align-middle text-muted-foreground text-[11px]">
+                                            {tmpl.notes || "—"}
+                                          </td>
+                                          <td className="px-4 py-3 align-middle">
+                                            {boundVariants.length > 0 ? (
+                                              <div className="flex flex-wrap gap-1">
+                                                {boundVariants.map((bv) => (
+                                                  <Badge
+                                                    key={bv.id}
+                                                    variant="secondary"
+                                                    className="font-mono text-[10px]"
+                                                  >
+                                                    {bv.label} ({bv.trafficWeight}%)
+                                                  </Badge>
+                                                ))}
+                                              </div>
+                                            ) : (
+                                              <span className="text-muted-foreground/60 text-[11px] italic">
+                                                Unbound
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td className="px-4 py-3 align-middle font-mono text-[11px] text-muted-foreground">
+                                            {new Date(tmpl.createdAt).toLocaleDateString()}
+                                          </td>
+                                          <td className="px-4 py-3 text-right align-middle">
+                                            <div className="flex justify-end gap-1">
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="xs"
+                                                onClick={() => copyToClipboard(tmpl.content)}
+                                                title="Copy Prompt Content"
+                                              >
+                                                <Copy className="size-3 mr-1" /> Copy
+                                              </Button>
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="xs"
+                                                onClick={() => openEditModal(tmpl)}
+                                                title="Edit Prompt Template"
+                                              >
+                                                <Edit3 className="size-3 mr-1" /> Edit
+                                              </Button>
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="xs"
+                                                onClick={() => handleDeleteTemplate(tmpl)}
+                                                disabled={isSystemPrompt}
+                                                title={
+                                                  isSystemPrompt
+                                                    ? "System prompt cannot be deleted"
+                                                    : "Delete Prompt"
+                                                }
+                                                className={
+                                                  isSystemPrompt
+                                                    ? "opacity-50 cursor-not-allowed text-muted-foreground"
+                                                    : "text-rose-500 hover:text-rose-600 hover:bg-rose-500/10"
+                                                }
+                                              >
+                                                <Trash2 className="size-3 mr-1" /> Delete
+                                              </Button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+
+                                    {agentTemplates.length === 0 && (
+                                      <tr>
+                                        <td
+                                          colSpan={5}
+                                          className="px-4 py-6 text-center text-muted-foreground italic text-[11px]"
                                         >
-                                          Add variant
-                                        </Button>
-                                      </div>
-                                    </td>
-                                    <td className="px-4 py-3 text-right align-top">
-                                      <div className="flex justify-end gap-1">
-                                        <Button
-                                          type="button"
-                                          variant="outline"
-                                          size="xs"
-                                          onClick={() => openDeployDialogForAgent(agentId)}
-                                        >
-                                          Add prompt
-                                        </Button>
-                                        <Button
-                                          type="button"
-                                          variant="outline"
-                                          size="xs"
-                                          onClick={() => copyToClipboard(tmpl.content)}
-                                          title="Copy Full Prompt Content"
-                                        >
-                                          Copy
-                                        </Button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                );
-                              });
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                                          No prompt template deployed for {agentId} yet. Click "Add
+                                          prompt" to create one.
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </CardContent>
                   </div>
                 </div>
@@ -1151,6 +1388,187 @@ export function EvalDashboardClient() {
               Cancel
             </Button>
             <Button onClick={handleAddVariant}>Add variant</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Traffic Allocation Modal */}
+      <Dialog
+        open={Boolean(trafficModalAgent)}
+        onOpenChange={(o) => !o && setTrafficModalAgent(null)}
+      >
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sliders className="size-4 text-primary" /> Traffic Weight Allocation
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Configure A/B test traffic percentages for target node{" "}
+              <span className="font-mono font-semibold text-foreground">{trafficModalAgent}</span>.
+              Sum of active traffic weights must equal exactly 100%.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-4 py-3 text-xs">
+            <div className="flex items-center justify-between bg-muted/30 p-2.5 rounded-lg border">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-foreground">Traffic Sum:</span>
+                {(() => {
+                  const activeSum = trafficItems
+                    .filter((i) => i.enabled)
+                    .reduce((s, i) => s + (i.weight || 0), 0);
+                  const isValid = activeSum === 100;
+                  return (
+                    <Badge
+                      variant={isValid ? "default" : "destructive"}
+                      className="font-mono text-xs"
+                    >
+                      {activeSum}% {isValid ? "✓ Valid" : "✗ Must equal 100%"}
+                    </Badge>
+                  );
+                })()}
+              </div>
+              <Button type="button" variant="outline" size="xs" onClick={handleAutoBalanceTraffic}>
+                Auto-balance (100%)
+              </Button>
+            </div>
+
+            <div className="flex flex-col gap-2.5 max-h-[300px] overflow-y-auto pr-1">
+              {trafficItems.map((item, idx) => (
+                <div
+                  key={item.variantId}
+                  className="flex items-center justify-between gap-3 bg-card p-3 rounded-lg border"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={item.enabled}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setTrafficItems((prev) =>
+                          prev.map((i, iIdx) => (iIdx === idx ? { ...i, enabled: checked } : i)),
+                        );
+                      }}
+                      className="size-4 rounded-xs border-border accent-primary cursor-pointer"
+                    />
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-foreground">{item.label}</span>
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        {item.variantId} ({item.templateId})
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      disabled={!item.enabled}
+                      value={item.enabled ? item.weight : 0}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value) || 0;
+                        setTrafficItems((prev) =>
+                          prev.map((i, iIdx) => (iIdx === idx ? { ...i, weight: val } : i)),
+                        );
+                      }}
+                      className="h-1.5 w-32 cursor-pointer accent-primary rounded-lg bg-muted disabled:opacity-30"
+                    />
+                    <div className="flex items-center gap-1">
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        disabled={!item.enabled}
+                        value={item.enabled ? item.weight : 0}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 0;
+                          setTrafficItems((prev) =>
+                            prev.map((i, iIdx) => (iIdx === idx ? { ...i, weight: val } : i)),
+                          );
+                        }}
+                        className="h-8 w-16 font-mono text-center text-xs"
+                      />
+                      <span className="font-mono text-muted-foreground text-xs">%</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {trafficItems.length === 0 && (
+                <div className="text-center py-6 text-muted-foreground italic">
+                  No variants created for {trafficModalAgent} yet. Add a variant or prompt version
+                  first!
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTrafficModalAgent(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveTrafficWeights}
+              disabled={
+                savingTraffic ||
+                trafficItems.length === 0 ||
+                trafficItems.filter((i) => i.enabled).reduce((s, i) => s + (i.weight || 0), 0) !==
+                  100
+              }
+            >
+              {savingTraffic ? "Saving..." : "Save Traffic Split"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Prompt Template Modal */}
+      <Dialog
+        open={Boolean(editModalTemplate)}
+        onOpenChange={(o) => !o && setEditModalTemplate(null)}
+      >
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Edit3 className="size-4 text-primary" /> Edit Prompt Template
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Template ID:{" "}
+              <span className="font-mono font-semibold text-foreground">
+                {editModalTemplate?.id}
+              </span>{" "}
+              (Target Node: {editModalTemplate?.agent})
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-3.5 text-xs py-2">
+            <label className="flex flex-col gap-1">
+              <span className="font-medium text-foreground">Version Notes / Rationale</span>
+              <Input
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+                placeholder="e.g. Updated system prompt for better JSON formatting"
+                className="h-9 text-xs"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="font-medium text-foreground">System Prompt Content</span>
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                className="bg-background border-border min-h-[200px] rounded-md border p-2.5 font-mono text-xs focus:outline-hidden leading-relaxed"
+              />
+            </label>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditModalTemplate(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEditTemplate} disabled={savingEdit}>
+              {savingEdit ? "Saving..." : "Save Changes"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
