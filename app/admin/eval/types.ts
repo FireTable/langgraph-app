@@ -45,6 +45,7 @@ export type UserAssignment = {
   userId: string;
   userName?: string;
   userEmail?: string;
+  userImage?: string | null;
   variantId: string;
   variantLabel?: string;
   templateId?: string;

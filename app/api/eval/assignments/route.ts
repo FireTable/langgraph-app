@@ -14,6 +14,7 @@ export const GET = withAuth(async () => {
         userId: promptVariantAssignment.userId,
         userName: user.name,
         userEmail: user.email,
+        userImage: user.image,
         variantId: promptVariantAssignment.variantId,
         variantLabel: promptVariant.label,
         templateId: promptVariant.templateId,

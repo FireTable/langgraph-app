@@ -1,9 +1,9 @@
 "use client";
 
 import React from "react";
-import { RefreshCw, Search, Sparkles, UserCheck } from "lucide-react";
+import { Network, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Variant, UserAssignment } from "../types";
+import { UserAssignment, Variant } from "../types";
 
 interface UserAssignmentsTabProps {
   assignments: UserAssignment[];
@@ -29,6 +29,20 @@ interface UserAssignmentsTabProps {
   onSearchChange: (search: string) => void;
   onOverrideCohort: (userId: string, cohortLabel: string) => void;
   overridingUserId?: string | null;
+}
+
+function getInitials(name?: string, email?: string): string {
+  if (name && name.trim()) {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  if (email && email.trim()) {
+    return email.trim().slice(0, 2).toUpperCase();
+  }
+  return "US";
 }
 
 export function UserAssignmentsTab({
@@ -52,6 +66,7 @@ export function UserAssignmentsTab({
       userId: string;
       userName?: string;
       userEmail?: string;
+      userImage?: string | null;
       assignedAt: string;
       cohortLabel: string;
       items: UserAssignment[];
@@ -63,6 +78,7 @@ export function UserAssignmentsTab({
       userId: a.userId,
       userName: a.userName,
       userEmail: a.userEmail,
+      userImage: a.userImage,
       assignedAt: a.assignedAt,
       cohortLabel: a.variantLabel || "default",
       items: [],
@@ -86,9 +102,7 @@ export function UserAssignmentsTab({
     <div className="flex flex-col gap-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h3 className="text-base font-semibold flex items-center gap-2">
-            <UserCheck className="size-4 text-primary" /> User Experiment Variant Assignments
-          </h3>
+          <h3 className="text-base font-semibold">User Experiment Variant Assignments</h3>
           <p className="text-muted-foreground text-xs mt-0.5">
             Inspect or override sticky experiment variant assignments for registered users across all agent nodes.
           </p>
@@ -109,53 +123,91 @@ export function UserAssignmentsTab({
           <TableHeader className="bg-muted/50 uppercase text-[10px]">
             <TableRow>
               <TableHead>User Profile</TableHead>
-              <TableHead>Active Assigned Variant</TableHead>
-              <TableHead>Override Variant Assignment</TableHead>
+              <TableHead>Routing Mechanism</TableHead>
+              <TableHead>Bound Graph Nodes</TableHead>
+              <TableHead>Assigned Variant</TableHead>
               <TableHead className="text-right">Assigned Date</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {userList.map((u) => {
               const isUpdating = overridingUserId === u.userId;
+              const isOverride = u.cohortLabel.toLowerCase() !== "default";
 
               return (
                 <TableRow key={u.userId}>
                   <TableCell>
-                    <div className="flex flex-col">
-                      <span className="font-medium text-foreground">{u.userName || "User"}</span>
-                      <span className="font-mono text-[11px] text-muted-foreground">
-                        {u.userEmail || u.userId}
-                      </span>
+                    <div className="flex items-center gap-3">
+                      <Avatar className="size-8 rounded-full bg-muted shrink-0">
+                        {u.userImage ? (
+                          <AvatarImage src={u.userImage} alt={u.userName || u.userEmail} />
+                        ) : null}
+                        <AvatarFallback className="text-xs text-muted-foreground font-medium">
+                          {(u.userName || u.userEmail || u.userId).slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-medium text-foreground">{u.userName || "Registered User"}</span>
+                        <span className="font-mono text-[11px] text-muted-foreground truncate">
+                          {u.userEmail || u.userId}
+                        </span>
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="default" className="font-mono text-[11px] px-2 py-0.5">
-                      <Sparkles className="size-3 mr-1" /> {u.cohortLabel}
+                    <Badge
+                      variant={isOverride ? "secondary" : "outline"}
+                      className="font-mono text-[10px] px-2 py-0.5 gap-1"
+                    >
+                      {isOverride ? (
+                        <>
+                          <ShieldCheck className="size-3 text-amber-500" />
+                          <span>Admin Override</span>
+                        </>
+                      ) : (
+                        <>
+                          <Network className="size-3 text-muted-foreground" />
+                          <span>Deterministic Hashed</span>
+                        </>
+                      )}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2 max-w-[200px]">
+                    <Badge variant="outline" className="font-mono text-[10px] px-2 py-0.5">
+                      10 Agent Nodes
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
                       <Select
                         value={u.cohortLabel}
                         onValueChange={(val) => onOverrideCohort(u.userId, val)}
                         disabled={isUpdating}
                       >
-                        <SelectTrigger className="h-8 text-xs font-mono">
-                          <SelectValue />
+                        <SelectTrigger size="sm" className="!h-6 !py-0 w-auto px-2 gap-1.5 text-[10px] font-mono border border-border/80 bg-background hover:bg-muted/50 rounded-md shadow-2xs focus:ring-1 focus:ring-primary">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-foreground uppercase tracking-wide text-[10px]">
+                              <SelectValue />
+                            </span>
+                            <span className="h-2.5 w-px bg-border/80 shrink-0" />
+                          </div>
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent position="popper" align="start" className="w-[140px] uppercase">
                           {availableCohorts.map((cohortLabel) => (
                             <SelectItem
                               key={cohortLabel}
                               value={cohortLabel}
-                              className="text-xs font-mono"
+                              className="text-xs font-mono uppercase"
                             >
                               {cohortLabel}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      {isUpdating && <RefreshCw className="size-3.5 animate-spin text-primary shrink-0" />}
+
+                      {isUpdating && (
+                        <RefreshCw className="size-3.5 animate-spin text-primary shrink-0" />
+                      )}
                     </div>
                   </TableCell>
                   <TableCell className="text-right font-mono text-muted-foreground">
@@ -166,7 +218,7 @@ export function UserAssignmentsTab({
             })}
             {userList.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="text-muted-foreground px-4 py-8 text-center text-xs">
+                <TableCell colSpan={5} className="text-muted-foreground px-4 py-8 text-center text-xs">
                   No sticky user assignments recorded yet. Invoking agents will automatically assign users to cohorts.
                 </TableCell>
               </TableRow>
