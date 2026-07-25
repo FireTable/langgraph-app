@@ -172,21 +172,39 @@ export function EvalDashboardClient() {
     }
   };
 
-  const openTrafficModal = (agentId: string) => {
-    const agentTemplates = templates.filter((t) => t.agent === agentId);
-    const agentTmplIds = new Set(agentTemplates.map((t) => t.id));
-    const agentVars = variants.filter((v) => agentTmplIds.has(v.templateId));
+  const openTrafficModal = () => {
+    // Extract unique variant labels across all agent nodes
+    const cohortMap = new Map<
+      string,
+      { label: string; weight: number; enabled: boolean }
+    >();
 
-    const items = agentVars.map((v) => ({
-      variantId: v.id,
-      label: v.label,
-      templateId: v.templateId,
-      weight: v.trafficWeight,
-      enabled: v.enabled,
-    }));
+    for (const v of variants) {
+      const existing = cohortMap.get(v.label) || {
+        label: v.label,
+        weight: v.trafficWeight,
+        enabled: v.enabled,
+      };
+      existing.weight = Math.max(existing.weight, v.trafficWeight);
+      existing.enabled = existing.enabled || v.enabled;
+      cohortMap.set(v.label, existing);
+    }
+
+    const items: TrafficItem[] = Array.from(cohortMap.entries()).map(
+      ([label, info]) => {
+        const rep = variants.find((v) => v.label === label);
+        return {
+          variantId: rep?.id || label,
+          label,
+          templateId: rep?.templateId || label,
+          weight: info.weight,
+          enabled: info.enabled,
+        };
+      },
+    );
 
     setTrafficItems(items);
-    setTrafficModalAgent(agentId);
+    setTrafficModalAgent("all");
   };
 
   const handleAutoBalanceTraffic = () => {
@@ -217,21 +235,31 @@ export function EvalDashboardClient() {
 
     setSavingTraffic(true);
     try {
+      // Build update list for ALL variants matching each label across all agent nodes
+      const updates: Array<{ variantId: string; trafficWeight: number; enabled: boolean }> = [];
+
+      for (const item of trafficItems) {
+        const targetWeight = item.enabled ? item.weight : 0;
+        const matchingVariants = variants.filter((v) => v.label === item.label);
+        for (const mv of matchingVariants) {
+          updates.push({
+            variantId: mv.id,
+            trafficWeight: targetWeight,
+            enabled: item.enabled,
+          });
+        }
+      }
+
       const res = await fetch("/api/eval/prompts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "batch_update_weights",
-          agent: trafficModalAgent,
-          variants: trafficItems.map((i) => ({
-            id: i.variantId,
-            trafficWeight: i.enabled ? i.weight : 0,
-            enabled: i.enabled,
-          })),
+          updates,
         }),
       });
       if (!res.ok) throw new Error("Failed to save traffic split");
-      toast.success("Traffic weight allocation updated successfully!");
+      toast.success("Traffic weight allocation updated across all agents successfully!");
       setTrafficModalAgent(null);
       fetchData();
     } catch (e: unknown) {

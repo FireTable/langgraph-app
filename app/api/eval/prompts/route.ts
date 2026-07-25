@@ -35,7 +35,7 @@ export const POST = withAuth(async (req, { user }) => {
       label?: string;
       trafficWeight?: number;
       enabled?: boolean;
-      updates?: Array<{ variantId: string; trafficWeight: number; enabled?: boolean }>;
+      updates?: Array<{ id?: string; variantId?: string; trafficWeight: number; enabled?: boolean }>;
     };
 
     if (body.action === "create_template") {
@@ -150,11 +150,24 @@ export const POST = withAuth(async (req, { user }) => {
     }
 
     if (body.action === "batch_update_weights") {
-      if (!Array.isArray(body.updates)) {
+      const items = Array.isArray(body.updates)
+        ? body.updates
+        : Array.isArray((body as Record<string, unknown>).variants)
+          ? ((body as Record<string, unknown>).variants as Array<{
+              id?: string;
+              variantId?: string;
+              trafficWeight?: number;
+              enabled?: boolean;
+            }>)
+          : null;
+
+      if (!items) {
         return NextResponse.json({ error: "updates array is required" }, { status: 400 });
       }
-      for (const update of body.updates) {
-        if (update.variantId && typeof update.trafficWeight === "number") {
+
+      for (const update of items) {
+        const vId = update.variantId || update.id;
+        if (vId && typeof update.trafficWeight === "number") {
           await db
             .update(promptVariant)
             .set({
@@ -162,7 +175,7 @@ export const POST = withAuth(async (req, { user }) => {
               enabled: update.enabled !== undefined ? update.enabled : true,
               updatedAt: new Date(),
             })
-            .where(eq(promptVariant.id, update.variantId));
+            .where(eq(promptVariant.id, vId));
         }
       }
       return NextResponse.json({ success: true });

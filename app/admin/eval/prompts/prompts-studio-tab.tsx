@@ -26,7 +26,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { LANGGRAPH_GROUPS, Template, Variant } from "../types";
+
+function truncateId(id: string, front = 3, back = 8): string {
+  if (!id || id.length <= front + back + 3) return id;
+  return `${id.slice(0, front)}...${id.slice(-back)}`;
+}
 
 interface PromptsStudioTabProps {
   templates: Template[];
@@ -107,7 +118,7 @@ export function PromptsStudioTab({
               variant="outline"
               size="xs"
               className="gap-1.5 font-medium"
-              onClick={() => openTrafficModal("chatAgent")}
+              onClick={() => openTrafficModal("all")}
             >
               <Sliders className="size-3.5 text-primary" />
               <span>Set traffic split</span>
@@ -144,16 +155,22 @@ export function PromptsStudioTab({
             return (
               <Card
                 key={cohort.label}
-                className="border-border/80 shadow-2xs flex flex-col justify-between overflow-hidden"
+                className="border-border/80 shadow-2xs flex flex-col justify-between overflow-hidden p-0 gap-0"
               >
                 {/* Cohort Card Header with Action Icons at Top Right */}
-                <CardHeader className="p-4 pb-3 bg-muted/20 border-b border-border/40">
+                <div className="p-3.5 bg-muted/20 border-b border-border/40 flex flex-col gap-1.5">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Sparkles className="size-4 text-primary shrink-0" />
-                      <CardTitle className="text-sm font-bold font-mono">
+                      <span className="text-sm font-bold font-mono text-foreground uppercase">
                         {cohort.label}
-                      </CardTitle>
+                      </span>
+                      <Badge
+                        variant={cohort.enabled ? "default" : "secondary"}
+                        className="font-mono text-[10px] px-2 py-0.5"
+                      >
+                        {cohort.enabled ? `${pct}% TRAFFIC` : "DISABLED"}
+                      </Badge>
                     </div>
 
                     {/* Action Icon Buttons: Edit & Delete */}
@@ -201,39 +218,53 @@ export function PromptsStudioTab({
                       </Button>
                     </div>
                   </div>
+                </div>
 
-                  {/* Percentage Badge Moved Down to Sub-header */}
-                  <div className="flex items-center justify-between mt-2 pt-1">
-                    <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                      Traffic Allocation:
-                    </span>
-                    <Badge
-                      variant={cohort.enabled ? "default" : "secondary"}
-                      className="font-mono text-[10px] px-2 py-0.5"
-                    >
-                      {cohort.enabled ? `${pct}% TRAFFIC` : "DISABLED"}
-                    </Badge>
-                  </div>
-                </CardHeader>
-
-                <CardContent className="p-4 flex flex-col gap-2.5 text-xs">
+                <CardContent className="p-3.5 flex flex-col gap-2 text-xs">
                   <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                     Agent Node Prompt Bindings:
                   </span>
-                  <div className="flex flex-col gap-1.5 max-h-[140px] overflow-y-auto pr-1">
-                    {cohort.items.map(({ variant, template }) => (
-                      <div
-                        key={variant.id}
-                        className="flex items-center justify-between bg-muted/30 px-2.5 py-1.5 rounded-md border border-border/40 font-mono text-[11px]"
-                      >
-                        <span className="font-semibold text-foreground">
-                          {template?.agent || "agent"}
-                        </span>
-                        <span className="text-muted-foreground text-[10px] truncate max-w-[140px]">
-                          {template?.id || variant.templateId}
-                        </span>
-                      </div>
-                    ))}
+                  <div className="flex flex-col gap-1.5">
+                    {cohort.items.map(({ variant, template }) => {
+                      const fullId = template?.id || variant.templateId;
+                      const truncated = truncateId(fullId);
+
+                      return (
+                        <div
+                          key={variant.id}
+                          className="flex items-center justify-between bg-muted/30 px-2.5 py-1.5 rounded-md border border-border/40 font-mono text-[11px] gap-2"
+                        >
+                          <span className="font-semibold text-foreground shrink-0">
+                            {template?.agent || "agent"}
+                          </span>
+                          <div className="flex items-center gap-1 min-w-0 shrink-0">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="text-muted-foreground text-[10px] whitespace-nowrap font-mono cursor-pointer hover:text-foreground hover:underline">
+                                    {truncated}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent className="font-mono text-xs max-w-xs break-all">
+                                  {fullId}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="size-5 text-muted-foreground hover:text-foreground shrink-0"
+                              title="Copy Template ID"
+                              onClick={() => copyToClipboard(fullId)}
+                            >
+                              <Copy className="size-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>
@@ -285,8 +316,6 @@ export function PromptsStudioTab({
                         </Badge>
                       </div>
                       <CardDescription className="text-xs text-muted-foreground">
-                        <span className="font-mono">{group.entrypoint}</span>
-                        <span className="mx-1.5">·</span>
                         {group.description}
                       </CardDescription>
                     </div>
@@ -347,27 +376,19 @@ export function PromptsStudioTab({
                                     className="bg-muted/30 hover:bg-muted/50 cursor-pointer select-none font-medium border-t border-b border-border/60"
                                   >
                                     <TableCell colSpan={4} className="py-3">
-                                      <div className="flex items-center gap-2.5">
+                                      <div className="flex items-center gap-2">
                                         {isAgentCollapsed ? (
                                           <ChevronRight className="size-4 text-muted-foreground shrink-0" />
                                         ) : (
                                           <ChevronDown className="size-4 text-primary shrink-0" />
                                         )}
                                         <GitBranch className="size-4 text-primary shrink-0" />
+                                        <Badge variant="secondary" className="font-mono text-[10px] px-1.5 py-0.5">
+                                          {agentTemplates.length}
+                                        </Badge>
                                         <span className="font-mono text-sm font-semibold text-foreground">
                                           {agentId}
                                         </span>
-                                        <span className="text-xs text-muted-foreground font-normal">
-                                          ({agentObj.name})
-                                        </span>
-                                        <span className="mx-1 text-muted-foreground/40">·</span>
-                                        <span className="text-[11px] text-muted-foreground font-normal italic">
-                                          {agentObj.desc}
-                                        </span>
-                                        <Badge variant="secondary" className="ml-2 font-mono text-[10px]">
-                                          {agentTemplates.length} Template
-                                          {agentTemplates.length === 1 ? "" : "s"}
-                                        </Badge>
                                       </div>
                                     </TableCell>
                                     <TableCell className="py-3 text-right">

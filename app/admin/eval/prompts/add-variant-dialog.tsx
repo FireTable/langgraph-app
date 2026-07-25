@@ -159,17 +159,26 @@ export function AddCohortVariantDialog({
                         value={selectedTmplId}
                         onValueChange={(val) => handleSelectBinding(agentId, val)}
                       >
-                        <SelectTrigger className="h-9 w-full text-xs font-mono">
+                        <SelectTrigger className="h-auto min-h-10 py-1.5 px-3 w-full text-xs">
                           <SelectValue placeholder="Select template" />
                         </SelectTrigger>
                         <SelectContent>
                           {agentTemplates.map((tmpl) => (
-                            <SelectItem key={tmpl.id} value={tmpl.id} className="text-xs font-mono">
-                              {tmpl.id} {tmpl.notes ? `(${tmpl.notes})` : ""}
+                            <SelectItem key={tmpl.id} value={tmpl.id} className="py-2 cursor-pointer">
+                              <div className="flex flex-col gap-0.5 min-w-0 text-left">
+                                <span className="font-mono font-semibold text-foreground text-xs">
+                                  {tmpl.id}
+                                </span>
+                                {tmpl.notes && (
+                                  <span className="text-[11px] text-muted-foreground font-sans line-clamp-1">
+                                    {tmpl.notes}
+                                  </span>
+                                )}
+                              </div>
                             </SelectItem>
                           ))}
                           {agentTemplates.length === 0 && (
-                            <SelectItem value="none" disabled className="text-xs italic text-muted-foreground">
+                            <SelectItem value="none" disabled className="text-xs italic text-muted-foreground py-2">
                               No templates deployed
                             </SelectItem>
                           )}

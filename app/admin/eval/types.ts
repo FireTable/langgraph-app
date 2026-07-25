@@ -80,7 +80,7 @@ export type RunTraceDetail = {
 export const LANGGRAPH_GROUPS = [
   {
     id: "agent",
-    label: "Main Chat Graph (agent)",
+    label: "Main Chat Graph",
     entrypoint: "./backend/agent.ts",
     icon: Cpu,
     description: "Core interactive chat, intent router, and domain sub-agents",
@@ -102,7 +102,7 @@ export const LANGGRAPH_GROUPS = [
   },
   {
     id: "background_agent",
-    label: "Background Graph (background_agent)",
+    label: "Background Graph",
     entrypoint: "./backend/background-agent.ts",
     icon: Workflow,
     description: "Asynchronous background processing and thread summarization",
@@ -121,7 +121,7 @@ export const LANGGRAPH_GROUPS = [
   },
   {
     id: "kbAgent",
-    label: "Knowledge Base Graph (kbAgent)",
+    label: "Knowledge Base Graph",
     entrypoint: "./backend/agent/kb-agent.ts",
     icon: Database,
     description: "PDF OCR vision parsing, GraphRAG entity extraction, and canonical alignment",
