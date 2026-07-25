@@ -145,6 +145,7 @@ backend/
     weather-agent.ts          weatherAgent compiled subgraph
     crypto-agent.ts           cryptoAgent compiled subgraph
     code-agent.ts             codeAgent compiled subgraph
+    eval-agent.ts             evalAgent compiled evaluation graph (LLM-as-a-Judge)
   node/
     call-model-node.ts        "agent" node — calls the model, appends AI reply
     rename-thread-agent-node.ts "renameThreadAgent" — generates + persists the title
@@ -159,6 +160,8 @@ backend/
     recall.ts                 loadMemory / getCachedMemory (LRU max 1000, 60s TTL); extractUserId / extractThreadId
     template.ts               buildSystemMessageWithMemory (mustache <memory> + <threads>) + trimMessagesForInvoke
     profile-size.ts           assertProfileSize — guard before the store write (NFR-003)
+  eval/
+    callback.ts               EvalCallbackHandler — captures LLM run executions for evaluation
   observability/
     callback-collector.ts     CapturingHandler — buffers spans per runId, persists on End hook
 
@@ -181,6 +184,9 @@ lib/
     adapter.ts                RemoteThreadListAdapter for assistant-ui
     validators.ts             Zod API body schemas
   memory/                     Memory module — queries (getMemoryDoc / putMemoryDoc / getAuthInfo / writeSummary / getThreadSummaries / getRecentThreadSummaries / deleteThreadSummaries) + validators (RFC 6902 patches, SummaryEntry) + merge (mergeMemory + getStoreKeys) + constants + format
+  eval/                       Agent Evaluation Studio & A/B testing module
+    schema.ts                 Drizzle tables (prompt_template, prompt_variant, eval_run, eval_feedback, eval_rubric, eval_benchmark, eval_judgment)
+    queries.ts                seedInitialPrompts (100% English per-agent Rubrics & Benchmarks) + CRUD operations
   observability/              Observability module
     schema.ts                 Drizzle table (observability_spans)
     queries.ts                bulkInsertSpans / getSpansByThreadId / markRunningAsFailed / deleteSpansByThreadId
