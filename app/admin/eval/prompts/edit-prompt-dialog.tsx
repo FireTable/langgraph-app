@@ -1,7 +1,5 @@
 "use client";
 
-import React from "react";
-import { Edit3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -41,8 +39,8 @@ export function EditPromptDialog({
     <Dialog open={Boolean(template)} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="p-6 pb-4 border-b border-border/60">
-          <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
-            <Edit3 className="size-5 text-primary" /> Edit Prompt Template
+          <DialogTitle className="text-base sm:text-lg">
+            Edit Prompt Template
           </DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
             Template ID:{" "}

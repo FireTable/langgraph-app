@@ -10,6 +10,7 @@ import { ExecutionLogsTab, TraceDetailDialog } from "./logs";
 import {
   AddCohortVariantDialog,
   DeletePromptDialog,
+  DeleteVariantDialog,
   DeployPromptDialog,
   EditPromptDialog,
   PromptsStudioTab,
@@ -152,23 +153,38 @@ export function EvalDashboardClient() {
     }
   };
 
-  const handleDeleteCohort = async (cohortLabel: string) => {
+  // Delete Variant Modal State
+  const [deleteVariantLabel, setDeleteVariantLabel] = useState<string | null>(null);
+  const [deletingVariant, setDeletingVariant] = useState(false);
+
+  const handleDeleteCohort = (cohortLabel: string) => {
     if (cohortLabel.toLowerCase() === "default") {
       toast.error("Default variant cannot be deleted");
       return;
     }
-    if (!confirm(`Are you sure you want to delete variant "${cohortLabel}"?`)) {
-      return;
-    }
+    setDeleteVariantLabel(cohortLabel);
+  };
+
+  const handleConfirmDeleteVariant = async () => {
+    if (!deleteVariantLabel) return;
+    setDeletingVariant(true);
     try {
-      const cohortVariants = variants.filter((v) => v.label === cohortLabel);
-      for (const v of cohortVariants) {
-        await fetch(`/api/eval/prompts?id=${v.id}`, { method: "DELETE" });
-      }
-      toast.success(`Variant "${cohortLabel}" deleted`);
+      const res = await fetch("/api/eval/prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete_cohort_variant",
+          label: deleteVariantLabel,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to delete variant");
+      toast.success(`Variant "${deleteVariantLabel}" deleted`);
+      setDeleteVariantLabel(null);
       fetchData();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Error deleting variant");
+    } finally {
+      setDeletingVariant(false);
     }
   };
 
@@ -491,7 +507,7 @@ export function EvalDashboardClient() {
               value="prompts"
               className="flex items-center gap-2 text-xs font-semibold rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-xs"
             >
-              <Layers className="size-4 text-primary" /> Prompts & A/B Studio
+              <Layers className="size-4 text-primary" /> Prompts Studio
               <Badge variant="secondary" className="ml-auto text-[10px] font-mono px-1.5 py-0">
                 {templates.length}
               </Badge>
@@ -624,6 +640,13 @@ export function EvalDashboardClient() {
         onOpenChange={(o) => !o && setDeleteModalTemplate(null)}
         onConfirm={handleConfirmDeleteTemplate}
         deleting={deletingTemplate}
+      />
+
+      <DeleteVariantDialog
+        variantLabel={deleteVariantLabel}
+        onOpenChange={(o) => !o && setDeleteVariantLabel(null)}
+        onConfirm={handleConfirmDeleteVariant}
+        deleting={deletingVariant}
       />
 
       <TraceDetailDialog

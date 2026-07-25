@@ -105,8 +105,8 @@ export function PromptsStudioTab({
       <section className="flex flex-col gap-3.5">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-base font-semibold flex items-center gap-2">
-              <Sliders className="size-4 text-primary" /> Global A/B Traffic Variants
+            <h3 className="text-base font-semibold">
+              Global A/B Traffic Variants
             </h3>
             <p className="text-muted-foreground text-xs mt-0.5">
               Experiment variants configured across agent nodes. Traffic weights deterministically route user requests.
@@ -121,7 +121,7 @@ export function PromptsStudioTab({
               onClick={() => openTrafficModal("all")}
             >
               <Sliders className="size-3.5 text-primary" />
-              <span>Set traffic split</span>
+              <span>Set Traffic Weight</span>
             </Button>
             <Button
               type="button"
@@ -284,8 +284,8 @@ export function PromptsStudioTab({
       {/* SECTION 2: Bottom Prompt Templates Repository (Single Consolidated Table per Graph Group) */}
       <section className="flex flex-col gap-4">
         <div>
-          <h3 className="text-base font-semibold flex items-center gap-2">
-            <Layers className="size-4 text-primary" /> Prompt Templates Repository
+          <h3 className="text-base font-semibold">
+            Prompt Templates Repository
           </h3>
           <p className="text-muted-foreground text-xs mt-0.5">
             System prompt versions deployed per agent node. Edit prompt content, add notes, or deploy new iterations.

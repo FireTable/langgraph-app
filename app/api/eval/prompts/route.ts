@@ -24,6 +24,7 @@ export const POST = withAuth(async (req, { user }) => {
       action?:
         | "create_template"
         | "create_cohort_variant"
+        | "delete_cohort_variant"
         | "create_variant"
         | "update_variant_weight"
         | "batch_update_weights";
@@ -76,37 +77,84 @@ export const POST = withAuth(async (req, { user }) => {
     if (body.action === "create_cohort_variant") {
       const cohortBody = body as unknown as {
         label: string;
-        trafficWeight: number;
+        trafficWeight?: number;
         bindings: Record<string, string>;
       };
 
-      if (!cohortBody.label || typeof cohortBody.trafficWeight !== "number") {
+      if (!cohortBody.label) {
         return NextResponse.json(
-          { error: "label and trafficWeight are required" },
+          { error: "label is required" },
           { status: 400 },
         );
       }
 
+      const labelStr = cohortBody.label.trim();
       const bindings = cohortBody.bindings || {};
-      const createdVariants = [];
+
+      // Fetch all existing templates and variants for this label
+      const allTemplates = await db.select().from(promptTemplate);
+      const existingVariants = await db
+        .select()
+        .from(promptVariant)
+        .where(eq(promptVariant.label, labelStr));
+
+      const resultVariants = [];
 
       for (const [agent, tmplId] of Object.entries(bindings)) {
         if (!tmplId) continue;
-        const id = `var_${generateId()}`;
-        const [created] = await db
-          .insert(promptVariant)
-          .values({
-            id,
-            templateId: tmplId,
-            label: cohortBody.label.trim(),
-            trafficWeight: cohortBody.trafficWeight,
-            enabled: true,
-          })
-          .returning();
-        createdVariants.push(created);
+
+        // Find all existing variants for this label that belong to this agent node
+        const matching = existingVariants.filter((v) => {
+          const tmpl = allTemplates.find((t) => t.id === v.templateId);
+          return tmpl?.agent === agent;
+        });
+
+        if (matching.length > 0) {
+          // UPDATE the first matching variant with the new templateId
+          const targetVar = matching[0];
+          const [updated] = await db
+            .update(promptVariant)
+            .set({
+              templateId: tmplId,
+              ...(typeof cohortBody.trafficWeight === "number"
+                ? { trafficWeight: cohortBody.trafficWeight }
+                : {}),
+              updatedAt: new Date(),
+            })
+            .where(eq(promptVariant.id, targetVar.id))
+            .returning();
+          resultVariants.push(updated);
+
+          // Delete any historical duplicate variants for the same (label, agent)
+          for (let i = 1; i < matching.length; i++) {
+            await db.delete(promptVariant).where(eq(promptVariant.id, matching[i].id));
+          }
+        } else {
+          // INSERT new variant for this agent node
+          const id = `var_${generateId()}`;
+          const [created] = await db
+            .insert(promptVariant)
+            .values({
+              id,
+              templateId: tmplId,
+              label: labelStr,
+              trafficWeight: cohortBody.trafficWeight ?? 0,
+              enabled: true,
+            })
+            .returning();
+          resultVariants.push(created);
+        }
       }
 
-      return NextResponse.json({ variants: createdVariants });
+      return NextResponse.json({ variants: resultVariants });
+    }
+
+    if (body.action === "delete_cohort_variant") {
+      if (!body.label || body.label.trim().toLowerCase() === "default") {
+        return NextResponse.json({ error: "Cannot delete default variant" }, { status: 400 });
+      }
+      await db.delete(promptVariant).where(eq(promptVariant.label, body.label.trim()));
+      return NextResponse.json({ success: true });
     }
 
     if (body.action === "create_variant") {
