@@ -102,7 +102,9 @@ export function RubricJudgmentsTab({ rubrics, judgments }: RubricJudgmentsTabPro
                     <TableCell className="font-mono text-[11px] font-medium text-foreground">
                       {j.runId}
                     </TableCell>
-                    <TableCell className="font-mono text-muted-foreground">{j.agent || "—"}</TableCell>
+                    <TableCell className="font-mono text-muted-foreground">
+                      {j.agent || "—"}
+                    </TableCell>
                     <TableCell className="font-mono text-xs">{j.rubricId}</TableCell>
                     <TableCell className="text-center">
                       <Badge
@@ -123,7 +125,10 @@ export function RubricJudgmentsTab({ rubrics, judgments }: RubricJudgmentsTabPro
               })}
               {judgments.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-muted-foreground px-4 py-8 text-center text-xs">
+                  <TableCell
+                    colSpan={6}
+                    className="text-muted-foreground px-4 py-8 text-center text-xs"
+                  >
                     No AI Judge evaluation history recorded yet. Trigger AI Judge on an execution
                     run to generate scores!
                   </TableCell>

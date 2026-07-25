@@ -40,9 +40,7 @@ export function TrafficSplitDialog({
   onSave,
   saving,
 }: TrafficSplitDialogProps) {
-  const activeSum = items
-    .filter((i) => i.enabled)
-    .reduce((s, i) => s + (i.weight || 0), 0);
+  const activeSum = items.filter((i) => i.enabled).reduce((s, i) => s + (i.weight || 0), 0);
   const isValid = activeSum === 100;
 
   const handleWeightChange = (index: number, val: number) => {
@@ -62,11 +60,10 @@ export function TrafficSplitDialog({
     <Dialog open={Boolean(agentId)} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="p-6 pb-4 border-b border-border/60">
-          <DialogTitle className="text-base sm:text-lg">
-            Set Traffic Weight
-          </DialogTitle>
+          <DialogTitle className="text-base sm:text-lg">Set Traffic Weight</DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
-            Configure A/B test traffic percentages across all agent nodes. Sum of active traffic weights must equal exactly 100%.
+            Configure A/B test traffic percentages across all agent nodes. Sum of active traffic
+            weights must equal exactly 100%.
           </DialogDescription>
         </DialogHeader>
 

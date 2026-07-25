@@ -37,7 +37,8 @@ export function DeleteVariantDialog({
             <span className="font-mono font-semibold text-foreground bg-muted/60 px-1.5 py-0.5 rounded-md">
               {variantLabel}
             </span>{" "}
-            across all agent nodes? Prompt bindings for this variant will be removed. This action cannot be undone.
+            across all agent nodes? Prompt bindings for this variant will be removed. This action
+            cannot be undone.
           </DialogDescription>
         </DialogHeader>
 

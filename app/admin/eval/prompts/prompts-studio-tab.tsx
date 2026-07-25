@@ -26,12 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { LANGGRAPH_GROUPS, Template, Variant } from "../types";
 
 function truncateId(id: string, front = 3, back = 8): string {
@@ -46,7 +41,11 @@ interface PromptsStudioTabProps {
   toggleGroupCollapse: (groupId: string) => void;
   openTrafficModal: (agentId: string) => void;
   openAddCohortDialog: () => void;
-  openEditCohortDialog?: (cohortLabel: string, weight: number, bindings: Record<string, string>) => void;
+  openEditCohortDialog?: (
+    cohortLabel: string,
+    weight: number,
+    bindings: Record<string, string>,
+  ) => void;
   openDeployDialogForAgent: (agentId: string) => void;
   copyToClipboard: (text: string) => void;
   openEditModal: (tmpl: Template) => void;
@@ -76,10 +75,7 @@ export function PromptsStudioTab({
   };
 
   // Group variants by label to form Global Cohorts
-  const cohortMap = new Map<
-    string,
-    Array<{ variant: Variant; template?: Template }>
-  >();
+  const cohortMap = new Map<string, Array<{ variant: Variant; template?: Template }>>();
 
   for (const v of variants) {
     const tmpl = templates.find((t) => t.id === v.templateId);
@@ -105,11 +101,10 @@ export function PromptsStudioTab({
       <section className="flex flex-col gap-3.5">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-base font-semibold">
-              Global A/B Traffic Variants
-            </h3>
+            <h3 className="text-base font-semibold">Global A/B Traffic Variants</h3>
             <p className="text-muted-foreground text-xs mt-0.5">
-              Experiment variants configured across agent nodes. Traffic weights deterministically route user requests.
+              Experiment variants configured across agent nodes. Traffic weights deterministically
+              route user requests.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -284,11 +279,10 @@ export function PromptsStudioTab({
       {/* SECTION 2: Bottom Prompt Templates Repository (Single Consolidated Table per Graph Group) */}
       <section className="flex flex-col gap-4">
         <div>
-          <h3 className="text-base font-semibold">
-            Prompt Templates Repository
-          </h3>
+          <h3 className="text-base font-semibold">Prompt Templates Repository</h3>
           <p className="text-muted-foreground text-xs mt-0.5">
-            System prompt versions deployed per agent node. Edit prompt content, add notes, or deploy new iterations.
+            System prompt versions deployed per agent node. Edit prompt content, add notes, or
+            deploy new iterations.
           </p>
         </div>
 
@@ -303,7 +297,10 @@ export function PromptsStudioTab({
             );
 
             return (
-              <Card key={group.id} className="overflow-hidden border-border/80 py-0 gap-0 shadow-2xs">
+              <Card
+                key={group.id}
+                className="overflow-hidden border-border/80 py-0 gap-0 shadow-2xs"
+              >
                 {/* Graph Group Card Header */}
                 <CardHeader className="p-6 border-b border-border/60">
                   <div className="flex items-start justify-between gap-3">
@@ -330,8 +327,9 @@ export function PromptsStudioTab({
                       >
                         <span>{isGroupCollapsed ? "Expand" : "Collapse"}</span>
                         <ChevronDown
-                          className={`size-3.5 transition-transform duration-200 ${isGroupCollapsed ? "-rotate-90" : "rotate-0"
-                            }`}
+                          className={`size-3.5 transition-transform duration-200 ${
+                            isGroupCollapsed ? "-rotate-90" : "rotate-0"
+                          }`}
                         />
                       </Button>
                     </div>
@@ -339,8 +337,9 @@ export function PromptsStudioTab({
                 </CardHeader>
 
                 <div
-                  className={`grid transition-all duration-300 ease-in-out ${isGroupCollapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
-                    }`}
+                  className={`grid transition-all duration-300 ease-in-out ${
+                    isGroupCollapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
+                  }`}
                 >
                   <div className="overflow-hidden">
                     <CardContent className="p-6">
@@ -383,7 +382,10 @@ export function PromptsStudioTab({
                                           <ChevronDown className="size-4 text-primary shrink-0" />
                                         )}
                                         <GitBranch className="size-4 text-primary shrink-0" />
-                                        <Badge variant="secondary" className="font-mono text-[10px] px-1.5 py-0.5">
+                                        <Badge
+                                          variant="secondary"
+                                          className="font-mono text-[10px] px-1.5 py-0.5"
+                                        >
                                           {agentTemplates.length}
                                         </Badge>
                                         <span className="font-mono text-sm font-semibold text-foreground">
@@ -418,7 +420,10 @@ export function PromptsStudioTab({
                                         >
                                           <div className="flex items-center gap-2">
                                             <CornerDownRight className="size-3.5 text-muted-foreground/60 shrink-0" />
-                                            <span>No prompt template deployed for {agentId} yet. Click "Add prompt" to create one.</span>
+                                            <span>
+                                              No prompt template deployed for {agentId} yet. Click
+                                              "Add prompt" to create one.
+                                            </span>
                                           </div>
                                         </TableCell>
                                       </TableRow>

@@ -148,9 +148,7 @@ export function AddCohortVariantDialog({
                         <span className="font-mono font-semibold text-foreground text-xs">
                           {agentId}
                         </span>
-                        <span className="text-muted-foreground text-[11px]">
-                          ({agentObj.name})
-                        </span>
+                        <span className="text-muted-foreground text-[11px]">({agentObj.name})</span>
                       </div>
                     </div>
 
@@ -164,7 +162,11 @@ export function AddCohortVariantDialog({
                         </SelectTrigger>
                         <SelectContent>
                           {agentTemplates.map((tmpl) => (
-                            <SelectItem key={tmpl.id} value={tmpl.id} className="py-2 cursor-pointer">
+                            <SelectItem
+                              key={tmpl.id}
+                              value={tmpl.id}
+                              className="py-2 cursor-pointer"
+                            >
                               <div className="flex flex-col gap-0.5 min-w-0 text-left">
                                 <span className="font-mono font-semibold text-foreground text-xs">
                                   {tmpl.id}
@@ -178,7 +180,11 @@ export function AddCohortVariantDialog({
                             </SelectItem>
                           ))}
                           {agentTemplates.length === 0 && (
-                            <SelectItem value="none" disabled className="text-xs italic text-muted-foreground py-2">
+                            <SelectItem
+                              value="none"
+                              disabled
+                              className="text-xs italic text-muted-foreground py-2"
+                            >
                               No templates deployed
                             </SelectItem>
                           )}

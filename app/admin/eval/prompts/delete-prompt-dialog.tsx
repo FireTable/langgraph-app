@@ -33,15 +33,15 @@ export function DeletePromptDialog({
             Delete Prompt Template?
           </DialogTitle>
 
-            <DialogDescription className="text-xs text-muted-foreground mt-1 leading-relaxed">
-              Are you sure you want to permanently delete prompt template{" "}
-              <span className="font-mono font-semibold text-foreground bg-muted/60 px-1.5 py-0.5 rounded-md">
-                {template?.id}
-              </span>{" "}
-              for agent node{" "}
-              <span className="font-mono font-semibold text-foreground">{template?.agent}</span>?
-              This action cannot be undone.
-            </DialogDescription>
+          <DialogDescription className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            Are you sure you want to permanently delete prompt template{" "}
+            <span className="font-mono font-semibold text-foreground bg-muted/60 px-1.5 py-0.5 rounded-md">
+              {template?.id}
+            </span>{" "}
+            for agent node{" "}
+            <span className="font-mono font-semibold text-foreground">{template?.agent}</span>? This
+            action cannot be undone.
+          </DialogDescription>
         </DialogHeader>
 
         {template?.notes && (

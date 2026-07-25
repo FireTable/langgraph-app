@@ -77,7 +77,9 @@ export function DeployPromptDialog({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label className="text-xs font-semibold text-foreground">Version Notes / Rationale</Label>
+            <Label className="text-xs font-semibold text-foreground">
+              Version Notes / Rationale
+            </Label>
             <Input
               value={notes}
               onChange={(e) => onNotesChange(e.target.value)}

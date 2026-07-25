@@ -89,16 +89,16 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
     const run = this.runs.get(runId);
     if (!run) return;
 
-    // Record when it is root chain OR an agent chain (like mainAgent, chatAgent)
-    const isTargetAgent =
-      run.parentRunId === null ||
-      ["mainAgent", "chatAgent", "routerAgent", "kbAgent"].includes(run.name);
+    // Filter out anonymous RunnableSequence / inner wrappers — only capture named graph agents or root mainAgent
+    const isNamedAgent =
+      run.name && run.name !== "RunnableSequence" && run.name !== "chain" && run.name !== "agent";
 
-    if (isTargetAgent) {
+    const isRootOrTarget = run.parentRunId === null || isNamedAgent;
+
+    if (isRootOrTarget && run.name !== "RunnableSequence") {
       const endedAt = Date.now();
       const totalMs = Math.max(1, endedAt - run.startedAt);
 
-      // Fallback threadId & userId for single-user dev testing if missing
       const finalThreadId = run.threadId || "dev-thread";
       const finalUserId = run.userId || "dev-user";
 
@@ -128,11 +128,12 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
     const run = this.runs.get(runId);
     if (!run) return;
 
-    const isTargetAgent =
-      run.parentRunId === null ||
-      ["mainAgent", "chatAgent", "routerAgent", "kbAgent"].includes(run.name);
+    const isNamedAgent =
+      run.name && run.name !== "RunnableSequence" && run.name !== "chain" && run.name !== "agent";
 
-    if (isTargetAgent) {
+    const isRootOrTarget = run.parentRunId === null || isNamedAgent;
+
+    if (isRootOrTarget && run.name !== "RunnableSequence") {
       const endedAt = Date.now();
       const totalMs = Math.max(1, endedAt - run.startedAt);
       const finalThreadId = run.threadId || "dev-thread";

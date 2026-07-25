@@ -39,9 +39,7 @@ export function EditPromptDialog({
     <Dialog open={Boolean(template)} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="p-6 pb-4 border-b border-border/60">
-          <DialogTitle className="text-base sm:text-lg">
-            Edit Prompt Template
-          </DialogTitle>
+          <DialogTitle className="text-base sm:text-lg">Edit Prompt Template</DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
             Template ID:{" "}
             <span className="font-mono font-semibold text-foreground">{template?.id}</span> (Target
@@ -51,7 +49,9 @@ export function EditPromptDialog({
 
         <div className="p-6 overflow-y-auto max-h-[60vh] flex flex-col gap-4 text-xs">
           <div className="flex flex-col gap-1.5">
-            <Label className="text-xs font-semibold text-foreground">Version Notes / Rationale</Label>
+            <Label className="text-xs font-semibold text-foreground">
+              Version Notes / Rationale
+            </Label>
             <Input
               value={notes}
               onChange={(e) => onNotesChange(e.target.value)}

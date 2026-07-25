@@ -104,7 +104,8 @@ export function UserAssignmentsTab({
         <div>
           <h3 className="text-base font-semibold">User Experiment Variant Assignments</h3>
           <p className="text-muted-foreground text-xs mt-0.5">
-            Inspect or override sticky experiment variant assignments for registered users across all agent nodes.
+            Inspect or override sticky experiment variant assignments for registered users across
+            all agent nodes.
           </p>
         </div>
         <div className="relative w-full sm:w-[260px]">
@@ -147,7 +148,9 @@ export function UserAssignmentsTab({
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex flex-col min-w-0">
-                        <span className="font-medium text-foreground">{u.userName || "Registered User"}</span>
+                        <span className="font-medium text-foreground">
+                          {u.userName || "Registered User"}
+                        </span>
                         <span className="font-mono text-[11px] text-muted-foreground truncate">
                           {u.userEmail || u.userId}
                         </span>
@@ -184,7 +187,10 @@ export function UserAssignmentsTab({
                         onValueChange={(val) => onOverrideCohort(u.userId, val)}
                         disabled={isUpdating}
                       >
-                        <SelectTrigger size="sm" className="!h-6 !py-0 w-auto px-2 gap-1.5 text-[10px] font-mono border border-border/80 bg-background hover:bg-muted/50 rounded-md shadow-2xs focus:ring-1 focus:ring-primary">
+                        <SelectTrigger
+                          size="sm"
+                          className="!h-6 !py-0 w-auto px-2 gap-1.5 text-[10px] font-mono border border-border/80 bg-background hover:bg-muted/50 rounded-md shadow-2xs focus:ring-1 focus:ring-primary"
+                        >
                           <div className="flex items-center gap-1.5">
                             <span className="font-bold text-foreground uppercase tracking-wide text-[10px]">
                               <SelectValue />
@@ -192,7 +198,11 @@ export function UserAssignmentsTab({
                             <span className="h-2.5 w-px bg-border/80 shrink-0" />
                           </div>
                         </SelectTrigger>
-                        <SelectContent position="popper" align="start" className="w-[140px] uppercase">
+                        <SelectContent
+                          position="popper"
+                          align="start"
+                          className="w-[140px] uppercase"
+                        >
                           {availableCohorts.map((cohortLabel) => (
                             <SelectItem
                               key={cohortLabel}
@@ -218,8 +228,12 @@ export function UserAssignmentsTab({
             })}
             {userList.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground px-4 py-8 text-center text-xs">
-                  No sticky user assignments recorded yet. Invoking agents will automatically assign users to cohorts.
+                <TableCell
+                  colSpan={5}
+                  className="text-muted-foreground px-4 py-8 text-center text-xs"
+                >
+                  No sticky user assignments recorded yet. Invoking agents will automatically assign
+                  users to cohorts.
                 </TableCell>
               </TableRow>
             )}

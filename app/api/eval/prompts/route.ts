@@ -36,7 +36,12 @@ export const POST = withAuth(async (req, { user }) => {
       label?: string;
       trafficWeight?: number;
       enabled?: boolean;
-      updates?: Array<{ id?: string; variantId?: string; trafficWeight: number; enabled?: boolean }>;
+      updates?: Array<{
+        id?: string;
+        variantId?: string;
+        trafficWeight: number;
+        enabled?: boolean;
+      }>;
     };
 
     if (body.action === "create_template") {
@@ -82,10 +87,7 @@ export const POST = withAuth(async (req, { user }) => {
       };
 
       if (!cohortBody.label) {
-        return NextResponse.json(
-          { error: "label is required" },
-          { status: 400 },
-        );
+        return NextResponse.json({ error: "label is required" }, { status: 400 });
       }
 
       const labelStr = cohortBody.label.trim();
