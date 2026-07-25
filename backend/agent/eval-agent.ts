@@ -11,6 +11,7 @@ import { getEvalModelFromDB } from "@/lib/provider/model-registry";
 export const EvalAgentState = new StateSchema({
   runId: z.string(),
   rubricId: z.string().default("rubric_default"),
+  judgeThreadId: z.string().optional(),
   status: z.enum(["pending", "completed", "failed"]).default("pending"),
   errorMessage: z.string().nullable().default(null),
 });
@@ -21,7 +22,11 @@ const JudgeSchema = z.object({
   reasoning: z.string().describe("Detailed reasoning explaining the score assignment"),
 });
 
-async function evaluateRunNode(state: { runId: string; rubricId?: string }) {
+async function evaluateRunNode(state: {
+  runId: string;
+  rubricId?: string;
+  judgeThreadId?: string;
+}) {
   const rubricId = state.rubricId ?? "rubric_default";
 
   // 1. Fetch run details
@@ -31,11 +36,21 @@ async function evaluateRunNode(state: { runId: string; rubricId?: string }) {
   }
   const run = runs[0];
 
-  // 2. Fetch rubric criteria
-  const rubrics = await db.select().from(evalRubric).where(eq(evalRubric.id, rubricId)).limit(1);
-  const rubric = rubrics[0] ?? {
-    id: "rubric_default",
-    name: "Default Rubric",
+  // 2. Fetch rubric criteria directly by rubric_${run.agent} or rubricId
+  const targetRubricId = `rubric_${run.agent}`;
+  const rubrics = await db
+    .select()
+    .from(evalRubric)
+    .where(eq(evalRubric.id, targetRubricId))
+    .limit(1);
+  const fallbackRubrics =
+    rubrics.length > 0
+      ? rubrics
+      : await db.select().from(evalRubric).where(eq(evalRubric.id, rubricId)).limit(1);
+
+  const rubric = fallbackRubrics[0] ?? {
+    id: targetRubricId,
+    name: `${run.agent} Evaluation Rubric`,
     criteria: [
       { key: "relevance", description: "Answer addresses user query accurately." },
       { key: "accuracy", description: "Answer is factually correct." },
@@ -96,6 +111,7 @@ Evaluate relevance and accuracy on a scale of 1 to 5, and provide your reasoning
         accuracy: result.accuracy,
       },
       reasoning: result.reasoning,
+      judgeThreadId: state.judgeThreadId ?? null,
     });
 
     return { status: "completed", errorMessage: null };

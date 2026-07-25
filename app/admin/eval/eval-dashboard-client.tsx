@@ -582,7 +582,6 @@ export function EvalDashboardClient() {
           }}
           onRunJudge={(run) => triggerAIJudge(run.id)}
           onRefresh={fetchData}
-          evaluating={evaluating}
         />
       )}
 

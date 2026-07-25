@@ -4,8 +4,8 @@ import { db } from "@/db/client";
 import { withAuth } from "@/lib/auth/with-auth";
 import { evalRun, evalRubric } from "@/lib/eval/schema";
 import { graph as evalAgentGraph } from "@/backend/agent/eval-agent";
-
-import { saveJudgment } from "@/lib/eval/queries";
+import { langGraphClient } from "@/lib/langgraph/client";
+import { generateId } from "@/lib/ids/nanoid";
 
 export const runtime = "nodejs";
 
@@ -29,19 +29,36 @@ export const POST = withAuth(async (req) => {
       id: "rubric_default",
       name: "Default Agent Evaluation Rubric",
       criteria: [
-        { name: "Accuracy", description: "Factual accuracy of response", weight: 0.4 },
-        { name: "ToolChoice", description: "Appropriateness of tool calls", weight: 0.3 },
-        { name: "Conciseness", description: "Formatting and clarity", weight: 0.3 },
+        { key: "relevance", description: "Answer addresses user query accurately." },
+        { key: "accuracy", description: "Answer is factually correct." },
       ],
     };
 
-    // Invoke LLM-as-a-Judge Graph
-    const judgeResult = await evalAgentGraph.invoke({
-      runId: run.id,
-      rubricId: rubric.id,
-    });
+    // Observability Thread ID for this AI Judge run (matches kbAgent ingest pattern)
+    const judgeThreadId = `eval-judge-${generateId()}`;
 
-    return NextResponse.json({ result: judgeResult });
+    try {
+      await langGraphClient.threads.create({
+        threadId: judgeThreadId,
+        ifExists: "do_nothing",
+      });
+    } catch {
+      // Ignore if local dev server without langgraph server
+    }
+
+    // Invoke LLM-as-a-Judge Graph
+    const judgeResult = await evalAgentGraph.invoke(
+      {
+        runId: run.id,
+        rubricId: rubric.id,
+        judgeThreadId,
+      },
+      {
+        configurable: { thread_id: judgeThreadId },
+      },
+    );
+
+    return NextResponse.json({ result: judgeResult, judgeThreadId });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -27,11 +27,8 @@ export function LLMGenerationCard({
     <Card className="border-border/60 bg-card/60 shadow-2xs hover:border-border transition-colors">
       <CardHeader className="p-3.5 pb-2 border-b border-border/40 bg-muted/20">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <Bot className="size-4 text-primary shrink-0" />
-            <span className="font-mono font-semibold text-xs text-foreground truncate">
-              {run.agent}
-            </span>
+          <div className="flex items-center gap-2 min-w-0 font-mono text-xs">
+            <span className="font-semibold text-foreground truncate">{run.id}</span>
             <Badge variant="outline" className="font-mono text-[10px] uppercase">
               {run.variantId || "var_chat_default"}
             </Badge>
@@ -55,7 +52,7 @@ export function LLMGenerationCard({
                 variant="ghost"
                 size="icon"
                 className="size-6 text-muted-foreground hover:text-foreground"
-                title="View Observability Waterfall Trace"
+                title="View Execution Observability Trace"
                 onClick={() => onOpenTrace(run)}
               >
                 <Activity className="size-3.5" />
@@ -113,21 +110,42 @@ export function LLMGenerationCard({
             </div>
           )}
 
-          {onRunJudge && (
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              className="gap-1.5 font-medium shrink-0"
-              disabled={evaluating}
-              onClick={() => onRunJudge(run)}
-            >
-              <Sparkles className="size-3 text-amber-500" />
-              <span>
-                {evaluating ? "Evaluating..." : judgment ? "Re-evaluate" : "Run AI Judge"}
-              </span>
-            </Button>
-          )}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {judgment?.judgeThreadId && onOpenTrace && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-6 text-amber-500 hover:text-amber-600 hover:bg-amber-500/10"
+                title="View AI Judge Execution Trace"
+                onClick={() =>
+                  onOpenTrace({
+                    ...run,
+                    threadId: judgment.judgeThreadId!,
+                    parentMessageId: undefined,
+                  })
+                }
+              >
+                <Activity className="size-3.5" />
+              </Button>
+            )}
+
+            {onRunJudge && (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                className="gap-1.5 font-medium shrink-0"
+                disabled={evaluating}
+                onClick={() => onRunJudge(run)}
+              >
+                <Sparkles className="size-3 text-amber-500" />
+                <span>
+                  {evaluating ? "Evaluating..." : judgment ? "Re-evaluate" : "Run AI Judge"}
+                </span>
+              </Button>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>

@@ -56,8 +56,9 @@ export type UserAssignment = {
 
 export type Rubric = {
   id: string;
+  agent?: string;
   name: string;
-  criteria: Array<{ name: string; description: string; weight: number }>;
+  criteria: Array<{ name?: string; key?: string; description: string; weight?: number }>;
 };
 
 export type Judgment = {
@@ -67,6 +68,7 @@ export type Judgment = {
   scores: Record<string, number>;
   reasoning: string;
   totalCostTokens?: number;
+  judgeThreadId?: string;
   createdAt: string;
   agent?: string;
   variantId?: string;

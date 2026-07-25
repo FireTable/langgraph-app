@@ -254,6 +254,24 @@ Returns aggregated A/B variant metrics (total runs, average latency, ratings) an
 
 - **Status Codes**: 200 / 401 / 500
 
+### `POST /api/eval/judge`
+
+Triggers an `evalAgent` LLM-as-a-Judge run against a specific `eval_run` execution record using domain-specific Rubric Criteria, linking `judge_thread_id` for Observability trace tracking.
+
+- **Body**: `{ runId: string }`
+- **Status Codes**: 200 / 400 / 401 / 404 / 500
+
+### `GET / POST / DELETE /api/eval/benchmarks`
+
+Manages per-agent Benchmark Test Datasets and Agent Rubric Criteria updates.
+
+- **`GET /api/eval/benchmarks?agent=<agentId>`**: Returns benchmark test cases and Rubric Criteria for an agent.
+- **`POST /api/eval/benchmarks`**:
+  - `action: "create"`: Adds a new Benchmark Test Case (`{ action: "create", agent, title, inputPrompt, expectedOutput }`).
+  - `action: "update_rubric"`: Updates an Agent's Rubric Criteria (`{ action: "update_rubric", rubricId, name, criteria }`).
+- **`DELETE /api/eval/benchmarks`**: Removes a Benchmark Test Case by ID (`{ id: string }`).
+- **Status Codes**: 200 / 400 / 401 / 500
+
 ## Memory
 
 Backed by the LangGraph `PostgresStore` (per-user, cross-thread long-term memory). Every route is `withAuth`-wrapped and isolation is by namespace prefix `[userId, ...]`. Storage detail: `lib/memory/queries.ts`; schema (RFC 6902 patches, store): `lib/memory/validators.ts`; size guard: `backend/memory/profile-size.ts`. Read counterpart of `save_memory` (see "Graph tools").

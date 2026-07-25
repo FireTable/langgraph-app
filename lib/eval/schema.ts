@@ -159,6 +159,7 @@ export const evalJudgment = pgTable(
     scores: jsonb("scores").$type<Record<string, number>>().notNull(),
     reasoning: text("reasoning"),
     totalCostTokens: integer("total_cost_tokens"),
+    judgeThreadId: text("judge_thread_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -168,6 +169,28 @@ export const evalJudgment = pgTable(
   (t) => [index("eval_judgment_run_idx").on(t.runId)],
 );
 
+export const evalBenchmark = pgTable(
+  "eval_benchmark",
+  {
+    id: text("id").primaryKey(),
+    agent: text("agent").notNull(),
+    title: text("title").notNull(),
+    inputPrompt: text("input_prompt").notNull(),
+    expectedOutput: text("expected_output"),
+    metadata: jsonb("metadata").$type<{
+      tags?: string[];
+      kbDocumentIds?: string[];
+      [key: string]: unknown;
+    }>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("eval_benchmark_agent_idx").on(t.agent)],
+);
+
 export type PromptTemplateRow = typeof promptTemplate.$inferSelect;
 export type PromptVariantRow = typeof promptVariant.$inferSelect;
 export type PromptVariantAssignmentRow = typeof promptVariantAssignment.$inferSelect;
@@ -175,3 +198,5 @@ export type EvalRunRow = typeof evalRun.$inferSelect;
 export type EvalFeedbackRow = typeof evalFeedback.$inferSelect;
 export type EvalRubricRow = typeof evalRubric.$inferSelect;
 export type EvalJudgmentRow = typeof evalJudgment.$inferSelect;
+export type EvalBenchmarkRow = typeof evalBenchmark.$inferSelect;
+export type NewEvalBenchmarkRow = typeof evalBenchmark.$inferInsert;
