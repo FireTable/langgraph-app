@@ -9,7 +9,7 @@ import { langGraphClient } from "@/lib/langgraph/client";
 
 export const runtime = "nodejs";
 
-export const POST = withAuth(async (req, { user }) => {
+export const POST = withAuth({ role: "admin" }, async (req, { user }) => {
   try {
     const body = (await req.json()) as { benchmarkId?: string };
     if (!body.benchmarkId) {

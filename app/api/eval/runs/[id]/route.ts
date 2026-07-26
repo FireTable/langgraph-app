@@ -17,6 +17,13 @@ export const GET = withAuth<{ id: string }>(async (_req, ctx) => {
     }
     const run = runs[0]!;
 
+    // ponytail: ownership + role gate. eval/trace data is sensitive — only
+    // the owning user OR an admin can read it. 404 (not 403) so we don't
+    // leak run existence to non-owners.
+    if (run.userId !== ctx.user.id && ctx.user.roleId !== "admin") {
+      return NextResponse.json({ error: "evalRun not found" }, { status: 404 });
+    }
+
     const feedbackList = await db.select().from(evalFeedback).where(eq(evalFeedback.runId, id));
 
     const judgments = await db.select().from(evalJudgment).where(eq(evalJudgment.runId, id));

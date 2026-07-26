@@ -24,7 +24,7 @@ export const GET = withAuth(async () => {
   }
 });
 
-export const POST = withAuth(async (req, { user }) => {
+export const POST = withAuth({ role: "admin" }, async (req, { user }) => {
   try {
     const body = (await req.json()) as {
       action?:
@@ -244,7 +244,7 @@ export const POST = withAuth(async (req, { user }) => {
   }
 });
 
-export const PUT = withAuth(async (req) => {
+export const PUT = withAuth({ role: "admin" }, async (req) => {
   try {
     const body = (await req.json()) as { id?: string; content?: string; notes?: string };
     if (!body.id) {
@@ -266,7 +266,7 @@ export const PUT = withAuth(async (req) => {
   }
 });
 
-export const DELETE = withAuth(async (req) => {
+export const DELETE = withAuth({ role: "admin" }, async (req) => {
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");

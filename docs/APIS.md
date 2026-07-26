@@ -336,7 +336,7 @@ Three `action` values:
 
 ### `POST /api/eval/benchmarks/run`
 
-Triggers a stored Benchmark Test Case end-to-end. Resolves the benchmark row server-side (`targetAgent` / `inputPrompt` / `expectedOutput`), then dispatches `evalAgent` in `mode="benchmark"` which owns the full pipeline (target-agent invocation → record `eval_run` + paired observability span → LLM-judge → cleanup → denormalize latest\_\* onto `eval_benchmark`). The benchmark thread (`kind="eval-benchmark"`) is hidden from the chat sidebar and from Online Executions; the judge thread (`kind="eval-judge"`) is registered so the AI Judge trace stays linked from Online Executions.
+Triggers a stored Benchmark Test Case end-to-end. Resolves the benchmark row server-side (`targetAgent` / `inputPrompt` / `expectedOutput`), then dispatches `evalAgent` in `mode="benchmark"` which owns the full pipeline (target-agent invocation → record `eval_run` + paired observability span → LLM-judge → denormalize latest\_\* onto `eval_benchmark`). The benchmark thread (`kind="eval-benchmark"`) is hidden from the chat sidebar and from Online Executions; the judge thread (`kind="eval-judge"`) is registered so the AI Judge trace stays linked from Online Executions.
 
 - **Body**: `{ benchmarkId: string }`
 - **Output**: `{ runId: string | null, judgeThreadId, result: { status, errorMessage: string | null } }`
@@ -386,10 +386,10 @@ Single-run drilldown: returns the `eval_run` row, its first `eval_feedback` (or 
 
 `evalAgent` accepts a `mode` field in its input, dispatching via conditional edges inside the graph:
 
-| mode                | flow                                                                                                                                                                                                                                                          |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `"judge"` (default) | judge an existing `eval_run` (id `runId`) against its rubric; writes `eval_judgment`                                                                                                                                                                          |
-| `"benchmark"`       | run the resolved target agent (`targetAgent`) on `inputPrompt`, write `eval_run` + paired span, judge against `rubric_<targetAgent>` (or `rubricId` override), cleanup the hidden benchmark thread, denormalize latest judgment + score onto `eval_benchmark` |
+| mode                | flow                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"judge"` (default) | judge an existing `eval_run` (id `runId`) against its rubric; writes `eval_judgment`                                                                                                                                                                                                                                                                  |
+| `"benchmark"`       | run the resolved target agent (`targetAgent`) on `inputPrompt`, write `eval_run` + paired span, judge against `rubric_<targetAgent>` (or `rubricId` override), denormalize latest judgment + score onto `eval_benchmark`. The hidden benchmark thread (`kind="eval-benchmark"`) is retained for the AI Judge trace link — no graph-level cleanup node |
 
 Adding a new target agent requires registering an `invoke<Name>Agent` node and a dispatch entry in `routeFromInput` — same diff, no separate mapping table.
 

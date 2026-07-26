@@ -53,7 +53,7 @@ function chainInsert() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  setCurrentUser(TEST_USER);
+  setCurrentUser({ ...TEST_USER, roleId: "admin" });
   mocks.dbInsert.mockReturnValue(chainInsert());
   mocks.threadsCreate.mockResolvedValue(undefined);
 });

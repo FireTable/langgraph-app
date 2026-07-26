@@ -7,7 +7,7 @@ import { user } from "@/lib/auth/schema";
 
 export const runtime = "nodejs";
 
-export const GET = withAuth(async () => {
+export const GET = withAuth({ role: "admin" }, async () => {
   try {
     const assignments = await db
       .select({
@@ -33,7 +33,7 @@ export const GET = withAuth(async () => {
   }
 });
 
-export const POST = withAuth(async (req) => {
+export const POST = withAuth({ role: "admin" }, async (req) => {
   try {
     const body = (await req.json()) as {
       userId?: string;

@@ -20,7 +20,7 @@ const PAGE_SIZE = 5;
 // so the frontend never has to second-guess.
 const chatRunWhere = and(ne(threadTable.kind, "eval-benchmark"));
 
-export const GET = withAuth(async () => {
+export const GET = withAuth({ role: "admin" }, async () => {
   try {
     const variantStats = await db
       .select({

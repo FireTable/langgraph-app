@@ -21,7 +21,7 @@ function request(url: string): Request {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  setCurrentUser(TEST_USER);
+  setCurrentUser({ ...TEST_USER, roleId: "admin" });
 });
 
 describe("GET /api/eval/runs/page", () => {

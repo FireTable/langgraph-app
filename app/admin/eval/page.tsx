@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth/config";
 import { BrandMarkLink } from "@/components/brand-mark";
 import { EvalDashboardClient } from "@/app/admin/eval/eval-dashboard-client";
+import { ObservabilitySheetProvider } from "@/components/observability/sheet-context";
+import { ObservabilitySheet } from "@/components/observability/sheet";
 
 export default async function EvalAdminPage() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -10,7 +12,7 @@ export default async function EvalAdminPage() {
   if (session.user.roleId !== "admin") redirect("/");
 
   return (
-    <>
+    <ObservabilitySheetProvider>
       <div className="mt-2 flex h-12 shrink-0 items-center gap-2 px-4 md:px-6">
         <BrandMarkLink />
         <span className="text-muted-foreground text-sm">Admin / Eval & A/B Testing</span>
@@ -25,6 +27,7 @@ export default async function EvalAdminPage() {
         </p>
         <EvalDashboardClient />
       </div>
-    </>
+      <ObservabilitySheet />
+    </ObservabilitySheetProvider>
   );
 }

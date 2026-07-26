@@ -4,7 +4,7 @@ import { getRunsByAgentPage } from "@/lib/eval/queries";
 
 export const runtime = "nodejs";
 
-export const GET = withAuth(async (req: Request) => {
+export const GET = withAuth({ role: "admin" }, async (req: Request) => {
   try {
     const url = new URL(req.url);
     const agent = url.searchParams.get("agent");

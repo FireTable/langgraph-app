@@ -126,6 +126,17 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
     const run = this.runs.get(runId);
     if (!run) return;
 
+    // ponytail: skip the write when either FK target is missing. The previous
+    // "dev-thread" / "dev-user" fallbacks FK-violated every non-prod callback
+    // (unit tests, dev traffic, any invocation that didn't wire thread/user
+    // ids) and the catch block swallowed the error — production eval rows
+    // silently disappeared for any caller missing those keys. The right
+    // behavior is no row at all, not a dangling FK.
+    if (!run.threadId || !run.userId) {
+      this.runs.delete(runId);
+      return;
+    }
+
     const totalMs = Math.max(1, Date.now() - run.startedAt);
     const usage = output.llmOutput?.tokenUsage as
       | { promptTokens?: number; completionTokens?: number }
@@ -133,8 +144,8 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
 
     try {
       await recordEvalRun({
-        threadId: run.threadId || "dev-thread",
-        userId: run.userId || "dev-user",
+        threadId: run.threadId,
+        userId: run.userId,
         agent: run.agent,
         templateId: run.templateId,
         variantId: run.variantId,
@@ -156,11 +167,16 @@ export class EvalCallbackHandler extends BaseCallbackHandler {
     const run = this.runs.get(runId);
     if (!run) return;
 
+    if (!run.threadId || !run.userId) {
+      this.runs.delete(runId);
+      return;
+    }
+
     const totalMs = Math.max(1, Date.now() - run.startedAt);
 
     recordEvalRun({
-      threadId: run.threadId || "dev-thread",
-      userId: run.userId || "dev-user",
+      threadId: run.threadId,
+      userId: run.userId,
       agent: run.agent,
       templateId: run.templateId,
       variantId: run.variantId,

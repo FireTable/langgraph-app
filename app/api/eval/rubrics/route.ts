@@ -33,7 +33,7 @@ export const GET = withAuth(async () => {
   }
 });
 
-export const POST = withAuth(async (req) => {
+export const POST = withAuth({ role: "admin" }, async (req) => {
   try {
     const body = (await req.json()) as {
       id?: string;

@@ -626,12 +626,16 @@ export async function submitFeedback(data: {
   rating: number;
   reason?: string | null;
 }): Promise<void> {
-  // ponytail: chat UI sends the assistant message id (`resp_...`); resolve
-  // to the eval_run row that owns that message via parent_message_id.
-  // When the callback never recorded a run for this turn (eval tables
-  // disabled, callback mis-wired, or synthetic dev traffic) there is
-  // nothing to rate — return success so the thumbs-up button silently
-  // no-ops instead of crashing the chat on a dangling FK violation.
+  // ponytail: best-effort lookup. Caller passes either the eval_run.id
+  // (admin eval studio) or the assistant message id (chat thumbs-up).
+  // The current chat wiring sends the assistant message id but the
+  // callback writes the *human* message id into eval_run.parent_message_id
+  // — those don't match today, so every chat thumbs-up hits the
+  // `if (!targetRunId) return` branch below. Resolving this is a
+  // follow-up: either the chat UI sends the human id, the callback
+  // writes the assistant id, or we add an assistant-message-id column
+  // to eval_run. For now we silently no-op so the thumbs-up never
+  // FK-violates a non-existent run.
   const matchedRun = await db
     .select({ id: evalRun.id })
     .from(evalRun)
