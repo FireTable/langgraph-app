@@ -502,13 +502,13 @@ export function AgentBenchmarkTab({
                                     <colgroup>
                                       <col className="w-[300px]" />
                                       <col />
-                                      <col className="w-[160px]" />
+                                      <col className="w-[140px]" />
                                     </colgroup>
                                     <thead>
                                       <tr className="border-b border-border/40 bg-muted/20 text-muted-foreground font-mono text-[11px]">
                                         <th className="py-2.5 px-3 font-medium">TEST CASE</th>
                                         <th className="py-2.5 px-3 font-medium">
-                                          Last AI Judge Assessment
+                                          LAST AI JUDGE ASSESSMENT
                                         </th>
                                         <th className="py-2.5 px-3 font-medium text-right">
                                           ACTIONS
@@ -610,7 +610,7 @@ export function AgentBenchmarkTab({
                                     <colgroup>
                                       <col className="w-[100px]" />
                                       <col />
-                                      <col className="w-[140px]" />
+                                      <col className="w-[125px]" />
                                     </colgroup>
                                     <thead>
                                       <tr className="border-b border-border/40 bg-muted/20 text-muted-foreground font-mono text-[11px]">
@@ -674,27 +674,6 @@ export function AgentBenchmarkTab({
 
                                             <td className="py-3 px-3 align-middle text-right">
                                               <div className="flex items-center justify-end gap-1.5">
-                                                {judgment?.judgeThreadId &&
-                                                  judgment?.judgeParentMessageId && (
-                                                    <Button
-                                                      type="button"
-                                                      variant="ghost"
-                                                      size="icon"
-                                                      className="size-7 text-muted-foreground hover:text-foreground"
-                                                      title="View AI Judge Observability Trace"
-                                                      onClick={() =>
-                                                        onOpenTrace({
-                                                          ...run,
-                                                          threadId: judgment.judgeThreadId!,
-                                                          parentMessageId:
-                                                            judgment.judgeParentMessageId!,
-                                                        })
-                                                      }
-                                                    >
-                                                      <Activity className="size-3.5" />
-                                                    </Button>
-                                                  )}
-
                                                 <Button
                                                   type="button"
                                                   variant="outline"

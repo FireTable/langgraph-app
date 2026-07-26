@@ -262,23 +262,6 @@ async function recordEvalRunNode(
   }
 }
 
-async function cleanupBenchmarkThread(state: {
-  mode?: "judge" | "benchmark";
-  benchmarkThreadId?: string;
-}) {
-  // Self-gating: judge mode never had a benchmark thread to delete,
-  // benchmark mode does. No conditional edge needed upstream — the
-  // node is reached unconditionally and decides on its own.
-  if (state.mode !== "benchmark") return {};
-  if (!state.benchmarkThreadId) return {};
-  // Safe-fail cleanup — never blocks the run from completing.
-  await db
-    .delete(threadTable)
-    .where(eq(threadTable.id, state.benchmarkThreadId))
-    .catch(() => null);
-  return {};
-}
-
 // ─── Judge node. Identical to the previous judge-only behavior; in
 // ─── benchmark mode state.runId is now populated by recordEvalRun.
 
@@ -508,7 +491,6 @@ const builder = new StateGraph(EvalAgentState)
   // orchestration nodes
   .addNode("recordEvalRun", recordEvalRunNode)
   .addNode("judge", judgeNode)
-  .addNode("cleanupBenchmark", cleanupBenchmarkThread)
   .addEdge(START, "inputRouter")
   .addConditionalEdges("inputRouter", routeByMode, {
     judge: "judge",
@@ -533,8 +515,7 @@ const builder = new StateGraph(EvalAgentState)
   .addEdge("invokeRenameThreadAgent", "recordEvalRun")
   .addEdge("invokeThreadSummarizeAgent", "recordEvalRun")
   .addEdge("recordEvalRun", "judge")
-  .addEdge("judge", "cleanupBenchmark")
-  .addEdge("cleanupBenchmark", END);
+  .addEdge("judge", END);
 
 const standaloneCompiled = builder.compile({
   name: "evalAgent",

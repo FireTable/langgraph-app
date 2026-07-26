@@ -120,11 +120,7 @@ export function JudgmentAssessmentCell({
             </Tooltip>
           </TooltipProvider>
         )}
-        {Object.entries(judgment.scores || {}).map(([k, v]) => (
-          <Badge key={k} variant="secondary" className="font-mono text-[10px]">
-            {k}: {v}/5
-          </Badge>
-        ))}
+
         {canOpenTrace && (
           <Button
             type="button"
@@ -138,6 +134,15 @@ export function JudgmentAssessmentCell({
           </Button>
         )}
       </div>
+
+      <div className="flex items-center gap-1.5">
+        {Object.entries(judgment.scores || {}).map(([k, v]) => (
+          <Badge key={k} variant="secondary" className="font-mono text-[10px]">
+            {k}: {v}/5
+          </Badge>
+        ))}
+      </div>
+
       {judgment.reasoning && (
         <p className="text-[11px] text-muted-foreground italic line-clamp-2">
           "{String(judgment.reasoning)}"
