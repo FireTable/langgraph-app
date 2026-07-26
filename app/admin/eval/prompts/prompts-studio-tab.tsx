@@ -82,6 +82,21 @@ export function PromptsStudioTab({
     cohortMap.set(v.label, list);
   }
 
+  // ponytail: variant ids are nanoid (random) — sorting by id here is
+  // no-op for human readability. Sort items by agent name ascending
+  // so the cohort card renders in stable dictionary order
+  // (chatAgent → codeAgent → cryptoAgent → kbEntityAlignAgent → …).
+  // Backend orderBy on prompt_variant.id was added earlier for
+  // create / update / delete paths; this client-side sort covers
+  // the READ path the cards actually render.
+  for (const [, items] of cohortMap) {
+    items.sort((a, b) => {
+      const aAgent = a.template?.agent ?? "";
+      const bAgent = b.template?.agent ?? "";
+      return aAgent.localeCompare(bAgent);
+    });
+  }
+
   const cohorts = Array.from(cohortMap.entries()).map(([label, items]) => {
     const enabled = items.some((i) => i.variant.enabled);
     const weight = items.reduce((s, i) => Math.max(s, i.variant.trafficWeight), 0);
