@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, lt, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   promptTemplate,
@@ -659,4 +659,96 @@ export async function getAllBenchmarks() {
 
 export async function deleteBenchmark(id: string) {
   await db.delete(evalBenchmark).where(eq(evalBenchmark.id, id));
+}
+
+/**
+ * Fetch a single page of eval_run rows for one agent, newest first. The
+ * cursor is the id of the last row from the previous page; the function
+ * resolves it to its createdAt and returns rows strictly older than that
+ * point (tie-broken on id DESC so paginated walks are stable even when
+ * rows share a timestamp). fetched_limit + 1 → hasMore + nextCursorId.
+ */
+export type RecentRunRow = {
+  id: string;
+  agent: string;
+  variantId: string;
+  label: string | null;
+  totalMs: number;
+  status: string;
+  createdAt: Date;
+  userRating: number | null;
+  threadId: string;
+  parentMessageId: string | null;
+};
+
+export async function getRunsByAgentPage(args: {
+  agent: string;
+  cursorId?: string | null;
+  limit: number;
+}): Promise<{
+  runs: RecentRunRow[];
+  hasMore: boolean;
+  nextCursorId: string | null;
+}> {
+  const { agent, cursorId, limit } = args;
+  const safeLimit = Math.max(1, Math.min(50, Math.floor(limit) || 5));
+
+  let cursorCreatedAt: Date | null = null;
+  if (cursorId) {
+    const rows = await db
+      .select({ createdAt: evalRun.createdAt })
+      .from(evalRun)
+      .where(eq(evalRun.id, cursorId))
+      .limit(1);
+    cursorCreatedAt = rows[0]?.createdAt ?? null;
+  }
+
+  const whereClause = cursorCreatedAt
+    ? and(
+        eq(evalRun.agent, agent),
+        or(
+          lt(evalRun.createdAt, cursorCreatedAt),
+          and(eq(evalRun.createdAt, cursorCreatedAt), lt(evalRun.id, cursorId!)),
+        ),
+      )
+    : eq(evalRun.agent, agent);
+
+  const rows = await db
+    .select({
+      id: evalRun.id,
+      agent: evalRun.agent,
+      variantId: evalRun.variantId,
+      label: promptVariant.label,
+      totalMs: evalRun.totalMs,
+      status: evalRun.status,
+      createdAt: evalRun.createdAt,
+      userRating: evalFeedback.rating,
+      threadId: evalRun.threadId,
+      parentMessageId: evalRun.parentMessageId,
+    })
+    .from(evalRun)
+    .leftJoin(promptVariant, eq(evalRun.variantId, promptVariant.id))
+    .leftJoin(evalFeedback, eq(evalRun.id, evalFeedback.runId))
+    .where(whereClause)
+    .orderBy(sql`${evalRun.createdAt} DESC, ${evalRun.id} DESC`)
+    .limit(safeLimit + 1);
+
+  const hasMore = rows.length > safeLimit;
+  const pageRows = hasMore ? rows.slice(0, safeLimit) : rows;
+  const nextCursorId = hasMore ? (pageRows[pageRows.length - 1]?.id ?? null) : null;
+
+  const runs: RecentRunRow[] = pageRows.map((r) => ({
+    id: r.id,
+    agent: r.agent,
+    variantId: r.variantId,
+    label: r.label,
+    totalMs: r.totalMs,
+    status: r.status,
+    createdAt: r.createdAt,
+    userRating: r.userRating,
+    threadId: r.threadId,
+    parentMessageId: r.parentMessageId,
+  }));
+
+  return { runs, hasMore, nextCursorId };
 }

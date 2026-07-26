@@ -250,9 +250,27 @@ Admin action to create templates/variants or update traffic weights.
 
 ### `GET /api/eval/runs/compare`
 
-Returns aggregated A/B variant metrics (total runs, average latency, ratings) and recent run logs.
+Returns aggregated A/B variant metrics (total runs, average latency, ratings) and a first page of recent run logs per agent. Runs are grouped by `agent` so the UI can render per-agent Online Executions tables. The window is 5 rows per agent; older history is fetched on demand via `/api/eval/runs/page`.
 
+- **Output**:
+  ```json
+  {
+    "stats": [{ "variantId", "label", "totalRuns", "avgTotalMs", "avgRating" }],
+    "runs": { "<agentId>": [RecentRun, ...] },
+    "pageSize": 5,
+    "hasMore": { "<agentId>": boolean },
+    "nextCursor": { "<agentId>": string | null }
+  }
+  ```
 - **Status Codes**: 200 / 401 / 500
+
+### `GET /api/eval/runs/page?agent=<id>&cursor=<runId>&limit=<n>`
+
+Fetches the next page of `eval_run` rows for a single agent, ordered `createdAt DESC, id DESC` (cursor-based, stable). The previous page's `nextCursor` is the `id` of its last kept row; passing it back returns strictly older runs.
+
+- **Query Params**: `agent` (required), `cursor` (id from previous response), `limit` (default `5`, clamped to `1..50`).
+- **Output**: `{ agent, runs, hasMore, nextCursor }`
+- **Status Codes**: 200 / 400 (missing agent) / 401 / 500
 
 ### `POST /api/eval/judge`
 

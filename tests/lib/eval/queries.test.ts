@@ -161,3 +161,122 @@ describe("lib/eval/queries — saveJudgment", () => {
     expect(judgments[0].scores).toEqual({ relevance: 5, accuracy: 4 });
   });
 });
+
+describe("lib/eval/queries — getRunsByAgentPage", () => {
+  it("paginates newest-first per agent with stable hasMore + cursor", async () => {
+    await seedInitialPrompts();
+    const threadId = await createTestThread();
+
+    const { getRunsByAgentPage } = await import("@/lib/eval/queries");
+
+    const insertedIds: string[] = [];
+    for (let i = 0; i < 7; i++) {
+      const run = await recordEvalRun({
+        threadId,
+        userId: TEST_USER.id,
+        agent: "chatAgent",
+        templateId: "tmpl_chat_v1",
+        variantId: "var_chat_control",
+        totalMs: 100 + i,
+        status: "success",
+      });
+      insertedIds.push(run.id);
+    }
+
+    const other = await recordEvalRun({
+      threadId,
+      userId: TEST_USER.id,
+      agent: "weatherAgent",
+      templateId: "tmpl_chat_v1",
+      variantId: "var_chat_control",
+      totalMs: 50,
+      status: "success",
+    });
+
+    // First page: 5 rows, hasMore, nextCursor set
+    const page1 = await getRunsByAgentPage({ agent: "chatAgent", limit: 5 });
+    expect(page1.runs).toHaveLength(5);
+    expect(page1.hasMore).toBe(true);
+    expect(page1.nextCursorId).toBe(page1.runs[page1.runs.length - 1]!.id);
+
+    // page1.runs must be a strict suffix of newest seven — every id
+    // present, none from the weatherAgent row
+    const page1Ids = new Set(page1.runs.map((r) => r.id));
+    for (const id of insertedIds.slice(-5)) {
+      expect(page1Ids.has(id)).toBe(true);
+    }
+    expect(page1Ids.has(other.id)).toBe(false);
+
+    // Second page from cursor: gets the remaining 2, hasMore=false
+    const page2 = await getRunsByAgentPage({
+      agent: "chatAgent",
+      cursorId: page1.nextCursorId,
+      limit: 5,
+    });
+    expect(page2.runs).toHaveLength(2);
+    expect(page2.hasMore).toBe(false);
+    expect(page2.nextCursorId).toBeNull();
+
+    const page2Ids = new Set(page2.runs.map((r) => r.id));
+    for (const id of insertedIds.slice(0, 2)) {
+      expect(page2Ids.has(id)).toBe(true);
+    }
+  });
+
+  it("defaults the limit to 5 when zero or NaN", async () => {
+    await seedInitialPrompts();
+    const threadId = await createTestThread();
+    const { getRunsByAgentPage } = await import("@/lib/eval/queries");
+
+    for (let i = 0; i < 8; i++) {
+      await recordEvalRun({
+        threadId,
+        userId: TEST_USER.id,
+        agent: "chatAgent",
+        templateId: "tmpl_chat_v1",
+        variantId: "var_chat_control",
+        totalMs: 100,
+        status: "success",
+      });
+    }
+
+    const pageZero = await getRunsByAgentPage({ agent: "chatAgent", limit: 0 });
+    expect(pageZero.runs).toHaveLength(5);
+    expect(pageZero.hasMore).toBe(true);
+
+    const pageNaN = await getRunsByAgentPage({
+      agent: "chatAgent",
+      limit: Number.NaN as unknown as number,
+    });
+    expect(pageNaN.runs).toHaveLength(5);
+  });
+
+  it("clamps oversized limits to the 50 ceiling", async () => {
+    await seedInitialPrompts();
+    const threadId = await createTestThread();
+    const { getRunsByAgentPage } = await import("@/lib/eval/queries");
+
+    for (let i = 0; i < 3; i++) {
+      await recordEvalRun({
+        threadId,
+        userId: TEST_USER.id,
+        agent: "chatAgent",
+        templateId: "tmpl_chat_v1",
+        variantId: "var_chat_control",
+        totalMs: 100,
+        status: "success",
+      });
+    }
+
+    const page = await getRunsByAgentPage({ agent: "chatAgent", limit: 9999 });
+    expect(page.runs.length).toBeLessThanOrEqual(50);
+  });
+
+  it("returns an empty page for an agent with no runs", async () => {
+    const { getRunsByAgentPage } = await import("@/lib/eval/queries");
+    const page = await getRunsByAgentPage({ agent: "noSuchAgent", limit: 5 });
+    expect(page.runs).toHaveLength(0);
+    expect(page.hasMore).toBe(false);
+    expect(page.nextCursorId).toBeNull();
+  });
+});

@@ -59,7 +59,9 @@ function computeWeightedScore(
 }
 
 interface AgentBenchmarkTabProps {
-  recentRuns: RecentRun[];
+  runsByAgent: Record<string, RecentRun[]>;
+  pageByAgent: Record<string, { hasMore: boolean; nextCursor: string | null }>;
+  loadingMore: Record<string, boolean>;
   rubrics: Rubric[];
   judgments: Judgment[];
   variants: Variant[];
@@ -67,11 +69,14 @@ interface AgentBenchmarkTabProps {
   toggleGroupCollapse: (groupId: string) => void;
   onOpenTrace: (run: RecentRun) => void;
   onRunJudge: (run: RecentRun) => Promise<void>;
+  onLoadMoreRuns: (agentId: string) => Promise<void>;
   onRefresh: () => void;
 }
 
 export function AgentBenchmarkTab({
-  recentRuns,
+  runsByAgent,
+  pageByAgent,
+  loadingMore,
   rubrics,
   judgments,
   variants,
@@ -79,6 +84,7 @@ export function AgentBenchmarkTab({
   toggleGroupCollapse,
   onOpenTrace,
   onRunJudge,
+  onLoadMoreRuns,
   onRefresh,
 }: AgentBenchmarkTabProps) {
   const [collapsedAgents, setCollapsedAgents] = useState<Record<string, boolean>>({});
@@ -235,10 +241,9 @@ export function AgentBenchmarkTab({
     judgmentsByRunId.set(j.runId, j);
   }
 
-  const enrichedRuns = recentRuns.map((r) => ({
-    ...r,
-    judgment: r.judgment || judgmentsByRunId.get(r.id),
-  }));
+  const enrichedRuns = Object.values(runsByAgent)
+    .flat()
+    .map((r) => ({ ...r, judgment: r.judgment || judgmentsByRunId.get(r.id) }));
 
   // ponytail: pre-index rubrics by agent so the row renderer can O(1)
   // look up weights for the weighted-score computation. Without this the
@@ -789,6 +794,29 @@ export function AgentBenchmarkTab({
                                           </tr>
                                         );
                                       })}
+                                      {pageByAgent[agentId]?.hasMore && (
+                                        <tr className="hover:bg-transparent">
+                                          <td colSpan={3} className="py-3 px-3 text-center">
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="xs"
+                                              className="gap-1.5 font-medium"
+                                              disabled={!!loadingMore[agentId]}
+                                              onClick={() => onLoadMoreRuns(agentId)}
+                                            >
+                                              {loadingMore[agentId] ? (
+                                                <RotateCw className="size-3 animate-spin" />
+                                              ) : null}
+                                              <span>
+                                                {loadingMore[agentId]
+                                                  ? "Loading…"
+                                                  : "Load Older Executions"}
+                                              </span>
+                                            </Button>
+                                          </td>
+                                        </tr>
+                                      )}
                                     </tbody>
                                   </table>
                                 </div>

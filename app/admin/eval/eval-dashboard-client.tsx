@@ -36,7 +36,11 @@ export function EvalDashboardClient() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [variants, setVariants] = useState<Variant[]>([]);
   const [stats, setStats] = useState<VariantStat[]>([]);
-  const [recentRuns, setRecentRuns] = useState<RecentRun[]>([]);
+  const [runsByAgent, setRunsByAgent] = useState<Record<string, RecentRun[]>>({});
+  const [pageByAgent, setPageByAgent] = useState<
+    Record<string, { hasMore: boolean; nextCursor: string | null }>
+  >({});
+  const [loadingMore, setLoadingMore] = useState<Record<string, boolean>>({});
   const [assignments, setAssignments] = useState<UserAssignment[]>([]);
   const [rubrics, setRubrics] = useState<Rubric[]>([]);
   const [judgments, setJudgments] = useState<Judgment[]>([]);
@@ -365,7 +369,18 @@ export function EvalDashboardClient() {
       if (compareRes.ok) {
         const cData = await compareRes.json();
         setStats(cData.stats || []);
-        setRecentRuns(cData.recentRuns || []);
+        const runs = cData.runs || {};
+        const cursors = cData.nextCursor || {};
+        const hasMore = cData.hasMore || {};
+        setRunsByAgent(runs);
+        setPageByAgent(
+          Object.fromEntries(
+            Object.keys(runs).map((a) => [
+              a,
+              { hasMore: !!hasMore[a], nextCursor: cursors[a] ?? null },
+            ]),
+          ),
+        );
       }
 
       if (assignRes.ok) {
@@ -389,6 +404,39 @@ export function EvalDashboardClient() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // ponytail: per-agent "load more" for the Online Executions table.
+  // The compare endpoint returns the first 5 per agent + a nextCursor;
+  // this reads the cursor from pageByAgent and appends the next page on
+  // top of the already-loaded runs without re-fetching the full list.
+  const handleLoadMoreRuns = async (agentId: string) => {
+    const cursor = pageByAgent[agentId]?.nextCursor;
+    if (!cursor) return;
+    setLoadingMore((prev) => ({ ...prev, [agentId]: true }));
+    try {
+      const res = await fetch(
+        `/api/eval/runs/page?agent=${encodeURIComponent(agentId)}&cursor=${encodeURIComponent(cursor)}&limit=5`,
+      );
+      if (!res.ok) throw new Error("Failed to load more runs");
+      const data = (await res.json()) as {
+        runs: RecentRun[];
+        hasMore: boolean;
+        nextCursor: string | null;
+      };
+      setRunsByAgent((prev) => ({
+        ...prev,
+        [agentId]: [...(prev[agentId] || []), ...data.runs],
+      }));
+      setPageByAgent((prev) => ({
+        ...prev,
+        [agentId]: { hasMore: data.hasMore, nextCursor: data.nextCursor },
+      }));
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to load more runs");
+    } finally {
+      setLoadingMore((prev) => ({ ...prev, [agentId]: false }));
+    }
+  };
 
   const handleCreateTemplate = async () => {
     if (!newPromptContent.trim()) {
@@ -525,7 +573,7 @@ export function EvalDashboardClient() {
             >
               <Scale className="size-4 text-primary" /> Agent Benchmark & Evaluation
               <Badge variant="secondary" className="ml-auto text-[10px] font-mono px-1.5 py-0">
-                {recentRuns.length}
+                {Object.values(runsByAgent).reduce((s, r) => s + r.length, 0)}
               </Badge>
             </TabsTrigger>
           </TabsList>
@@ -566,7 +614,10 @@ export function EvalDashboardClient() {
 
       {subTab === "benchmark" && (
         <AgentBenchmarkTab
-          recentRuns={recentRuns}
+          runsByAgent={runsByAgent}
+          pageByAgent={pageByAgent}
+          loadingMore={loadingMore}
+          onLoadMoreRuns={handleLoadMoreRuns}
           rubrics={rubrics}
           judgments={judgments}
           variants={variants}
