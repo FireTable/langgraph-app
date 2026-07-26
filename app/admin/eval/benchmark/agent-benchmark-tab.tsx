@@ -322,7 +322,7 @@ export function AgentBenchmarkTab({
                       className="border border-border/60 rounded-xl overflow-hidden bg-background/50"
                     >
                       {/* Agent Header Bar */}
-                      <div className="p-3.5 bg-muted/30 border-b border-border/40 flex items-center justify-between gap-3">
+                      <div className="p-2 bg-muted/30 border-b border-border/40 flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                           <Button
                             type="button"
@@ -338,21 +338,12 @@ export function AgentBenchmarkTab({
                             />
                           </Button>
                           <span className="font-semibold text-foreground font-mono text-xs">
-                            {agentObj.name} ({agentId})
-                          </span>
-                          <span className="text-muted-foreground font-normal text-xs border-l pl-2 hidden sm:inline">
-                            {agentObj.desc}
+                            <Badge className="font-mono capitalize">{agentId}</Badge>
                           </span>
                         </div>
-
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="font-mono text-[10px]">
-                            {agentBenchmarks.length} Benchmarks
-                          </Badge>
-                          <Badge variant="secondary" className="font-mono text-[10px]">
-                            {agentRuns.length} Executions
-                          </Badge>
-                        </div>
+                        <span className="text-muted-foreground font-normal text-xs">
+                          {agentObj.desc}
+                        </span>
                       </div>
 
                       {/* Agent Body Content */}

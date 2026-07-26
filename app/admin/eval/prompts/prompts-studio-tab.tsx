@@ -3,12 +3,9 @@
 import React, { useState } from "react";
 import {
   ChevronDown,
-  ChevronRight,
   Copy,
   CornerDownRight,
   Edit3,
-  GitBranch,
-  Layers,
   Plus,
   Sliders,
   Sparkles,
@@ -16,7 +13,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
   Table,
@@ -309,13 +306,13 @@ export function PromptsStudioTab({
               >
                 {/* SINGLE CONSOLIDATED TABLE PER GRAPH GROUP */}
                 <div className="border border-border/60 overflow-hidden rounded-xl bg-card">
-                  <Table className="text-xs">
+                  <Table className="text-xs [&_td]:py-2 [&_th]:py-2 [&_th]:h-8">
                     <TableHeader className="bg-muted/50 uppercase text-[10px]">
                       <TableRow>
                         <TableHead className="w-[260px]">Target Node / Template ID</TableHead>
                         <TableHead>Notes / Rationale</TableHead>
-                        <TableHead className="w-[200px]">Bound Cohort Variants</TableHead>
-                        <TableHead className="w-[120px]">Created Date</TableHead>
+                        <TableHead className="w-[200px]">Traffic Weight</TableHead>
+                        <TableHead className="w-[120px]">CreatedAt</TableHead>
                         <TableHead className="text-right w-[200px]">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -324,10 +321,6 @@ export function PromptsStudioTab({
                         const agentId = agentObj.id;
                         const isAgentCollapsed = collapsedAgents[agentId];
                         const agentTemplates = groupTemplates.filter((t) => t.agent === agentId);
-                        const agentTmplIds = new Set(agentTemplates.map((t) => t.id));
-                        const agentVariants = variants.filter((v) =>
-                          agentTmplIds.has(v.templateId),
-                        );
 
                         return (
                           <React.Fragment key={agentId}>
@@ -349,21 +342,12 @@ export function PromptsStudioTab({
                                     />
                                   </Button>
                                   <span className="font-semibold text-foreground font-mono text-xs">
-                                    {agentObj.name} ({agentId})
-                                  </span>
-                                  <span className="text-muted-foreground font-normal text-xs border-l pl-2">
-                                    {agentObj.desc}
+                                    <Badge className="font-mono capitalize">{agentId}</Badge>
                                   </span>
                                 </div>
                               </TableCell>
-                              <TableCell className="py-2.5">
-                                <Badge variant="secondary" className="font-mono text-[10px]">
-                                  {agentVariants.length} variants bound
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="py-2.5 text-muted-foreground font-mono text-[11px]">
-                                {agentTemplates.length} templates
-                              </TableCell>
+                              <TableCell className="py-2.5"></TableCell>
+                              <TableCell className="py-2.5 text-muted-foreground font-mono text-[11px]"></TableCell>
                               <TableCell className="text-right py-2.5">
                                 <Button
                                   type="button"
@@ -400,19 +384,30 @@ export function PromptsStudioTab({
                                       <TableCell className="font-mono text-xs font-medium pl-10">
                                         <div className="flex items-center gap-2">
                                           <CornerDownRight className="size-3 text-muted-foreground shrink-0" />
-                                          <span className="text-foreground">{tmpl.id}</span>
+                                          <TooltipProvider>
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <span className="text-foreground whitespace-nowrap font-mono cursor-pointer hover:text-primary">
+                                                  {truncateId(tmpl.id)}
+                                                </span>
+                                              </TooltipTrigger>
+                                              <TooltipContent className="font-mono text-xs max-w-xs break-all">
+                                                {tmpl.id}
+                                              </TooltipContent>
+                                            </Tooltip>
+                                          </TooltipProvider>
                                           {!tmpl.userId && (
                                             <Badge
                                               variant="secondary"
                                               className="text-[9px] font-mono px-1.5 py-0"
                                             >
-                                              SYSTEM DEFAULT
+                                              SYSTEM
                                             </Badge>
                                           )}
                                         </div>
                                       </TableCell>
 
-                                      <TableCell className="max-w-xs truncate text-muted-foreground text-xs font-sans">
+                                      <TableCell className="min-w-[320px] text-muted-foreground text-xs font-sans whitespace-normal break-words">
                                         {tmpl.notes || (
                                           <span className="italic text-muted-foreground/50">
                                             No notes provided
@@ -447,7 +442,7 @@ export function PromptsStudioTab({
                                         <div className="flex items-center justify-end gap-1">
                                           <Button
                                             type="button"
-                                            variant="ghost"
+                                            variant="outline"
                                             size="xs"
                                             onClick={() => copyToClipboard(tmpl.content)}
                                             title="Copy Full Prompt Content"
@@ -456,7 +451,7 @@ export function PromptsStudioTab({
                                           </Button>
                                           <Button
                                             type="button"
-                                            variant="ghost"
+                                            variant="outline"
                                             size="xs"
                                             onClick={() => openEditModal(tmpl)}
                                             title="Edit Prompt Notes & Content"
@@ -466,7 +461,7 @@ export function PromptsStudioTab({
 
                                           <Button
                                             type="button"
-                                            variant="ghost"
+                                            variant="outline"
                                             size="xs"
                                             disabled={!tmpl.userId}
                                             title={
@@ -478,7 +473,7 @@ export function PromptsStudioTab({
                                             className={
                                               !tmpl.userId
                                                 ? "opacity-40 cursor-not-allowed text-muted-foreground"
-                                                : "text-rose-500 hover:text-rose-600 hover:bg-rose-500/10"
+                                                : "text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 border-rose-500/40 hover:border-rose-500"
                                             }
                                           >
                                             <Trash2 className="size-3 mr-1" /> Delete
