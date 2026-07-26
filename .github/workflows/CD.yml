@@ -1,13 +1,14 @@
 name: CD
 
 # Tag strategy:
-#   main        → `latest` (stable channel)
+#   main        → `YYYY-MM-DD-<sha>` (stable channel, also re-tags `:latest`)
 #   dev         → `beta-<sha>` (beta channel)
 #   PR          → build only, no push (sanity check)
 #   manual      → custom tag (workflow_dispatch → image_tag input)
 #
-# Same image, different tags. `docker pull ghcr.io/<owner>/langgraph-app:beta`
-# gives you the latest dev build; `:latest` gives you main.
+# Same image, different tags. Stable pushes keep a date-versioned history
+# (each merge → new tag + GitHub Release); `:latest` is repointed to the
+# most recent so `docker pull :latest` keeps working.
 
 on:
   push:
@@ -70,6 +71,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+      # Extra tag stamped on the same image — empty for non-stable channels.
+      # Stable channel re-tags `:latest` so `docker pull :latest` stays current.
+      latest_tag: ${{ steps.tag.outputs.latest_tag }}
       channel: ${{ steps.channel.outputs.channel }}
       should_push: ${{ steps.push.outputs.should_push }}
       # Lowercased `github.repository_owner` — buildx rejects uppercase in
@@ -92,15 +96,25 @@ jobs:
 
           if [ -n "$override" ]; then
             tag=$(sanitize "$override")
+            latest_tag=""
           elif [ "$branch" = "main" ]; then
-            tag="latest"
+            # Date + short SHA — each stable merge gets a unique tag, so
+            # pushes accumulate as versioned history instead of clobbering
+            # `:latest`. Same-day hotfixes still get distinct tags via sha.
+            tag="$(date -u +%Y-%m-%d)-${sha}"
+            # Re-tag `:latest` on the same image so `docker pull :latest`
+            # keeps resolving to the most recent stable build.
+            latest_tag="latest"
           elif [ "$branch" = "dev" ]; then
             tag="beta-${sha}"
+            latest_tag=""
           else
             tag="$(sanitize "$branch")-${sha}"
+            latest_tag=""
           fi
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
       - id: channel
         run: |
           branch="${GITHUB_REF_NAME}"
@@ -188,7 +202,10 @@ jobs:
           # `lower()` because Docker's tag validator rejects uppercase in
           # the repo path (e.g. `FireTable`). GHCR is case-insensitive at
           # the registry, but the buildx parser is strict.
-          tags: ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }}
+          # Stable channel stamps two tags on one image: the unique
+          # date-versioned tag and `:latest`. Other channels just get the
+          # primary tag.
+          tags: ${{ needs.resolve.outputs.image }}:${{ needs.resolve.outputs.tag }}${{ needs.resolve.outputs.latest_tag && format(',{0}:{1}', needs.resolve.outputs.image, needs.resolve.outputs.latest_tag) || '' }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -215,9 +232,11 @@ jobs:
   release:
     name: GitHub Release + tarball asset
     needs: [resolve, build]
-    # Stable releases overwrite a single "Latest" release (tarball kept
-    # current). Beta releases are unique per short SHA — every dev push
-    # gets its own immutable release. Other branches / PRs skip.
+    # Every push creates a unique release (date+sha on stable, sha on
+    # beta) so the release history accumulates. softprops defaults
+    # `make_latest: true` on non-prereleases, so the most recent stable
+    # release is auto-marked as Latest in the GH UI. Other branches /
+    # PRs skip.
     if: |
       needs.resolve.outputs.should_push == 'true' &&
       (needs.resolve.outputs.channel == 'stable' || needs.resolve.outputs.channel == 'beta')
@@ -247,7 +266,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve.outputs.tag }}
-          name: ${{ needs.resolve.outputs.channel == 'stable' && 'Latest' || needs.resolve.outputs.tag }}
+          # Each push now has a unique tag (date+sha on stable, sha on beta),
+          # so the release name matches — no more overwriting "Latest".
+          # softprops defaults `make_latest: true` on non-prereleases, so
+          # the newest stable release is auto-marked as Latest.
+          name: ${{ needs.resolve.outputs.tag }}
           prerelease: ${{ needs.resolve.outputs.channel == 'beta' }}
           generate_release_notes: true
           files: release-assets/langgraph-app-${{ needs.resolve.outputs.tag }}.tar.gz

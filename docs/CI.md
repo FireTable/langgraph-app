@@ -120,14 +120,17 @@ Triggers: push to `main` / `dev`, PR to `main` / `dev` (build only),
 
 | trigger              | tag                                | channel     | pushes?                      |
 | -------------------- | ---------------------------------- | ----------- | ---------------------------- |
-| push to `main`       | `latest`                           | stable      | yes                          |
+| push to `main`       | `YYYY-MM-DD-<sha>` + `:latest`     | stable      | yes                          |
 | push to `dev`        | `beta-<sha>`                       | beta        | yes                          |
 | push to other branch | `<branch>-<sha>`                   | branch      | yes                          |
 | PR (any branch)      | (resolved tag)                     | —           | no (build-only sanity check) |
 | `workflow_dispatch`  | `image_tag` input or branch-driven | manual/auto | yes                          |
 
-Same image, different tags. `docker pull ghcr.io/<owner>/langgraph-app:beta`
-gives you the latest dev build; `:latest` gives you main.
+Each `main` push produces a unique date-versioned tag (so the release
+history accumulates) and also re-tags `:latest` on the same image — so
+`docker pull ghcr.io/<owner>/langgraph-app:beta` gives you the latest dev
+build, and `:latest` follows `main`. Same-day hotfixes don't collide
+because the tag includes the short SHA.
 
 The `resolve` job isolates the tag logic from the build job — easy to
 audit and easy to add new channels later (e.g. `release-<version>`).
@@ -152,8 +155,11 @@ channels:
 3. Creates / updates a GitHub Release via `softprops/action-gh-release@v2`,
    attaching the tarball.
 
-- **Stable (main)** — one accumulating "Latest" release, tarball
-  overwritten each push. Tag = `latest`.
+- **Stable (main)** — new release per push, tag = `YYYY-MM-DD-<sha>`.
+  `softprops/action-gh-release@v2` defaults to `make_latest: true` on
+  non-prereleases, so the most recent stable release is auto-marked as
+  "Latest" in the GitHub UI; older stable releases stay visible as
+  versioned history. Tarball asset is unique per tag.
 - **Beta (dev)** — new release per push, tag = `beta-<sha>`, marked
   prerelease.
 - **Other branches** — skipped.

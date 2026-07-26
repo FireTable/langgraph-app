@@ -39,11 +39,11 @@ Ports the stack exposes:
 The `CD` workflow publishes images to GHCR under
 `ghcr.io/<owner>/langgraph-app:<tag>` with these tags:
 
-| Branch    | Tag                    | Notes                                |
-| --------- | ---------------------- | ------------------------------------ |
-| `main`    | `latest`               | Stable, overwritten on each merge.   |
-| `dev`     | `beta-<short-sha>`     | One immutable tag per dev push.      |
-| any other | `<branch>-<short-sha>` | Build is sanity-only; no tag pushed. |
+| Branch    | Tag                                  | Notes                                                                                                                     |
+| --------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `main`    | `YYYY-MM-DD-<short-sha>` + `:latest` | Stable. Each merge produces a unique date-versioned tag (history accumulates); `:latest` is repointed to the most recent. |
+| `dev`     | `beta-<short-sha>`                   | One immutable tag per dev push.                                                                                           |
+| any other | `<branch>-<short-sha>`               | Build is sanity-only; no tag pushed.                                                                                      |
 
 Pull a specific version, or just `latest` for stable:
 
