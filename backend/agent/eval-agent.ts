@@ -265,7 +265,7 @@ async function recordEvalRunNode(
 // ─── Judge node. Identical to the previous judge-only behavior; in
 // ─── benchmark mode state.runId is now populated by recordEvalRun.
 
-async function judgeNode(
+async function judgeByLLMNode(
   state: {
     runId?: string;
     rubricId?: string;
@@ -490,10 +490,10 @@ const builder = new StateGraph(EvalAgentState)
   .addNode("invokeThreadSummarizeAgent", invokeThreadSummarizeAgent)
   // orchestration nodes
   .addNode("recordEvalRun", recordEvalRunNode)
-  .addNode("judge", judgeNode)
+  .addNode("judgeByLLM", judgeByLLMNode)
   .addEdge(START, "inputRouter")
   .addConditionalEdges("inputRouter", routeByMode, {
-    judge: "judge",
+    judge: "judgeByLLM",
     benchmark: "preDispatch",
   })
   .addEdge("preDispatch", "benchmarkDispatch")
@@ -514,8 +514,8 @@ const builder = new StateGraph(EvalAgentState)
   .addEdge("invokeKbAgent", "recordEvalRun")
   .addEdge("invokeRenameThreadAgent", "recordEvalRun")
   .addEdge("invokeThreadSummarizeAgent", "recordEvalRun")
-  .addEdge("recordEvalRun", "judge")
-  .addEdge("judge", END);
+  .addEdge("recordEvalRun", "judgeByLLM")
+  .addEdge("judgeByLLM", END);
 
 const standaloneCompiled = builder.compile({
   name: "evalAgent",

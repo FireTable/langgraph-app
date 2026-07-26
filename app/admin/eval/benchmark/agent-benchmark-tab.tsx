@@ -502,7 +502,7 @@ export function AgentBenchmarkTab({
                                     <colgroup>
                                       <col className="w-[300px]" />
                                       <col />
-                                      <col className="w-[140px]" />
+                                      <col className="w-[160px]" />
                                     </colgroup>
                                     <thead>
                                       <tr className="border-b border-border/40 bg-muted/20 text-muted-foreground font-mono text-[11px]">
@@ -575,7 +575,9 @@ export function AgentBenchmarkTab({
                                                 <span>
                                                   {testingBenchmarkIds.has(bm.id)
                                                     ? "Evaluating..."
-                                                    : "Evaluate"}
+                                                    : bm.judgment
+                                                      ? "Re-evaluate"
+                                                      : "Evaluate"}
                                                 </span>
                                               </Button>
                                               <Button

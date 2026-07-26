@@ -16,6 +16,7 @@ import {
   type EvalJudgmentRow,
 } from "@/lib/eval/schema";
 import { generateId } from "@/lib/ids/nanoid";
+import { threads as threadTable } from "@/lib/threads/schema";
 import {
   CHAT_AGENT_PROMPT,
   ROUTER_AGENT_PROMPT,
@@ -744,15 +745,20 @@ export async function getRunsByAgentPage(args: {
     cursorCreatedAt = rows[0]?.createdAt ?? null;
   }
 
+  // ponytail: only chat-originated runs surface in Online Executions;
+  // benchmark runs are filtered out via the threads.kind='chat' guard.
+  // The same join is applied at the cursor lookup below.
+  const chatKind = eq(threadTable.kind, "chat");
   const whereClause = cursorCreatedAt
     ? and(
         eq(evalRun.agent, agent),
+        chatKind,
         or(
           lt(evalRun.createdAt, cursorCreatedAt),
           and(eq(evalRun.createdAt, cursorCreatedAt), lt(evalRun.id, cursorId!)),
         ),
       )
-    : eq(evalRun.agent, agent);
+    : and(eq(evalRun.agent, agent), chatKind);
 
   const rows = await db
     .select({
@@ -768,6 +774,7 @@ export async function getRunsByAgentPage(args: {
       parentMessageId: evalRun.parentMessageId,
     })
     .from(evalRun)
+    .innerJoin(threadTable, eq(threadTable.id, evalRun.threadId))
     .leftJoin(promptVariant, eq(evalRun.variantId, promptVariant.id))
     .leftJoin(evalFeedback, eq(evalRun.id, evalFeedback.runId))
     .where(whereClause)
