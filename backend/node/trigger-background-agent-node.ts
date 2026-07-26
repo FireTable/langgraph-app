@@ -72,6 +72,7 @@ async function dispatchViaCreate(input: PreparedCall): Promise<void> {
       configurable: {
         userId: input.userId,
         thread_id: input.threadId,
+        user_id: input.userId,
       },
     },
     // ponytail: stamp parent_message_id so the observability per-turn
@@ -79,7 +80,11 @@ async function dispatchViaCreate(input: PreparedCall): Promise<void> {
     // to the current chat turn. Same key the CapturingHandler stamps on
     // span rows — the API uses one filter to match both DB rows and
     // in-flight runs to a single human turn.
-    metadata: { parent_message_id: input.parentMessageId },
+    metadata: {
+      parent_message_id: input.parentMessageId,
+      thread_id: input.threadId,
+      user_id: input.userId,
+    },
   });
 }
 

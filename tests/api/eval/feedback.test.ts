@@ -71,4 +71,20 @@ describe("POST /api/eval/feedback", () => {
     expect(fb).toHaveLength(1);
     expect(fb[0].rating).toBe(5);
   });
+
+  // ponytail: chat UI sends the assistant message id (resp_...); when
+  // the eval callback never recorded a run for that turn, the like
+  // button must silently no-op instead of crashing on a dangling FK.
+  it("no-ops when no eval_run matches the runId (chat assistant message id)", async () => {
+    const req = jsonRequest({
+      runId: "resp_no_such_message",
+      rating: 5,
+      source: "user_online",
+    });
+    const res = await POST(req, { params: Promise.resolve({}) });
+    expect(res.status).toBe(200);
+
+    const fb = await db.select().from(evalFeedback);
+    expect(fb).toHaveLength(0);
+  });
 });

@@ -120,6 +120,36 @@ export async function seedInitialPrompts(): Promise<void> {
         );
     }
 
+    // Seed the generic fallback rubric so "Run AI Judge" without a
+    // per-agent rubric resolves to a real DB row instead of an in-memory
+    // stub. Matches the hardcoded fallback in
+    // backend/agent/eval-agent.ts and app/api/eval/judge/route.ts so the
+    // judge sees identical criteria whether the row exists or not.
+    const defaultRubricId = "rubric_default";
+    const existingDefaultRubric = await db
+      .select()
+      .from(evalRubric)
+      .where(eq(evalRubric.id, defaultRubricId))
+      .limit(1);
+    if (existingDefaultRubric.length === 0) {
+      await db.insert(evalRubric).values({
+        id: defaultRubricId,
+        name: "Default Agent Evaluation Rubric",
+        criteria: [
+          {
+            key: "relevance",
+            description: "Answer addresses user query accurately.",
+            weight: 0.5,
+          },
+          {
+            key: "accuracy",
+            description: "Answer is factually correct.",
+            weight: 0.5,
+          },
+        ],
+      });
+    }
+
     // Seed agent-specific Rubrics (100% English, domain-tailored per Agent Node)
     const rubricId = `rubric_${agentName}`;
     const existingRubric = await db
@@ -253,6 +283,30 @@ export async function seedInitialPrompts(): Promise<void> {
             weight: 0.4,
           },
         ],
+        // ponytail: judgeByLLM is a scoring node, not a target — the
+        // rubric here evaluates the quality of the judge's own output
+        // (reasoning + scores), kept in DB so the Judge Eval Graph
+        // surface has a populated Rubric tab matching every other agent.
+        judgeByLLM: [
+          {
+            key: "criteria_alignment",
+            description:
+              "Scores across rubric criteria reflect genuine quality differences and match the criteria definitions.",
+            weight: 0.4,
+          },
+          {
+            key: "reasoning_clarity",
+            description:
+              "Reasoning explains the score with specific, actionable evidence drawn from the run output.",
+            weight: 0.4,
+          },
+          {
+            key: "calibration",
+            description:
+              "Scores span the 1-5 range appropriately rather than clustering around a default.",
+            weight: 0.2,
+          },
+        ],
       };
 
       const criteria = defaultCriteria[agentName] ?? [
@@ -375,6 +429,23 @@ export async function seedInitialPrompts(): Promise<void> {
             inputPrompt: "Summarize the key architectural decisions made in the last 10 turns.",
             expectedOutput:
               "Bullet-point summary highlighting database schema choices, API contracts, and next action items.",
+          },
+        ],
+        // ponytail: judgeByLLM is the scoring node; we still seed one
+        // benchmark so the Judge Eval Graph Benchmark Datasets tab is
+        // populated like every other agent. The benchmark's
+        // inputPrompt documents a representative run to score; Run
+        // Evaluate here records a chatAgent run (eval-agent's
+        // routeFromInput falls back to invokeChatAgent when the target
+        // isn't an invoke target) and then judgeByLLM scores it
+        // against rubric_judgeByLLM.
+        judgeByLLM: [
+          {
+            title: "Sample Run Scoring Calibration",
+            inputPrompt:
+              "Score a sample eval_run: chatAgent answered 'The capital of France is Paris' to user query 'What is the capital of France?' in 240ms.",
+            expectedOutput:
+              "Judge assigns criteria_alignment=5, reasoning_clarity=4, calibration=4 with reasoning citing the concise accurate response and noting the brief reasoning could include more context.",
           },
         ],
       };
@@ -553,20 +624,25 @@ export async function submitFeedback(data: {
   rating: number;
   reason?: string | null;
 }): Promise<void> {
-  // Resolve actual runId if data.runId is a parentMessageId or assistant message ID
+  // ponytail: chat UI sends the assistant message id (`resp_...`); resolve
+  // to the eval_run row that owns that message via parent_message_id.
+  // When the callback never recorded a run for this turn (eval tables
+  // disabled, callback mis-wired, or synthetic dev traffic) there is
+  // nothing to rate — return success so the thumbs-up button silently
+  // no-ops instead of crashing the chat on a dangling FK violation.
   const matchedRun = await db
     .select({ id: evalRun.id })
     .from(evalRun)
     .where(sql`${evalRun.id} = ${data.runId} OR ${evalRun.parentMessageId} = ${data.runId}`)
     .limit(1);
 
-  const targetRunId = matchedRun[0]?.id ?? data.runId;
-  const id = generateId();
+  const targetRunId = matchedRun[0]?.id;
+  if (!targetRunId) return;
 
   await db
     .insert(evalFeedback)
     .values({
-      id,
+      id: generateId(),
       runId: targetRunId,
       userId: data.userId,
       source: data.source,
