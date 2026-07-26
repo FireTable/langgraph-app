@@ -3,7 +3,6 @@ import PQueue from "p-queue";
 import { z } from "zod";
 import type { KbAgentStateShape, PageResult } from "@/backend/state";
 import { getOcrModel } from "@/backend/model";
-import { KB_OCR_PAGE_PROMPT } from "@/backend/prompt/system";
 import { updateKbDocumentStatus } from "@/lib/kb/queries";
 import { KB_OCR_CONCURRENCY } from "@/lib/constants";
 import { getAgentPrompt } from "@/backend/prompt/loader";
@@ -41,7 +40,13 @@ export async function pageToMarkdownNode(
   }
 
   const ocrModel = await getOcrModel();
-  const promptInfo = await getAgentPrompt("pageToMarkdown");
+  // ponytail: pass state.userId so the seeded tmpl_pageToMarkdown_v1 /
+  // var_pageToMarkdown_default row resolves (loader.ts short-circuits
+  // to the static KB_OCR_PAGE_PROMPT fallback when userId is empty —
+  // every other agent-node caller passes userId; this one was the
+  // exception). Synthetic callers without a real userId still get the
+  // static fallback (the ?? undefined below is a no-op for that path).
+  const promptInfo = await getAgentPrompt("pageToMarkdown", state.userId ?? undefined);
   const system = new SystemMessage(promptInfo.content);
 
   const structured = ocrModel.withStructuredOutput(ocrPageSchema, {
