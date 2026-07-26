@@ -62,7 +62,7 @@ Why at the proxy and not in the LangGraph callback:
 
 ## Where the log is written
 
-`lib/credit/callback.ts` (`CreditTrackingHandler`) is a `BaseCallbackHandler` instantiated as a process-wide singleton in `backend/callbacks.ts` (`creditTrackingHandler`) and wired into every compiled graph via `compile({ callbacks: [capturingHandler, creditTrackingHandler] })` (see `backend/agent.ts` + `backend/background-agent.ts`). It is the **only** writer of `credit_usage_log`. The singleton lives in `backend/callbacks.ts` rather than `backend/agent.ts` so the `background_agent` graph (and any future graph) shares the same in-memory `runMeta` map.
+`lib/credit/callback.ts` (`CreditTrackingHandler`) is a `BaseCallbackHandler` instantiated as a process-wide singleton in `backend/callbacks.ts` (`creditTrackingHandler`) and wired into every compiled graph via `compile({ callbacks: [capturingHandler, creditTrackingHandler] })` (see `backend/agent.ts` + `backend/background-agent.ts`). It is the **only** writer of `credit_usage_log`. The singleton lives in `backend/callbacks.ts` rather than `backend/agent.ts` so the `backgroundAgent` graph (and any future graph) shares the same in-memory `runMeta` map.
 
 Lifecycle:
 

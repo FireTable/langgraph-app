@@ -1,7 +1,7 @@
 // ponytail: chat response edge's terminal node. Sits between
 // `subAgent` and `END` in the main graph (`subAgent →
 // triggerBackgroundAgentNode → END`). Its only job is to ask LangGraph to
-// run the `background_agent` graph (last_message_at touch +
+// run the `backgroundAgent` graph (last_message_at touch +
 // threadSummarizeNode work), then return immediately.
 //
 // Dispatch: SDK `client.runs.create(...)` over HTTP to langgraphjs
@@ -14,7 +14,7 @@
 // whether the call blocks (no worker pool locally, yes; LangSmith
 // Deployments, no).
 //
-// Span tagging: background_agent runs through the shared
+// Span tagging: backgroundAgent runs through the shared
 // capturingHandler singleton from backend/callbacks.ts. Its LLM/DB
 // spans land in the same observability row set as the chat invoke.
 import { langGraphClient } from "@/lib/langgraph/client";
@@ -61,7 +61,7 @@ async function readBackgroundCall(
 }
 
 async function dispatchViaCreate(input: PreparedCall): Promise<void> {
-  await langGraphClient.runs.create(input.threadId, "background_agent", {
+  await langGraphClient.runs.create(input.threadId, "backgroundAgent", {
     multitaskStrategy: "enqueue",
     input: {
       messages: input.messages,

@@ -106,7 +106,7 @@ export const LANGGRAPH_GROUPS = [
     ],
   },
   {
-    id: "background_agent",
+    id: "backgroundAgent",
     label: "Background Graph",
     entrypoint: "./backend/background-agent.ts",
     icon: Workflow,
@@ -146,7 +146,7 @@ export const LANGGRAPH_GROUPS = [
   },
   {
     id: "evalAgent",
-    label: "Judge Eval Graph (evalAgent)",
+    label: "Judge Eval Graph",
     entrypoint: "./backend/agent/eval-agent.ts",
     icon: Scale,
     description: "LLM-as-a-Judge offline/online scoring agent",

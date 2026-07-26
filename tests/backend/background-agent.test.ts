@@ -52,7 +52,7 @@ describe("touchLastMessageNode", () => {
 describe("backgroundAgent graph wiring", () => {
   it("compiles to a Pregel with start → touchLastMessage → summarize → end", () => {
     // ponytail: smoke test for the topology. The graph is registered in
-    // langgraph.json as `background_agent: ./backend/background-agent.ts:graph`
+    // langgraph.json as `backgroundAgent: ./backend/background-agent.ts:graph`
     // and langgraphjs dev will load it via exactly this export. A
     // misconfigured graph (no edge to END, missing START, etc.) shows up
     // here as a runtime error or as an empty node list, not as a test

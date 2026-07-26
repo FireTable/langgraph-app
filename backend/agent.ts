@@ -102,7 +102,7 @@ export const builder = new StateGraph(RouterAgentState)
   // (see backend/agent/code-agent.ts + components/tool-ui/code).
   //
   // triggerBackgroundAgent is the chat's last sub-agent step. It fires
-  // the `background_agent` graph (registered separately in
+  // the `backgroundAgent` graph (registered separately in
   // langgraph.json) and returns `{}` immediately — that graph does
   // `last_message_at` touch + threadSummarizeNode work on its own
   // thread. See backend/node/trigger-background-agent-node.ts for the
@@ -139,7 +139,7 @@ export const builder = new StateGraph(RouterAgentState)
 
 // ponytail: one handler per process (per module), shared across all
 // concurrent runs AND across every Pregel that wires it via withConfig.
-// The handler now lives in backend/callbacks.ts so the background_agent
+// The handler now lives in backend/callbacks.ts so the backgroundAgent
 // graph (registered separately in langgraph.json) can wrap itself with
 // the same singleton — span writes from both graphs land in the same
 // in-memory Map and the same bulkInsert path.

@@ -11,7 +11,7 @@
 ## Features
 
 - **Streaming chat UI** powered by assistant-ui's `Thread` component.
-- **LangGraph backend** running **two compiled graphs** side-by-side: a chat graph (`agent` — router + sub-agents + `triggerBackgroundAgent`) and a turn-end side-effect graph (`background_agent` — `touchLastMessage` + `summarize`). The chat stream doesn't block on background work; `triggerBackgroundAgentNode` HTTP-dispatches via the SDK and returns immediately.
+- **LangGraph backend** running **two compiled graphs** side-by-side: a chat graph (`agent` — router + sub-agents + `triggerBackgroundAgent`) and a turn-end side-effect graph (`backgroundAgent` — `touchLastMessage` + `summarize`). The chat stream doesn't block on background work; `triggerBackgroundAgentNode` HTTP-dispatches via the SDK and returns immediately.
 - **Persistent threads and checkpoints** in Postgres — closing the tab doesn't lose context.
 - **Cross-conversation memory**: the model calls `save_memory` to persist durable user facts (RFC 6902 patches against `[userId, "memory"] main`); a recall middleware prepends `<memory>` (profile + auth overlay) and `<threads>` (compressed Q&A history) blocks to the SystemMessage on every invoke. Long threads stay readable via a store-anchored `threadSummarizeNode` trigger that compresses K-turn windows into `SummaryEntry` rows. The Memory settings tab lets users review and delete. See [docs/MEMORY.md](docs/MEMORY.md).
 - **Self-hosted**: runs on a single VPS with Docker Compose, no SaaS lock-in.
@@ -150,7 +150,7 @@ backend/
     call-model-node.ts        "agent" node — calls the model, appends AI reply
     rename-thread-agent-node.ts "renameThreadAgent" — generates + persists the title
     router-agent-node.ts      "routerAgent" — picks weatherAgent / chatAgent / cryptoAgent / codeAgent
-    trigger-background-agent-node.ts "triggerBackgroundAgent" — SDK runs.create to background_agent
+    trigger-background-agent-node.ts "triggerBackgroundAgent" — SDK runs.create to backgroundAgent
     thread-summarize-node.ts  "summarize" — compresses K-turn window into a SummaryEntry
   tool/                       LangChain tools bound to the agent
     web-search.ts             search_web — Jina Search (s.jina.ai/{query})
@@ -231,7 +231,7 @@ tests/                        Vitest (NODE_ENV=test → reads .env.test)
 
 drizzle.config.ts             Drizzle-kit config (uses @next/env to load .env)
 vitest.config.ts              Vitest config (NODE_ENV=test → reads .env.test)
-langgraph.json                LangGraph CLI config (registers BOTH graphs: agent + background_agent)
+langgraph.json                LangGraph CLI config (registers BOTH graphs: agent + backgroundAgent)
 .env.example                  Template (committed)
 .env.local                    Local dev secrets (gitignored)
 .env.test                     Test secrets (gitignored)

@@ -161,7 +161,7 @@ describe("GET /api/threads/[id]/observability/[parentMessageId]/spans/[spanId]",
           {
             run_id: "bg-1",
             thread_id: "t-mine",
-            assistant_id: "background_agent",
+            assistant_id: "backgroundAgent",
             status: "running",
             created_at: "2026-07-05T00:00:00Z",
             updated_at: "2026-07-05T00:00:01Z",
@@ -176,7 +176,7 @@ describe("GET /api/threads/[id]/observability/[parentMessageId]/spans/[spanId]",
     const body = await res.json();
     expect(body.span.span_id).toBe("bg-1");
     expect(body.span.kind).toBe("chain");
-    expect(body.span.meta.assistant_id).toBe("background_agent");
+    expect(body.span.meta.assistant_id).toBe("backgroundAgent");
     expect(body.span.meta.parent_message_id).toBe("msg-1");
   });
 
@@ -193,7 +193,7 @@ describe("GET /api/threads/[id]/observability/[parentMessageId]/spans/[spanId]",
           {
             run_id: "bg-1",
             thread_id: "t-mine",
-            assistant_id: "background_agent",
+            assistant_id: "backgroundAgent",
             status: "running",
             created_at: "2026-07-05T00:00:00Z",
             updated_at: "2026-07-05T00:00:01Z",
