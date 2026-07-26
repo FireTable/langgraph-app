@@ -106,14 +106,14 @@ export const EvaluationExplainerDemo = () => {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-stretch">
         {/* Left column: run bubble pair */}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 rounded-lg border p-3 border-border/60 bg-muted/10">
           <m.div
             initial={{ opacity: 0, y: 4 }}
             animate={userVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: 4 }}
             transition={{ duration: 0.25, ease: "easeOut" }}
-            className="border-border/60 bg-muted/30 ml-auto max-w-[85%] rounded-lg border px-3 py-2 text-xs"
+            className="border-primary/30 bg-primary/0 ml-auto max-w-[85%] rounded-lg border px-3 py-2 text-xs"
           >
-            <span className="text-muted-foreground">user · </span>
+            <span className="text-muted-foreground">User · </span>
             <span className="text-foreground/90">What&apos;s the capital of France?</span>
           </m.div>
           <m.div
@@ -122,7 +122,7 @@ export const EvaluationExplainerDemo = () => {
             transition={{ duration: 0.3, ease: "easeOut" }}
             className="border-primary/30 bg-primary/5 max-w-[85%] rounded-lg border px-3 py-2 text-xs"
           >
-            <span className="text-muted-foreground">assistant · </span>
+            <span className="text-muted-foreground">Assistant · </span>
             <span className="text-foreground/90">Paris.</span>
           </m.div>
           <m.div
