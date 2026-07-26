@@ -5,6 +5,8 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import { getChatModel } from "@/backend/model";
 import { CHAT_TOOLS } from "@/backend/tool";
 import { CHAT_AGENT_PROMPT } from "@/backend/prompt/system";
+import { getAgentPrompt } from "@/backend/prompt/loader";
+
 import { CommonAgentState } from "@/backend/state";
 import {
   buildSystemMessageWithMemory,
@@ -45,7 +47,9 @@ async function chatModelNode({ messages }: { messages: BaseMessage[] }, config?:
     userId ?? undefined,
   );
 
-  const sysMsg = await buildSystemMessageWithMemory(CHAT_AGENT_PROMPT, config, threads);
+  const promptInfo = await getAgentPrompt("chatAgent", userId ?? undefined);
+  const sysMsg = await buildSystemMessageWithMemory(promptInfo.content, config, threads);
+
   const response = await (
     await getChatModel()
   )
@@ -62,11 +66,11 @@ function chatModelRoute(state: { messages: BaseMessage[] }) {
 const chatToolNode = new ToolNode(CHAT_TOOLS);
 
 const builder = new StateGraph(CommonAgentState)
-  .addNode("chatModel", chatModelNode)
+  .addNode("chatAgent", chatModelNode)
   .addNode("chatTools", chatToolNode)
-  .addEdge(START, "chatModel")
-  .addConditionalEdges("chatModel", chatModelRoute, ["chatTools", END])
-  .addEdge("chatTools", "chatModel");
+  .addEdge(START, "chatAgent")
+  .addConditionalEdges("chatAgent", chatModelRoute, ["chatTools", END])
+  .addEdge("chatTools", "chatAgent");
 
 export const chatAgent = builder.compile({
   ...subgraphCheckpointerConfig,

@@ -20,7 +20,7 @@ The agent runtime runs **three graphs** side by side, all registered in
   `triggerBackgroundAgent`, which HTTP-dispatches the background graph
   via `langGraphClient.runs.create(...)` and returns immediately — the
   chat stream doesn't wait for background work.
-- `background_agent` (`backend/background-agent.ts:graph`) — the
+- `backgroundAgent` (`backend/background-agent.ts:graph`) — the
   turn-end side-effect graph. Linear: `START → touchLastMessage →
 summarize → END`. Runs after every chat turn. Cheap to add a router
   between the two nodes later if `summarize` becomes a bottleneck.
@@ -31,7 +31,7 @@ summarize → END`. Runs after every chat turn. Cheap to add a router
   → kbAgent without the router + renameThreadAgent LLM calls). See
   [`docs/KNOWLEDGE_BASE.md`](./KNOWLEDGE_BASE.md) for the pipeline
   shape; this doc only notes it exists alongside `agent` and
-  `background_agent` so the graph-id sync list in
+  `backgroundAgent` so the graph-id sync list in
   [`CLAUDE.md`](../CLAUDE.md) doesn't drift.
 
 Memory is split across the chat + background graphs in the same way: profile reads

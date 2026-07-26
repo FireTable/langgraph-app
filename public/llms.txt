@@ -1,20 +1,24 @@
 # LangGraph App
 
-> Self-hostable chat application streaming LangGraph StateGraph agents into an assistant-ui thread, with persistent threads in Postgres, per-LLM-call credit quotas, Knowledge Base (Hybrid + GraphRAG), cross-conversation memory, and observability waterfall.
+> Self-hostable chat application streaming LangGraph StateGraph agents into an assistant-ui thread, with persistent threads in Postgres, per-LLM-call credit quotas, Knowledge Base (Hybrid + GraphRAG), cross-conversation memory, observability waterfall, and an in-app Agent Evaluation Studio (LLM-as-a-Judge + per-agent benchmark datasets).
 
 ## Overview
-LangGraph App provides an enterprise-ready, open-source AI agent platform built with Next.js, LangGraph, Drizzle ORM, and PostgreSQL (pgvector). It features dual-graph background execution, real-time token streaming, tool composition, and multi-model provider management.
+LangGraph App provides an enterprise-ready, open-source AI agent platform built with Next.js, LangGraph, Drizzle ORM, and PostgreSQL (pgvector). It features dual-graph background execution, real-time token streaming, tool composition, multi-model provider management, and a built-in eval platform that scores every production run with rubric-aware AI Judges and replays synthetic benchmarks through any agent.
 
 ## Core Features
 - **LangGraph StateGraph Engine**: Stream agent output, execution states, tool calls, and subgraph checkpoints.
-- **Knowledge Base (KB v3)**: Hybrid vector & keyword search (pgvector + BM25) coupled with GraphRAG entity-relationship search.
+- **Knowledge Base (KB v3)**: Hybrid vector & keyword search (pgvector + BM25) coupled with GraphRAG entity-relationship search. Per-agent ingestion runs surface under `pageToMarkdown`, `chunkExtract`, `chunkAlignment` in the Eval Studio's Online Executions.
+- **Agent Evaluation Studio** (`/admin/eval`): Per-agent rubrics, offline benchmark datasets, AI-Judge scoring via a dedicated `evalAgent` graph, and a per-agent Online Executions waterfall. Eleven agent IDs are seeded (`chatAgent`, `routerAgent`, `weatherAgent`, `cryptoAgent`, `codeAgent`, `pageToMarkdown`, `chunkExtract`, `chunkAlignment`, `renameThreadAgent`, `threadSummarizeAgent`, `judgeByLLM`).
+- **A/B Testing & Sticky Traffic Split**: Per-`prompt_variant` traffic weights with sticky `(userId, agent)` assignments. Edits via Prompt Studio card; takes effect on the next `prepareDataNode` lookup.
 - **Credit Quota & Metering**: Granular per-user, per-role, and per-model credit limits with real-time token usage tracking.
 - **Cross-Conversation Memory**: Persistent profile memory and automated thread summarization.
 - **Observability Waterfall**: OpenTelemetry-style trace visualization for every LLM invocation and tool step.
 - **Multi-Modal R2 Attachments**: Direct-to-storage presigned uploads for PDFs, images, and text files with in-memory extraction.
-- **Admin Management Console**: Manage providers, API keys, models, user roles, and ban status with live token statistics.
+- **Admin Management Console**: Manage providers, API keys, models, user roles, and ban status with live token statistics. The Eval tab is admin-only.
 
 ## Links & API Contracts
 - [Full LLM Specification](/llms-full.txt): Complete technical architecture, database schemas, and API documentation.
 - [GitHub Repository](https://github.com/FireTable/langgraph-app): Source code, setup instructions, and issue tracker.
 - [Public Site](https://ai.firetable.tech): Live demo and administration interface.
+- [Evaluation Docs](https://github.com/FireTable/langgraph-app/blob/main/docs/EVALUATION.md): Agent Evaluation Studio architecture and ops.
+- [API Docs](https://github.com/FireTable/langgraph-app/blob/main/docs/APIS.md): Per-endpoint request / response / status codes for every route under `app/api/`.

@@ -224,6 +224,175 @@ Status codes:
 | 401    | no session                                                                             | `{ code: "UNAUTHORIZED" }` |
 | 404    | thread missing or owned by another, OR span not in this turn, OR span not found at all | `{ code: "NOT_FOUND" }`    |
 
+## Evaluation & A/B Testing (`/api/eval/*`)
+
+Routes for online user feedback, prompt versioning, A/B performance metrics, and LLM-as-a-Judge orchestration. All routes are `withAuth`-wrapped and execute on `runtime = "nodejs"`.
+
+### Thread `kind` discriminator
+
+`threads.kind` separates where a run originates so Online Executions can show judge work without leaking benchmark noise. Both `lib/eval/queries.ts:getRunsByAgentPage` and `GET /api/eval/runs/compare` filter `kind != 'eval-benchmark'`:
+
+| `kind`           | source                                          | Online Executions                    |
+| ---------------- | ----------------------------------------------- | ------------------------------------ |
+| `chat`           | user chat turn                                  | ✅                                   |
+| `kb`             | standalone `kbAgent` ingestion                  | ✅                                   |
+| `eval-judge`     | `POST /api/eval/judge` — LLM-as-a-Judge scoring | ✅                                   |
+| `eval-benchmark` | `POST /api/eval/benchmarks/run` — synthetic run | ❌ (Benchmark Datasets surface only) |
+
+### `POST /api/eval/feedback`
+
+Submits online user feedback or admin rating (1-5 integer). The chat UI sends the assistant message id (`resp_...`) as `runId`; the route resolves it via `eval_run.id = runId` OR `eval_run.parent_message_id = runId`. When no match exists (e.g. the eval callback never recorded this turn), the handler returns 200 with zero rows inserted — never a dangling FK violation on `eval_feedback.run_id`. See `lib/eval/queries.ts:submitFeedback`.
+
+- **Body**: `{ runId: string, rating: number, source?: "user_online" | "admin_manual", reason?: string }`
+- **Status Codes**: 200 / 400 (missing `runId` / non-numeric `rating`) / 401 / 500
+
+### `GET /api/eval/prompts`
+
+Returns all `prompt_template` + `prompt_variant` rows ordered by `id`.
+
+- **Output**: `{ templates: PromptTemplate[], variants: PromptVariant[] }`
+- **Status Codes**: 200 / 401 / 500
+
+### `POST /api/eval/prompts`
+
+Admin action surface for prompt lifecycle. `action` discriminates:
+
+| action                  | required body fields                       | semantics                                                                                           |
+| ----------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `create_template`       | `agent`, `content` (+ optional `notes`)    | Insert a new `prompt_template` row; `group` resolved from `GRAPH_MAPPING` or `"Group:<name>"` notes |
+| `create_cohort_variant` | `label`, `bindings: Record<agent,tmplId>`  | Upsert a cohort — for each `(label, agent)` pair, update the matching variant or insert a new one   |
+| `delete_cohort_variant` | `label` (cannot be `"default"`)            | Delete every `prompt_variant` row with the given label                                              |
+| `create_variant`        | `templateId`, `label`, `trafficWeight`     | Insert a single variant; `enabled` defaults to `true`                                               |
+| `update_variant_weight` | `variantId`, `trafficWeight` (+ `enabled`) | Update weight + enabled flag on one variant                                                         |
+| `batch_update_weights`  | `updates: [{ variantId, trafficWeight }]`  | Bulk version of the above — one round-trip for the cohort weight sliders                            |
+
+- **Status Codes**: 200 / 400 (missing fields / invalid action) / 401 / 500
+
+### `PUT /api/eval/prompts`
+
+Updates a `prompt_template`'s `content` and/or `notes`.
+
+- **Body**: `{ id: string, content?: string, notes?: string }`
+- **Status Codes**: 200 / 400 (missing `id`) / 401 / 500
+
+### `DELETE /api/eval/prompts?id=<templateId>`
+
+Deletes an admin-authored `prompt_template`. System templates (those with `userId = null`, i.e. seeded by `seedInitialPrompts`) are 403 — the seeder is the only way to remove them.
+
+- **Status Codes**: 200 / 400 (missing `id`) / 401 / 403 (system template) / 404 (not found) / 500
+
+### `GET /api/eval/rubrics`
+
+Returns every `eval_rubric` plus recent `eval_judgment` rows joined to their `eval_run.agent` / `variant_id`. The Admin Eval Studio renders both lists from one fetch.
+
+- **Output**: `{ rubrics: EvalRubric[], judgments: Array<{ id, runId, rubricId, scores, reasoning, totalCostTokens, judgeThreadId, judgeParentMessageId, createdAt, agent, variantId }> }`
+- **Status Codes**: 200 / 401 / 500
+
+### `POST /api/eval/rubrics`
+
+Inserts or updates a rubric by `id` (default `rubric_${Date.now()}`), criteria shape `{ key, description, weight }`.
+
+- **Body**: `{ id?: string, name: string, criteria: Array<{ key | name: string, description: string, weight: number }> }`
+- **Status Codes**: 200 / 400 / 401 / 500
+
+### `GET /api/eval/assignments`
+
+Returns every sticky `prompt_variant_assignment` row joined to the assigned user (`name`, `email`, `image`), the variant label, and the variant's template.
+
+- **Output**: `{ assignments: Array<{ userId, userName, userEmail, userImage, variantId, variantLabel, templateId, agent, assignedAt }> }`
+- **Status Codes**: 200 / 401 / 500
+
+### `POST /api/eval/assignments`
+
+Reassigns a user (or whole cohort) to a different variant. Two modes:
+
+| body                                                | semantics                                                                                             |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `{ userId, cohortLabel }`                           | For every agent, set the user's `prompt_variant_assignment` to the variant with `label = cohortLabel` |
+| `{ userId, targetVariantId, agent? = "chatAgent" }` | Set a single `(userId, agent)` row to `targetVariantId`                                               |
+
+Existing rows are updated in place; new rows are inserted. `default` variants are merged with the cohort label so a partial cohort binding still leaves non-listed agents on `default`.
+
+- **Status Codes**: 200 / 400 / 401 / 500
+
+### `GET /api/eval/benchmarks`
+
+Returns every benchmark row with its latest judgment denormalized onto the row. The Latest-Join lives on `eval_benchmark.latest_judgment_id`, not on a query-time `LEFT JOIN` — see `lib/eval/queries.ts:getAllBenchmarksWithLatestJudgment`.
+
+- **Output**: `{ benchmarks: Array<{ ...EvalBenchmarkRow, judgment: { id, scores, reasoning, judgeThreadId, judgeParentMessageId } | null }> }`
+- **Status Codes**: 200 / 401 / 500
+
+### `POST /api/eval/benchmarks`
+
+Three `action` values:
+
+| action          | body fields                                                          | semantics                                                                  |
+| --------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `create`        | `agent`, `title`, `inputPrompt`, `expectedOutput?`                   | Insert a new `eval_benchmark` row                                          |
+| `delete`        | `id`                                                                 | Delete the benchmark (cascade kills its judgments + denorm pointer)        |
+| `update_rubric` | `rubricId`, `name?`, `criteria: Array<{ key, description, weight }>` | Replace the rubric row — `rubricId` stays, criteria + name change in place |
+
+- **Status Codes**: 200 / 400 (missing fields / unknown action) / 401 / 500
+
+### `POST /api/eval/benchmarks/run`
+
+Triggers a stored Benchmark Test Case end-to-end. Resolves the benchmark row server-side (`targetAgent` / `inputPrompt` / `expectedOutput`), then dispatches `evalAgent` in `mode="benchmark"` which owns the full pipeline (target-agent invocation → record `eval_run` + paired observability span → LLM-judge → denormalize latest\_\* onto `eval_benchmark`). The benchmark thread (`kind="eval-benchmark"`) is hidden from the chat sidebar and from Online Executions; the judge thread (`kind="eval-judge"`) is registered so the AI Judge trace stays linked from Online Executions.
+
+- **Body**: `{ benchmarkId: string }`
+- **Output**: `{ runId: string | null, judgeThreadId, result: { status, errorMessage: string | null } }`
+- **Status Codes**: 200 / 400 / 401 / 404 (unknown benchmark) / 500 (judge run returned no result)
+- **Side effects**: `eval_benchmark.latest_judgment_id` / `latest_run_at` / `latest_run_status` / `latest_score` updated to point at the new judgment so the next `GET /api/eval/benchmarks` returns the fresh assessment inline.
+
+### `POST /api/eval/judge`
+
+Triggers an `evalAgent` LLM-as-a-Judge run against a specific `eval_run` execution record using domain-specific Rubric Criteria, linking `judge_thread_id` for Observability trace tracking. Dispatched as `mode="judge"` — the judge thread is created with `kind="eval-judge"` and DOES surface in Online Executions for that run's agent.
+
+- **Body**: `{ runId: string, rubricId?: string }`
+- **Output**: `{ result, judgeThreadId }`
+- **Status Codes**: 200 / 400 / 401 / 404 (unknown `eval_run`) / 500
+
+### `GET /api/eval/runs/compare`
+
+Returns aggregated A/B variant metrics (total runs, average latency, ratings) and a first page of recent run logs per agent. Runs are grouped by `agent` so the UI can render per-agent Online Executions tables. The window is 5 rows per agent; older history is fetched on demand via `/api/eval/runs/page`. Excludes `kind = 'eval-benchmark'`.
+
+- **Output**:
+  ```json
+  {
+    "stats": [{ "variantId", "label", "totalRuns", "avgTotalMs", "avgRating" }],
+    "runs": { "<agentId>": [RecentRun, ...] },
+    "pageSize": 5,
+    "hasMore": { "<agentId>": boolean },
+    "nextCursor": { "<agentId>": string | null }
+  }
+  ```
+- **Status Codes**: 200 / 401 / 500
+
+### `GET /api/eval/runs/page?agent=<id>&cursor=<runId>&limit=<n>`
+
+Fetches the next page of `eval_run` rows for a single agent, ordered `createdAt DESC, id DESC` (cursor-based, stable). The previous page's `nextCursor` is the `id` of its last kept row; passing it back returns strictly older runs. Excludes `kind = 'eval-benchmark'`.
+
+- **Query Params**: `agent` (required), `cursor` (id from previous response), `limit` (default `5`, clamped to `1..50`).
+- **Output**: `{ agent, runs, hasMore, nextCursor }`
+- **Status Codes**: 200 / 400 (missing agent) / 401 / 500
+
+### `GET /api/eval/runs/[id]`
+
+Single-run drilldown: returns the `eval_run` row, its first `eval_feedback` (or `null`), its first `eval_judgment` (or `null`), and the first 20 observability spans for the run's `threadId` so the Admin Eval Studio can render the full trace inline.
+
+- **Output**: `{ run, feedback, judgment, spans }`
+- **Status Codes**: 200 / 401 / 404 (unknown run) / 500
+
+### `evalAgent` mode discriminator
+
+`evalAgent` accepts a `mode` field in its input, dispatching via conditional edges inside the graph:
+
+| mode                | flow                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"judge"` (default) | judge an existing `eval_run` (id `runId`) against its rubric; writes `eval_judgment`                                                                                                                                                                                                                                                                  |
+| `"benchmark"`       | run the resolved target agent (`targetAgent`) on `inputPrompt`, write `eval_run` + paired span, judge against `rubric_<targetAgent>` (or `rubricId` override), denormalize latest judgment + score onto `eval_benchmark`. The hidden benchmark thread (`kind="eval-benchmark"`) is retained for the AI Judge trace link — no graph-level cleanup node |
+
+Adding a new target agent requires registering an `invoke<Name>Agent` node and a dispatch entry in `routeFromInput` — same diff, no separate mapping table.
+
 ## Memory
 
 Backed by the LangGraph `PostgresStore` (per-user, cross-thread long-term memory). Every route is `withAuth`-wrapped and isolation is by namespace prefix `[userId, ...]`. Storage detail: `lib/memory/queries.ts`; schema (RFC 6902 patches, store): `lib/memory/validators.ts`; size guard: `backend/memory/profile-size.ts`. Read counterpart of `save_memory` (see "Graph tools").

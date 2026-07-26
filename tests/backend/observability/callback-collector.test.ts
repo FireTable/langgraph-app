@@ -252,7 +252,7 @@ describe("CapturingHandler — parent_message_id extraction", () => {
     expect(callB[0]?.meta.parent_message_id).toBe("h-B");
   });
 
-  // ponytail: kb-upload / background_agent dispatches stamp
+  // ponytail: kb-upload / backgroundAgent dispatches stamp
   // metadata.parent_message_id via runs.create. The handler should
   // honor that even if inputs.messages would resolve to a different
   // value — metadata is the per-run trigger reference, the messages

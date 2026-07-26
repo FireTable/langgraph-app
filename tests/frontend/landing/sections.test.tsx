@@ -51,6 +51,40 @@ describe("KnowledgeBase row", () => {
   });
 });
 
+describe("Evaluation row", () => {
+  afterEach(cleanup);
+
+  it("ships the AI Judge explainer inside How-it-works", () => {
+    render(<HowItWorks />);
+    expect(
+      screen.getByRole("heading", {
+        name: /score every run against the rubric/i,
+        level: 3,
+      }),
+    ).toBeInTheDocument();
+    // eyebrow renders as a tracked-out <p>; demo card uses a separate
+    // "Evaluation · AI Judge" label, so the standalone <p> is unique.
+    expect(
+      screen.getByText((_, node) => {
+        if (!node) return false;
+        return node.tagName === "P" && /evaluation/i.test(node.textContent ?? "");
+      }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("Features bottom row", () => {
+  afterEach(cleanup);
+
+  it("names the Evaluation & A/B card alongside HITL and Self-host", () => {
+    render(<Features />);
+    expect(
+      screen.getByRole("heading", { name: /evaluation.*a\/b/i, level: 3 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /composable tools/i, level: 3 })).toBeNull();
+  });
+});
+
 describe("Footer", () => {
   afterEach(cleanup);
 

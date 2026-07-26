@@ -3,8 +3,10 @@
   "dependencies": ["."],
   "graphs": {
     "agent": "./backend/agent.ts:graph",
-    "background_agent": "./backend/background-agent.ts:graph",
-    "kbAgent": "./backend/agent/kb-agent.ts:graph"
+    "backgroundAgent": "./backend/background-agent.ts:graph",
+    "kbAgent": "./backend/agent/kb-agent.ts:graph",
+    "evalAgent": "./backend/agent/eval-agent.ts:graph"
   },
+
   "env": ".env.local"
 }

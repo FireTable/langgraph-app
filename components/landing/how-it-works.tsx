@@ -5,6 +5,7 @@
 import type { FC } from "react";
 
 import { BackgroundSplitDemo } from "@/components/landing/motion/background-split-demo";
+import { EvaluationExplainerDemo } from "@/components/landing/motion/evaluation-explainer-demo";
 import { HumanInTheLoopDemo } from "@/components/landing/motion/human-in-the-loop-demo";
 import { KbExplainerDemo } from "@/components/landing/motion/kb-explainer-demo";
 import { MemoryRecallDemo } from "@/components/landing/motion/memory-recall-demo";
@@ -94,6 +95,35 @@ export const HowItWorks: FC = () => (
           reverse
         >
           <KbExplainerDemo />
+        </ExplainRow>
+
+        <ExplainRow
+          eyebrow="Evaluation"
+          title="Score every run against the rubric — by hand or by AI Judge."
+          body={
+            <>
+              <p>
+                <span className="text-foreground font-medium">Online Executions:</span> every chat
+                turn, every KB ingest, every AI Judge scoring run shows up under its own agent card.
+                Click a row for the per-turn waterfall; click the thumbs-up to stamp a 1–5 rating
+                onto the same <code>eval_run</code> the model produced. The chat UI sends the
+                assistant message id and the route resolves it against{" "}
+                <code>eval_run.parent_message_id</code> — no match, silent no-op (the thumbs-up
+                never crashes on a dangling row).
+              </p>
+              <p>
+                <span className="text-foreground font-medium">LLM-as-a-Judge:</span> a separate
+                <code> evalAgent</code> graph runs an LLM against the same span context the target
+                agent saw and emits one structured score per rubric criterion plus a reasoning
+                paragraph. The rubric lives in <code>eval_rubric</code> — seeded per agent (incl.{" "}
+                <code>judgeByLLM</code> itself), editable in <code>/admin/eval</code>. Benchmarks
+                replay one input through a target agent under the same harness; the judge scores the
+                output and the result lands inline on the Benchmark Datasets table.
+              </p>
+            </>
+          }
+        >
+          <EvaluationExplainerDemo />
         </ExplainRow>
       </div>
     </div>

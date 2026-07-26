@@ -38,7 +38,7 @@ type Step = {
   ns: string;
   // ponytail: the LC run id the step belongs to. CapturingHandler
   // stamps meta.run_id on every span — main invokes and the
-  // background_agent dispatch each get their own UUID, so a step's
+  // backgroundAgent dispatch each get their own UUID, so a step's
   // run_id is the unambiguous identifier of "which invoke does this
   // step belong to". Two invokes triggered in the same thread + same
   // parent_message_id (regenerate, follow-up) share langgraph_node /
@@ -60,7 +60,7 @@ const LANGSMITH_NOISE = new Set(["RunnableSequence", "RunnableLambda", "parser"]
 // ponytail: a root chain span is a kind=chain callback with no
 // langgraph_node / langgraph_step (it's the outermost compiled graph
 // wrapper, fired before any step's START). One per invoke — main chat
-// graph fires one, the background_agent graph fires another when
+// graph fires one, the backgroundAgent graph fires another when
 // `runs.create` triggers it. Identifying them lets the panel render
 // sibling invoke trees (`graph.invoke` + `backgroundGraph.invoke`) at
 // the top level instead of flattening both into one synthetic root.
@@ -287,7 +287,7 @@ export function transformCapturedToSpanData(captured: CapturedSpan[]): WireSpanD
     let parentId: string | null = rootForStep(step);
     if (repRaw?.parent_span_id) {
       // ponytail: if the step's parent in callback-land is a real root
-      // chain (different invoke — e.g. background_agent triggered via
+      // chain (different invoke — e.g. backgroundAgent triggered via
       // runs.create), anchor it under THAT root, not under the synthetic
       // default. Without this, every cross-invoke step falls to the
       // fallback and the panel flattens two trees into one.

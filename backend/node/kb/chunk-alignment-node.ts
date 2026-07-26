@@ -4,6 +4,8 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import type { KbAgentStateShape } from "@/backend/state";
 import { getExtractModel } from "@/backend/model";
 import { KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT } from "@/backend/prompt/system";
+import { getAgentPrompt } from "@/backend/prompt/loader";
+
 import {
   applyEntityAliases,
   applyThemeAlignment,
@@ -70,7 +72,8 @@ export async function resolveEntityAliasesForDoc(args: {
   const rawEntities = await findCanonicalEntitiesByDocId(userId, documentId);
   const rawRelationships = await findCanonicalRelationshipsByDocId(userId, documentId);
 
-  const systemMessage = new SystemMessage(KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT);
+  const alignPromptInfo = await getAgentPrompt("chunkAlignment", userId);
+  const systemMessage = new SystemMessage(alignPromptInfo.content);
 
   const entityLines = rawEntities.map(
     (e) => `- ${e.name} (${e.type}): ${e.description ?? "no description"}`,

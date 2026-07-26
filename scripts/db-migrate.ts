@@ -214,11 +214,19 @@ async function main() {
         await sql.unsafe(stmt);
       }
     });
+
+    // 5. Seed initial system prompts & default eval rubric once tables are ready.
+    await step("seed initial system prompts & rubric", async () => {
+      const { seedInitialPrompts } = await import("@/lib/eval/queries");
+      await seedInitialPrompts();
+    });
   } finally {
     await sql.end({ timeout: 5 });
   }
 
   console.log("\nAll migrations applied.");
+
+  process.exit(0);
 }
 
 main().catch((err) => {

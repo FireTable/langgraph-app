@@ -253,7 +253,7 @@ export class CapturingHandler extends BaseCallbackHandler {
   // ponytail: parent_message_id is resolved per-call in start() from
   // each span's own `partial.input.messages`. No instance-level cache,
   // so concurrent invokes on the same handler (e.g. main chat + a
-  // background_agent dispatched mid-turn) can't clobber each other.
+  // backgroundAgent dispatched mid-turn) can't clobber each other.
   // Spans without messages in their input (inner LLM/tool nodes, or
   // any background run that wasn't passed messages) get null here —
   // bulkInsertSpans' state-fallback backfill fills them at INSERT time.
@@ -274,7 +274,7 @@ export class CapturingHandler extends BaseCallbackHandler {
     parentRunId?: string,
   ) {
     // ponytail: prefer metadata.parent_message_id (stamped by runs.create
-    // on kbAgent / background_agent dispatches) — it's per-run and won't
+    // on kbAgent / backgroundAgent dispatches) — it's per-run and won't
     // be clobbered by concurrent invokes the way an instance field
     // would. Fall back to parsing inputs.messages for the chat streaming
     // path where metadata isn't set.

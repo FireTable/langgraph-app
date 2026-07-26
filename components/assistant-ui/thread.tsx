@@ -60,15 +60,20 @@ import {
   PencilIcon,
   RefreshCwIcon,
   SquareIcon,
+  ThumbsUpIcon,
+  ThumbsDownIcon,
 } from "lucide-react";
+
 import {
   createContext,
   useContext,
   useEffect,
+  useState,
   type ComponentType,
   type FC,
   type PropsWithChildren,
 } from "react";
+
 import { useUploadStore } from "@/lib/attachments/upload-store";
 
 export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
@@ -561,6 +566,9 @@ const AssistantActionBar: FC = () => {
       {/* Observability Button */}
       <ObservabilityButton />
 
+      {/* Online Feedback Buttons */}
+      <FeedbackButtons />
+
       <ActionBarMorePrimitive.Root>
         <ActionBarMorePrimitive.Trigger asChild>
           <TooltipIconButton tooltip="More" className="data-[state=open]:bg-accent">
@@ -582,6 +590,47 @@ const AssistantActionBar: FC = () => {
         </ActionBarMorePrimitive.Content>
       </ActionBarMorePrimitive.Root>
     </ActionBarPrimitive.Root>
+  );
+};
+
+const FeedbackButtons: FC = () => {
+  const messageId = useAuiState((s) => s.message.id);
+  const [rating, setRating] = useState<number | null>(null);
+
+  const handleFeedback = async (score: number) => {
+    setRating(score);
+    try {
+      await fetch("/api/eval/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: messageId,
+          rating: score,
+          source: "user_online",
+        }),
+      });
+    } catch (err) {
+      console.error("[FeedbackButtons] Failed to send feedback:", err);
+    }
+  };
+
+  return (
+    <>
+      <TooltipIconButton
+        tooltip="Good response"
+        className={cn(rating === 5 && "text-emerald-500")}
+        onClick={() => handleFeedback(5)}
+      >
+        <ThumbsUpIcon />
+      </TooltipIconButton>
+      <TooltipIconButton
+        tooltip="Bad response"
+        className={cn(rating === 1 && "text-rose-500")}
+        onClick={() => handleFeedback(1)}
+      >
+        <ThumbsDownIcon />
+      </TooltipIconButton>
+    </>
   );
 };
 

@@ -268,7 +268,7 @@ describe("transformCapturedToSpanData", () => {
   it("emits a top-level SpanData per real root chain (main + background invokes)", () => {
     // ponytail: regression for the cross-process dispatch case.
     // triggerBackgroundAgentNode calls `client.runs.create(...)`, which fires the
-    // background_agent graph in a different runId. Both invokes land in
+    // backgroundAgent graph in a different runId. Both invokes land in
     // the same thread + parentMessageId and produce a CompiledStateGraph
     // root chain span. The transform must surface them as two sibling
     // top-level chains instead of merging background's steps under the

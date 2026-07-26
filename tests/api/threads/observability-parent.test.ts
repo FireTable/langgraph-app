@@ -266,7 +266,7 @@ describe("GET /api/threads/[id]/observability/[parentMessageId]", () => {
       return {
         run_id: "r-1",
         thread_id: "t-mine",
-        assistant_id: "background_agent",
+        assistant_id: "backgroundAgent",
         status: "running",
         created_at: "2026-07-05T00:00:00Z",
         updated_at: "2026-07-05T00:00:01Z",

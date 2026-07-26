@@ -75,6 +75,7 @@ async function lookupLocalSpan(
   // panel renderers + transform layer keep working with the original
   // meta shape (they pre-date the column promotion).
   const meta = (row.meta as Record<string, unknown> | null | undefined) ?? {};
+
   const metaWithPmid = meta.parent_message_id
     ? meta
     : row.parentMessageId

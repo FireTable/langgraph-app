@@ -11,7 +11,7 @@
 ## Features
 
 - **Streaming chat UI** powered by assistant-ui's `Thread` component.
-- **LangGraph backend** running **two compiled graphs** side-by-side: a chat graph (`agent` — router + sub-agents + `triggerBackgroundAgent`) and a turn-end side-effect graph (`background_agent` — `touchLastMessage` + `summarize`). The chat stream doesn't block on background work; `triggerBackgroundAgentNode` HTTP-dispatches via the SDK and returns immediately.
+- **LangGraph backend** running **two compiled graphs** side-by-side: a chat graph (`agent` — router + sub-agents + `triggerBackgroundAgent`) and a turn-end side-effect graph (`backgroundAgent` — `touchLastMessage` + `summarize`). The chat stream doesn't block on background work; `triggerBackgroundAgentNode` HTTP-dispatches via the SDK and returns immediately.
 - **Persistent threads and checkpoints** in Postgres — closing the tab doesn't lose context.
 - **Cross-conversation memory**: the model calls `save_memory` to persist durable user facts (RFC 6902 patches against `[userId, "memory"] main`); a recall middleware prepends `<memory>` (profile + auth overlay) and `<threads>` (compressed Q&A history) blocks to the SystemMessage on every invoke. Long threads stay readable via a store-anchored `threadSummarizeNode` trigger that compresses K-turn windows into `SummaryEntry` rows. The Memory settings tab lets users review and delete. See [docs/MEMORY.md](docs/MEMORY.md).
 - **Self-hosted**: runs on a single VPS with Docker Compose, no SaaS lock-in.
@@ -25,6 +25,7 @@
 - **Knowledge Base & Hybrid Search**: ingestion across seven source kinds (PDF, image, plain text, markdown, DOCX, XLSX, PPTX) plus pasted URLs — PDF / image go through vision OCR, Office formats are parsed structurally by `officeparser` with embedded images extracted to R2, text and markdown skip straight to chunking — followed by text chunking, embedding, entity / relationship / theme extraction, and pgvector-backed three-leg RRF (Keyword, Vector, Tag) hybrid search combined with semantic Reranking (Cohere/Jina), `@` mention resolution (with automatic fallback to full markdown when chunks are not ready), dynamic budget scaling, and iterative search. See [docs/KNOWLEDGE_BASE.md](docs/KNOWLEDGE_BASE.md).
 - **Per-LLM-call credit quota**: every successful call is metered against a UTC-aligned rolling-window cap read from `role.creditLimit` / `role.windowHours`. Enforcement lives at the `/api/[..._path]` proxy — when the cap is hit, the proxy synthesizes a `show_credit_card` SSE stream and the chat UI renders the credit-limit-reached card inline. The call log backs a per-user history (Settings → Credits) and an admin-managed rate config. See [docs/CREDIT.md](docs/CREDIT.md).
 - **Admin console**: a single `/admin` page with three tabs — Providers (registry + encrypted API keys + per-model rates), Roles (credit caps + window length), Users (role assignment, ban with immediate session revoke, delete). The first admin is bootstrapped via `INITIAL_ADMIN_EMAIL`. See [docs/ADMIN.md](docs/ADMIN.md).
+- **Agent Evaluation Studio** (under `/admin/eval`): per-agent Benchmark Studio, Rubric Editor, Online Executions (per-agent paginated waterfall of production + judge runs), and LLM-as-a-Judge orchestration via the dedicated `evalAgent` graph. 11 agent IDs are seeded with domain-tailored rubrics + English benchmark datasets, including `judgeByLLM` (the judge itself) and three KB sub-agents (`pageToMarkdown`, `chunkExtract`, `chunkAlignment`) whose ingest runs surface under their own agent cards. `eval-judge` and `eval-benchmark` thread kinds split judge vs synthetic activity. See [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ## Tech stack
 
@@ -145,11 +146,12 @@ backend/
     weather-agent.ts          weatherAgent compiled subgraph
     crypto-agent.ts           cryptoAgent compiled subgraph
     code-agent.ts             codeAgent compiled subgraph
+    eval-agent.ts             evalAgent compiled evaluation graph (LLM-as-a-Judge)
   node/
     call-model-node.ts        "agent" node — calls the model, appends AI reply
     rename-thread-agent-node.ts "renameThreadAgent" — generates + persists the title
     router-agent-node.ts      "routerAgent" — picks weatherAgent / chatAgent / cryptoAgent / codeAgent
-    trigger-background-agent-node.ts "triggerBackgroundAgent" — SDK runs.create to background_agent
+    trigger-background-agent-node.ts "triggerBackgroundAgent" — SDK runs.create to backgroundAgent
     thread-summarize-node.ts  "summarize" — compresses K-turn window into a SummaryEntry
   tool/                       LangChain tools bound to the agent
     web-search.ts             search_web — Jina Search (s.jina.ai/{query})
@@ -159,6 +161,8 @@ backend/
     recall.ts                 loadMemory / getCachedMemory (LRU max 1000, 60s TTL); extractUserId / extractThreadId
     template.ts               buildSystemMessageWithMemory (mustache <memory> + <threads>) + trimMessagesForInvoke
     profile-size.ts           assertProfileSize — guard before the store write (NFR-003)
+  eval/
+    callback.ts               EvalCallbackHandler — captures LLM run executions for evaluation
   observability/
     callback-collector.ts     CapturingHandler — buffers spans per runId, persists on End hook
 
@@ -181,6 +185,9 @@ lib/
     adapter.ts                RemoteThreadListAdapter for assistant-ui
     validators.ts             Zod API body schemas
   memory/                     Memory module — queries (getMemoryDoc / putMemoryDoc / getAuthInfo / writeSummary / getThreadSummaries / getRecentThreadSummaries / deleteThreadSummaries) + validators (RFC 6902 patches, SummaryEntry) + merge (mergeMemory + getStoreKeys) + constants + format
+  eval/                       Agent Evaluation Studio & A/B testing module
+    schema.ts                 Drizzle tables (prompt_template, prompt_variant, prompt_variant_assignment, eval_run, eval_feedback, eval_rubric, eval_benchmark, eval_judgment)
+    queries.ts                seedInitialPrompts (100% English per-agent Rubrics & Benchmarks + rubric_default) + CRUD (run / feedback / judgment / benchmark / getRunsByAgentPage with PG row-value cursor)
   observability/              Observability module
     schema.ts                 Drizzle table (observability_spans)
     queries.ts                bulkInsertSpans / getSpansByThreadId / markRunningAsFailed / deleteSpansByThreadId
@@ -225,7 +232,7 @@ tests/                        Vitest (NODE_ENV=test → reads .env.test)
 
 drizzle.config.ts             Drizzle-kit config (uses @next/env to load .env)
 vitest.config.ts              Vitest config (NODE_ENV=test → reads .env.test)
-langgraph.json                LangGraph CLI config (registers BOTH graphs: agent + background_agent)
+langgraph.json                LangGraph CLI config (registers BOTH graphs: agent + backgroundAgent)
 .env.example                  Template (committed)
 .env.local                    Local dev secrets (gitignored)
 .env.test                     Test secrets (gitignored)
@@ -245,6 +252,11 @@ Owned by `lib/<module>/schema.ts` (re-exported from `db/schema.ts`). See [`docs/
 - **`role`** — per-tier credit cap (`credit_limit`, `window_hours`). Seeded with `guest`, `user`, `admin` (migration `0003`).
 - **`provider`** — LLM registry (encrypted API keys + per-model rates). Seeded with `default` (migration `0003`).
 - **`credit_usage_log`** — append-only per-LLM-call log. Source of truth for the cap check + the user-facing history. Composite index `(user_id, created_at)` covers both workloads.
+- **`eval_rubric`** — per-agent evaluation criteria definitions for LLM-as-a-Judge (keyed directly by `id = "rubric_${agentId}"`, plus a generic `rubric_default` seeded by `seedInitialPrompts`).
+- **`eval_benchmark`** — admin-defined offline benchmark test cases per agent (`id`, `agent`, `title`, `input_prompt`, `expected_output`) with denormalized `latest_judgment_id` / `latest_run_at` / `latest_run_status` / `latest_score` so the Benchmark Datasets table can render "Last Result" inline.
+- **`eval_judgment`** — assessment scores and reasoning outputs emitted by `evalAgent`, with `judge_thread_id` tracking AI Judge execution traces.
+- **`prompt_template`, `prompt_variant`, `prompt_variant_assignment`** — system-prompt versioning + sticky A/B traffic splitting (admin-managed weights; sticky by `(userId, agent)`).
+- **`eval_run`, `eval_feedback`** — turn-level execution record + user/admin 1-5 rating (👍/👎). The chat UI sends the assistant message id; `lib/eval/queries.ts:submitFeedback` resolves it via `eval_run.parent_message_id` and silently no-ops when no match — the thumbs-up button never crashes on a dangling FK.
 
 ### 2. LangGraph checkpoints
 
@@ -331,7 +343,8 @@ Test database stays isolated from dev — never put production-like data in `lan
 - [`docs/INTERRUPT.md`](docs/INTERRUPT.md) — interrupt-driven tool flows (ask_location, connect_wallet, place_crypto_order, get_order_status) — the two runtime paths the cards can take.
 - [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, role mechanism, `INITIAL_ADMIN_EMAIL` bootstrap, troubleshooting.
 - [`docs/ATTACHMENTS.md`](docs/ATTACHMENTS.md) — chat attachments backed by Cloudflare R2: direct-upload architecture, key convention, lazy-register on missing env, `Content-Disposition` XSS guard, `messageId`-deferred decision.
-- [`docs/DB.md`](docs/DB.md) — database schema (Better Auth + `threads` + `attachments` + `role` + `provider` + `credit_usage_log`), ownership model, indexes. Source of truth: `db/migrations/0000_*.sql`.
+- [`docs/DB.md`](docs/DB.md) — database schema (Better Auth + `threads` + `attachments` + `role` + `provider` + `credit_usage_log` + `prompt_*` / `eval_*`), ownership model, indexes. Source of truth: `db/migrations/0000_*.sql`.
+- [`docs/EVALUATION.md`](docs/EVALUATION.md) — Agent Evaluation Studio + A/B testing: prompt versioning, sticky traffic splitting, per-agent Benchmark Datasets, LLM-as-a-Judge orchestration, `threads.kind = 'eval-judge' | 'eval-benchmark'` discriminator, full `/api/eval/*` route map.
 - [`docs/CREDIT.md`](docs/CREDIT.md) — per-LLM-call credit cap: UTC-aligned rolling window, proxy-level enforcement, callback-level recording, `show_credit_card` UI affordance, `credit_usage_log` audit trail.
 - [`docs/ADMIN.md`](docs/ADMIN.md) — admin console: `/admin` Providers / Roles / Users tabs, AES-256-GCM API-key encryption, last-admin + default-provider guards, secrets handling.
 - [`docs/PROVIDERS.md`](docs/PROVIDERS.md) — DB-backed chat-model registry: `getChatModel` / `getChatModelFromDB` / `invalidateModelCache`, LRU + 60s cross-process TTL tradeoff, seeded `default` row, env fallback.

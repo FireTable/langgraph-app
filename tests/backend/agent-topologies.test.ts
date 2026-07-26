@@ -9,7 +9,7 @@ import { builder } from "@/backend/agent";
 describe("parent graph builder", () => {
   it("registers the compiled subgraphs as opaque nodes", () => {
     // ponytail: afterAgent + threadSummarize moved to a separate
-    // `background_agent` graph in langgraph.json — chat graph now
+    // `backgroundAgent` graph in langgraph.json — chat graph now
     // only schedules it via `triggerBackgroundAgent`. fan-out is no
     // longer needed (the SDK call inside the node is the side-effect).
     expect(Object.keys(builder.nodes).sort()).toEqual([

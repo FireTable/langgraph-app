@@ -63,7 +63,7 @@ describe("triggerBackgroundAgentNode", () => {
     expect(mockRunsCreate).toHaveBeenCalledTimes(1);
     const [threadId, assistantId, payload] = mockRunsCreate.mock.calls[0];
     expect(threadId).toBe("t1");
-    expect(assistantId).toBe("background_agent");
+    expect(assistantId).toBe("backgroundAgent");
     expect(payload).toMatchObject({
       input: { messages: [], userId: "u1", threadId: "t1" },
       multitaskStrategy: "enqueue",

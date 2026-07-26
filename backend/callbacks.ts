@@ -1,11 +1,11 @@
 // ponytail: one CapturingHandler instance per process, shared across
 // every graph registered in langgraph.json (currently `agent` and
-// `background_agent`). The .withConfig({ callbacks: [handler] })
+// `backgroundAgent`). The .withConfig({ callbacks: [handler] })
 // pattern applies the same singleton to each compiled Pregel, so
 // spans from both chat and background invocations land in the same
 // in-memory Map and the same write path.
 //
-// Lifted out of backend/observability/ when the background_agent
+// Lifted out of backend/observability/ when the backgroundAgent
 // graph registered: the singleton now has TWO consumers (chat +
 // background), so it stopped being an "observability" implementation
 // detail and became a backend-wide callback wiring. The observability/
@@ -29,6 +29,8 @@
 // move to prod checkpointing.
 import { CapturingHandler } from "@/lib/observability/callback";
 import { CreditTrackingHandler } from "@/lib/credit/callback";
+import { EvalCallbackHandler } from "@/lib/eval/callback";
 
 export const capturingHandler = new CapturingHandler();
 export const creditTrackingHandler = new CreditTrackingHandler();
+export const evalCallbackHandler = new EvalCallbackHandler();

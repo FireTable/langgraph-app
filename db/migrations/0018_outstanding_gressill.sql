@@ -1,0 +1,1 @@
+ALTER TABLE "prompt_template" ADD COLUMN "group" text DEFAULT 'Main Assistant' NOT NULL;

@@ -256,6 +256,18 @@ up -d` — the first start applies all three migration sources in order:
 Subsequent `docker compose restart app` runs are safe to skip — all three
 sources are idempotent and bail on existing objects.
 
+The Drizzle source also creates the Evaluation & A/B Testing tables
+(`prompt_template`, `prompt_variant`, `prompt_variant_assignment`,
+`eval_run`, `eval_feedback`, `eval_rubric`, `eval_benchmark`,
+`eval_judgment`) on first start, and `seedInitialPrompts` populates 11
+agent prompt templates, the generic `rubric_default`, and one rubric per
+agent. The `threads.kind` enum migration adds two new values
+(`eval-judge` and `eval-benchmark`) — both are additive and safe to run
+against an existing `kind = 'eval'` row (those rows just stop appearing
+in Online Executions until the API layer filters them; manual cleanup is
+not required). See `docs/EVALUATION.md` and `docs/DB.md` for the
+per-table contract.
+
 To migrate **before** pulling a new image (zero-downtime deploys), run
 `pnpm db:migrate` against the DB from any host that has Node + pnpm.
 

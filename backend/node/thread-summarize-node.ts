@@ -8,6 +8,7 @@ import { getChatModel } from "@/backend/model";
 import { THREAD_SUMMARIZE_PROMPT } from "@/backend/prompt/system";
 import { HumanMessage, BaseMessage } from "@langchain/core/messages";
 import { prepareMessagesForInvoke } from "@/backend/memory/template";
+import { getAgentPrompt } from "@/backend/prompt/loader";
 
 function isHumanMessage(m: BaseMessage | ExcerptMessage): boolean {
   return m instanceof HumanMessage || m.type === "human";
@@ -327,19 +328,18 @@ export async function threadSummarizeNode(
 
   const transcript = renderTranscript(excerpt, startIdx);
 
+  const promptInfo = await getAgentPrompt("threadSummarizeAgent", userId);
+
   /* oxlint-disable no-unreachable */
   let out: z.infer<typeof summaryOutputSchema>;
   try {
-    // ponytail: "nostream" tag so partial tokens don't leak into the
-    // chat stream — the summary is a side-effect, not a user-visible
-    // reply.
     out = await (
       await getChatModel()
     )
       .withStructuredOutput(summaryOutputSchema, { method: "jsonSchema", strict: true })
       .invoke(
         [
-          { role: "system", content: THREAD_SUMMARIZE_PROMPT },
+          { role: "system", content: promptInfo.content },
           ...transcript.map((item) => ({
             role: "user",
             content: [

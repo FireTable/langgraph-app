@@ -1,0 +1,1 @@
+ALTER TABLE "eval_judgment" ADD COLUMN "judge_parent_message_id" text;

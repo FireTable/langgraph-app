@@ -21,18 +21,15 @@ import { subgraphCheckpointerConfig } from "@/backend/checkpointer";
 // what the frontend card keys on, and the user's pick comes back as an
 // overwritten tool result on the next model pass.
 
+import { getAgentPrompt } from "@/backend/prompt/loader";
+
 async function cryptoModelNode({ messages }: { messages: BaseMessage[] }, config?: RunnableConfig) {
-  // ponytail: same load+trim pattern as chatAgent — read the
-  // thread's compressed history, inject as <earlier_conversation>,
-  // and drop the original turns from the input array. state.messages
-  // is NEVER touched.
   const threads = await loadThreadSummariesForPrompt(config);
-  const history = await prepareMessagesForInvoke(
-    messages,
-    threads?.summaries ?? [],
-    extractUserId(config) ?? undefined,
-  );
-  const sysMsg = await buildSystemMessageWithMemory(CRYPTO_AGENT_PROMPT, config, threads);
+  const userId = extractUserId(config) ?? undefined;
+  const history = await prepareMessagesForInvoke(messages, threads?.summaries ?? [], userId);
+  const promptInfo = await getAgentPrompt("cryptoAgent", userId);
+  const sysMsg = await buildSystemMessageWithMemory(promptInfo.content, config, threads);
+
   const response = await (
     await getChatModel()
   )
