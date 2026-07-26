@@ -54,8 +54,8 @@ describe("POST /api/eval/feedback", () => {
       threadId,
       userId: TEST_USER.id,
       agent: "chatAgent",
-      templateId: "tmpl_chat_v1",
-      variantId: "var_chat_control",
+      templateId: "tmpl_chatAgent_v1",
+      variantId: "var_chatAgent_default",
       totalMs: 300,
       status: "success",
     });

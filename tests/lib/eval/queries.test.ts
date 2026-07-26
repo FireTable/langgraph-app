@@ -66,8 +66,8 @@ describe("lib/eval/queries — assignPromptVariant", () => {
   it("assigns a variant and remains sticky for the same user", async () => {
     await seedInitialPrompts();
     const first = await assignPromptVariant(TEST_USER.id, "chatAgent");
-    expect(first.templateId).toBe("tmpl_chat_v1");
-    expect(first.variantId).toBe("var_chat_control");
+    expect(first.templateId).toBe("tmpl_chatAgent_v1");
+    expect(first.variantId).toBe("var_chatAgent_default");
     expect(first.content).toBeTruthy();
 
     const second = await assignPromptVariant(TEST_USER.id, "chatAgent");
@@ -84,8 +84,8 @@ describe("lib/eval/queries — recordEvalRun", () => {
       threadId,
       userId: TEST_USER.id,
       agent: "chatAgent",
-      templateId: "tmpl_chat_v1",
-      variantId: "var_chat_control",
+      templateId: "tmpl_chatAgent_v1",
+      variantId: "var_chatAgent_default",
       totalMs: 450,
       status: "success",
       inputTokens: 100,
@@ -112,8 +112,8 @@ describe("lib/eval/queries — submitFeedback", () => {
       threadId,
       userId: TEST_USER.id,
       agent: "chatAgent",
-      templateId: "tmpl_chat_v1",
-      variantId: "var_chat_control",
+      templateId: "tmpl_chatAgent_v1",
+      variantId: "var_chatAgent_default",
       totalMs: 300,
       status: "success",
     });
@@ -142,8 +142,8 @@ describe("lib/eval/queries — saveJudgment", () => {
       threadId,
       userId: TEST_USER.id,
       agent: "chatAgent",
-      templateId: "tmpl_chat_v1",
-      variantId: "var_chat_control",
+      templateId: "tmpl_chatAgent_v1",
+      variantId: "var_chatAgent_default",
       totalMs: 300,
       status: "success",
     });
@@ -175,8 +175,8 @@ describe("lib/eval/queries — getRunsByAgentPage", () => {
         threadId,
         userId: TEST_USER.id,
         agent: "chatAgent",
-        templateId: "tmpl_chat_v1",
-        variantId: "var_chat_control",
+        templateId: "tmpl_chatAgent_v1",
+        variantId: "var_chatAgent_default",
         totalMs: 100 + i,
         status: "success",
       });
@@ -187,8 +187,8 @@ describe("lib/eval/queries — getRunsByAgentPage", () => {
       threadId,
       userId: TEST_USER.id,
       agent: "weatherAgent",
-      templateId: "tmpl_chat_v1",
-      variantId: "var_chat_control",
+      templateId: "tmpl_chatAgent_v1",
+      variantId: "var_chatAgent_default",
       totalMs: 50,
       status: "success",
     });
@@ -233,8 +233,8 @@ describe("lib/eval/queries — getRunsByAgentPage", () => {
         threadId,
         userId: TEST_USER.id,
         agent: "chatAgent",
-        templateId: "tmpl_chat_v1",
-        variantId: "var_chat_control",
+        templateId: "tmpl_chatAgent_v1",
+        variantId: "var_chatAgent_default",
         totalMs: 100,
         status: "success",
       });
@@ -261,8 +261,8 @@ describe("lib/eval/queries — getRunsByAgentPage", () => {
         threadId,
         userId: TEST_USER.id,
         agent: "chatAgent",
-        templateId: "tmpl_chat_v1",
-        variantId: "var_chat_control",
+        templateId: "tmpl_chatAgent_v1",
+        variantId: "var_chatAgent_default",
         totalMs: 100,
         status: "success",
       });

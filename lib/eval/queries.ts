@@ -80,45 +80,47 @@ export async function seedInitialPrompts(): Promise<void> {
   for (const [agentName, promptContent] of Object.entries(ALL_AGENT_PROMPTS)) {
     const groupName = GRAPH_MAPPING[agentName] ?? "agent";
 
-    const existing = await db
-      .select()
-      .from(promptTemplate)
-      .where(eq(promptTemplate.agent, agentName))
-      .limit(1);
-
-    if (existing.length === 0) {
-      const tmplId = `tmpl_${agentName}_v1`;
-      const varId = `var_${agentName}_default`;
-      await db.insert(promptTemplate).values({
+    // ponytail: every concurrent write here uses onConflictDoNothing so
+    // multiple vitest workers (and any other racer — the seeder is
+    // also called from /api/eval/prompts POST) can collide without
+    // surfacing a duplicate-key error. The previous check-then-insert
+    // pattern lost both writers' race in CI and left prompt_template
+    // half-seeded, which then FK-violated eval_run inserts downstream.
+    const tmplId = `tmpl_${agentName}_v1`;
+    const varId = `var_${agentName}_default`;
+    await db
+      .insert(promptTemplate)
+      .values({
         id: tmplId,
         group: groupName,
         agent: agentName,
         content: promptContent,
         notes: `Initial system prompt v1 for ${agentName}`,
         userId: null,
-      });
-      await db.insert(promptVariant).values({
+      })
+      .onConflictDoNothing();
+    await db
+      .insert(promptVariant)
+      .values({
         id: varId,
         templateId: tmplId,
         label: "default",
         trafficWeight: 100,
         enabled: true,
-      });
-    } else {
-      // Ensure existing records get updated with graph group name
-      await db
-        .update(promptTemplate)
-        .set({ group: groupName })
-        .where(eq(promptTemplate.agent, agentName));
+      })
+      .onConflictDoNothing();
 
-      // Update existing control label to default
-      await db
-        .update(promptVariant)
-        .set({ label: "default" })
-        .where(
-          and(eq(promptVariant.templateId, existing[0].id), eq(promptVariant.label, "control")),
-        );
-    }
+    // Ensure the seeded row stays in sync with the canonical graph
+    // group name + variant label across deploys. UPDATEs are idempotent
+    // so they don't need conflict guards.
+    await db
+      .update(promptTemplate)
+      .set({ group: groupName })
+      .where(eq(promptTemplate.agent, agentName));
+    await db
+      .update(promptVariant)
+      .set({ label: "default" })
+      .where(and(eq(promptVariant.templateId, tmplId), eq(promptVariant.label, "control")));
 
     // Seed the generic fallback rubric so "Run AI Judge" without a
     // per-agent rubric resolves to a real DB row instead of an in-memory
