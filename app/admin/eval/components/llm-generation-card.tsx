@@ -104,8 +104,8 @@ export function LLMGenerationCard({
               )}
             </div>
           ) : (
-            <div className="text-xs text-muted-foreground italic flex items-center gap-1.5">
-              <Sparkles className="size-3.5 text-muted-foreground/60" />
+            <div className="text-xs text-amber-600 dark:text-amber-500 italic flex items-center gap-1.5">
+              <Sparkles className="size-3.5 text-amber-500" />
               <span>Not evaluated by AI Judge yet</span>
             </div>
           )}

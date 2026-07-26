@@ -159,9 +159,12 @@ async function recordEvalRunNode(
   const targetAgent = state.targetAgent ?? "chatAgent";
   const totalMs = state.totalMs ?? 0;
 
-  // ponytail: benchmark thread is hidden (kind=eval) — never
-  // surfaces in the chat sidebar. Cleanup node deletes it after
-  // judge finishes so it doesn't pile up; cascade deletes its spans.
+  // ponytail: benchmark thread is hidden (kind=eval-benchmark) —
+  // never surfaces in the chat sidebar. The `eval-benchmark`
+  // discriminator (vs `eval-judge` for LLM-as-Judge scoring) lets
+  // Online Executions surface real judge work while still hiding
+  // synthetic benchmarks. Cleanup node deletes it after judge
+  // finishes so it doesn't pile up; cascade deletes its spans.
   const benchmarkThreadId = randomUUID();
   const parentMessageId = `bm-${generateId()}`;
   await db
@@ -170,7 +173,7 @@ async function recordEvalRunNode(
       id: benchmarkThreadId,
       userId,
       title: "Benchmark Run",
-      kind: "eval",
+      kind: "eval-benchmark",
     })
     .onConflictDoNothing();
 

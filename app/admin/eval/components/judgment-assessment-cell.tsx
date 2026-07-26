@@ -51,7 +51,8 @@ export function JudgmentAssessmentCell({
 }: JudgmentAssessmentCellProps) {
   if (!judgment) {
     return (
-      <span className="text-muted-foreground/60 italic text-[11px]">
+      <span className="text-amber-600 dark:text-amber-500 italic text-[11px] flex items-center gap-1">
+        <Sparkles className="size-3 text-amber-500 shrink-0" />
         Not evaluated by AI Judge yet
       </span>
     );

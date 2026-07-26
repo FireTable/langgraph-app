@@ -40,7 +40,7 @@ export const POST = withAuth(async (req, { user }) => {
 
     await db
       .insert(threads)
-      .values({ id: judgeThreadId, userId: user.id, title: "AI Judge Run", kind: "eval" })
+      .values({ id: judgeThreadId, userId: user.id, title: "AI Judge Run", kind: "eval-judge" })
       .onConflictDoNothing();
 
     try {

@@ -20,9 +20,17 @@ export const threads = pgTable(
       .default("regular"),
     // ponytail: source discriminator. `chat` = user-visible conversation
     // (sidebar shows these). `kb` = standalone kbAgent ingestion run from
-    // /settings/knowledge-base. `eval` = benchmark / LLM-as-a-Judge evaluation run.
+    // /settings/knowledge-base. `eval-judge` = LLM-as-a-Judge scoring run
+    // (triggered from /admin/eval "Run Judge" / "Re-evaluate" buttons).
+    // `eval-benchmark` = benchmark evaluation run (the Benchmark Datasets
+    // surface, triggered from "Run Evaluate"). The two `eval*` kinds are
+    // split so Online Executions can surface real judge work
+    // (`eval-judge`) while still hiding synthetic benchmarks
+    // (`eval-benchmark`) — they share the same eval-agent graph but
+    // the run is fundamentally different (judge scores an existing
+    // production run, benchmark generates one from a prompt).
     // Set at creation; never changes for a given row.
-    kind: text("kind", { enum: ["chat", "kb", "eval"] })
+    kind: text("kind", { enum: ["chat", "kb", "eval-judge", "eval-benchmark"] })
       .notNull()
       .default("chat"),
     userId: text("user_id")

@@ -10,15 +10,15 @@ export const runtime = "nodejs";
 
 const PAGE_SIZE = 5;
 
-// ponytail: Online Executions means "real production traffic" — both
-// chat-originated threads (kind='chat') and standalone kbAgent
-// ingestion threads (kind='kb'). Benchmark runs write
-// threads.kind='eval' — they belong on the Benchmark Datasets surface,
-// never here. We exclude only 'eval' so KB sub-agents (OCR Digitizer /
-// GraphRAG Extract / GraphRAG Align) surface their ingest runs too.
-// Same guard is applied at the paginated query layer in
-// lib/eval/queries.ts so the frontend never has to second-guess.
-const chatRunWhere = and(ne(threadTable.kind, "eval"))!;
+// ponytail: Online Executions means "real production traffic" — chat
+// threads (kind='chat'), standalone kbAgent ingestion (kind='kb'), and
+// LLM-as-Judge scoring runs (kind='eval-judge'). Benchmark runs write
+// threads.kind='eval-benchmark' — they belong on the Benchmark Datasets
+// surface, never here. The two eval kinds are split specifically so
+// judge work surfaces here while synthetic benchmarks stay hidden. Same
+// guard is applied at the paginated query layer in lib/eval/queries.ts
+// so the frontend never has to second-guess.
+const chatRunWhere = and(ne(threadTable.kind, "eval-benchmark"));
 
 export const GET = withAuth(async () => {
   try {

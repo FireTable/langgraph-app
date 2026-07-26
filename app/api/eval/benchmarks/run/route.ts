@@ -52,7 +52,7 @@ export const POST = withAuth(async (req, { user }) => {
         id: judgeThreadId,
         userId: user.id,
         title: "AI Judge Run",
-        kind: "eval",
+        kind: "eval-benchmark",
       })
       .onConflictDoNothing();
     try {

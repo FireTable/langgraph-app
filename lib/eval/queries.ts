@@ -759,18 +759,20 @@ export async function getRunsByAgentPage(args: {
     cursorCreatedAtRaw = rows[0]?.createdAt ?? null;
   }
 
-  // ponytail: only NON-benchmark runs surface in Online Executions;
-  // benchmark runs are filtered out via the threads.kind='eval' guard.
-  // We deliberately include both 'chat' (user chat flow) and 'kb'
-  // (standalone kbAgent ingestion — uploads + reprocess) so the per-
-  // agent Online Executions card reflects everything that actually
-  // ran in production. `kind='chat'` here was over-restrictive and
-  // left KB OCR Digitizer / GraphRAG Extract / GraphRAG Align cards
-  // permanently empty. The cursor lookup below uses the same guard.
-  // The cursor itself uses PG row-value comparison on (created_at, id)
-  // so the microsecond precision from the raw string above is
-  // preserved end to end — no JS Date round-trip.
-  const notEvalKind = ne(threadTable.kind, "eval");
+  // ponytail: only NON-benchmark runs surface in Online Executions.
+  // Benchmark runs write threads.kind='eval-benchmark'; judge scoring
+  // runs write kind='eval-judge' — those surface here so the Judge
+  // Eval Graph card has real data. Chat + KB ingest threads are also
+  // included (`chat` = user chat flow, `kb` = standalone kbAgent
+  // ingestion) so the per-agent Online Executions card reflects
+  // everything that actually ran in production. Earlier `kind='chat'`
+  // and `kind!='eval'` filters were both too coarse — chat-only hid
+  // every KB ingest run; `!='eval'` accidentally hid judge scoring
+  // too. The cursor lookup below uses the same guard. The cursor
+  // itself uses PG row-value comparison on (created_at, id) so the
+  // microsecond precision from the raw string above is preserved end
+  // to end — no JS Date round-trip.
+  const notEvalKind = ne(threadTable.kind, "eval-benchmark");
   const whereClause =
     cursorCreatedAtRaw && cursorId
       ? and(
