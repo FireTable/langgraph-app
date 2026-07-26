@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { AgentGroupCard } from "../components/agent-group-card";
 import { LLMGenerationCard } from "../components/llm-generation-card";
@@ -34,6 +35,28 @@ export type BenchmarkItem = {
   expectedOutput?: string | null;
   createdAt: string;
 };
+
+// ponytail: weighted score = Σ(score × weight) / Σ(weight). Returns null
+// when the rubric lacks positive weights or no scored criterion matches
+// a rubric key — the renderer falls back to the per-criterion badges.
+function computeWeightedScore(
+  scores: Record<string, number>,
+  criteria: Array<{ key?: string; name?: string; weight?: number }>,
+): number | null {
+  let weightedSum = 0;
+  let totalWeight = 0;
+  for (const c of criteria) {
+    const key = c.key || c.name;
+    if (!key) continue;
+    const weight = c.weight ?? 0;
+    if (weight <= 0) continue;
+    const score = scores[key];
+    if (typeof score !== "number") continue;
+    weightedSum += score * weight;
+    totalWeight += weight;
+  }
+  return totalWeight > 0 ? weightedSum / totalWeight : null;
+}
 
 interface AgentBenchmarkTabProps {
   recentRuns: RecentRun[];
@@ -216,6 +239,16 @@ export function AgentBenchmarkTab({
     ...r,
     judgment: r.judgment || judgmentsByRunId.get(r.id),
   }));
+
+  // ponytail: pre-index rubrics by agent so the row renderer can O(1)
+  // look up weights for the weighted-score computation. Without this the
+  // existing render path was already paying O(rubrics) per row, which
+  // gets noticeable once the platform logs hundreds of runs.
+  const rubricByAgent = new Map<string, Rubric>();
+  for (const r of rubrics) {
+    const agentKey = (r as { agent?: string }).agent ?? r.id.replace(/^rubric_/, "");
+    rubricByAgent.set(agentKey, r);
+  }
 
   const defaultRubric = rubrics.find((r) => r.id === "rubric_default") || {
     id: "rubric_default",
@@ -557,7 +590,7 @@ export function AgentBenchmarkTab({
                                     <colgroup>
                                       <col className="w-[100px]" />
                                       <col />
-                                      <col className="w-[180px]" />
+                                      <col className="w-[140px]" />
                                     </colgroup>
                                     <thead>
                                       <tr className="border-b border-border/40 bg-muted/20 text-muted-foreground font-mono text-[11px]">
@@ -608,6 +641,84 @@ export function AgentBenchmarkTab({
                                                     <span className="font-semibold text-[11px]">
                                                       AI Assessment:
                                                     </span>
+                                                    {(() => {
+                                                      const rubric = rubricByAgent.get(run.agent);
+                                                      if (!rubric) return null;
+                                                      const weighted = computeWeightedScore(
+                                                        judgment.scores || {},
+                                                        rubric.criteria,
+                                                      );
+                                                      if (weighted === null) return null;
+                                                      return (
+                                                        <TooltipProvider>
+                                                          <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                              <Badge
+                                                                variant="default"
+                                                                className="font-mono text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40 cursor-help"
+                                                              >
+                                                                Score:{" "}
+                                                                {parseFloat(weighted.toFixed(2))}/5
+                                                              </Badge>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent
+                                                              showArrow={false}
+                                                              className="font-mono text-[11px] bg-popover text-popover-foreground border border-border shadow-md"
+                                                            >
+                                                              <div className="flex flex-col gap-1">
+                                                                <div className="text-amber-600 dark:text-amber-400 font-semibold whitespace-nowrap">
+                                                                  Score = Σ(score × weight) /
+                                                                  Σ(weight)
+                                                                </div>
+                                                                {rubric.criteria
+                                                                  .filter(
+                                                                    (c) =>
+                                                                      (c.weight ?? 0) > 0 &&
+                                                                      typeof (judgment.scores ||
+                                                                        {})[
+                                                                        c.key || c.name || ""
+                                                                      ] === "number",
+                                                                  )
+                                                                  .map((c) => {
+                                                                    const key =
+                                                                      c.key || c.name || "";
+                                                                    const score =
+                                                                      (judgment.scores || {})[
+                                                                        key
+                                                                      ] as number;
+                                                                    const weightPct = Math.round(
+                                                                      (c.weight ?? 0) * 100,
+                                                                    );
+                                                                    return (
+                                                                      <div
+                                                                        key={key}
+                                                                        className="flex justify-between gap-3 text-foreground/80"
+                                                                      >
+                                                                        <span>{key}</span>
+                                                                        <span>
+                                                                          {score} × {weightPct}% ={" "}
+                                                                          {(
+                                                                            score * (c.weight ?? 0)
+                                                                          ).toFixed(2)}
+                                                                        </span>
+                                                                      </div>
+                                                                    );
+                                                                  })}
+                                                                <div className="border-t border-border pt-1 mt-1 flex justify-between font-semibold">
+                                                                  <span>Total</span>
+                                                                  <span>
+                                                                    {parseFloat(
+                                                                      weighted.toFixed(2),
+                                                                    )}{" "}
+                                                                    / 5
+                                                                  </span>
+                                                                </div>
+                                                              </div>
+                                                            </TooltipContent>
+                                                          </Tooltip>
+                                                        </TooltipProvider>
+                                                      );
+                                                    })()}
                                                     {Object.entries(judgment.scores || {}).map(
                                                       ([k, v]) => (
                                                         <Badge
@@ -615,7 +726,7 @@ export function AgentBenchmarkTab({
                                                           variant="secondary"
                                                           className="font-mono text-[10px]"
                                                         >
-                                                          {k}: {v}/5★
+                                                          {k}: {v}/5
                                                         </Badge>
                                                       ),
                                                     )}
@@ -669,8 +780,8 @@ export function AgentBenchmarkTab({
                                                     {isEvaluating
                                                       ? "Evaluating..."
                                                       : judgment
-                                                        ? "Re-eval"
-                                                        : "Run Judge"}
+                                                        ? "Re-evaluate"
+                                                        : "Evaluate"}
                                                   </span>
                                                 </Button>
                                               </div>

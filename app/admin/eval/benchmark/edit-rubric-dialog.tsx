@@ -81,7 +81,7 @@ export function EditRubricDialog({
                 key={idx}
                 className="p-3 border border-border/60 rounded-lg flex flex-col gap-2 bg-muted/20"
               >
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
                   <Input
                     placeholder="Criterion Key (e.g. accuracy)"
                     value={c.key}
@@ -89,6 +89,22 @@ export function EditRubricDialog({
                     className="font-mono text-xs h-8"
                     required
                   />
+                  <div className="relative shrink-0">
+                    <Input
+                      type="number"
+                      step="5"
+                      min="0"
+                      max="100"
+                      value={Math.round((c.weight ?? 0) * 100)}
+                      onChange={(e) =>
+                        handleChangeCriterion(idx, "weight", Number(e.target.value) / 100)
+                      }
+                      className="font-mono text-xs h-8 w-20 pr-6"
+                    />
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground font-mono pointer-events-none">
+                      %
+                    </span>
+                  </div>
                   <Button
                     type="button"
                     variant="ghost"
