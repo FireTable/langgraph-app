@@ -1,4 +1,4 @@
-import { and, eq, lt, or, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   promptTemplate,
@@ -738,30 +738,42 @@ export async function getRunsByAgentPage(args: {
   const { agent, cursorId, limit } = args;
   const safeLimit = Math.max(1, Math.min(50, Math.floor(limit) || 5));
 
-  let cursorCreatedAt: Date | null = null;
+  // ponytail: read the cursor row's `created_at` as a PG-rendered
+  // string (microsecond-precise) instead of a JS Date (truncated to
+  // millisecond). PG's `timestamptz` is microsecond-precise on disk,
+  // but Drizzle hydrates it to `Date` which only carries milliseconds
+  // — when that truncated value is fed back into the next query's
+  // `lt(createdAt, ?)`, sibling rows whose PG `created_at` differs
+  // from the cursor by sub-millisecond get re-classified to the
+  // wrong side of the cursor and the page silently drops rows. The
+  // test that caught this (`paginates newest-first per agent with
+  // stable hasMore + cursor`) inserts 7 rows in tight succession
+  // and depends on the cursor rounding down to the exact PG value.
+  let cursorCreatedAtRaw: string | null = null;
   if (cursorId) {
     const rows = await db
-      .select({ createdAt: evalRun.createdAt })
+      .select({ createdAt: sql<string>`${evalRun.createdAt}::text` })
       .from(evalRun)
       .where(eq(evalRun.id, cursorId))
       .limit(1);
-    cursorCreatedAt = rows[0]?.createdAt ?? null;
+    cursorCreatedAtRaw = rows[0]?.createdAt ?? null;
   }
 
   // ponytail: only chat-originated runs surface in Online Executions;
   // benchmark runs are filtered out via the threads.kind='chat' guard.
-  // The same join is applied at the cursor lookup below.
+  // The same join is applied at the cursor lookup below. The cursor
+  // itself uses PG row-value comparison on (created_at, id) so the
+  // microsecond precision from the raw string above is preserved end
+  // to end — no JS Date round-trip.
   const chatKind = eq(threadTable.kind, "chat");
-  const whereClause = cursorCreatedAt
-    ? and(
-        eq(evalRun.agent, agent),
-        chatKind,
-        or(
-          lt(evalRun.createdAt, cursorCreatedAt),
-          and(eq(evalRun.createdAt, cursorCreatedAt), lt(evalRun.id, cursorId!)),
-        ),
-      )
-    : and(eq(evalRun.agent, agent), chatKind);
+  const whereClause =
+    cursorCreatedAtRaw && cursorId
+      ? and(
+          eq(evalRun.agent, agent),
+          chatKind,
+          sql`(${evalRun.createdAt}, ${evalRun.id}) < (${cursorCreatedAtRaw}::timestamptz, ${cursorId})`,
+        )
+      : and(eq(evalRun.agent, agent), chatKind);
 
   const rows = await db
     .select({
