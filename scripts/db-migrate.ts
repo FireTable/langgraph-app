@@ -225,6 +225,8 @@ async function main() {
   }
 
   console.log("\nAll migrations applied.");
+
+  process.exit(0);
 }
 
 main().catch((err) => {
