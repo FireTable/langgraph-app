@@ -283,7 +283,7 @@ Triggers an `evalAgent` LLM-as-a-Judge run against a specific `eval_run` executi
 
 Manages per-agent Benchmark Test Datasets and Agent Rubric Criteria updates.
 
-- **`GET /api/eval/benchmarks?agent=<agentId>`**: Returns benchmark test cases and Rubric Criteria for an agent.
+- **`GET /api/eval/benchmarks?agent=<agentId>`**: Returns benchmark test cases (one row per `eval_benchmark`) with `LEFT JOIN eval_judgment ON latest_judgment_id`. Each row carries an inline `judgment` (the most-recent AI Judge assessment — `id`, `scores`, `reasoning`, `judgeThreadId`, `judgeParentMessageId`) so the Benchmark Datasets table can render "Last AI Judge Assessment" without per-render joins. Rows without a judgment yet have `judgment: null`.
 - **`POST /api/eval/benchmarks`**:
   - `action: "create"`: Adds a new Benchmark Test Case (`{ action: "create", agent, title, inputPrompt, expectedOutput }`).
   - `action: "update_rubric"`: Updates an Agent's Rubric Criteria (`{ action: "update_rubric", rubricId, name, criteria }`).
@@ -292,20 +292,21 @@ Manages per-agent Benchmark Test Datasets and Agent Rubric Criteria updates.
 
 ### `POST /api/eval/benchmarks/run`
 
-Triggers a stored Benchmark Test Case end-to-end. Resolves the benchmark row server-side (resolving `targetAgent` / `inputPrompt` / `expectedOutput`), then dispatches `evalAgent` in `mode="benchmark"` which owns the full pipeline (target-agent invocation → record `eval_run` + paired observability span → LLM-judge → cleanup). The benchmark thread itself is hidden; the judge thread is registered so the AI Judge trace stays linked from Online Executions.
+Triggers a stored Benchmark Test Case end-to-end. Resolves the benchmark row server-side (resolving `targetAgent` / `inputPrompt` / `expectedOutput`), then dispatches `evalAgent` in `mode="benchmark"` which owns the full pipeline (target-agent invocation → record `eval_run` + paired observability span → LLM-judge → cleanup → denormalize latest\_\* onto `eval_benchmark`). The benchmark thread itself is hidden; the judge thread is registered so the AI Judge trace stays linked from Online Executions.
 
 - **Body**: `{ benchmarkId: string }`
 - **Output**: `{ runId, judgeThreadId, result: { status, errorMessage } }`
 - **Status Codes**: 200 / 400 / 401 / 404 (unknown benchmark) / 500 (judge run returned no result)
+- **Side effects**: `eval_benchmark.latest_judgment_id` / `latest_run_at` / `latest_run_status` / `latest_score` updated to point at the new judgment so the next `GET /api/eval/benchmarks` returns the fresh assessment inline.
 
 ### `evalAgent` mode discriminator
 
 `evalAgent` accepts a `mode` field in its input, dispatching via conditional edges inside the graph:
 
-| mode                | flow                                                                                                                                                                                               |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `"judge"` (default) | judge an existing `eval_run` (id `runId`) against its rubric; writes `eval_judgment`                                                                                                               |
-| `"benchmark"`       | run the resolved target agent (`targetAgent`) on `inputPrompt`, write `eval_run` + paired span, judge against `rubric_<targetAgent>` (or `rubricId` override), cleanup the hidden benchmark thread |
+| mode                | flow                                                                                                                                                                                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"judge"` (default) | judge an existing `eval_run` (id `runId`) against its rubric; writes `eval_judgment`                                                                                                                                                                          |
+| `"benchmark"`       | run the resolved target agent (`targetAgent`) on `inputPrompt`, write `eval_run` + paired span, judge against `rubric_<targetAgent>` (or `rubricId` override), cleanup the hidden benchmark thread, denormalize latest judgment + score onto `eval_benchmark` |
 
 Adding a new target agent requires registering an `invoke<Name>Agent` node and a dispatch entry in `routeByTargetAgent` — same diff, no separate mapping table.
 

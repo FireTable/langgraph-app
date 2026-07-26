@@ -3,7 +3,7 @@ import { withAuth } from "@/lib/auth/with-auth";
 import {
   createBenchmark,
   deleteBenchmark,
-  getAllBenchmarks,
+  getAllBenchmarksWithLatestJudgment,
   updateRubricCriteria,
 } from "@/lib/eval/queries";
 
@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 
 export const GET = withAuth(async () => {
   try {
-    const benchmarks = await getAllBenchmarks();
+    const benchmarks = await getAllBenchmarksWithLatestJudgment();
     return NextResponse.json({ benchmarks });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal error";

@@ -23,6 +23,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { toast } from "sonner";
 import { AgentGroupCard } from "../components/agent-group-card";
 import { LLMGenerationCard } from "../components/llm-generation-card";
+import { JudgmentAssessmentCell } from "../components/judgment-assessment-cell";
 import { Judgment, LANGGRAPH_GROUPS, RecentRun, Rubric, Variant } from "../types";
 import { AddBenchmarkDialog } from "./add-benchmark-dialog";
 import { EditRubricDialog } from "./edit-rubric-dialog";
@@ -34,29 +35,23 @@ export type BenchmarkItem = {
   inputPrompt: string;
   expectedOutput?: string | null;
   createdAt: string;
+  latestJudgmentId?: string | null;
+  latestRunAt?: string | Date | null;
+  latestRunStatus?: string | null;
+  latestScore?: number | null;
+  judgment?: {
+    id: string;
+    scores: Record<string, number>;
+    reasoning: string;
+    judgeThreadId?: string | null;
+    judgeParentMessageId?: string | null;
+  } | null;
 };
 
-// ponytail: weighted score = Σ(score × weight) / Σ(weight). Returns null
-// when the rubric lacks positive weights or no scored criterion matches
-// a rubric key — the renderer falls back to the per-criterion badges.
-function computeWeightedScore(
-  scores: Record<string, number>,
-  criteria: Array<{ key?: string; name?: string; weight?: number }>,
-): number | null {
-  let weightedSum = 0;
-  let totalWeight = 0;
-  for (const c of criteria) {
-    const key = c.key || c.name;
-    if (!key) continue;
-    const weight = c.weight ?? 0;
-    if (weight <= 0) continue;
-    const score = scores[key];
-    if (typeof score !== "number") continue;
-    weightedSum += score * weight;
-    totalWeight += weight;
-  }
-  return totalWeight > 0 ? weightedSum / totalWeight : null;
-}
+// ponytail: weighted score logic + AI Assessment rendering live in
+// JudgmentAssessmentCell (../components/judgment-assessment-cell.tsx);
+// the same component renders Online Executions rows AND Benchmark
+// Datasets "Last Result" so the two surfaces show identical scoring.
 
 interface AgentBenchmarkTabProps {
   runsByAgent: Record<string, RecentRun[]>;
@@ -499,15 +494,19 @@ export function AgentBenchmarkTab({
                                 <div className="border border-border/60 rounded-lg overflow-hidden bg-card">
                                   <table className="w-full text-left text-xs border-collapse table-fixed">
                                     <colgroup>
-                                      <col className="w-[220px]" />
+                                      <col className="w-[200px]" />
                                       <col />
-                                      <col className="w-[180px]" />
+                                      <col className="w-[260px]" />
+                                      <col className="w-[160px]" />
                                     </colgroup>
                                     <thead>
                                       <tr className="border-b border-border/40 bg-muted/20 text-muted-foreground font-mono text-[11px]">
-                                        <th className="py-2.5 px-3 font-medium">TEST CASE & ID</th>
+                                        <th className="py-2.5 px-3 font-medium">TEST CASE</th>
                                         <th className="py-2.5 px-3 font-medium">
-                                          INPUT PROMPT & EXPECTED GROUND TRUTH
+                                          INPUT PROMPT & Expected Ground Truth
+                                        </th>
+                                        <th className="py-2.5 px-3 font-medium">
+                                          Last AI Judge Assessment
                                         </th>
                                         <th className="py-2.5 px-3 font-medium text-right">
                                           ACTIONS
@@ -525,9 +524,6 @@ export function AgentBenchmarkTab({
                                               <span className="font-semibold text-foreground">
                                                 {bm.title}
                                               </span>
-                                              <span className="font-mono text-[10px] text-muted-foreground">
-                                                {bm.id}
-                                              </span>
                                             </div>
                                           </td>
                                           <td className="py-3 px-3 align-middle">
@@ -541,6 +537,25 @@ export function AgentBenchmarkTab({
                                                 </div>
                                               )}
                                             </div>
+                                          </td>
+                                          <td className="py-3 px-3 align-middle">
+                                            <JudgmentAssessmentCell
+                                              judgment={bm.judgment ?? null}
+                                              rubric={rubricByAgent.get(bm.agent)}
+                                              onOpenJudgeTrace={
+                                                bm.judgment?.judgeThreadId &&
+                                                bm.judgment?.judgeParentMessageId
+                                                  ? () =>
+                                                      onOpenTrace({
+                                                        id: bm.id,
+                                                        agent: bm.agent,
+                                                        threadId: bm.judgment!.judgeThreadId!,
+                                                        parentMessageId:
+                                                          bm.judgment!.judgeParentMessageId!,
+                                                      } as RecentRun)
+                                                  : undefined
+                                              }
+                                            />
                                           </td>
                                           <td className="py-3 px-3 align-middle text-right">
                                             <div className="flex items-center justify-end gap-1.5">
@@ -639,114 +654,22 @@ export function AgentBenchmarkTab({
                                             </td>
 
                                             <td className="py-3 px-3 align-middle">
-                                              {judgment ? (
-                                                <div className="flex flex-col gap-1 bg-amber-500/5 p-2 rounded border border-amber-500/20">
-                                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                                    <Sparkles className="size-3.5 text-amber-500 shrink-0" />
-                                                    <span className="font-semibold text-[11px]">
-                                                      AI Assessment:
-                                                    </span>
-                                                    {(() => {
-                                                      const rubric = rubricByAgent.get(run.agent);
-                                                      if (!rubric) return null;
-                                                      const weighted = computeWeightedScore(
-                                                        judgment.scores || {},
-                                                        rubric.criteria,
-                                                      );
-                                                      if (weighted === null) return null;
-                                                      return (
-                                                        <TooltipProvider>
-                                                          <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                              <Badge
-                                                                variant="default"
-                                                                className="font-mono text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40 cursor-help"
-                                                              >
-                                                                Score:{" "}
-                                                                {parseFloat(weighted.toFixed(2))}/5
-                                                              </Badge>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent
-                                                              showArrow={false}
-                                                              className="font-mono text-[11px] bg-popover text-popover-foreground border border-border shadow-md"
-                                                            >
-                                                              <div className="flex flex-col gap-1">
-                                                                <div className="text-amber-600 dark:text-amber-400 font-semibold whitespace-nowrap">
-                                                                  Score = Σ(score × weight) /
-                                                                  Σ(weight)
-                                                                </div>
-                                                                {rubric.criteria
-                                                                  .filter(
-                                                                    (c) =>
-                                                                      (c.weight ?? 0) > 0 &&
-                                                                      typeof (judgment.scores ||
-                                                                        {})[
-                                                                        c.key || c.name || ""
-                                                                      ] === "number",
-                                                                  )
-                                                                  .map((c) => {
-                                                                    const key =
-                                                                      c.key || c.name || "";
-                                                                    const score =
-                                                                      (judgment.scores || {})[
-                                                                        key
-                                                                      ] as number;
-                                                                    const weightPct = Math.round(
-                                                                      (c.weight ?? 0) * 100,
-                                                                    );
-                                                                    return (
-                                                                      <div
-                                                                        key={key}
-                                                                        className="flex justify-between gap-3 text-foreground/80"
-                                                                      >
-                                                                        <span>{key}</span>
-                                                                        <span>
-                                                                          {score} × {weightPct}% ={" "}
-                                                                          {(
-                                                                            score * (c.weight ?? 0)
-                                                                          ).toFixed(2)}
-                                                                        </span>
-                                                                      </div>
-                                                                    );
-                                                                  })}
-                                                                <div className="border-t border-border pt-1 mt-1 flex justify-between font-semibold">
-                                                                  <span>Total</span>
-                                                                  <span>
-                                                                    {parseFloat(
-                                                                      weighted.toFixed(2),
-                                                                    )}{" "}
-                                                                    / 5
-                                                                  </span>
-                                                                </div>
-                                                              </div>
-                                                            </TooltipContent>
-                                                          </Tooltip>
-                                                        </TooltipProvider>
-                                                      );
-                                                    })()}
-                                                    {Object.entries(judgment.scores || {}).map(
-                                                      ([k, v]) => (
-                                                        <Badge
-                                                          key={k}
-                                                          variant="secondary"
-                                                          className="font-mono text-[10px]"
-                                                        >
-                                                          {k}: {v}/5
-                                                        </Badge>
-                                                      ),
-                                                    )}
-                                                  </div>
-                                                  {judgment.reasoning && (
-                                                    <p className="text-[11px] text-muted-foreground italic line-clamp-2">
-                                                      "{String(judgment.reasoning)}"
-                                                    </p>
-                                                  )}
-                                                </div>
-                                              ) : (
-                                                <span className="text-muted-foreground/60 italic text-[11px]">
-                                                  Not evaluated by AI Judge yet
-                                                </span>
-                                              )}
+                                              <JudgmentAssessmentCell
+                                                judgment={judgment ?? null}
+                                                rubric={rubricByAgent.get(run.agent)}
+                                                onOpenJudgeTrace={
+                                                  judgment?.judgeThreadId &&
+                                                  judgment?.judgeParentMessageId
+                                                    ? () =>
+                                                        onOpenTrace({
+                                                          ...run,
+                                                          threadId: judgment.judgeThreadId!,
+                                                          parentMessageId:
+                                                            judgment.judgeParentMessageId!,
+                                                        })
+                                                    : undefined
+                                                }
+                                              />
                                             </td>
 
                                             <td className="py-3 px-3 align-middle text-right">

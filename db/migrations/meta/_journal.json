@@ -148,6 +148,13 @@
       "when": 1785040151762,
       "tag": "0020_cooing_talkback",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785070142857,
+      "tag": "0021_medical_outlaw_kid",
+      "breakpoints": true
     }
   ]
 }

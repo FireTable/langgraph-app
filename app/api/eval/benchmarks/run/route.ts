@@ -34,6 +34,7 @@ export const POST = withAuth(async (req, { user }) => {
     // (`rubric_${targetAgent}`) by leaving it undefined.
     const input = {
       mode: "benchmark" as const,
+      benchmarkId: benchmark.id,
       targetAgent: benchmark.agent,
       inputPrompt: benchmark.inputPrompt,
       expectedOutput: benchmark.expectedOutput ?? undefined,

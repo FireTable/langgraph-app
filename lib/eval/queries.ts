@@ -12,6 +12,8 @@ import {
   type PromptTemplateRow,
   type PromptVariantRow,
   type EvalRunRow,
+  type EvalBenchmarkRow,
+  type EvalJudgmentRow,
 } from "@/lib/eval/schema";
 import { generateId } from "@/lib/ids/nanoid";
 import {
@@ -589,7 +591,7 @@ export async function saveJudgment(data: {
   totalCostTokens?: number | null;
   judgeThreadId?: string | null;
   judgeParentMessageId?: string | null;
-}): Promise<void> {
+}): Promise<string> {
   const id = generateId();
   await db.insert(evalJudgment).values({
     id,
@@ -601,6 +603,7 @@ export async function saveJudgment(data: {
     judgeThreadId: data.judgeThreadId ?? null,
     judgeParentMessageId: data.judgeParentMessageId ?? null,
   });
+  return id;
 }
 
 /**
@@ -655,6 +658,44 @@ export async function createBenchmark(data: {
 
 export async function getAllBenchmarks() {
   return await db.select().from(evalBenchmark).orderBy(evalBenchmark.createdAt);
+}
+
+// ponytail: each benchmark row is denormalized with the latest
+// eval_judgment fields so the Benchmark Datasets table can render
+// "Last Result" (AI Judge Assessment + Activity trace) without
+// per-render joins. Cursor is benchmark.latest_judgment_id; LEFT JOIN
+// keeps new cases without a judgment in the response with judgment=null.
+export type BenchmarkWithLatestJudgment = EvalBenchmarkRow & {
+  judgment: Pick<
+    EvalJudgmentRow,
+    "id" | "scores" | "reasoning" | "judgeThreadId" | "judgeParentMessageId" | "createdAt"
+  > | null;
+};
+
+export async function getAllBenchmarksWithLatestJudgment(): Promise<BenchmarkWithLatestJudgment[]> {
+  const rows = await db
+    .select({
+      bm: evalBenchmark,
+      j: {
+        id: evalJudgment.id,
+        scores: evalJudgment.scores,
+        reasoning: evalJudgment.reasoning,
+        judgeThreadId: evalJudgment.judgeThreadId,
+        judgeParentMessageId: evalJudgment.judgeParentMessageId,
+        createdAt: evalJudgment.createdAt,
+      },
+    })
+    .from(evalBenchmark)
+    .leftJoin(evalJudgment, eq(evalJudgment.id, evalBenchmark.latestJudgmentId))
+    .orderBy(evalBenchmark.createdAt);
+
+  return rows.map((r) => {
+    const j = r.j;
+    return {
+      ...r.bm,
+      judgment: j && j.id ? j : null,
+    };
+  });
 }
 
 export async function deleteBenchmark(id: string) {

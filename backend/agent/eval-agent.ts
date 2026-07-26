@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { evalRun, evalRubric } from "@/lib/eval/schema";
+import { evalRun, evalRubric, evalBenchmark } from "@/lib/eval/schema";
 import { observabilitySpans, type NewObservabilitySpanRow } from "@/lib/observability/schema";
 import { threads as threadTable } from "@/lib/threads/schema";
 import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
@@ -39,6 +39,7 @@ export const EvalAgentState = new StateSchema({
 
   // benchmark mode input (resolved server-side by Next.js from
   // benchmarkId; ad-hoc also accepted)
+  benchmarkId: z.string().optional(),
   targetAgent: z.string().optional(),
   inputPrompt: z.string().optional(),
   expectedOutput: z.string().optional(),
@@ -285,6 +286,7 @@ async function judgeNode(
   state: {
     runId?: string;
     rubricId?: string;
+    benchmarkId?: string;
   },
   config?: RunnableConfig,
 ) {
@@ -394,7 +396,7 @@ Score each criterion on a scale of 1 to 5, and provide your overall reasoning.`;
       if (typeof val === "number") scores[c.key] = val;
     }
 
-    await saveJudgment({
+    const judgmentId = await saveJudgment({
       runId: run.id,
       rubricId: rubric.id,
       scores,
@@ -402,6 +404,39 @@ Score each criterion on a scale of 1 to 5, and provide your overall reasoning.`;
       judgeThreadId,
       judgeParentMessageId,
     });
+
+    // ponytail: in benchmark mode, denormalize the latest result onto
+    // the benchmark row so the Benchmark Datasets surface can render
+    // "Last Result" without joining eval_run + eval_judgment per render.
+    // Weighted score uses the same formula as the frontend badge so the
+    // numbers match. eval_judgment still owns score history; this is
+    // just a snapshot of the most recent one. Concurrent Evaluate
+    // clicks: last writer wins, which is fine for this UX.
+    if (state.benchmarkId) {
+      let weighted: number | null = null;
+      let weightedSum = 0;
+      let totalWeight = 0;
+      for (const c of rubric.criteria) {
+        const key = "key" in c ? c.key : (c as { name?: string }).name;
+        const weight = c.weight ?? 0;
+        const score = key ? scores[key] : undefined;
+        if (!key || typeof score !== "number" || weight <= 0) continue;
+        weightedSum += score * weight;
+        totalWeight += weight;
+      }
+      if (totalWeight > 0) weighted = Math.round((weightedSum / totalWeight) * 100) / 100;
+
+      await db
+        .update(evalBenchmark)
+        .set({
+          latestJudgmentId: judgmentId,
+          latestRunAt: new Date(),
+          latestRunStatus: "completed",
+          ...(weighted !== null ? { latestScore: Math.round(weighted * 20) } : {}),
+        })
+        .where(eq(evalBenchmark.id, state.benchmarkId))
+        .catch(() => null);
+    }
 
     return { status: "completed", errorMessage: null };
   } catch (err: unknown) {

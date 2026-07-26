@@ -183,6 +183,15 @@ export const evalBenchmark = pgTable(
       kbDocumentIds?: string[];
       [key: string]: unknown;
     }>(),
+    // ponytail: denormalized pointer + scoring snapshot so Benchmark
+    // Datasets can render "Last Result" without joining eval_run /
+    // eval_judgment per-render. eval_judgment still owns the score
+    // history; this just points at the most recent one. last writer
+    // wins on concurrent Evaluate clicks.
+    latestJudgmentId: text("latest_judgment_id"),
+    latestRunAt: timestamp("latest_run_at", { withTimezone: true }),
+    latestRunStatus: text("latest_run_status"),
+    latestScore: integer("latest_score"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
