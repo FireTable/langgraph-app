@@ -1,7 +1,7 @@
 // ponytail: feature bento. Two grids stacked — top is the 4-card
 // bento (Streaming big, Memory tall, plus two single cells filling
 // the right column) and bottom is a 3-col row of equal-width cards
-// (Composable / Human in the loop / Self-host). Two grids feels
+// (Evaluation / Human in the loop / Self-host). Two grids feels
 // heavier than one but reads cleanly: the bento is the engine,
 // the row below are the operational guarantees.
 
@@ -11,9 +11,9 @@ import {
   BrainIcon,
   GitBranchIcon,
   MessagesSquareIcon,
+  ScaleIcon,
   ServerIcon,
   UserCheckIcon,
-  WrenchIcon,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -144,9 +144,10 @@ type RowCard = {
 
 const BOTTOM_ROW: RowCard[] = [
   {
-    title: "Composable tools",
-    description: "Web, code, NFT, prices, weather — lazy-registered so missing keys never 401.",
-    icon: <WrenchIcon className="size-4" />,
+    title: "Evaluation & A/B",
+    description:
+      "Per-agent rubrics, benchmark datasets, and an LLM-as-a-Judge that scores every run. Online executions surface judge work; benchmarks replay one prompt through any agent.",
+    icon: <ScaleIcon className="size-4" />,
     hue: "fuchsia",
   },
   {
