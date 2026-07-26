@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Activity, Clock, Layers, Scale, UserCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,6 +9,7 @@ import { useOpenObservabilitySheet } from "@/components/observability/sheet-cont
 import { UserAssignmentsTab } from "./assignments";
 import { AgentBenchmarkTab } from "./benchmark/agent-benchmark-tab";
 import { ExecutionLogsTab, TraceDetailDialog } from "./logs";
+import { SkeletonLoading } from "./components/skeleton-loading";
 import {
   AddCohortVariantDialog,
   DeletePromptDialog,
@@ -45,6 +46,13 @@ export function EvalDashboardClient() {
   const [rubrics, setRubrics] = useState<Rubric[]>([]);
   const [judgments, setJudgments] = useState<Judgment[]>([]);
   const [loading, setLoading] = useState(true);
+  // ponytail: first-load vs subsequent-load discriminator. The full
+  // SkeletonLoading only renders when no data has ever loaded yet.
+  // Once the dashboard has rendered once, subsequent refetches swap
+  // data in place and don't re-mount the layout tree — avoids
+  // resetting the active sub-tab, scroll position, or row-level
+  // selection state on every action.
+  const hasLoadedOnce = useRef(false);
 
   // Active Sub-Tab
   const [subTab, setSubTab] = useState("prompts");
@@ -397,6 +405,7 @@ export function EvalDashboardClient() {
       console.error("Failed to load eval dashboard data:", err);
       toast.error("Failed to fetch evaluation data");
     } finally {
+      hasLoadedOnce.current = true;
       setLoading(false);
     }
   };
@@ -523,13 +532,8 @@ export function EvalDashboardClient() {
     toast.success("Copied to clipboard");
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground">
-        <Activity className="size-6 animate-spin text-primary" />
-        <span className="text-sm font-medium">Loading Evaluation Platform...</span>
-      </div>
-    );
+  if (loading && !hasLoadedOnce.current) {
+    return <SkeletonLoading />;
   }
 
   return (
