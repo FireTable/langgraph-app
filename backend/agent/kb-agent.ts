@@ -1,6 +1,6 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { checkpointer, subgraphCheckpointerConfig } from "@/backend/checkpointer";
-import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
+import { capturingHandler, creditTrackingHandler, evalCallbackHandler } from "@/backend/callbacks";
 import { KbAgentState, type KbAgentStateShape } from "@/backend/state";
 import { store } from "@/backend/store";
 import {
@@ -100,5 +100,5 @@ const standaloneCompiled = builder.compile({
 
 type WithConfigPregel = (config: Record<string, unknown>) => typeof standaloneCompiled;
 export const graph = (standaloneCompiled.withConfig as unknown as WithConfigPregel)({
-  callbacks: [capturingHandler, creditTrackingHandler],
+  callbacks: [capturingHandler, creditTrackingHandler, evalCallbackHandler],
 });

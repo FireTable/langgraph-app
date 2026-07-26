@@ -143,3 +143,39 @@ export type KbAgentStateShape = {
   alignedEntities?: string[];
   entityEmbeddings?: string[];
 };
+
+// ---------------------------------------------------------------------------
+// evalAgent state — LLM-as-Judge grading.
+//
+// `mode` discriminates entry points:
+//   "judge"     — grade an existing eval_run (id field: runId).
+//   "benchmark" — execute the target agent on inputPrompt against the rubric
+//                 (works through eval_run / eval_judgment side-effects).
+// `runId` is the input for judge mode and the populated-id output for
+// benchmark mode. Other benchmark-only fields are populated by the route
+// before dispatch and consumed by the recordEvalRunNode → judgeByLLMNode chain.
+// ---------------------------------------------------------------------------
+export const EvalAgentState = new StateSchema({
+  mode: z.enum(["judge", "benchmark"]).default("judge"),
+
+  // judge mode input
+  runId: z.string().optional(),
+  rubricId: z.string().default("rubric_default"),
+
+  // benchmark mode input (resolved server-side by Next.js from
+  // benchmarkId; ad-hoc also accepted)
+  benchmarkId: z.string().optional(),
+  targetAgent: z.string().optional(),
+  inputPrompt: z.string().optional(),
+  expectedOutput: z.string().optional(),
+
+  // shared output fields
+  status: z.enum(["pending", "completed", "failed"]).default("pending"),
+  errorMessage: z.string().nullable().default(null),
+  lastMessage: z.unknown().optional(),
+  totalMs: z.number().optional(),
+
+  // benchmark-internal carrier fields
+  benchmarkThreadId: z.string().optional(),
+  parentMessageId: z.string().optional(),
+});

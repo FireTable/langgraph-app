@@ -1,5 +1,5 @@
-import { END, START, StateGraph, StateSchema } from "@langchain/langgraph";
-import { HumanMessage } from "@langchain/core/messages";
+import { END, START, StateGraph } from "@langchain/langgraph";
+import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
@@ -7,12 +7,14 @@ import { db } from "@/db/client";
 import { evalRun, evalRubric, evalBenchmark } from "@/lib/eval/schema";
 import { observabilitySpans, type NewObservabilitySpanRow } from "@/lib/observability/schema";
 import { threads as threadTable } from "@/lib/threads/schema";
-import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
+import { capturingHandler, creditTrackingHandler, evalCallbackHandler } from "@/backend/callbacks";
 import { recordEvalRun as recordEvalRunQuery, saveJudgment } from "@/lib/eval/queries";
 import { generateId } from "@/lib/ids/nanoid";
 import { getEvalModelFromDB } from "@/lib/provider/model-registry";
 import { store } from "@/backend/store";
 import { checkpointer } from "@/backend/checkpointer";
+import { EVAL_JUDGE_SYSTEM_PROMPT } from "@/backend/prompt/system";
+import { EvalAgentState } from "@/backend/state";
 
 import { chatAgent } from "@/backend/agent/chat-agent";
 import { weatherAgent } from "@/backend/agent/weather-agent";
@@ -23,37 +25,6 @@ import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
 import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
 
 import type { RunnableConfig } from "@langchain/core/runnables";
-
-export const EvalAgentState = new StateSchema({
-  // ponytail: mode is the entry discriminator — defaults to "judge" so
-  // existing callers (api/eval/judge, etc.) keep working without
-  // changing their input shape. Benchmark mode isolates the per-agent
-  // prompt run + judge into one LangGraph invocation; the route only
-  // has to resolve { targetAgent, inputPrompt, ... } server-side and
-  // hand off to the graph.
-  mode: z.enum(["judge", "benchmark"]).default("judge"),
-
-  // judge mode input
-  runId: z.string().optional(), // also populated by recordEvalRun in benchmark mode
-  rubricId: z.string().default("rubric_default"),
-
-  // benchmark mode input (resolved server-side by Next.js from
-  // benchmarkId; ad-hoc also accepted)
-  benchmarkId: z.string().optional(),
-  targetAgent: z.string().optional(),
-  inputPrompt: z.string().optional(),
-  expectedOutput: z.string().optional(),
-
-  // output fields shared by both modes
-  status: z.enum(["pending", "completed", "failed"]).default("pending"),
-  errorMessage: z.string().nullable().default(null),
-  lastMessage: z.unknown().optional(),
-  totalMs: z.number().optional(),
-
-  // benchmark-internal carrier fields
-  benchmarkThreadId: z.string().optional(),
-  parentMessageId: z.string().optional(),
-});
 
 // ─── No-op source nodes (only purpose: provide a target for
 // ─── `addConditionalEdges` so the graph can read state and dispatch).
@@ -345,9 +316,13 @@ async function judgeByLLMNode(
       )
       .join("\n");
 
-    const prompt = `You are an expert AI Evaluator. Evaluate the quality of the AI Assistant's response to the User.
-
-Evaluation Criteria (score each 1-5):
+    // ponytail: pair the persistent role/scale (EVAL_JUDGE_SYSTEM_PROMPT
+    // in backend/prompt/system.ts) with a per-run HumanMessage that
+    // carries the data — criteria list, run metadata, and the spans
+    // that document what the Assistant actually did. Keeps the system
+    // prompt stable across runs while the per-run payload stays
+    // free-form.
+    const humanContent = `Evaluation Criteria (score each 1-5):
 ${criteriaLines}
 
 Target Run ID: ${run.id}
@@ -358,7 +333,10 @@ ${spanContext}
 
 Score each criterion on a scale of 1 to 5, and provide your overall reasoning.`;
 
-    const result = await structuredModel.invoke(prompt);
+    const result = await structuredModel.invoke([
+      new SystemMessage(EVAL_JUDGE_SYSTEM_PROMPT),
+      new HumanMessage(humanContent),
+    ]);
 
     const scores: Record<string, number> = {};
     for (const c of rubric.criteria) {
@@ -513,5 +491,5 @@ const standaloneCompiled = builder.compile({
 });
 
 export const graph = standaloneCompiled.withConfig({
-  callbacks: [capturingHandler, creditTrackingHandler],
+  callbacks: [capturingHandler, creditTrackingHandler, evalCallbackHandler],
 });
