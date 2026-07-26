@@ -1,32 +1,42 @@
 import "@/tests/helpers/session";
 import { describe, expect, it } from "vitest";
-import { routeByMode, routeByTargetAgent } from "@/backend/agent/eval-agent";
+import { routeFromInput } from "@/backend/agent/eval-agent";
 
-describe("evalAgent — routeByMode", () => {
-  it("returns 'judge' when mode is undefined", () => {
-    expect(routeByMode({})).toBe("judge");
+describe("evalAgent — routeFromInput", () => {
+  it("returns 'judgeByLLM' when mode is undefined (legacy default)", () => {
+    expect(routeFromInput({})).toBe("judgeByLLM");
   });
 
-  it("returns 'judge' when mode is explicitly 'judge'", () => {
-    expect(routeByMode({ mode: "judge" })).toBe("judge");
+  it("returns 'judgeByLLM' when mode is explicitly 'judge'", () => {
+    expect(routeFromInput({ mode: "judge" })).toBe("judgeByLLM");
   });
 
-  it("returns 'benchmark' when mode is 'benchmark'", () => {
-    expect(routeByMode({ mode: "benchmark" })).toBe("benchmark");
+  it("falls back to invokeChatAgent for benchmark mode without a targetAgent (defensive)", () => {
+    expect(routeFromInput({ mode: "benchmark" })).toBe("invokeChatAgent");
   });
-});
 
-describe("evalAgent — routeByTargetAgent", () => {
-  it("returns the matching invocation node name", () => {
-    expect(routeByTargetAgent({ targetAgent: "chatAgent" })).toBe("invokeChatAgent");
-    expect(routeByTargetAgent({ targetAgent: "weatherAgent" })).toBe("invokeWeatherAgent");
-    expect(routeByTargetAgent({ targetAgent: "renameThreadAgent" })).toBe(
+  it("maps each benchmark targetAgent to its invoke<X>Agent node", () => {
+    expect(routeFromInput({ mode: "benchmark", targetAgent: "chatAgent" })).toBe("invokeChatAgent");
+    expect(routeFromInput({ mode: "benchmark", targetAgent: "weatherAgent" })).toBe(
+      "invokeWeatherAgent",
+    );
+    expect(routeFromInput({ mode: "benchmark", targetAgent: "cryptoAgent" })).toBe(
+      "invokeCryptoAgent",
+    );
+    expect(routeFromInput({ mode: "benchmark", targetAgent: "codeAgent" })).toBe("invokeCodeAgent");
+    expect(routeFromInput({ mode: "benchmark", targetAgent: "kbAgent" })).toBe("invokeKbAgent");
+    expect(routeFromInput({ mode: "benchmark", targetAgent: "renameThreadAgent" })).toBe(
       "invokeRenameThreadAgent",
+    );
+    expect(routeFromInput({ mode: "benchmark", targetAgent: "threadSummarizeAgent" })).toBe(
+      "invokeThreadSummarizeAgent",
     );
   });
 
-  it("falls back to invokeChatAgent for unknown / missing targetAgent", () => {
-    expect(routeByTargetAgent({})).toBe("invokeChatAgent");
-    expect(routeByTargetAgent({ targetAgent: "unknownAgent" })).toBe("invokeChatAgent");
+  it("falls back to invokeChatAgent for unknown targetAgent (defensive)", () => {
+    expect(routeFromInput({ mode: "benchmark", targetAgent: "nonsenseAgent" })).toBe(
+      "invokeChatAgent",
+    );
+    expect(routeFromInput({ mode: "benchmark", targetAgent: undefined })).toBe("invokeChatAgent");
   });
 });

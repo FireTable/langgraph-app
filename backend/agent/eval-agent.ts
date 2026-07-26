@@ -51,7 +51,6 @@ export const EvalAgentState = new StateSchema({
   totalMs: z.number().optional(),
 
   // benchmark-internal carrier fields
-  dispatchAt: z.number().optional(),
   benchmarkThreadId: z.string().optional(),
   parentMessageId: z.string().optional(),
 });
@@ -60,17 +59,6 @@ export const EvalAgentState = new StateSchema({
 // ─── `addConditionalEdges` so the graph can read state and dispatch).
 
 async function inputRouter() {
-  return {};
-}
-
-// Pre-dispatch: stamp dispatchAt so recordEvalRun can compute the
-// actual end-to-end delta from when the user submitted the benchmark
-// to when the agent finished.
-async function preDispatchNode() {
-  return { dispatchAt: Date.now() };
-}
-
-async function benchmarkDispatch() {
   return {};
 }
 
@@ -187,7 +175,6 @@ async function recordEvalRunNode(
     inputPrompt?: string;
     lastMessage?: unknown;
     totalMs?: number;
-    dispatchAt?: number;
   },
   config?: RunnableConfig,
 ) {
@@ -199,7 +186,7 @@ async function recordEvalRunNode(
   }
 
   const targetAgent = state.targetAgent ?? "chatAgent";
-  const totalMs = state.totalMs ?? (state.dispatchAt ? Date.now() - state.dispatchAt : 0);
+  const totalMs = state.totalMs ?? 0;
 
   // ponytail: benchmark thread is hidden (kind=eval) — never
   // surfaces in the chat sidebar. Cleanup node deletes it after
@@ -234,8 +221,8 @@ async function recordEvalRunNode(
       name: `benchmark:${targetAgent}`,
       kind: "chain",
       status: "completed",
-      startedAt: (state.dispatchAt ?? Date.now()) - totalMs,
-      endedAt: state.dispatchAt ?? Date.now(),
+      startedAt: Date.now() - totalMs,
+      endedAt: Date.now(),
       input: { messages: [{ role: "user", content: state.inputPrompt ?? "" }] },
       output: (state.lastMessage ?? null) as never,
       usage: null,
@@ -438,9 +425,12 @@ Score each criterion on a scale of 1 to 5, and provide your overall reasoning.`;
 // map keys aligned — eliminates "Branch condition returned unknown
 // or null destination" mismatches.
 
-export function routeByMode(state: { mode?: "judge" | "benchmark" }): "judge" | "benchmark" {
-  return state.mode === "benchmark" ? "benchmark" : "judge";
-}
+// ─── Single dispatch from inputRouter: collapses mode + target agent
+// ─── into one routing decision. Eliminates the two stale placeholder
+// ─── nodes (preDispatch + benchmarkDispatch) that used to be the
+// ─── attachment points for two separate conditional edges. The graph
+// ─── now goes directly from inputRouter to judgeByLLM (mode='judge')
+// ─── or one of the invoke<X>Agent nodes (mode='benchmark').
 
 type TargetNodeName =
   | "invokeChatAgent"
@@ -449,37 +439,40 @@ type TargetNodeName =
   | "invokeCodeAgent"
   | "invokeKbAgent"
   | "invokeRenameThreadAgent"
-  | "invokeThreadSummarizeAgent";
+  | "invokeThreadSummarizeAgent"
+  | "judgeByLLM";
 
-type TargetAgentId =
-  | "chatAgent"
-  | "weatherAgent"
-  | "cryptoAgent"
-  | "codeAgent"
-  | "kbAgent"
-  | "renameThreadAgent"
-  | "threadSummarizeAgent";
-
-const TARGET_NODES: Record<TargetAgentId, TargetNodeName> = {
-  chatAgent: "invokeChatAgent",
-  weatherAgent: "invokeWeatherAgent",
-  cryptoAgent: "invokeCryptoAgent",
-  codeAgent: "invokeCodeAgent",
-  kbAgent: "invokeKbAgent",
-  renameThreadAgent: "invokeRenameThreadAgent",
-  threadSummarizeAgent: "invokeThreadSummarizeAgent",
-};
-
-export function routeByTargetAgent(state: { targetAgent?: string }): TargetNodeName {
-  const t = state.targetAgent as TargetAgentId | undefined;
-  return t && t in TARGET_NODES ? TARGET_NODES[t] : "invokeChatAgent";
+export function routeFromInput(state: {
+  mode?: "judge" | "benchmark";
+  targetAgent?: string;
+}): TargetNodeName {
+  if (state.mode !== "benchmark") return "judgeByLLM";
+  switch (state.targetAgent) {
+    case "chatAgent":
+      return "invokeChatAgent";
+    case "weatherAgent":
+      return "invokeWeatherAgent";
+    case "cryptoAgent":
+      return "invokeCryptoAgent";
+    case "codeAgent":
+      return "invokeCodeAgent";
+    case "kbAgent":
+      return "invokeKbAgent";
+    case "renameThreadAgent":
+      return "invokeRenameThreadAgent";
+    case "threadSummarizeAgent":
+      return "invokeThreadSummarizeAgent";
+    default:
+      // ponytail: defensive fallback so a typo'd targetAgent keeps the
+      // graph runnable rather than crashing. Logs nothing — invalid
+      // targetAgents indicate upstream bugs, surface them elsewhere.
+      return "invokeChatAgent";
+  }
 }
 
 const builder = new StateGraph(EvalAgentState)
-  // source/router nodes
+  // source/router
   .addNode("inputRouter", inputRouter)
-  .addNode("preDispatch", preDispatchNode)
-  .addNode("benchmarkDispatch", benchmarkDispatch)
   // per-target invocation nodes
   .addNode("invokeChatAgent", invokeChatAgent)
   .addNode("invokeWeatherAgent", invokeWeatherAgent)
@@ -488,16 +481,12 @@ const builder = new StateGraph(EvalAgentState)
   .addNode("invokeKbAgent", invokeKbAgent)
   .addNode("invokeRenameThreadAgent", invokeRenameThreadAgent)
   .addNode("invokeThreadSummarizeAgent", invokeThreadSummarizeAgent)
-  // orchestration nodes
+  // orchestration
   .addNode("recordEvalRun", recordEvalRunNode)
   .addNode("judgeByLLM", judgeByLLMNode)
   .addEdge(START, "inputRouter")
-  .addConditionalEdges("inputRouter", routeByMode, {
-    judge: "judgeByLLM",
-    benchmark: "preDispatch",
-  })
-  .addEdge("preDispatch", "benchmarkDispatch")
-  .addConditionalEdges("benchmarkDispatch", routeByTargetAgent, {
+  .addConditionalEdges("inputRouter", routeFromInput, {
+    judgeByLLM: "judgeByLLM",
     invokeChatAgent: "invokeChatAgent",
     invokeWeatherAgent: "invokeWeatherAgent",
     invokeCryptoAgent: "invokeCryptoAgent",
@@ -506,7 +495,7 @@ const builder = new StateGraph(EvalAgentState)
     invokeRenameThreadAgent: "invokeRenameThreadAgent",
     invokeThreadSummarizeAgent: "invokeThreadSummarizeAgent",
   })
-  // every target converges to recordEvalRun
+  // every target converges to recordEvalRun → judge
   .addEdge("invokeChatAgent", "recordEvalRun")
   .addEdge("invokeWeatherAgent", "recordEvalRun")
   .addEdge("invokeCryptoAgent", "recordEvalRun")
