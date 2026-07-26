@@ -588,6 +588,7 @@ export async function saveJudgment(data: {
   reasoning?: string | null;
   totalCostTokens?: number | null;
   judgeThreadId?: string | null;
+  judgeParentMessageId?: string | null;
 }): Promise<void> {
   const id = generateId();
   await db.insert(evalJudgment).values({
@@ -598,6 +599,7 @@ export async function saveJudgment(data: {
     reasoning: data.reasoning ?? null,
     totalCostTokens: data.totalCostTokens ?? null,
     judgeThreadId: data.judgeThreadId ?? null,
+    judgeParentMessageId: data.judgeParentMessageId ?? null,
   });
 }
 

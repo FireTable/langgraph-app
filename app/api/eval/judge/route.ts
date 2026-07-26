@@ -3,13 +3,13 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { withAuth } from "@/lib/auth/with-auth";
 import { evalRun, evalRubric } from "@/lib/eval/schema";
-import { graph as evalAgentGraph } from "@/backend/agent/eval-agent";
+import { threads } from "@/lib/threads/schema";
 import { langGraphClient } from "@/lib/langgraph/client";
-import { generateId } from "@/lib/ids/nanoid";
+import { randomUUID } from "node:crypto";
 
 export const runtime = "nodejs";
 
-export const POST = withAuth(async (req) => {
+export const POST = withAuth(async (req, { user }) => {
   try {
     const body = (await req.json()) as { runId?: string; rubricId?: string };
 
@@ -34,8 +34,14 @@ export const POST = withAuth(async (req) => {
       ],
     };
 
-    // Observability Thread ID for this AI Judge run (matches kbAgent ingest pattern)
-    const judgeThreadId = `eval-judge-${generateId()}`;
+    // Observability Thread ID (UUID v4) & Parent Message ID (UUID v4) for this AI Judge run
+    const judgeThreadId = randomUUID();
+    const judgeParentMessageId = randomUUID();
+
+    await db
+      .insert(threads)
+      .values({ id: judgeThreadId, userId: user.id, title: "AI Judge Run", kind: "eval" })
+      .onConflictDoNothing();
 
     try {
       await langGraphClient.threads.create({
@@ -46,17 +52,30 @@ export const POST = withAuth(async (req) => {
       // Ignore if local dev server without langgraph server
     }
 
-    // Invoke LLM-as-a-Judge Graph
-    const judgeResult = await evalAgentGraph.invoke(
-      {
-        runId: run.id,
-        rubricId: rubric.id,
-        judgeThreadId,
+    const input = {
+      runId: run.id,
+      rubricId: rubric.id,
+    };
+
+    const config = {
+      configurable: {
+        userId: user.id,
+        thread_id: judgeThreadId,
+        user_id: user.id,
       },
-      {
-        configurable: { thread_id: judgeThreadId },
-      },
-    );
+    };
+
+    const metadata = {
+      parent_message_id: judgeParentMessageId,
+      thread_id: judgeThreadId,
+      user_id: user.id,
+    };
+
+    const judgeResult = await langGraphClient.runs.wait(judgeThreadId, "evalAgent", {
+      input,
+      config,
+      metadata,
+    });
 
     return NextResponse.json({ result: judgeResult, judgeThreadId });
   } catch (err: unknown) {

@@ -272,6 +272,14 @@ Manages per-agent Benchmark Test Datasets and Agent Rubric Criteria updates.
 - **`DELETE /api/eval/benchmarks`**: Removes a Benchmark Test Case by ID (`{ id: string }`).
 - **Status Codes**: 200 / 400 / 401 / 500
 
+### `POST /api/eval/benchmarks/run`
+
+Triggers a stored Benchmark Test Case end-to-end: invokes the mapped target graph (chat / router / weather / crypto / code, background rename/summarize, or KB subgraph), records an `eval_run`, persists a paired observability span, then dispatches the `evalAgent` judge against the agent's domain rubric. The hidden benchmark thread is removed after the run to keep the chat sidebar clean.
+
+- **Body**: `{ benchmarkId: string, rubricId?: string }`
+- **Output**: `{ runId, threadId, judgeThreadId, result: { status, errorMessage } }`
+- **Status Codes**: 200 / 400 / 401 / 404 (unknown benchmark) / 500
+
 ## Memory
 
 Backed by the LangGraph `PostgresStore` (per-user, cross-thread long-term memory). Every route is `withAuth`-wrapped and isolation is by namespace prefix `[userId, ...]`. Storage detail: `lib/memory/queries.ts`; schema (RFC 6902 patches, store): `lib/memory/validators.ts`; size guard: `backend/memory/profile-size.ts`. Read counterpart of `save_memory` (see "Graph tools").

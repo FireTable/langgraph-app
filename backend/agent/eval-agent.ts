@@ -4,30 +4,31 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { evalRun, evalRubric } from "@/lib/eval/schema";
 import { observabilitySpans } from "@/lib/observability/schema";
-
+import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
 import { saveJudgment } from "@/lib/eval/queries";
 import { getEvalModelFromDB } from "@/lib/provider/model-registry";
+import { store } from "@/backend/store";
+import { checkpointer } from "@/backend/checkpointer";
+
+import type { RunnableConfig } from "@langchain/core/runnables";
 
 export const EvalAgentState = new StateSchema({
   runId: z.string(),
   rubricId: z.string().default("rubric_default"),
-  judgeThreadId: z.string().optional(),
   status: z.enum(["pending", "completed", "failed"]).default("pending"),
   errorMessage: z.string().nullable().default(null),
 });
 
-const JudgeSchema = z.object({
-  relevance: z.number().describe("Score 1-5 for relevance to user prompt"),
-  accuracy: z.number().describe("Score 1-5 for factual accuracy and correctness"),
-  reasoning: z.string().describe("Detailed reasoning explaining the score assignment"),
-});
-
-async function evaluateRunNode(state: {
-  runId: string;
-  rubricId?: string;
-  judgeThreadId?: string;
-}) {
+async function evaluateRunNode(
+  state: {
+    runId: string;
+    rubricId?: string;
+  },
+  config?: RunnableConfig,
+) {
   const rubricId = state.rubricId ?? "rubric_default";
+  const judgeThreadId = (config?.configurable?.thread_id as string) ?? null;
+  const judgeParentMessageId = (config?.metadata?.parent_message_id as string) ?? null;
 
   // 1. Fetch run details
   const runs = await db.select().from(evalRun).where(eq(evalRun.id, state.runId)).limit(1);
@@ -86,12 +87,33 @@ async function evaluateRunNode(state: {
   // 4. Obtain LLM Judge model
   try {
     const judgeModel = await getEvalModelFromDB();
-    const structuredModel = judgeModel.withStructuredOutput(JudgeSchema);
+
+    // Dynamically build the structured output schema from rubric.criteria
+    const criteriaFields = Object.fromEntries(
+      rubric.criteria.map((c) => [
+        c.key,
+        z.number().min(1).max(5).describe(`Score 1-5 for ${c.key}: ${c.description}`),
+      ]),
+    );
+    const dynamicJudgeSchema = z.object({
+      ...criteriaFields,
+      reasoning: z
+        .string()
+        .describe("Detailed reasoning explaining the score assignment for each criterion"),
+    });
+
+    const structuredModel = judgeModel.withStructuredOutput(dynamicJudgeSchema);
+
+    const criteriaLines = rubric.criteria
+      .map(
+        (c) => `- ${c.key}${c.weight != null ? ` (weight: ${c.weight}%)` : ""}: ${c.description}`,
+      )
+      .join("\n");
 
     const prompt = `You are an expert AI Evaluator. Evaluate the quality of the AI Assistant's response to the User.
 
-Evaluation Criteria:
-${JSON.stringify(rubric.criteria, null, 2)}
+Evaluation Criteria (score each 1-5):
+${criteriaLines}
 
 Target Run ID: ${run.id}
 Agent: ${run.agent}
@@ -99,19 +121,24 @@ Execution Duration: ${run.totalMs}ms
 Status: ${run.status}
 ${spanContext}
 
-Evaluate relevance and accuracy on a scale of 1 to 5, and provide your reasoning.`;
+Score each criterion on a scale of 1 to 5, and provide your overall reasoning.`;
 
     const result = await structuredModel.invoke(prompt);
+
+    // Collect all criterion scores dynamically (exclude 'reasoning' key)
+    const scores: Record<string, number> = {};
+    for (const c of rubric.criteria) {
+      const val = (result as Record<string, unknown>)[c.key];
+      if (typeof val === "number") scores[c.key] = val;
+    }
 
     await saveJudgment({
       runId: run.id,
       rubricId: rubric.id,
-      scores: {
-        relevance: result.relevance,
-        accuracy: result.accuracy,
-      },
-      reasoning: result.reasoning,
-      judgeThreadId: state.judgeThreadId ?? null,
+      scores,
+      reasoning: (result as { reasoning: string }).reasoning,
+      judgeThreadId,
+      judgeParentMessageId,
     });
 
     return { status: "completed", errorMessage: null };
@@ -123,8 +150,16 @@ Evaluate relevance and accuracy on a scale of 1 to 5, and provide your reasoning
 }
 
 const builder = new StateGraph(EvalAgentState)
-  .addNode("evaluateRun", evaluateRunNode)
-  .addEdge(START, "evaluateRun")
-  .addEdge("evaluateRun", END);
+  .addNode("evaluateAgent", evaluateRunNode)
+  .addEdge(START, "evaluateAgent")
+  .addEdge("evaluateAgent", END);
 
-export const graph = builder.compile();
+const standaloneCompiled = builder.compile({
+  name: "evalAgent",
+  checkpointer,
+  store,
+});
+
+export const graph = standaloneCompiled.withConfig({
+  callbacks: [capturingHandler, creditTrackingHandler],
+});

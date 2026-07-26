@@ -20,9 +20,9 @@ export const threads = pgTable(
       .default("regular"),
     // ponytail: source discriminator. `chat` = user-visible conversation
     // (sidebar shows these). `kb` = standalone kbAgent ingestion run from
-    // /settings/knowledge-base — same row shape, just hidden from sidebar.
+    // /settings/knowledge-base. `eval` = benchmark / LLM-as-a-Judge evaluation run.
     // Set at creation; never changes for a given row.
-    kind: text("kind", { enum: ["chat", "kb"] })
+    kind: text("kind", { enum: ["chat", "kb", "eval"] })
       .notNull()
       .default("chat"),
     userId: text("user_id")

@@ -17,6 +17,8 @@ export const GET = withAuth(async () => {
         scores: evalJudgment.scores,
         reasoning: evalJudgment.reasoning,
         totalCostTokens: evalJudgment.totalCostTokens,
+        judgeThreadId: evalJudgment.judgeThreadId,
+        judgeParentMessageId: evalJudgment.judgeParentMessageId,
         createdAt: evalJudgment.createdAt,
         agent: evalRun.agent,
         variantId: evalRun.variantId,

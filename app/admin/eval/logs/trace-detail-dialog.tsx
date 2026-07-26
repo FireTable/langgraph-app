@@ -65,7 +65,9 @@ export function TraceDetailDialog({
                 <span className="text-[10px] text-muted-foreground block uppercase">
                   Total Latency
                 </span>
-                <span className="font-semibold text-foreground">{traceDetail.run.totalMs} ms</span>
+                <span className="font-semibold text-foreground">
+                  {(traceDetail.run.totalMs / 1000).toFixed(2)} s
+                </span>
               </div>
             </div>
 

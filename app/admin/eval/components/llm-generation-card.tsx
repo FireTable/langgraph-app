@@ -43,7 +43,7 @@ export function LLMGenerationCard({
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-[11px] font-mono text-muted-foreground flex items-center gap-1">
               <Clock className="size-3" />
-              {run.totalMs}ms
+              {(run.totalMs / 1000).toFixed(2)}s
             </span>
 
             {onOpenTrace && (
@@ -122,7 +122,7 @@ export function LLMGenerationCard({
                   onOpenTrace({
                     ...run,
                     threadId: judgment.judgeThreadId!,
-                    parentMessageId: undefined,
+                    parentMessageId: judgment.judgeParentMessageId ?? undefined,
                   })
                 }
               >

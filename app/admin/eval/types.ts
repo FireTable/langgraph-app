@@ -69,6 +69,7 @@ export type Judgment = {
   reasoning: string;
   totalCostTokens?: number;
   judgeThreadId?: string;
+  judgeParentMessageId?: string;
   createdAt: string;
   agent?: string;
   variantId?: string;

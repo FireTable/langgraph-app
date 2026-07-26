@@ -141,6 +141,13 @@
       "when": 1784999445960,
       "tag": "0019_mute_snowbird",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785040151762,
+      "tag": "0020_cooing_talkback",
+      "breakpoints": true
     }
   ]
 }

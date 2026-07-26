@@ -160,6 +160,7 @@ export const evalJudgment = pgTable(
     reasoning: text("reasoning"),
     totalCostTokens: integer("total_cost_tokens"),
     judgeThreadId: text("judge_thread_id"),
+    judgeParentMessageId: text("judge_parent_message_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()

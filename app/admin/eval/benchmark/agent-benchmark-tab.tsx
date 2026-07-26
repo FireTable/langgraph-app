@@ -166,6 +166,34 @@ export function AgentBenchmarkTab({
     }
   };
 
+  const handleRunEvaluate = async (bm: BenchmarkItem) => {
+    setTestingBenchmarkIds((prev) => new Set(prev).add(bm.id));
+    try {
+      const res = await fetch("/api/eval/benchmarks/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ benchmarkId: bm.id }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? `Request failed (${res.status})`);
+      }
+      const data = (await res.json()) as { runId?: string };
+      toast.success(
+        `Evaluation completed for "${bm.title}"${data.runId ? ` (run ${data.runId})` : ""}`,
+      );
+      onRefresh();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Evaluation failed");
+    } finally {
+      setTestingBenchmarkIds((prev) => {
+        const next = new Set(prev);
+        next.delete(bm.id);
+        return next;
+      });
+    }
+  };
+
   const handleSingleJudge = async (run: RecentRun) => {
     setEvaluatingRunIds((prev) => new Set(prev).add(run.id));
     try {
@@ -491,15 +519,20 @@ export function AgentBenchmarkTab({
                                                 type="button"
                                                 variant="outline"
                                                 size="xs"
+                                                disabled={testingBenchmarkIds.has(bm.id)}
                                                 className="gap-1 font-medium text-amber-600 dark:text-amber-400 hover:text-amber-500"
-                                                onClick={() => {
-                                                  toast.info(
-                                                    `Running evaluation for benchmark "${bm.title}"...`,
-                                                  );
-                                                }}
+                                                onClick={() => handleRunEvaluate(bm)}
                                               >
-                                                <Sparkles className="size-3 text-amber-500" />
-                                                <span>Run Evaluate</span>
+                                                {testingBenchmarkIds.has(bm.id) ? (
+                                                  <RotateCw className="size-3 animate-spin text-amber-500" />
+                                                ) : (
+                                                  <Sparkles className="size-3 text-amber-500" />
+                                                )}
+                                                <span>
+                                                  {testingBenchmarkIds.has(bm.id)
+                                                    ? "Running…"
+                                                    : "Run Evaluate"}
+                                                </span>
                                               </Button>
                                               <Button
                                                 type="button"
@@ -588,12 +621,19 @@ export function AgentBenchmarkTab({
 
                                             <td className="py-3 px-3 align-middle">
                                               <div className="flex flex-col gap-1.5 text-xs">
-                                                {run.parentMessageId && (
-                                                  <div className="font-mono text-[11px] text-muted-foreground">
-                                                    Parent Msg ID: {run.parentMessageId}
-                                                  </div>
+                                                {run.threadId && run.parentMessageId && (
+                                                  <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="xs"
+                                                    className="gap-1.5 font-mono text-[11px] w-fit"
+                                                    title="View Execution Observability Trace"
+                                                    onClick={() => onOpenTrace(run)}
+                                                  >
+                                                    <Activity className="size-3" />
+                                                    Context
+                                                  </Button>
                                                 )}
-
                                                 {/* Judgment score badge & reasoning */}
                                                 {judgment ? (
                                                   <div className="flex flex-col gap-1 bg-amber-500/5 p-2 rounded border border-amber-500/20">
@@ -629,40 +669,31 @@ export function AgentBenchmarkTab({
                                             </td>
 
                                             <td className="py-3 px-3 align-middle text-right font-mono text-muted-foreground">
-                                              {run.totalMs}ms
+                                              {(run.totalMs / 1000).toFixed(2)}s
                                             </td>
 
                                             <td className="py-3 px-3 align-middle text-right">
                                               <div className="flex items-center justify-end gap-1.5">
-                                                {judgment?.judgeThreadId && (
-                                                  <Button
-                                                    type="button"
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="size-7 text-amber-500 hover:text-amber-600 hover:bg-amber-500/10"
-                                                    title="View AI Judge Execution Trace"
-                                                    onClick={() =>
-                                                      onOpenTrace({
-                                                        ...run,
-                                                        threadId: judgment.judgeThreadId!,
-                                                        parentMessageId: undefined,
-                                                      })
-                                                    }
-                                                  >
-                                                    <Activity className="size-3.5" />
-                                                  </Button>
-                                                )}
-
-                                                <Button
-                                                  type="button"
-                                                  variant="ghost"
-                                                  size="icon"
-                                                  className="size-7 text-muted-foreground hover:text-foreground"
-                                                  title="View Execution Observability Trace"
-                                                  onClick={() => onOpenTrace(run)}
-                                                >
-                                                  <Activity className="size-3.5" />
-                                                </Button>
+                                                {judgment?.judgeThreadId &&
+                                                  judgment?.judgeParentMessageId && (
+                                                    <Button
+                                                      type="button"
+                                                      variant="ghost"
+                                                      size="icon"
+                                                      className="size-7 text-muted-foreground hover:text-foreground"
+                                                      title="View AI Judge Observability Trace"
+                                                      onClick={() =>
+                                                        onOpenTrace({
+                                                          ...run,
+                                                          threadId: judgment.judgeThreadId!,
+                                                          parentMessageId:
+                                                            judgment.judgeParentMessageId!,
+                                                        })
+                                                      }
+                                                    >
+                                                      <Activity className="size-3.5" />
+                                                    </Button>
+                                                  )}
 
                                                 <Button
                                                   type="button"

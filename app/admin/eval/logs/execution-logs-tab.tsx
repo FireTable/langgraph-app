@@ -82,7 +82,7 @@ export function ExecutionLogsTab({
                   )}
                 </TableCell>
                 <TableCell className="text-right font-mono tabular-nums">
-                  {run.totalMs} ms
+                  {(run.totalMs / 1000).toFixed(2)} s
                 </TableCell>
                 <TableCell className="text-center font-medium">
                   {run.userRating === 5 ? (
