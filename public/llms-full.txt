@@ -1,34 +1,44 @@
 # LangGraph App — Full Technical Documentation
 
-> Complete architecture, API specification, database schemas, Knowledge Base engine, and deployment guide.
+> Complete architecture, API specification, database schemas, Knowledge Base engine, Agent Evaluation Studio, and deployment guide.
 
 ---
 
 ## 1. System Architecture
 
-LangGraph App is a full-stack Next.js 15 (App Router) application integrating LangGraph for agent orchestration and Better Auth for authentication.
+LangGraph App is a full-stack Next.js 16 (App Router) application integrating LangGraph for agent orchestration and Better Auth for authentication.
 
-- **Frontend**: Next.js 15, React 19, TailwindCSS, `@assistant-ui/react`, Radix UI, Lucide icons.
-- **Backend / Agent Engine**: `@langchain/langgraph`, `@langchain/openai`, custom tool registry, dual-graph architecture (Foreground streaming graph + Background async subgraphs).
-- **Database & Storage**: PostgreSQL with `pgvector` extension for vector embeddings, Drizzle ORM, S3/Cloudflare R2 for object storage.
-- **Observability**: Custom span collector, trace waterfall UI, and memory profile inspectability.
+- **Frontend**: Next.js 16 (Turbopack), React, TailwindCSS v4, `@assistant-ui/react`, Radix UI, Lucide icons. The marketing landing page at `/` is server-rendered with one `landing-motion-provider` client island so first paint never blocks on the motion bundle.
+- **Backend / Agent Engine**: `@langchain/langgraph`, `@langchain/openai`, custom tool registry, dual-graph architecture (Foreground streaming graph `agent` + Background async subgraphs `backgroundAgent` + standalone `kbAgent` for ingestion + standalone `evalAgent` for LLM-as-a-Judge + benchmark orchestration).
+- **Database & Storage**: PostgreSQL 16 with `pgvector` extension for vector embeddings, Drizzle ORM, Cloudflare R2 for object storage.
+- **Observability**: Custom `BaseCallbackHandler` span collector, trace waterfall UI, and memory profile inspectability.
+- **Eval & A/B**: `lib/eval/` module owns the prompt versioning / A-B traffic splitting / per-agent rubrics / benchmark datasets / AI-Judge orchestration. Wired across both graphs via a process-singleton `EvalCallbackHandler` that mirrors the same `creditTrackingHandler` callback-fan-out pattern.
 
 ---
 
 ## 2. API Specification
 
+All `/api/*` routes are wrapped with `withAuth` (from `lib/auth/with-auth.ts`) and execute on `runtime = "nodejs"`. The catch-all `/api/[..._path]` proxies LangGraph calls from Next.js to the LangGraph dev server with per-turn credit enforcement.
+
 ### Authentication & User Management
-- `POST /api/auth/[...all]`: Better Auth endpoints (email/password, Web3 wallet auth, session management).
+- `POST /api/auth/[...all]`: Better Auth endpoints (email/password, OAuth, session management).
 - `GET /api/admin/users`: List all users with role snapshots, avatar images, and token/credit usage.
 - `PATCH /api/admin/users/[id]`: Update user role or toggle ban status (revokes active sessions immediately).
 - `DELETE /api/admin/users/[id]`: Delete user and cascade threads, checkpoints, memory profiles, and attachments.
 
 ### Threads & Assistant Streaming
-- `GET /api/threads`: List threads for current authenticated user.
+- `GET /api/threads`: List threads for current authenticated user (filtered by `kind='chat'`).
 - `POST /api/threads`: Create a new thread.
 - `GET /api/threads/[id]`: Fetch thread message history.
 - `DELETE /api/threads/[id]`: Delete thread and associated checkpointer state.
+- `POST /api/threads/[id]/observability/[parentMessageId]`: Per-turn span waterfall.
 - `POST /api/threads/[id]/stream`: Stream assistant response via Server-Sent Events (SSE).
+
+### Memory
+- `GET /api/memory/profile`: Profile doc + read-only better-auth fields + flat thread summaries.
+- `DELETE /api/memory/profile/[key]`: Remove a single profile key.
+- `DELETE /api/memory/threads`: Bulk-delete thread summaries.
+- `DELETE /api/memory/threads/[threadId]`: Remove a single thread's summary.
 
 ### Knowledge Base (KB v3)
 - `GET /api/kb/folders`: List Knowledge Base folders and documents.
@@ -36,6 +46,20 @@ LangGraph App is a full-stack Next.js 15 (App Router) application integrating La
 - `DELETE /api/kb/folders/[id]`: Delete folder and cascade inner documents, vector chunks, and entity graph triples.
 - `POST /api/kb/documents`: Upload document to Knowledge Base folder.
 - `POST /api/kb/search`: Perform Hybrid (Vector + Keyword) & GraphRAG (Entity-Relationship) search.
+- `POST /api/kb/upload`: Direct upload path for KB ingestion (R2-backed attachments).
+- `POST /api/kb/documents/[id]/reprocess`: Re-run KB pipeline for a document.
+
+### Agent Evaluation & A/B Testing (`/api/eval/*`)
+- `POST /api/eval/feedback`: Submit user / admin rating (1-5). The chat UI sends the assistant message id (`resp_...`); the route resolves it via `eval_run.id` OR `eval_run.parent_message_id` and silently no-ops when no match — the thumbs-up button never crashes on a dangling FK.
+- `GET / POST / PUT / DELETE /api/eval/prompts`: Prompt template + variant CRUD with admin actions `create_template` / `create_cohort_variant` / `delete_cohort_variant` / `create_variant` / `update_variant_weight` / `batch_update_weights`.
+- `GET / POST /api/eval/rubrics`: List every rubric + recent judgments joined to `eval_run.agent`; upsert by `id` (default `rubric_${Date.now()}`).
+- `GET / POST /api/eval/benchmarks`: Per-agent benchmark CRUD; `update_rubric` action mutates the rubric in place.
+- `POST /api/eval/benchmarks/run`: Trigger a stored benchmark end-to-end via `evalAgent` in `mode="benchmark"`; thread `kind="eval-benchmark"` (hidden from Online Executions).
+- `POST /api/eval/judge`: Trigger LLM-as-a-Judge against an existing `eval_run` via `evalAgent` in `mode="judge"`; thread `kind="eval-judge"` (surfaces in Online Executions).
+- `GET /api/eval/runs/compare`: Aggregated A/B metrics + first page of recent run logs per agent. Excludes `kind='eval-benchmark'`.
+- `GET /api/eval/runs/page?agent=<id>&cursor=<runId>&limit=<n>`: Per-agent paginated Online Executions (cursor-based, microsecond-stable via PG row-value comparison on `(created_at, id)`). Excludes `kind='eval-benchmark'`.
+- `GET /api/eval/runs/[id]`: Single-run drilldown (run + feedback + judgment + first 20 spans).
+- `GET / POST /api/eval/assignments`: Sticky `(userId, agent)` prompt-variant bindings. POST supports both cohort-level (`cohortLabel`) and single-agent (`targetVariantId`) reassignment.
 
 ### Credit & Quotas
 - `GET /api/credit/status`: Fetch current user's credit usage, window limit, and reset timestamp.
@@ -45,50 +69,109 @@ LangGraph App is a full-stack Next.js 15 (App Router) application integrating La
 
 ## 3. Knowledge Base & Search Engine
 
-The Knowledge Base uses a multi-stage retrieval architecture:
+The Knowledge Base uses a multi-stage retrieval architecture with seven source kinds (PDF, image, plain text, markdown, DOCX, XLSX, PPTX, plus pasted URLs fetched via Jina Reader):
 
 1. **Hybrid Dense/Sparse Search**:
    - Dense vector similarity via `pgvector` (`cosine` distance over 1536d / 1024d embeddings).
    - Sparse keyword matching over full-text tsvector indexes.
 2. **GraphRAG Entity Expansion**:
-   - Automatic entity & relationship extraction during document processing.
-   - Graph leg traversal connecting related entities to retrieve multi-hop context.
+   - Automatic entity & relationship extraction during document processing (`chunkExtract` agent node).
+   - Graph leg traversal connecting related entities to retrieve multi-hop context (`chunkAlignment` agent node resolves entity aliases before retrieval).
 3. **Reciprocal Rank Fusion (RRF)**:
    - Combines vector, keyword, and entity graph rankings into a unified relevance score.
+   - `meta.langgraph_node` values for KB sub-agents are `pageToMarkdown`, `chunkExtract`, `chunkAlignment` — these are the same ids the Agent Evaluation Studio uses for Online Executions.
 
 ---
 
-## 4. Credit & Quota System
+## 4. Agent Evaluation & A/B Platform
+
+The Evaluation Studio (`/admin/eval`) ships with the repo, not as a bolt-on. Eight tables:
+
+| Table | Purpose |
+| --- | --- |
+| `prompt_template` | System prompt definitions and revision history |
+| `prompt_variant` | A/B variants with `traffic_weight` (0-100) |
+| `prompt_variant_assignment` | Sticky `(user_id, agent)` binding |
+| `eval_run` | Turn execution record with latency / tokens / `parent_message_id` (JOINs `observability_spans`) |
+| `eval_feedback` | Online 1-5 rating (👍=5, 👎=1) |
+| `eval_rubric` | Per-agent criteria (keyed by `id = "rubric_${agentId}"`); plus `rubric_default` as generic fallback |
+| `eval_benchmark` | Admin-defined offline benchmark test cases per agent with denormalized `latest_judgment_id` / `latest_score` for inline "Last Result" |
+| `eval_judgment` | Per-run assessment scores + reasoning emitted by `evalAgent` |
+
+### Thread `kind` enum discriminator
+- `chat` — user chat turns (sidebar visible)
+- `kb` — standalone `kbAgent` ingestion runs
+- `eval-judge` — LLM-as-a-Judge scoring runs (surfaces in Online Executions)
+- `eval-benchmark` — synthetic benchmark runs (hidden from Online Executions; Benchmark Datasets surface only)
+
+### Seeded agent IDs (11)
+`chatAgent`, `routerAgent`, `weatherAgent`, `cryptoAgent`, `codeAgent`, `pageToMarkdown`, `chunkExtract`, `chunkAlignment`, `renameThreadAgent`, `threadSummarizeAgent`, `judgeByLLM`. `seedInitialPrompts` (idempotent, runs on every migration) populates:
+- one `prompt_template` + one `prompt_variant` per agent,
+- one `eval_rubric` per agent (incl. `judgeByLLM`: `criteria_alignment` 0.4 / `reasoning_clarity` 0.4 / `calibration` 0.2),
+- one or more `eval_benchmark` rows per agent,
+- a generic `rubric_default` (relevance 0.5 / accuracy 0.5) as the judge fallback.
+
+### `evalAgent` graph
+A separate StateGraph (`backend/agent/eval-agent.ts:graph`, registered as `evalAgent` in `langgraph.json`). Two modes dispatched via `mode` input + `routeFromInput` conditional edges:
+- `mode="judge"` (default): scores an existing `eval_run` against its rubric → writes `eval_judgment`.
+- `mode="benchmark"`: invokes the target agent with the benchmark's `inputPrompt`, writes `eval_run` + paired observability span, then judges against `rubric_${targetAgent}` (or `rubricId` override), denormalizes `latest_judgment_id` / `latest_score` onto `eval_benchmark`.
+
+The `EvalCallbackHandler` (`backend/eval/callback.ts`, singleton in `backend/callbacks.ts`) fires on every chat-model `handleChatModelStart` / `handleLLMEnd` and writes a row to `eval_run` keyed by `parent_message_id`. It reads the user id from the run's top-level `metadata.user_id` (NOT from `configurable.userId` — LangGraph surfaces top-level metadata on every callback).
+
+---
+
+## 5. Credit & Quota System
 
 - **Calculation**: Credits are computed per LLM call using model-specific input/output pricing (`inputPer1k`, `outputPer1k`).
-- **Enforcement**: Checked before LLM invocation (`checkCredit`). If window usage exceeds role limit, `CreditExceededError` halts execution gracefully.
+- **Enforcement**: Checked before LLM invocation (`checkCredit`). If window usage exceeds role limit, `CreditExceededError` halts execution gracefully and the proxy synthesizes a `show_credit_card` SSE stream.
 - **Admin Quotas**: Roles can have custom `creditLimit` (integers) and `windowHours` (e.g. 24h rolling window). Admin role carries `creditLimit = null` (unlimited).
 
 ---
 
-## 5. Deployment Guide
+## 6. Deployment Guide
 
 ### Prerequisites
-- Node.js >= 20.x
+- Node.js >= 22.x
 - PostgreSQL 16+ with `pgvector` extension enabled
-- S3 or Cloudflare R2 bucket for file attachments
+- Cloudflare R2 bucket for file attachments
+- Docker Engine 24+ with the Compose plugin
 
 ### Environment Variables
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/langgraph_db
-BETTER_AUTH_SECRET=your-32-byte-secret
-NEXT_PUBLIC_APP_URL=https://ai.firetable.tech
+DATABASE_URL=postgresql://langgraph:secret@postgres:5432/langgraph_app
+BETTER_AUTH_SECRET=$(openssl rand -hex 32)
+BETTER_AUTH_URL=https://chat.example.com
 OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=                          # leave empty for stock OpenAI
+OPENAI_MODEL=                             # leave empty for provider default
+JINA_API_KEYS=jina_abc,jina_def            # comma-separated; rotates + blacklists on 401/403
+LANGGRAPH_API_URL=http://localhost:2024
+LANGGRAPH_ASSISTANT_ID=agent               # or backgroundAgent / kbAgent / evalAgent
+LLM_KEY_ENCRYPTION_KEY=$(openssl rand -hex 32)   # AES-256-GCM KEK for provider.apiKeys
+INITIAL_ADMIN_EMAIL=you@example.com        # first matching signup is promoted to admin
+WALLET_CONNECT_PROJECT_ID=your_project_id  # non-secret; surfaces via window.__CONFIG__
+R2_ACCOUNT_ID=...                         # server-only
+R2_ACCESS_KEY_ID=...                      # server-only
+R2_BUCKET=langgraph-app
+R2_PUBLIC_BASE_URL=https://file.example.com
+ATTACHMENTS_ENABLED=true
+RESEND_API_KEY=re_...                     # verification emails
 ```
 
 ### Migration & Build Commands
 ```bash
-# Run database migrations
+# Run database migrations (Drizzle + langgraph PostgresStore + PostgresSaver; all idempotent)
 pnpm db:migrate
+
+# First-time seed: Eval Studio data + Admin Eval prompts/rubrics/benchmarks
+# (runs automatically via seedInitialPrompts on first migrate)
 
 # Build production bundle
 pnpm build
 
 # Start production server
-pnpm start
+docker compose up -d
 ```
+
+### First-time Postgres fix (langgraph-api 0.10.x)
+On first boot of the langgraph-api Python runtime, `CREATE INDEX CONCURRENTLY store_prefix_idx` is wrapped in a transaction and Postgres rejects it. Workaround: see `docs/DEPLOY.md § First-time Postgres fix`. Idempotent.
