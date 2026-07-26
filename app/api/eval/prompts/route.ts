@@ -9,8 +9,14 @@ export const runtime = "nodejs";
 
 export const GET = withAuth(async () => {
   try {
-    const templates = await db.select().from(promptTemplate);
-    const variants = await db.select().from(promptVariant);
+    const templates = await db
+      .select()
+      .from(promptTemplate)
+      // ponytail: order by id (asc) so the "Agent Node Prompt Bindings"
+      // list inside each cohort card renders in a stable, name-driven
+      // order — predictable for the admin regardless of insertion time.
+      .orderBy(promptTemplate.id);
+    const variants = await db.select().from(promptVariant).orderBy(promptVariant.id);
     return NextResponse.json({ templates, variants });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Internal error";
