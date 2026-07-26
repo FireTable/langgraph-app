@@ -28,6 +28,7 @@ import {
   THREAD_SUMMARIZE_PROMPT,
   KB_ENTITY_EXTRACTION_SYSTEM_PROMPT,
   KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT,
+  EVAL_JUDGE_SYSTEM_PROMPT,
 } from "@/backend/prompt/system";
 
 function weightedPick<T extends { trafficWeight: number }>(items: T[]): T {
@@ -59,6 +60,7 @@ export async function seedInitialPrompts(): Promise<void> {
     threadSummarizeAgent: THREAD_SUMMARIZE_PROMPT,
     kbEntityExtractAgent: KB_ENTITY_EXTRACTION_SYSTEM_PROMPT,
     kbEntityAlignAgent: KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT,
+    evalJudgeAgent: EVAL_JUDGE_SYSTEM_PROMPT,
   };
 
   const GRAPH_MAPPING: Record<string, string> = {
@@ -72,6 +74,7 @@ export async function seedInitialPrompts(): Promise<void> {
     kbOcrAgent: "kbAgent",
     kbEntityExtractAgent: "kbAgent",
     kbEntityAlignAgent: "kbAgent",
+    evalJudgeAgent: "evalAgent",
   };
 
   for (const [agentName, promptContent] of Object.entries(ALL_AGENT_PROMPTS)) {

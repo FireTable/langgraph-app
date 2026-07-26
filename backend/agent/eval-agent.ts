@@ -13,7 +13,7 @@ import { generateId } from "@/lib/ids/nanoid";
 import { getEvalModelFromDB } from "@/lib/provider/model-registry";
 import { store } from "@/backend/store";
 import { checkpointer } from "@/backend/checkpointer";
-import { EVAL_JUDGE_SYSTEM_PROMPT } from "@/backend/prompt/system";
+import { getAgentPrompt } from "@/backend/prompt/loader";
 import { EvalAgentState } from "@/backend/state";
 
 import { chatAgent } from "@/backend/agent/chat-agent";
@@ -237,6 +237,9 @@ async function judgeByLLMNode(
   const rubricId = state.rubricId ?? "rubric_default";
   const judgeThreadId = (config?.configurable?.thread_id as string) ?? null;
   const judgeParentMessageId = (config?.metadata?.parent_message_id as string) ?? null;
+  const userId =
+    (config?.configurable?.userId as string | undefined) ??
+    (config?.configurable?.user_id as string | undefined);
 
   // 1. Fetch run details
   const runs = await db.select().from(evalRun).where(eq(evalRun.id, state.runId)).limit(1);
@@ -316,12 +319,12 @@ async function judgeByLLMNode(
       )
       .join("\n");
 
-    // ponytail: pair the persistent role/scale (EVAL_JUDGE_SYSTEM_PROMPT
-    // in backend/prompt/system.ts) with a per-run HumanMessage that
-    // carries the data — criteria list, run metadata, and the spans
-    // that document what the Assistant actually did. Keeps the system
-    // prompt stable across runs while the per-run payload stays
-    // free-form.
+    // ponytail: pair the role/scale (resolved at runtime via
+    // getAgentPrompt so the admin can edit it through Prompt Studio
+    // without redeploying) with a per-run HumanMessage that carries
+    // the data — criteria list, run metadata, and the spans that
+    // document what the Assistant actually did.
+    const promptInfo = await getAgentPrompt("evalJudgeAgent", userId);
     const humanContent = `Evaluation Criteria (score each 1-5):
 ${criteriaLines}
 
@@ -334,7 +337,7 @@ ${spanContext}
 Score each criterion on a scale of 1 to 5, and provide your overall reasoning.`;
 
     const result = await structuredModel.invoke([
-      new SystemMessage(EVAL_JUDGE_SYSTEM_PROMPT),
+      new SystemMessage(promptInfo.content),
       new HumanMessage(humanContent),
     ]);
 

@@ -10,6 +10,7 @@ import {
   THREAD_SUMMARIZE_PROMPT,
   KB_ENTITY_EXTRACTION_SYSTEM_PROMPT,
   KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT,
+  EVAL_JUDGE_SYSTEM_PROMPT,
 } from "@/backend/prompt/system";
 
 const FALLBACK_PROMPTS: Record<string, string> = {
@@ -23,6 +24,7 @@ const FALLBACK_PROMPTS: Record<string, string> = {
   threadSummarizeAgent: THREAD_SUMMARIZE_PROMPT,
   kbEntityExtractAgent: KB_ENTITY_EXTRACTION_SYSTEM_PROMPT,
   kbEntityAlignAgent: KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT,
+  evalJudgeAgent: EVAL_JUDGE_SYSTEM_PROMPT,
 };
 
 export async function getAgentPrompt(
