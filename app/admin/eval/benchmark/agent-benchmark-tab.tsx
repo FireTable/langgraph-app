@@ -207,6 +207,12 @@ export function AgentBenchmarkTab({
         `Evaluation completed for "${bm.title}"${data.runId ? ` (run ${data.runId})` : ""}`,
       );
       onRefresh();
+      // ponytail: /compare and /rubrics refetch inside onRefresh, but the
+      // /benchmarks GET does NOT — and that's where the denormalized
+      // latest_judgment_id + judgment live. Pull it explicitly so the
+      // "Last AI Judge Assessment" column reflects the run we just
+      // completed without waiting for a tab switch.
+      fetchBenchmarks();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Evaluation failed");
     } finally {
@@ -494,17 +500,13 @@ export function AgentBenchmarkTab({
                                 <div className="border border-border/60 rounded-lg overflow-hidden bg-card">
                                   <table className="w-full text-left text-xs border-collapse table-fixed">
                                     <colgroup>
-                                      <col className="w-[200px]" />
+                                      <col className="w-[300px]" />
                                       <col />
-                                      <col className="w-[260px]" />
                                       <col className="w-[160px]" />
                                     </colgroup>
                                     <thead>
                                       <tr className="border-b border-border/40 bg-muted/20 text-muted-foreground font-mono text-[11px]">
                                         <th className="py-2.5 px-3 font-medium">TEST CASE</th>
-                                        <th className="py-2.5 px-3 font-medium">
-                                          INPUT PROMPT & Expected Ground Truth
-                                        </th>
                                         <th className="py-2.5 px-3 font-medium">
                                           Last AI Judge Assessment
                                         </th>
@@ -524,18 +526,16 @@ export function AgentBenchmarkTab({
                                               <span className="font-semibold text-foreground">
                                                 {bm.title}
                                               </span>
-                                            </div>
-                                          </td>
-                                          <td className="py-3 px-3 align-middle">
-                                            <div className="flex flex-col gap-1 text-xs">
-                                              <div className="font-mono bg-muted/30 p-1.5 rounded border border-border/40 text-foreground">
-                                                Input: {bm.inputPrompt}
-                                              </div>
-                                              {bm.expectedOutput && (
-                                                <div className="text-muted-foreground/80 italic text-[11px]">
-                                                  Expected: {bm.expectedOutput}
+                                              <div className="flex flex-col gap-1 text-xs">
+                                                <div className="font-mono bg-muted/30 p-1.5 rounded border border-border/40 text-foreground">
+                                                  Input: {bm.inputPrompt}
                                                 </div>
-                                              )}
+                                                {bm.expectedOutput && (
+                                                  <div className="text-muted-foreground/80 italic text-[11px]">
+                                                    Expected: {bm.expectedOutput}
+                                                  </div>
+                                                )}
+                                              </div>
                                             </div>
                                           </td>
                                           <td className="py-3 px-3 align-middle">
