@@ -274,9 +274,9 @@ Fetches the next page of `eval_run` rows for a single agent, ordered `createdAt 
 
 ### `POST /api/eval/judge`
 
-Triggers an `evalAgent` LLM-as-a-Judge run against a specific `eval_run` execution record using domain-specific Rubric Criteria, linking `judge_thread_id` for Observability trace tracking.
+Triggers an `evalAgent` LLM-as-a-Judge run against a specific `eval_run` execution record using domain-specific Rubric Criteria, linking `judge_thread_id` for Observability trace tracking. Dispatched as `mode="judge"` (the only mode currently wired in evalAgent — benchmark mode is reserved).
 
-- **Body**: `{ runId: string }`
+- **Body**: `{ runId: string, rubricId?: string }`
 - **Status Codes**: 200 / 400 / 401 / 404 / 500
 
 ### `GET / POST / DELETE /api/eval/benchmarks`
@@ -292,11 +292,22 @@ Manages per-agent Benchmark Test Datasets and Agent Rubric Criteria updates.
 
 ### `POST /api/eval/benchmarks/run`
 
-Triggers a stored Benchmark Test Case end-to-end: invokes the mapped target graph (chat / router / weather / crypto / code, background rename/summarize, or KB subgraph), records an `eval_run`, persists a paired observability span, then dispatches the `evalAgent` judge against the agent's domain rubric. The hidden benchmark thread is removed after the run to keep the chat sidebar clean.
+Triggers a stored Benchmark Test Case end-to-end. Resolves the benchmark row server-side (resolving `targetAgent` / `inputPrompt` / `expectedOutput`), then dispatches `evalAgent` in `mode="benchmark"` which owns the full pipeline (target-agent invocation → record `eval_run` + paired observability span → LLM-judge → cleanup). The benchmark thread itself is hidden; the judge thread is registered so the AI Judge trace stays linked from Online Executions.
 
-- **Body**: `{ benchmarkId: string, rubricId?: string }`
-- **Output**: `{ runId, threadId, judgeThreadId, result: { status, errorMessage } }`
-- **Status Codes**: 200 / 400 / 401 / 404 (unknown benchmark) / 500
+- **Body**: `{ benchmarkId: string }`
+- **Output**: `{ runId, judgeThreadId, result: { status, errorMessage } }`
+- **Status Codes**: 200 / 400 / 401 / 404 (unknown benchmark) / 500 (judge run returned no result)
+
+### `evalAgent` mode discriminator
+
+`evalAgent` accepts a `mode` field in its input, dispatching via conditional edges inside the graph:
+
+| mode                | flow                                                                                                                                                                                               |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"judge"` (default) | judge an existing `eval_run` (id `runId`) against its rubric; writes `eval_judgment`                                                                                                               |
+| `"benchmark"`       | run the resolved target agent (`targetAgent`) on `inputPrompt`, write `eval_run` + paired span, judge against `rubric_<targetAgent>` (or `rubricId` override), cleanup the hidden benchmark thread |
+
+Adding a new target agent requires registering an `invoke<Name>Agent` node and a dispatch entry in `routeByTargetAgent` — same diff, no separate mapping table.
 
 ## Memory
 

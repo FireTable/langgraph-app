@@ -1,31 +1,296 @@
 import { END, START, StateGraph, StateSchema } from "@langchain/langgraph";
+import { HumanMessage } from "@langchain/core/messages";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { evalRun, evalRubric } from "@/lib/eval/schema";
-import { observabilitySpans } from "@/lib/observability/schema";
+import { observabilitySpans, type NewObservabilitySpanRow } from "@/lib/observability/schema";
+import { threads as threadTable } from "@/lib/threads/schema";
 import { capturingHandler, creditTrackingHandler } from "@/backend/callbacks";
-import { saveJudgment } from "@/lib/eval/queries";
+import { recordEvalRun as recordEvalRunQuery, saveJudgment } from "@/lib/eval/queries";
+import { generateId } from "@/lib/ids/nanoid";
 import { getEvalModelFromDB } from "@/lib/provider/model-registry";
 import { store } from "@/backend/store";
 import { checkpointer } from "@/backend/checkpointer";
 
+import { chatAgent } from "@/backend/agent/chat-agent";
+import { weatherAgent } from "@/backend/agent/weather-agent";
+import { cryptoAgent } from "@/backend/agent/crypto-agent";
+import { codeAgent } from "@/backend/agent/code-agent";
+import { kbAgent } from "@/backend/agent/kb-agent";
+import { renameThreadAgentNode } from "@/backend/node/rename-thread-agent-node";
+import { threadSummarizeNode } from "@/backend/node/thread-summarize-node";
+
 import type { RunnableConfig } from "@langchain/core/runnables";
 
 export const EvalAgentState = new StateSchema({
-  runId: z.string(),
+  // ponytail: mode is the entry discriminator — defaults to "judge" so
+  // existing callers (api/eval/judge, etc.) keep working without
+  // changing their input shape. Benchmark mode isolates the per-agent
+  // prompt run + judge into one LangGraph invocation; the route only
+  // has to resolve { targetAgent, inputPrompt, ... } server-side and
+  // hand off to the graph.
+  mode: z.enum(["judge", "benchmark"]).default("judge"),
+
+  // judge mode input
+  runId: z.string().optional(), // also populated by recordEvalRun in benchmark mode
   rubricId: z.string().default("rubric_default"),
+
+  // benchmark mode input (resolved server-side by Next.js from
+  // benchmarkId; ad-hoc also accepted)
+  targetAgent: z.string().optional(),
+  inputPrompt: z.string().optional(),
+  expectedOutput: z.string().optional(),
+
+  // output fields shared by both modes
   status: z.enum(["pending", "completed", "failed"]).default("pending"),
   errorMessage: z.string().nullable().default(null),
+  lastMessage: z.unknown().optional(),
+  totalMs: z.number().optional(),
+
+  // benchmark-internal carrier fields
+  dispatchAt: z.number().optional(),
+  benchmarkThreadId: z.string().optional(),
+  parentMessageId: z.string().optional(),
 });
 
-async function evaluateRunNode(
+// ─── No-op source nodes (only purpose: provide a target for
+// ─── `addConditionalEdges` so the graph can read state and dispatch).
+
+async function inputRouter() {
+  return {};
+}
+
+// Pre-dispatch: stamp dispatchAt so recordEvalRun can compute the
+// actual end-to-end delta from when the user submitted the benchmark
+// to when the agent finished.
+async function preDispatchNode() {
+  return { dispatchAt: Date.now() };
+}
+
+async function benchmarkDispatch() {
+  return {};
+}
+
+// ─── Per-target invocation nodes. Each one wraps the underlying compiled
+// ─── sub-graph or raw node, captures lastMessage + totalMs and pushes
+// ─── it to parent state. The routing itself is still 100% edge-driven
+// ─── via routeByTargetAgent; there is no central map table here.
+
+async function invokeChatAgent(state: { inputPrompt?: string }, config?: RunnableConfig) {
+  const startedAt = Date.now();
+  const result = await chatAgent.invoke(
+    { messages: [new HumanMessage(state.inputPrompt ?? "")] },
+    config,
+  );
+  const messages = Array.isArray(result.messages) ? result.messages : [];
+  return {
+    lastMessage: messages.at(-1) ?? null,
+    totalMs: Date.now() - startedAt,
+  };
+}
+
+async function invokeWeatherAgent(state: { inputPrompt?: string }, config?: RunnableConfig) {
+  const startedAt = Date.now();
+  const result = await weatherAgent.invoke(
+    { messages: [new HumanMessage(state.inputPrompt ?? "")] },
+    config,
+  );
+  const messages = Array.isArray(result.messages) ? result.messages : [];
+  return {
+    lastMessage: messages.at(-1) ?? null,
+    totalMs: Date.now() - startedAt,
+  };
+}
+
+async function invokeCryptoAgent(state: { inputPrompt?: string }, config?: RunnableConfig) {
+  const startedAt = Date.now();
+  const result = await cryptoAgent.invoke(
+    { messages: [new HumanMessage(state.inputPrompt ?? "")] },
+    config,
+  );
+  const messages = Array.isArray(result.messages) ? result.messages : [];
+  return {
+    lastMessage: messages.at(-1) ?? null,
+    totalMs: Date.now() - startedAt,
+  };
+}
+
+async function invokeCodeAgent(state: { inputPrompt?: string }, config?: RunnableConfig) {
+  const startedAt = Date.now();
+  const result = await codeAgent.invoke(
+    { messages: [new HumanMessage(state.inputPrompt ?? "")] },
+    config,
+  );
+  const messages = Array.isArray(result.messages) ? result.messages : [];
+  return {
+    lastMessage: messages.at(-1) ?? null,
+    totalMs: Date.now() - startedAt,
+  };
+}
+
+async function invokeKbAgent(state: { inputPrompt?: string }, config?: RunnableConfig) {
+  // ponytail: kbAgent's compiled pipeline expects KB document state;
+  // for an ad-hoc benchmark prompt with no document, the first node
+  // short-circuits to the chat-style fallback. Per-step kbOcr /
+  // kbEntityExtract / kbEntityAlign benchmarks stay mapped to the
+  // full kbAgent for now — splits are future work.
+  const startedAt = Date.now();
+  const result = await kbAgent.invoke(
+    { messages: [new HumanMessage(state.inputPrompt ?? "")] },
+    config,
+  );
+  const messages = Array.isArray(result.messages) ? result.messages : [];
+  return {
+    lastMessage: messages.at(-1) ?? null,
+    totalMs: Date.now() - startedAt,
+  };
+}
+
+async function invokeRenameThreadAgent(state: { inputPrompt?: string }, config?: RunnableConfig) {
+  const startedAt = Date.now();
+  const result = await renameThreadAgentNode(
+    { messages: [new HumanMessage(state.inputPrompt ?? "")] },
+    config as Parameters<typeof renameThreadAgentNode>[1],
+  );
+  return {
+    lastMessage: result ?? null,
+    totalMs: Date.now() - startedAt,
+  };
+}
+
+async function invokeThreadSummarizeAgent(
+  state: { inputPrompt?: string },
+  config?: RunnableConfig,
+) {
+  const startedAt = Date.now();
+  const result = await threadSummarizeNode(
+    { messages: [new HumanMessage(state.inputPrompt ?? "")] },
+    config as Parameters<typeof threadSummarizeNode>[1],
+  );
+  return {
+    lastMessage: result ?? null,
+    totalMs: Date.now() - startedAt,
+  };
+}
+
+// ─── DB-side orchestration: write eval_run + paired observability
+// ─── span, mirror what benchmark-runner.ts used to do in Next.js.
+// ─── When this returns, state.runId is filled so judge can do its job
+// ─── identically to the manual judge mode.
+
+async function recordEvalRunNode(
   state: {
-    runId: string;
+    targetAgent?: string;
+    inputPrompt?: string;
+    lastMessage?: unknown;
+    totalMs?: number;
+    dispatchAt?: number;
+  },
+  config?: RunnableConfig,
+) {
+  const userId =
+    (config?.configurable?.userId as string | undefined) ??
+    (config?.configurable?.user_id as string | undefined);
+  if (!userId) {
+    return { status: "failed", errorMessage: "userId missing from config" };
+  }
+
+  const targetAgent = state.targetAgent ?? "chatAgent";
+  const totalMs = state.totalMs ?? (state.dispatchAt ? Date.now() - state.dispatchAt : 0);
+
+  // ponytail: benchmark thread is hidden (kind=eval) — never
+  // surfaces in the chat sidebar. Cleanup node deletes it after
+  // judge finishes so it doesn't pile up; cascade deletes its spans.
+  const benchmarkThreadId = randomUUID();
+  const parentMessageId = `bm-${generateId()}`;
+  await db
+    .insert(threadTable)
+    .values({
+      id: benchmarkThreadId,
+      userId,
+      title: "Benchmark Run",
+      kind: "eval",
+    })
+    .onConflictDoNothing();
+
+  let errorMessage: string | null = null;
+  try {
+    const inserted = await recordEvalRunQuery({
+      threadId: benchmarkThreadId,
+      userId,
+      agent: targetAgent,
+      parentMessageId,
+      totalMs,
+      status: "success",
+    });
+
+    const spanRow: NewObservabilitySpanRow = {
+      spanId: `bm-${inserted.id}`,
+      parentSpanId: null,
+      threadId: benchmarkThreadId,
+      name: `benchmark:${targetAgent}`,
+      kind: "chain",
+      status: "completed",
+      startedAt: (state.dispatchAt ?? Date.now()) - totalMs,
+      endedAt: state.dispatchAt ?? Date.now(),
+      input: { messages: [{ role: "user", content: state.inputPrompt ?? "" }] },
+      output: (state.lastMessage ?? null) as never,
+      usage: null,
+      error: null,
+      meta: {
+        thread_id: benchmarkThreadId,
+        parent_message_id: parentMessageId,
+        benchmark_run_id: inserted.id,
+      },
+      parentMessageId,
+    };
+    await db.insert(observabilitySpans).values(spanRow).onConflictDoNothing();
+
+    return {
+      runId: inserted.id,
+      benchmarkThreadId,
+      parentMessageId,
+      totalMs,
+      status: "completed" as const,
+    };
+  } catch (err: unknown) {
+    errorMessage = err instanceof Error ? err.message : String(err);
+    return { status: "failed" as const, errorMessage };
+  }
+}
+
+async function cleanupBenchmarkThread(state: {
+  mode?: "judge" | "benchmark";
+  benchmarkThreadId?: string;
+}) {
+  // Self-gating: judge mode never had a benchmark thread to delete,
+  // benchmark mode does. No conditional edge needed upstream — the
+  // node is reached unconditionally and decides on its own.
+  if (state.mode !== "benchmark") return {};
+  if (!state.benchmarkThreadId) return {};
+  // Safe-fail cleanup — never blocks the run from completing.
+  await db
+    .delete(threadTable)
+    .where(eq(threadTable.id, state.benchmarkThreadId))
+    .catch(() => null);
+  return {};
+}
+
+// ─── Judge node. Identical to the previous judge-only behavior; in
+// ─── benchmark mode state.runId is now populated by recordEvalRun.
+
+async function judgeNode(
+  state: {
+    runId?: string;
     rubricId?: string;
   },
   config?: RunnableConfig,
 ) {
+  if (!state.runId) {
+    return { status: "failed", errorMessage: "no runId to judge" };
+  }
   const rubricId = state.rubricId ?? "rubric_default";
   const judgeThreadId = (config?.configurable?.thread_id as string) ?? null;
   const judgeParentMessageId = (config?.metadata?.parent_message_id as string) ?? null;
@@ -84,11 +349,9 @@ async function evaluateRunNode(
     }
   }
 
-  // 4. Obtain LLM Judge model
   try {
     const judgeModel = await getEvalModelFromDB();
 
-    // Dynamically build the structured output schema from rubric.criteria
     const criteriaFields = Object.fromEntries(
       rubric.criteria.map((c) => [
         c.key,
@@ -125,7 +388,6 @@ Score each criterion on a scale of 1 to 5, and provide your overall reasoning.`;
 
     const result = await structuredModel.invoke(prompt);
 
-    // Collect all criterion scores dynamically (exclude 'reasoning' key)
     const scores: Record<string, number> = {};
     for (const c of rubric.criteria) {
       const val = (result as Record<string, unknown>)[c.key];
@@ -149,10 +411,95 @@ Score each criterion on a scale of 1 to 5, and provide your overall reasoning.`;
   }
 }
 
+// ─── Routing functions (pure; exported for unit testing).
+//
+// ponytail: langgraph's `addConditionalEdges` path map is keyed on
+// the EXACT value the routing function returns, not on the mode.
+// Returning "judge"/"benchmark" (the mode discriminators) and
+// mapping them to node names keeps the function return and the
+// map keys aligned — eliminates "Branch condition returned unknown
+// or null destination" mismatches.
+
+export function routeByMode(state: { mode?: "judge" | "benchmark" }): "judge" | "benchmark" {
+  return state.mode === "benchmark" ? "benchmark" : "judge";
+}
+
+type TargetNodeName =
+  | "invokeChatAgent"
+  | "invokeWeatherAgent"
+  | "invokeCryptoAgent"
+  | "invokeCodeAgent"
+  | "invokeKbAgent"
+  | "invokeRenameThreadAgent"
+  | "invokeThreadSummarizeAgent";
+
+type TargetAgentId =
+  | "chatAgent"
+  | "weatherAgent"
+  | "cryptoAgent"
+  | "codeAgent"
+  | "kbAgent"
+  | "renameThreadAgent"
+  | "threadSummarizeAgent";
+
+const TARGET_NODES: Record<TargetAgentId, TargetNodeName> = {
+  chatAgent: "invokeChatAgent",
+  weatherAgent: "invokeWeatherAgent",
+  cryptoAgent: "invokeCryptoAgent",
+  codeAgent: "invokeCodeAgent",
+  kbAgent: "invokeKbAgent",
+  renameThreadAgent: "invokeRenameThreadAgent",
+  threadSummarizeAgent: "invokeThreadSummarizeAgent",
+};
+
+export function routeByTargetAgent(state: { targetAgent?: string }): TargetNodeName {
+  const t = state.targetAgent as TargetAgentId | undefined;
+  return t && t in TARGET_NODES ? TARGET_NODES[t] : "invokeChatAgent";
+}
+
 const builder = new StateGraph(EvalAgentState)
-  .addNode("evaluateAgent", evaluateRunNode)
-  .addEdge(START, "evaluateAgent")
-  .addEdge("evaluateAgent", END);
+  // source/router nodes
+  .addNode("inputRouter", inputRouter)
+  .addNode("preDispatch", preDispatchNode)
+  .addNode("benchmarkDispatch", benchmarkDispatch)
+  // per-target invocation nodes
+  .addNode("invokeChatAgent", invokeChatAgent)
+  .addNode("invokeWeatherAgent", invokeWeatherAgent)
+  .addNode("invokeCryptoAgent", invokeCryptoAgent)
+  .addNode("invokeCodeAgent", invokeCodeAgent)
+  .addNode("invokeKbAgent", invokeKbAgent)
+  .addNode("invokeRenameThreadAgent", invokeRenameThreadAgent)
+  .addNode("invokeThreadSummarizeAgent", invokeThreadSummarizeAgent)
+  // orchestration nodes
+  .addNode("recordEvalRun", recordEvalRunNode)
+  .addNode("judge", judgeNode)
+  .addNode("cleanupBenchmark", cleanupBenchmarkThread)
+  .addEdge(START, "inputRouter")
+  .addConditionalEdges("inputRouter", routeByMode, {
+    judge: "judge",
+    benchmark: "preDispatch",
+  })
+  .addEdge("preDispatch", "benchmarkDispatch")
+  .addConditionalEdges("benchmarkDispatch", routeByTargetAgent, {
+    invokeChatAgent: "invokeChatAgent",
+    invokeWeatherAgent: "invokeWeatherAgent",
+    invokeCryptoAgent: "invokeCryptoAgent",
+    invokeCodeAgent: "invokeCodeAgent",
+    invokeKbAgent: "invokeKbAgent",
+    invokeRenameThreadAgent: "invokeRenameThreadAgent",
+    invokeThreadSummarizeAgent: "invokeThreadSummarizeAgent",
+  })
+  // every target converges to recordEvalRun
+  .addEdge("invokeChatAgent", "recordEvalRun")
+  .addEdge("invokeWeatherAgent", "recordEvalRun")
+  .addEdge("invokeCryptoAgent", "recordEvalRun")
+  .addEdge("invokeCodeAgent", "recordEvalRun")
+  .addEdge("invokeKbAgent", "recordEvalRun")
+  .addEdge("invokeRenameThreadAgent", "recordEvalRun")
+  .addEdge("invokeThreadSummarizeAgent", "recordEvalRun")
+  .addEdge("recordEvalRun", "judge")
+  .addEdge("judge", "cleanupBenchmark")
+  .addEdge("cleanupBenchmark", END);
 
 const standaloneCompiled = builder.compile({
   name: "evalAgent",

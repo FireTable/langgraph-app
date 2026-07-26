@@ -559,8 +559,8 @@ export function AgentBenchmarkTab({
                                                 )}
                                                 <span>
                                                   {testingBenchmarkIds.has(bm.id)
-                                                    ? "Running…"
-                                                    : "Run Evaluate"}
+                                                    ? "Evaluating..."
+                                                    : "Evaluate"}
                                                 </span>
                                               </Button>
                                               <Button
@@ -776,7 +776,7 @@ export function AgentBenchmarkTab({
                                                   type="button"
                                                   variant="outline"
                                                   size="xs"
-                                                  className="gap-1.5 font-medium shrink-0"
+                                                  className="gap-1.5 font-medium shrink-0 text-amber-600 dark:text-amber-400 hover:text-amber-500"
                                                   disabled={isEvaluating}
                                                   onClick={() => handleSingleJudge(run)}
                                                 >

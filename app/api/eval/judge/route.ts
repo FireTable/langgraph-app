@@ -53,6 +53,7 @@ export const POST = withAuth(async (req, { user }) => {
     }
 
     const input = {
+      mode: "judge" as const,
       runId: run.id,
       rubricId: rubric.id,
     };
