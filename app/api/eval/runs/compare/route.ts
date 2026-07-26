@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, avg, count, eq } from "drizzle-orm";
+import { and, avg, count, eq, ne } from "drizzle-orm";
 import { db } from "@/db/client";
 import { withAuth } from "@/lib/auth/with-auth";
 import { evalRun, evalFeedback, promptVariant } from "@/lib/eval/schema";
@@ -10,12 +10,15 @@ export const runtime = "nodejs";
 
 const PAGE_SIZE = 5;
 
-// ponytail: Online Executions means "real production traffic" (threads
-// created by the chat flow, kind='chat'). Benchmark runs write
+// ponytail: Online Executions means "real production traffic" — both
+// chat-originated threads (kind='chat') and standalone kbAgent
+// ingestion threads (kind='kb'). Benchmark runs write
 // threads.kind='eval' — they belong on the Benchmark Datasets surface,
-// never here. We filter via JOIN once at the route + paginated query
-// level so the frontend never has to second-guess.
-const chatRunWhere = and(eq(threadTable.kind, "chat"))!;
+// never here. We exclude only 'eval' so KB sub-agents (OCR Digitizer /
+// GraphRAG Extract / GraphRAG Align) surface their ingest runs too.
+// Same guard is applied at the paginated query layer in
+// lib/eval/queries.ts so the frontend never has to second-guess.
+const chatRunWhere = and(ne(threadTable.kind, "eval"))!;
 
 export const GET = withAuth(async () => {
   try {

@@ -72,7 +72,7 @@ export async function resolveEntityAliasesForDoc(args: {
   const rawEntities = await findCanonicalEntitiesByDocId(userId, documentId);
   const rawRelationships = await findCanonicalRelationshipsByDocId(userId, documentId);
 
-  const alignPromptInfo = await getAgentPrompt("kbEntityAlignAgent", userId);
+  const alignPromptInfo = await getAgentPrompt("chunkAlignment", userId);
   const systemMessage = new SystemMessage(alignPromptInfo.content);
 
   const entityLines = rawEntities.map(

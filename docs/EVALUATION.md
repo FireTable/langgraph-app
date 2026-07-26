@@ -78,9 +78,9 @@ The system seeds 100% English initial system prompts, domain-tailored Rubric Cri
   - `weatherAgent`: `location_extraction`, `forecast_completeness`
   - `cryptoAgent`: `market_data_accuracy`, `financial_disclaimer`
   - `codeAgent`: `syntax_correctness`, `logic_clarity`
-  - `kbEntityExtractAgent`: `entity_completeness`, `relationship_precision`
-  - `kbOcrAgent`: `text_extraction_fidelity`, `layout_preservation`
-  - `kbEntityAlignAgent`: `alias_resolution`, `deduplication_accuracy`
+  - `chunkExtract`: `entity_completeness`, `relationship_precision`
+  - `pageToMarkdown`: `text_extraction_fidelity`, `layout_preservation`
+  - `chunkAlignment`: `alias_resolution`, `deduplication_accuracy`
   - `renameThreadAgent`: `title_conciseness`, `semantic_relevance`
   - `threadSummarizeAgent`: `information_density`, `context_continuity`
 

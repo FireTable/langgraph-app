@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   promptTemplate,
@@ -56,11 +56,11 @@ export async function seedInitialPrompts(): Promise<void> {
     weatherAgent: WEATHER_AGENT_PROMPT,
     cryptoAgent: CRYPTO_AGENT_PROMPT,
     codeAgent: CODE_AGENT_PROMPT,
-    kbOcrAgent: KB_OCR_PAGE_PROMPT,
+    pageToMarkdown: KB_OCR_PAGE_PROMPT,
     threadSummarizeAgent: THREAD_SUMMARIZE_PROMPT,
-    kbEntityExtractAgent: KB_ENTITY_EXTRACTION_SYSTEM_PROMPT,
-    kbEntityAlignAgent: KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT,
-    evalJudgeAgent: EVAL_JUDGE_SYSTEM_PROMPT,
+    chunkExtract: KB_ENTITY_EXTRACTION_SYSTEM_PROMPT,
+    chunkAlignment: KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT,
+    judgeByLLM: EVAL_JUDGE_SYSTEM_PROMPT,
   };
 
   const GRAPH_MAPPING: Record<string, string> = {
@@ -71,10 +71,10 @@ export async function seedInitialPrompts(): Promise<void> {
     codeAgent: "agent",
     renameThreadAgent: "backgroundAgent",
     threadSummarizeAgent: "backgroundAgent",
-    kbOcrAgent: "kbAgent",
-    kbEntityExtractAgent: "kbAgent",
-    kbEntityAlignAgent: "kbAgent",
-    evalJudgeAgent: "evalAgent",
+    pageToMarkdown: "kbAgent",
+    chunkExtract: "kbAgent",
+    chunkAlignment: "kbAgent",
+    judgeByLLM: "evalAgent",
   };
 
   for (const [agentName, promptContent] of Object.entries(ALL_AGENT_PROMPTS)) {
@@ -193,7 +193,7 @@ export async function seedInitialPrompts(): Promise<void> {
             weight: 0.4,
           },
         ],
-        kbEntityExtractAgent: [
+        chunkExtract: [
           {
             key: "entity_completeness",
             description: "Extraction of all named domain entities from document chunks.",
@@ -205,7 +205,7 @@ export async function seedInitialPrompts(): Promise<void> {
             weight: 0.5,
           },
         ],
-        kbOcrAgent: [
+        pageToMarkdown: [
           {
             key: "text_extraction_fidelity",
             description: "High accuracy OCR transcription from scanned pages or PDFs.",
@@ -217,7 +217,7 @@ export async function seedInitialPrompts(): Promise<void> {
             weight: 0.4,
           },
         ],
-        kbEntityAlignAgent: [
+        chunkAlignment: [
           {
             key: "alias_resolution",
             description: "Correct mapping of synonyms and acronyms to canonical entity nodes.",
@@ -336,7 +336,7 @@ export async function seedInitialPrompts(): Promise<void> {
               "Provides clean, strongly-typed TypeScript code block with an O(log N) complexity explanation.",
           },
         ],
-        kbEntityExtractAgent: [
+        chunkExtract: [
           {
             title: "Entity & Graph Relationship Extraction",
             inputPrompt:
@@ -345,7 +345,7 @@ export async function seedInitialPrompts(): Promise<void> {
               "Extracts entities [OpenClaw (Product)], [FireTable (Organization)], [AI Agent Platform (Concept)] and maps relationships.",
           },
         ],
-        kbOcrAgent: [
+        pageToMarkdown: [
           {
             title: "Document OCR Processing",
             inputPrompt:
@@ -354,7 +354,7 @@ export async function seedInitialPrompts(): Promise<void> {
               "Produces clean Markdown formatted text preserving tabular numbers and structural headers.",
           },
         ],
-        kbEntityAlignAgent: [
+        chunkAlignment: [
           {
             title: "Entity Alias Resolution",
             inputPrompt: "Resolve 'BTC', 'Bitcoin', and 'XBT' against the knowledge graph.",
@@ -759,21 +759,26 @@ export async function getRunsByAgentPage(args: {
     cursorCreatedAtRaw = rows[0]?.createdAt ?? null;
   }
 
-  // ponytail: only chat-originated runs surface in Online Executions;
-  // benchmark runs are filtered out via the threads.kind='chat' guard.
-  // The same join is applied at the cursor lookup below. The cursor
-  // itself uses PG row-value comparison on (created_at, id) so the
-  // microsecond precision from the raw string above is preserved end
-  // to end — no JS Date round-trip.
-  const chatKind = eq(threadTable.kind, "chat");
+  // ponytail: only NON-benchmark runs surface in Online Executions;
+  // benchmark runs are filtered out via the threads.kind='eval' guard.
+  // We deliberately include both 'chat' (user chat flow) and 'kb'
+  // (standalone kbAgent ingestion — uploads + reprocess) so the per-
+  // agent Online Executions card reflects everything that actually
+  // ran in production. `kind='chat'` here was over-restrictive and
+  // left KB OCR Digitizer / GraphRAG Extract / GraphRAG Align cards
+  // permanently empty. The cursor lookup below uses the same guard.
+  // The cursor itself uses PG row-value comparison on (created_at, id)
+  // so the microsecond precision from the raw string above is
+  // preserved end to end — no JS Date round-trip.
+  const notEvalKind = ne(threadTable.kind, "eval");
   const whereClause =
     cursorCreatedAtRaw && cursorId
       ? and(
           eq(evalRun.agent, agent),
-          chatKind,
+          notEvalKind,
           sql`(${evalRun.createdAt}, ${evalRun.id}) < (${cursorCreatedAtRaw}::timestamptz, ${cursorId})`,
         )
-      : and(eq(evalRun.agent, agent), chatKind);
+      : and(eq(evalRun.agent, agent), notEvalKind);
 
   const rows = await db
     .select({

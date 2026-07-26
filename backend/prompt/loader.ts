@@ -20,11 +20,11 @@ const FALLBACK_PROMPTS: Record<string, string> = {
   weatherAgent: WEATHER_AGENT_PROMPT,
   cryptoAgent: CRYPTO_AGENT_PROMPT,
   codeAgent: CODE_AGENT_PROMPT,
-  kbOcrAgent: KB_OCR_PAGE_PROMPT,
+  pageToMarkdown: KB_OCR_PAGE_PROMPT,
   threadSummarizeAgent: THREAD_SUMMARIZE_PROMPT,
-  kbEntityExtractAgent: KB_ENTITY_EXTRACTION_SYSTEM_PROMPT,
-  kbEntityAlignAgent: KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT,
-  evalJudgeAgent: EVAL_JUDGE_SYSTEM_PROMPT,
+  chunkExtract: KB_ENTITY_EXTRACTION_SYSTEM_PROMPT,
+  chunkAlignment: KB_ENTITY_ALIGNMENT_SYSTEM_PROMPT,
+  judgeByLLM: EVAL_JUDGE_SYSTEM_PROMPT,
 };
 
 export async function getAgentPrompt(

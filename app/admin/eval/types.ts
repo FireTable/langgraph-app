@@ -131,15 +131,15 @@ export const LANGGRAPH_GROUPS = [
     icon: Database,
     description: "PDF OCR vision parsing, GraphRAG entity extraction, and canonical alignment",
     agents: [
-      { id: "kbOcrAgent", name: "KB OCR Digitizer", desc: "PDF page vision to clean Markdown" },
+      { id: "pageToMarkdown", name: "Page To Markdown", desc: "PDF page vision to clean Markdown" },
       {
-        id: "kbEntityExtractAgent",
-        name: "GraphRAG Extract",
+        id: "chunkExtract",
+        name: "Chunk Extract",
         desc: "Entity, relation & theme triple extraction",
       },
       {
-        id: "kbEntityAlignAgent",
-        name: "GraphRAG Align",
+        id: "chunkAlignment",
+        name: "Chunk Alignment",
         desc: "Cross-chunk canonical entity deduplication",
       },
     ],
@@ -150,8 +150,6 @@ export const LANGGRAPH_GROUPS = [
     entrypoint: "./backend/agent/eval-agent.ts",
     icon: Scale,
     description: "LLM-as-a-Judge offline/online scoring agent",
-    agents: [
-      { id: "evalJudgeAgent", name: "Eval Judge Agent", desc: "Automated scoring against rubric" },
-    ],
+    agents: [{ id: "judgeByLLM", name: "Judge By LLM", desc: "Automated scoring against rubric" }],
   },
 ];

@@ -85,7 +85,7 @@ export function PromptsStudioTab({
   // ponytail: variant ids are nanoid (random) — sorting by id here is
   // no-op for human readability. Sort items by agent name ascending
   // so the cohort card renders in stable dictionary order
-  // (chatAgent → codeAgent → cryptoAgent → kbEntityAlignAgent → …).
+  // (chatAgent → codeAgent → cryptoAgent → chunkAlignment → …).
   // Backend orderBy on prompt_variant.id was added earlier for
   // create / update / delete paths; this client-side sort covers
   // the READ path the cards actually render.

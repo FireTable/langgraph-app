@@ -333,7 +333,7 @@ export async function chunkExtractNode(
                   const ordinal = chunk.ordinal;
                   const text = chunk.content;
 
-                  const extractPromptInfo = await getAgentPrompt("kbEntityExtractAgent", userId);
+                  const extractPromptInfo = await getAgentPrompt("chunkExtract", userId);
                   const systemMessage = new SystemMessage(extractPromptInfo.content);
 
                   const humanMessage = new HumanMessage(

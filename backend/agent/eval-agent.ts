@@ -324,7 +324,7 @@ async function judgeByLLMNode(
     // without redeploying) with a per-run HumanMessage that carries
     // the data — criteria list, run metadata, and the spans that
     // document what the Assistant actually did.
-    const promptInfo = await getAgentPrompt("evalJudgeAgent", userId);
+    const promptInfo = await getAgentPrompt("judgeByLLM", userId);
     const humanContent = `Evaluation Criteria (score each 1-5):
 ${criteriaLines}
 

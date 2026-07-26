@@ -41,7 +41,7 @@ export async function pageToMarkdownNode(
   }
 
   const ocrModel = await getOcrModel();
-  const promptInfo = await getAgentPrompt("kbOcrAgent");
+  const promptInfo = await getAgentPrompt("pageToMarkdown");
   const system = new SystemMessage(promptInfo.content);
 
   const structured = ocrModel.withStructuredOutput(ocrPageSchema, {

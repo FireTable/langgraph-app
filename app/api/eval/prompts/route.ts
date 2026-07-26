@@ -62,9 +62,9 @@ export const POST = withAuth(async (req, { user }) => {
         codeAgent: "agent",
         renameThreadAgent: "backgroundAgent",
         threadSummarizeAgent: "backgroundAgent",
-        kbOcrAgent: "kbAgent",
-        kbEntityExtractAgent: "kbAgent",
-        kbEntityAlignAgent: "kbAgent",
+        pageToMarkdown: "kbAgent",
+        chunkExtract: "kbAgent",
+        chunkAlignment: "kbAgent",
       };
       const groupName = body.notes?.startsWith("Group:")
         ? (body.notes.split(":")[1]?.trim() ?? "agent")

@@ -138,6 +138,16 @@ export async function fireIngestionRun({
     docId,
     title,
     parent_message_id: messageId,
+    // ponytail: EvalCallbackHandler reads user_id from the chat-model
+    // callback's top-level metadata. config.configurable.userId is
+    // correctly forwarded into the graph state but the chat-model
+    // callback metadata we receive on the dev server doesn't surface
+    // `configurable.*` keys — only the run-level metadata we set here.
+    // Without these, the callback falls back to the literal "dev-user"
+    // placeholder and the resulting eval_run insert fails the FK on
+    // user.id. Mirror the shape judge/route.ts uses for the eval graph.
+    user_id: userId,
+    thread_id: threadId,
   };
 
   if (threadId) {
