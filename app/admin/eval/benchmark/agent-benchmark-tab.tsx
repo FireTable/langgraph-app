@@ -276,18 +276,6 @@ export function AgentBenchmarkTab({
               Manage per-Agent evaluation Rubrics, Benchmark Datasets, and Execution Traces.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              className="gap-1.5 font-medium"
-              onClick={onRefresh}
-            >
-              <RotateCw className="size-3.5 text-primary" />
-              <span>Refresh Executions</span>
-            </Button>
-          </div>
         </div>
 
         {/* Evaluation Summary Stats Header Card */}
