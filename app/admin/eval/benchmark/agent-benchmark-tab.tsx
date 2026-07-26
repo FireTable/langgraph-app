@@ -322,7 +322,7 @@ export function AgentBenchmarkTab({
                       className="border border-border/60 rounded-xl overflow-hidden bg-background/50"
                     >
                       {/* Agent Header Bar */}
-                      <div className="p-2 bg-muted/30 border-b border-border/40 flex items-center justify-between gap-3">
+                      <div className="py-2 px-4 bg-muted/30 border-b border-border/40 flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                           <Button
                             type="button"
@@ -434,7 +434,7 @@ export function AgentBenchmarkTab({
                             </TabsList>
 
                             {/* TAB 1: Benchmark Dataset Table */}
-                            <TabsContent value="benchmarks" className="mt-3 flex flex-col gap-3">
+                            <TabsContent value="benchmarks" className="flex flex-col gap-3">
                               <div className="flex items-center justify-between">
                                 <span className="text-xs font-semibold text-muted-foreground">
                                   Pre-defined Benchmark Test Suite
@@ -545,7 +545,7 @@ export function AgentBenchmarkTab({
                             </TabsContent>
 
                             {/* TAB 2: Online Executions Table */}
-                            <TabsContent value="executions" className="mt-3 flex flex-col gap-3">
+                            <TabsContent value="executions" className="flex flex-col gap-3">
                               {agentRuns.length === 0 ? (
                                 <div className="py-8 text-center text-muted-foreground italic text-xs border border-dashed rounded-lg bg-muted/10">
                                   No LLM executions logged for {agentObj.name} yet. Trigger a run in
@@ -555,19 +555,15 @@ export function AgentBenchmarkTab({
                                 <div className="border border-border/60 rounded-lg overflow-hidden bg-card">
                                   <table className="w-full text-left text-xs border-collapse table-fixed">
                                     <colgroup>
-                                      <col className="w-[220px]" />
-                                      <col />
                                       <col className="w-[100px]" />
+                                      <col />
                                       <col className="w-[180px]" />
                                     </colgroup>
                                     <thead>
                                       <tr className="border-b border-border/40 bg-muted/20 text-muted-foreground font-mono text-[11px]">
-                                        <th className="py-2.5 px-3 font-medium">RUN ID & STATUS</th>
+                                        <th className="py-2.5 px-3 font-medium">CONTEXT</th>
                                         <th className="py-2.5 px-3 font-medium">
-                                          CONTEXT & AI JUDGE ASSESSMENT
-                                        </th>
-                                        <th className="py-2.5 px-3 font-medium text-right">
-                                          LATENCY
+                                          AI JUDGE ASSESSMENT
                                         </th>
                                         <th className="py-2.5 px-3 font-medium text-right">
                                           ACTIONS
@@ -584,83 +580,57 @@ export function AgentBenchmarkTab({
                                             key={run.id}
                                             className="hover:bg-muted/10 transition-colors"
                                           >
-                                            <td className="py-3 px-3 align-middle font-mono">
-                                              <div className="flex flex-col gap-1">
-                                                <span className="font-semibold text-foreground">
-                                                  {run.id}
+                                            <td className="py-3 px-3 align-middle">
+                                              {run.threadId && run.parentMessageId ? (
+                                                <Button
+                                                  type="button"
+                                                  variant="outline"
+                                                  size="xs"
+                                                  className="gap-1.5 font-mono text-[11px] w-fit"
+                                                  title="View Execution Observability Trace"
+                                                  onClick={() => onOpenTrace(run)}
+                                                >
+                                                  <Activity className="size-3" />
+                                                  Context
+                                                </Button>
+                                              ) : (
+                                                <span className="text-muted-foreground/40 text-[11px]">
+                                                  —
                                                 </span>
-                                                <div className="flex items-center gap-1">
-                                                  <Badge
-                                                    variant="outline"
-                                                    className="text-[9px] uppercase"
-                                                  >
-                                                    {run.variantId || "var_chat_default"}
-                                                  </Badge>
-                                                  <Badge
-                                                    variant={
-                                                      run.status === "success"
-                                                        ? "default"
-                                                        : "destructive"
-                                                    }
-                                                    className="text-[9px]"
-                                                  >
-                                                    {run.status}
-                                                  </Badge>
-                                                </div>
-                                              </div>
+                                              )}
                                             </td>
 
                                             <td className="py-3 px-3 align-middle">
-                                              <div className="flex flex-col gap-1.5 text-xs">
-                                                {run.threadId && run.parentMessageId && (
-                                                  <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    size="xs"
-                                                    className="gap-1.5 font-mono text-[11px] w-fit"
-                                                    title="View Execution Observability Trace"
-                                                    onClick={() => onOpenTrace(run)}
-                                                  >
-                                                    <Activity className="size-3" />
-                                                    Context
-                                                  </Button>
-                                                )}
-                                                {/* Judgment score badge & reasoning */}
-                                                {judgment ? (
-                                                  <div className="flex flex-col gap-1 bg-amber-500/5 p-2 rounded border border-amber-500/20">
-                                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                                      <Sparkles className="size-3.5 text-amber-500 shrink-0" />
-                                                      <span className="font-semibold text-[11px]">
-                                                        AI Assessment:
-                                                      </span>
-                                                      {Object.entries(judgment.scores || {}).map(
-                                                        ([k, v]) => (
-                                                          <Badge
-                                                            key={k}
-                                                            variant="secondary"
-                                                            className="font-mono text-[10px]"
-                                                          >
-                                                            {k}: {v}/5★
-                                                          </Badge>
-                                                        ),
-                                                      )}
-                                                    </div>
-                                                    {judgment.reasoning && (
-                                                      <p className="text-[11px] text-muted-foreground italic line-clamp-2">
-                                                        "{String(judgment.reasoning)}"
-                                                      </p>
+                                              {judgment ? (
+                                                <div className="flex flex-col gap-1 bg-amber-500/5 p-2 rounded border border-amber-500/20">
+                                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <Sparkles className="size-3.5 text-amber-500 shrink-0" />
+                                                    <span className="font-semibold text-[11px]">
+                                                      AI Assessment:
+                                                    </span>
+                                                    {Object.entries(judgment.scores || {}).map(
+                                                      ([k, v]) => (
+                                                        <Badge
+                                                          key={k}
+                                                          variant="secondary"
+                                                          className="font-mono text-[10px]"
+                                                        >
+                                                          {k}: {v}/5★
+                                                        </Badge>
+                                                      ),
                                                     )}
                                                   </div>
-                                                ) : (
-                                                  <span className="text-muted-foreground/60 italic text-[11px]">
-                                                    Not evaluated by AI Judge yet
-                                                  </span>
-                                                )}
-                                              </div>
-                                            </td>
-
-                                            <td className="py-3 px-3 align-middle text-right font-mono text-muted-foreground">
-                                              {(run.totalMs / 1000).toFixed(2)}s
+                                                  {judgment.reasoning && (
+                                                    <p className="text-[11px] text-muted-foreground italic line-clamp-2">
+                                                      "{String(judgment.reasoning)}"
+                                                    </p>
+                                                  )}
+                                                </div>
+                                              ) : (
+                                                <span className="text-muted-foreground/60 italic text-[11px]">
+                                                  Not evaluated by AI Judge yet
+                                                </span>
+                                              )}
                                             </td>
 
                                             <td className="py-3 px-3 align-middle text-right">

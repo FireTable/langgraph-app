@@ -367,7 +367,7 @@ export function PromptsStudioTab({
                                 <TableRow className="hover:bg-transparent">
                                   <TableCell
                                     colSpan={5}
-                                    className="text-muted-foreground/60 italic text-xs py-3 pl-10"
+                                    className="text-muted-foreground/60 italic text-xs py-3 pl-12"
                                   >
                                     No prompt templates deployed for this node yet. Click "+ Add
                                     prompt" to create one.
@@ -381,7 +381,7 @@ export function PromptsStudioTab({
 
                                   return (
                                     <TableRow key={tmpl.id} className="hover:bg-muted/10">
-                                      <TableCell className="font-mono text-xs font-medium pl-10">
+                                      <TableCell className="font-mono text-xs font-medium pl-12">
                                         <div className="flex items-center gap-2">
                                           <CornerDownRight className="size-3 text-muted-foreground shrink-0" />
                                           <TooltipProvider>
