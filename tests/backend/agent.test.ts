@@ -97,7 +97,7 @@ describe("graph end-to-end", () => {
     );
 
     // routerDecision lives in state, not in messages.
-    expect(result.routerDecision).toEqual({ next: "chatAgent" });
+    expect(result.routerDecision).toMatchObject({ next: "chatAgent", source: "llm" });
     expect(result.messages).toContain(agentReply);
 
     const row = await db.query.threads.findFirst({
@@ -131,7 +131,7 @@ describe("graph end-to-end", () => {
       { configurable: { thread_id: threadId } },
     );
 
-    expect(result.routerDecision).toEqual({ next: "weatherAgent" });
+    expect(result.routerDecision).toMatchObject({ next: "weatherAgent", source: "keyword" });
     const containsPoisoned = result.messages.some(
       (m) => m instanceof AIMessage && m.content === "SHOULD NOT APPEAR",
     );

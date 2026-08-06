@@ -5,6 +5,10 @@
 <h1 align="center">LangGraph App</h1>
 
 <p align="center">
+  <a href="README.md">English</a> | <a href="README-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   A self-hostable chat app (this repo: <code>langgraph-app</code>) that streams tokens from a <a href="https://langchain-ai.github.io/langgraphjs/">LangGraph</a> <code>StateGraph</code> agent into an <a href="https://github.com/assistant-ui/assistant-ui">assistant-ui</a> React thread, with persistent threads and checkpointed conversations stored in Postgres.
 </p>
 
@@ -340,6 +344,7 @@ Test database stays isolated from dev — never put production-like data in `lan
 - [`docs/KNOWLEDGE_BASE.md`](docs/KNOWLEDGE_BASE.md) — knowledge base design: ingestion pipeline, three-leg RRF hybrid search (Keyword, Vector, Tag), semantic Reranking and score filtering, `@` mention resolution (Meta vs Full Markdown mode), mention budgeting, and iterative search.
 - [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — observability panel design: callback handler wiring, `observability_spans` schema, server-side transform + aggregate, lazy-loaded row detail, security/redaction, retention config, and curl examples.
 - [`docs/TOOLS.md`](docs/TOOLS.md) — LangGraph tool inventory and frontend card wiring. Update whenever a tool or card is added/removed/rerouted.
+- [`docs/ROUTING.md`](docs/ROUTING.md) — intent recognition & tiered router design: Tier 1 Rule short-circuit, Tier 2 Priority Keyword matching engine, Tier 3 LLM structured-output fallback, and decision source tagging (`rule` | `keyword` | `llm`).
 - [`docs/INTERRUPT.md`](docs/INTERRUPT.md) — interrupt-driven tool flows (ask_location, connect_wallet, place_crypto_order, get_order_status) — the two runtime paths the cards can take.
 - [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, role mechanism, `INITIAL_ADMIN_EMAIL` bootstrap, troubleshooting.
 - [`docs/ATTACHMENTS.md`](docs/ATTACHMENTS.md) — chat attachments backed by Cloudflare R2: direct-upload architecture, key convention, lazy-register on missing env, `Content-Disposition` XSS guard, `messageId`-deferred decision.

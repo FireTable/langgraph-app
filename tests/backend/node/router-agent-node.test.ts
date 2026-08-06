@@ -31,41 +31,69 @@ beforeEach(() => {
 });
 
 describe("routerAgentNode", () => {
-  it("returns the structured-output object as routerDecision", async () => {
+  it("returns the LLM structured-output object with source: llm on fallback", async () => {
     mockInvokeStructured.mockResolvedValueOnce({ next: "chatAgent" });
 
     const result = await routerAgentNode({
-      messages: [new HumanMessage("how do I parse JSON?")],
+      messages: [new HumanMessage("tell me a joke")],
     });
 
-    expect(result).toEqual({ routerDecision: { next: "chatAgent" } });
+    expect(result).toEqual({
+      routerDecision: { next: "chatAgent", source: "llm" },
+    });
   });
 
-  it("routes weather queries to weatherAgent", async () => {
-    mockInvokeStructured.mockResolvedValueOnce({ next: "weatherAgent" });
-
+  it("routes weather queries via keyword short-circuit (source: keyword)", async () => {
     const result = await routerAgentNode({
       messages: [new HumanMessage("北京天气怎么样?")],
     });
 
-    expect(result).toEqual({ routerDecision: { next: "weatherAgent" } });
+    expect(result).toEqual({
+      routerDecision: {
+        next: "weatherAgent",
+        source: "keyword",
+        matchedKey: "天气",
+      },
+    });
+    // Keyword match should NOT invoke the LLM
+    expect(mockInvokeStructured).not.toHaveBeenCalled();
   });
 
-  it("routes crypto queries to cryptoAgent", async () => {
-    mockInvokeStructured.mockResolvedValueOnce({ next: "cryptoAgent" });
-
+  it("routes crypto queries via keyword short-circuit (source: keyword)", async () => {
     const result = await routerAgentNode({
-      messages: [new HumanMessage("我想买 100 美元的 BTC")],
+      messages: [new HumanMessage("BTC price now")],
     });
 
-    expect(result).toEqual({ routerDecision: { next: "cryptoAgent" } });
+    expect(result).toEqual({
+      routerDecision: {
+        next: "cryptoAgent",
+        source: "keyword",
+        matchedKey: "/\\b(btc|eth|usdt|usdc|doge|shib)\\b/i",
+      },
+    });
+    expect(mockInvokeStructured).not.toHaveBeenCalled();
   });
 
-  it("prepends the router system prompt and strips any prior system messages", async () => {
+  it("routes code queries via keyword short-circuit (source: keyword)", async () => {
+    const result = await routerAgentNode({
+      messages: [new HumanMessage("请帮我写一段 TypeScript 代码")],
+    });
+
+    expect(result).toEqual({
+      routerDecision: {
+        next: "codeAgent",
+        source: "keyword",
+        matchedKey: "/(写|编写|生成|重构|优化|运行|调试|修复)[\\s\\S]{0,15}(代码|脚本|程序|函数|接口|正则)/i",
+      },
+    });
+    expect(mockInvokeStructured).not.toHaveBeenCalled();
+  });
+
+  it("prepends the router system prompt when falling back to LLM", async () => {
     mockInvokeStructured.mockResolvedValueOnce({ next: "chatAgent" });
 
     await routerAgentNode({
-      messages: [new SystemMessage("stale"), new HumanMessage("rain?")],
+      messages: [new SystemMessage("stale"), new HumanMessage("tell me a story")],
     });
 
     const callArgs = mockInvokeStructured.mock.calls[0]?.[0] as Array<{
@@ -81,15 +109,9 @@ describe("routerAgentNode", () => {
     mockInvokeStructured.mockResolvedValueOnce({ next: "chatAgent" });
 
     await routerAgentNode({
-      messages: [new HumanMessage("anything")],
+      messages: [new HumanMessage("tell me a story")],
     });
 
-    // withStructuredOutput is called once at module load + once per
-    // routerAgentNode invocation. The router invocation must pass the
-    // route_decision schema, the jsonSchema method, AND strict: true
-    // — a regression to functionCalling or non-strict jsonSchema breaks
-    // compatibility with strict-mode OpenAI providers (would let the
-    // LLM emit extra fields / truncations that crash output parsing).
     const schemaArg = mockWithStructuredArgs.mock.calls.at(-1)?.[0] as {
       safeParse: (v: unknown) => { success: boolean };
     };
@@ -108,18 +130,15 @@ describe("routerAgentNode", () => {
     });
   });
 
-  // ponytail: router is a yes/no classifier on the CURRENT turn. Full
-  // history is a token-cost move AND can distract the classifier into
-  // routing off a stale topic. Only the trailing HumanMessage goes in.
-  it("passes only the last user message to the model when history is long", async () => {
-    mockInvokeStructured.mockResolvedValueOnce({ next: "weatherAgent" });
+  it("passes only the last user message to LLM when falling back without keyword match", async () => {
+    mockInvokeStructured.mockResolvedValueOnce({ next: "chatAgent" });
 
     await routerAgentNode({
       messages: [
         new SystemMessage("stale system"),
         new HumanMessage("earlier question"),
         new SystemMessage("another stale system"),
-        new HumanMessage("今天北京天气怎么样?"),
+        new HumanMessage("tell me a philosophy concept"),
         new SystemMessage("trailing stale"),
       ],
     });
@@ -130,42 +149,7 @@ describe("routerAgentNode", () => {
     }>;
     expect(callArgs).toHaveLength(2);
     expect(callArgs?.map((m) => m.type)).toEqual(["system", "human"]);
-    expect(callArgs?.[1]?.content).toBe("今天北京天气怎么样?");
-  });
-
-  it("routes based on the most recent user message, not earlier turns", async () => {
-    mockInvokeStructured.mockResolvedValueOnce({ next: "cryptoAgent" });
-
-    await routerAgentNode({
-      messages: [
-        new HumanMessage("weather in Tokyo"), // earlier turn — ignored
-        new HumanMessage("BTC price now"), // current turn — drives decision
-      ],
-    });
-
-    const callArgs = mockInvokeStructured.mock.calls[0]?.[0] as Array<{
-      type: string;
-      content: string;
-    }>;
-    expect(callArgs?.map((m) => m.content)).toEqual([
-      expect.stringMatching(/router/i),
-      "BTC price now",
-    ]);
-  });
-
-  it("still invokes the model when the last message is human (no fallback when present)", async () => {
-    mockInvokeStructured.mockResolvedValueOnce({ next: "chatAgent" });
-
-    await routerAgentNode({
-      messages: [new SystemMessage("stray"), new HumanMessage("hi")],
-    });
-
-    expect(mockInvokeStructured).toHaveBeenCalledTimes(1);
-    const callArgs = mockInvokeStructured.mock.calls[0]?.[0] as Array<{
-      type: string;
-    }>;
-    // [system, human] — no extra system messages, no extra humans.
-    expect(callArgs).toHaveLength(2);
-    expect(callArgs?.map((m) => m.type)).toEqual(["system", "human"]);
+    expect(callArgs?.[1]?.content).toBe("tell me a philosophy concept");
   });
 });
+

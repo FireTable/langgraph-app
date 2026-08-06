@@ -16,6 +16,8 @@ export const RouterAgentState = new StateSchema({
   variantId: z.string().optional(),
   routerDecision: z.object({
     next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent", "kbAgent"]),
+    source: z.enum(["rule", "keyword", "llm"]).optional(),
+    matchedKey: z.string().optional(),
   }),
 });
 

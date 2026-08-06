@@ -8,20 +8,19 @@ import { hasUnprocessedFile, stripFileParts } from "@/lib/kb/extract";
 import { prepareMessagesForInvoke, loadThreadSummariesForPrompt } from "@/backend/memory/template";
 import { extractUserId } from "@/backend/memory/recall";
 import { getAgentPrompt } from "@/backend/prompt/loader";
+import { matchKeywordRoute } from "@/lib/router/keywords";
 
-// ponytail: v3 router. Two short-circuits and a fallback:
-
-//   1. ANY HumanMessage has an unprocessed PDF → route to kbAgent.
-//   2. Otherwise → resolve kb_refs + trim, ask the LLM.
-//
-// RouterNode is intentionally DB-free: kbAgent owns the contentHash
-// dedup probe. The router only inspects message shape.
+// ponytail: v4 tiered router. Two short-circuits and a fallback:
+//   1. Rule Short-circuit: ANY HumanMessage has an unprocessed PDF/file → route to kbAgent (source: "rule").
+//   2. Keyword Short-circuit: last HumanMessage matches priority keyword rules → route to target agent (source: "keyword").
+//   3. LLM Fallback: resolve kb_refs + trim, ask the LLM for structured routing (source: "llm").
 
 const RouteDecisionSchema = z.object({
   next: z.enum(["weatherAgent", "chatAgent", "cryptoAgent", "codeAgent", "kbAgent"]),
+  source: z.enum(["rule", "keyword", "llm"]).optional(),
+  matchedKey: z.string().optional(),
 });
 
-// delete RouteDecisionSchema kbAgent
 const InvokeRouteDecisionSchema = z
   .object({
     next: z
@@ -42,16 +41,26 @@ export async function routerAgentNode(
 ): Promise<{ routerDecision: RouterDecision }> {
   const lastUserMessage = state.messages.findLast((m) => m instanceof HumanMessage);
 
-  // Short-circuit: any HumanMessage has an unprocessed PDF → kbAgent.
-  // kbAgent now processes every PDF across every HumanMessage in one
-  // invocation, so the router only needs to know "is there still
-  // work to do?" — not which turn owns it.
+  // Tier 1 Short-circuit (Rule): any HumanMessage has an unprocessed file → kbAgent.
   if (hasUnprocessedFile(state.messages)) {
-    return { routerDecision: { next: "kbAgent" } };
+    return { routerDecision: { next: "kbAgent", source: "rule" } };
+  }
+
+  // Tier 2 Short-circuit (Keyword): last HumanMessage matches priority keyword rules.
+  if (lastUserMessage) {
+    const keywordResult = matchKeywordRoute(lastUserMessage);
+    if (keywordResult) {
+      return {
+        routerDecision: {
+          next: keywordResult.agent,
+          source: "keyword",
+          matchedKey: keywordResult.matchedKey,
+        },
+      };
+    }
   }
 
   const userId = extractUserId(config);
-
 
   const promptInfo = await getAgentPrompt("routerAgent", userId ?? undefined);
   const system = new SystemMessage(promptInfo.content);
@@ -67,9 +76,7 @@ export async function routerAgentNode(
     ? [system, ...trimmedClean.filter((m) => m.id !== lastClean.id), lastClean]
     : [system, ...trimmedClean];
 
-  // LLM route — schema now includes kbAgent for completeness, but
-  // the explicit short-circuit above means we never reach this with a
-  // new PDF.
+  // Tier 3 LLM Fallback
   const decision = (await (
     await getChatModel()
   )
@@ -83,5 +90,11 @@ export async function routerAgentNode(
       tags: [...(config?.tags ?? []), "nostream"],
     })) as RouterDecision;
 
-  return { routerDecision: decision };
+  return {
+    routerDecision: {
+      ...decision,
+      source: "llm",
+    },
+  };
 }
+
