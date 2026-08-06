@@ -13,7 +13,7 @@ import {
   PlaceCryptoOrderCard,
 } from "@/components/tool-ui/crypto";
 import { WriteCodeCard, ExecuteCodeResult } from "@/components/tool-ui/code";
-import { SaveMemoryCard } from "@/components/tool-ui/memory";
+import { LookupThreadMessagesCard, SaveMemoryCard } from "@/components/tool-ui/memory";
 import { CreditCard } from "@/components/tool-ui/credit";
 import { KbListDocumentsToolUI, KbSearchToolUI } from "@/components/tool-ui/kb";
 
@@ -128,6 +128,14 @@ const memoryToolkit = defineToolkit({
       ),
     }),
     render: SaveMemoryCard,
+  },
+  lookup_thread_messages: {
+    description: "Render a card showing historical thread message rehydration details.",
+    parameters: z.object({
+      refs: z.union([z.string(), z.array(z.string())]),
+      includeToolMessages: z.boolean().optional(),
+    }),
+    render: LookupThreadMessagesCard,
   },
 });
 

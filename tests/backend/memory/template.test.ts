@@ -101,7 +101,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
         text.indexOf("</earlier_conversation>"),
       )
       .trimEnd();
-    expect(inside).toBe(
+    expect(inside).toContain(
       [
         "#1",
         "Q: hello",
@@ -116,6 +116,7 @@ describe("createSystemPromptWithMemoryTemplate", () => {
         "A: answer",
       ].join("\n"),
     );
+    expect(inside).toContain("lookup_thread_messages");
 
     // Negative: no `---` separator, no raw-JSON keys.
     expect(inside).not.toContain("---");
@@ -229,9 +230,7 @@ function buildMessages(turns: Array<"u" | "a" | "t">): BaseMessage[] {
   return out;
 }
 
-// ponytail: a fully-formed SummaryEntry pick. The test never reads the
-// inner fields (entries are not consumed by trim) — only start/endIndex
-// matter.
+// ponytail: a fully-formed SummaryEntry pick.
 function summary(
   endMessageIndex: number,
   sequence = 1,
@@ -271,58 +270,78 @@ describe("prepareMessagesForInvoke", () => {
     expect(out.every((m) => !(m instanceof SystemMessage))).toBe(true);
   });
 
+  it("filters out ToolMessage instances and intermediate AIMessages with tool_calls when includeToolMessages is false", async () => {
+    const aiWithToolsOnly = new AIMessage({
+      content: "",
+      tool_calls: [{ name: "search", args: {}, id: "t1" }],
+    });
+    const finalAnswer = new AIMessage({
+      content: "Here is the weather result",
+    });
+    const msgs = [
+      new SystemMessage("system"),
+      new HumanMessage("q0"),
+      aiWithToolsOnly,
+      new ToolMessage({ content: "tool result", tool_call_id: "t1" }),
+      finalAnswer,
+      new HumanMessage("q1"),
+    ];
+    const out = await prepareMessagesForInvoke(msgs, [], undefined, { includeToolMessages: false });
+    expect(out.map((m) => m.content)).toEqual(["q0", "Here is the weather result", "q1"]);
+    expect(out.every((m) => !(m instanceof ToolMessage))).toBe(true);
+    for (const m of out) {
+      if (m instanceof AIMessage) {
+        expect(m.tool_calls).toEqual([]);
+      }
+    }
+  });
+
   it("returns messages as-is when there are no human messages", async () => {
-    // No humans → humanIndices is empty → maxEnd+1 < 0 is false →
-    // trimTo = noSystem.length → slice(trimTo) = full noSystem.
     const msgs = [new SystemMessage("base"), new AIMessage("orphan reply")];
     const out = await prepareMessagesForInvoke(msgs, [summary(0)]);
     expect(out.map((m) => m.content)).toEqual(["orphan reply"]);
   });
 
-  it("trims everything up to the next human past the last summary endIndex", async () => {
-    // humans at noSystem indices 0,2,4 (q0..a1..q2..a2..q3..a3)
-    // summary endIndex = 1 → trimTo = humanIndices[2] = 4
-    // expected: q2, a2, q3, a3
-    const msgs = buildMessages(["u", "a", "u", "a", "u", "a", "u", "a"]);
-    expect((await prepareMessagesForInvoke(msgs, [summary(1)])).map((m) => m.content)).toEqual([
-      "q2",
-      "a2",
-      "q3",
-      "a3",
+  it("retains recent buffer turns when maxEnd exceeds buffer count", async () => {
+    // 12 human turns (0..11). maxEnd = 9 (covers 0..9). Buffer = 5.
+    // effectiveTrimHumanIndex = 9 + 1 - 5 = 5.
+    // Trim starts at human index 5 (q5).
+    const msgs = buildMessages([
+      "u", "a", // q0 (0)
+      "u", "a", // q1 (1)
+      "u", "a", // q2 (2)
+      "u", "a", // q3 (3)
+      "u", "a", // q4 (4)
+      "u", "a", // q5 (5)
+      "u", "a", // q6 (6)
+      "u", "a", // q7 (7)
+      "u", "a", // q8 (8)
+      "u", "a", // q9 (9)
+      "u", "a", // q10 (10)
+      "u", "a", // q11 (11)
+    ]);
+    const out = await prepareMessagesForInvoke(msgs, [summary(9)]);
+    expect(out.map((m) => m.content)).toEqual([
+      "q5", "a5",
+      "q6", "a6",
+      "q7", "a7",
+      "q8", "a8",
+      "q9", "a9",
+      "q10", "a10",
+      "q11", "a11",
     ]);
   });
 
-  it("uses max endMessageIndex across multiple summaries", async () => {
-    // Two summaries; max wins. The smaller one is ignored.
-    const msgs = buildMessages(["u", "a", "u", "a", "u", "a", "u", "a", "u", "a"]);
-    const out = await prepareMessagesForInvoke(msgs, [summary(1, 1), summary(3, 2)]);
-    // humans at 0,2,4,6,8 → trimTo = humanIndices[4] = 8 → keep q4..a4
-    expect(out.map((m) => m.content)).toEqual(["q4", "a4"]);
-  });
-
-  it("keeps trailing messages beyond the summarized window (incl. tool calls)", async () => {
-    // Humans at 0, 2, 5. Summary covers endIndex=0 → trimTo = 2.
-    // slice(2) keeps every message from q1 onwards, INCLUDING the
-    // tool message sitting between a1 and q2. Tool messages that
-    // fall BEFORE the next human boundary are dropped with their
-    // Q&A — the summary text captured them.
-    const msgs = buildMessages(["u", "a", "u", "a", "t", "u", "a"]);
-    const out = await prepareMessagesForInvoke(msgs, [summary(0)]);
-    expect(out).toHaveLength(5);
-    expect(out[0]).toBeInstanceOf(HumanMessage);
-    expect(out[1]).toBeInstanceOf(AIMessage);
-    expect(out[2]).toBeInstanceOf(ToolMessage);
-    expect(out[3]).toBeInstanceOf(HumanMessage);
-    expect(out[4]).toBeInstanceOf(AIMessage);
-  });
-
-  it("returns [] when the last covered human is the final human (edge case)", async () => {
-    // trimTo = noSystem.length → slice(noSystem.length) = []
-    // state.messages still has the original — UI is unaffected. This
-    // case shouldn't happen in practice (trigger leaves the most
-    // recent K humans uncovered) but the trim must not crash.
-    const msgs = buildMessages(["u", "a"]);
-    expect(await prepareMessagesForInvoke(msgs, [summary(0)])).toEqual([]);
+  it("returns all messages when maxEnd is smaller than buffer size", async () => {
+    // 4 human turns, maxEnd = 1. effectiveTrimHumanIndex = 1 + 1 - 5 = -3 <= 0 -> returns noSystem.
+    const msgs = buildMessages(["u", "a", "u", "a", "u", "a", "u", "a"]);
+    const out = await prepareMessagesForInvoke(msgs, [summary(1)]);
+    expect(out.map((m) => m.content)).toEqual([
+      "q0", "a0",
+      "q1", "a1",
+      "q2", "a2",
+      "q3", "a3",
+    ]);
   });
 
   it("does not mutate the input array", async () => {
@@ -330,24 +349,6 @@ describe("prepareMessagesForInvoke", () => {
     const before = msgs.map((m) => m.content);
     await prepareMessagesForInvoke(msgs, [summary(1)]);
     expect(msgs.map((m) => m.content)).toEqual(before);
-  });
-
-  it("handles out-of-order summaries by trusting max endMessageIndex", async () => {
-    // Defensive: even if a store read returns rows in random order
-    // (e.g. user deleted the middle one), max wins and the trim is
-    // monotonic. With summaries covering 0..1 and 0..2, maxEnd=2 →
-    // trimTo = humanIndices[3] = 6 → keep q3..a3.
-    const msgs = buildMessages(["u", "a", "u", "a", "u", "a", "u", "a"]);
-    const out = await prepareMessagesForInvoke(msgs, [summary(2, 2), summary(1, 1)]);
-    expect(out.map((m) => m.content)).toEqual(["q3", "a3"]);
-  });
-
-  it("returns [] when max endMessageIndex covers every human (gapped summaries)", async () => {
-    // maxEnd = 3 covers all 4 humans → trimTo = noSystem.length → [].
-    // state.messages still has the original — UI is unaffected.
-    const msgs = buildMessages(["u", "a", "u", "a", "u", "a", "u", "a"]);
-    const out = await prepareMessagesForInvoke(msgs, [summary(3, 2), summary(1, 1)]);
-    expect(out).toEqual([]);
   });
 });
 

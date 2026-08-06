@@ -18,6 +18,7 @@ const DEFAULTS = {
   // Smaller → more calls but bounded per-call work. Defaults to 10
   // (matches the worked example in our docs).
   keepRecent: 10,
+  bufferRecentTurns: 5,
   profileMaxBytes: 8192,
 } as const;
 
@@ -41,6 +42,14 @@ function nonNegativeInt(raw: string | undefined, fallback: number): number {
 export const MEMORY_THREAD_SUMMARY_KEEP_RECENT = nonNegativeInt(
   process.env.MEMORY_THREAD_SUMMARY_KEEP_RECENT,
   DEFAULTS.keepRecent,
+);
+
+// ponytail: number of recent human turns to retain in messages array
+// even after they have been covered by a summary pass. Prevents sudden
+// context loss right after a compression pass. Defaults to 5.
+export const MEMORY_THREAD_MESSAGES_BUFFER_RECENT_TURNS = nonNegativeInt(
+  process.env.MEMORY_THREAD_MESSAGES_BUFFER_RECENT_TURNS,
+  DEFAULTS.bufferRecentTurns,
 );
 
 export const MEMORY_PROFILE_MAX_BYTES = positiveInt(

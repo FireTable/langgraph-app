@@ -1,5 +1,5 @@
 import { PromptTemplate } from "@langchain/core/prompts";
-import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { getThreadSummaries, type MemoryDoc } from "@/lib/memory/queries";
 import type { SummaryEntry } from "@/lib/memory/validators";
@@ -9,9 +9,14 @@ import {
   getCachedMemory,
   type LoadedMemory,
 } from "@/backend/memory/recall";
+import { MEMORY_THREAD_MESSAGES_BUFFER_RECENT_TURNS } from "@/lib/memory/constants";
 import { MEMORY_AUGMENTED_PROMPT_TEMPLATE } from "@/backend/prompt/system";
 import { formatSummaryText } from "@/lib/langgraph/format-summary";
 import { resolveKbRefs } from "@/lib/kb/resolve";
+
+export type PrepareMessagesOptions = {
+  includeToolMessages?: boolean;
+};
 
 // ponytail: the system prompt carries TWO dynamic blocks:
 //   <memory>    = the user's saved profile (keys + values), plus OAuth
@@ -82,49 +87,55 @@ export async function createSystemPromptWithMemoryTemplate(
   return new SystemMessage(content);
 }
 
-// ponytail: per-summary Q&A prose. Across summaries we just join with a
-// blank line — the per-entry `#N` ref already anchors each Q&A to its
-// turn, so a `---` separator (or any other rule) is noise. Pure
-// function — `template.test.ts` pins the exact output so a formatter
-// drift doesn't silently change what the model sees vs what the user
-// sees in the Memory tab.
+// ponytail: per-summary Q&A prose. Appends an explicit guidance note
+// informing the LLM that it can call `lookup_thread_messages` to rehydrate
+// raw message details for any #N reference tag seen in the summary.
 export function formatThreadsForPrompt(threads: ThreadSummariesPayload): string {
-  return threads.summaries.map((s) => formatSummaryText(s.summary.entries)).join("\n\n");
+  const text = threads.summaries.map((s) => formatSummaryText(s.summary.entries)).join("\n\n");
+  const note =
+    "Note: If you need full uncompressed details, raw code snippets, or original parameters for any historical turn referenced by #N above, call the `lookup_thread_messages` tool with the ref (e.g. refs: \"#3\" or refs: [\"#3\", \"#4\"]).";
+  return `${text}\n\n${note}`;
 }
 
 // ponytail: the messages array bound to chatModel.invoke at the model
 // node. Does TWO things in one pass:
 //   1. drops SystemMessage instances (the bindTools runner leaks them
 //      across invokes — strip every call, defensively).
-//   2. drops everything covered by the thread's summaries, keeping
-//      only the trailing slice from the next human past maxEndIndex.
+//   2. drops older turns covered by thread summaries, while retaining
+//      MEMORY_THREAD_MESSAGES_BUFFER_RECENT_TURNS recent human turns
+//      as a buffer to prevent sudden context loss after compression.
 //
-// The model reads the older turns via the <earlier_conversation> block
-// in its SystemMessage, so cutting them out of the input array is a
-// token-cost move (not a context-loss one). state.messages is NEVER
-// touched — UI + checkpointer read from it directly.
-//
-// Pure function — `template.test.ts` pins every branch (no summary,
-// no humans, single summary, multiple summaries, last human covered,
-// out-of-order store rows, tool interleaving preserved).
-//
-// v2 (issue #13): kb_ref resolution happens here too — the LLM only
-// ever sees resolved text. Async because resolveKbRefs awaits the
-// LRU-cached DB lookup.
-//
-// v3 (issue #13): resolveKbMentions leaves the `:kb-doc[…]{id=…}` /
-// `:kb-folder[…]{id=…}` directive tokens in the HumanMessage text
-// (the LLM reads them and calls `search_KB` itself with the right
-// filter). The resolver only injects a synthetic search_KB
-// ToolMessage for the rare 0-chunk-fallback case — see
-// `lib/kb/resolve-mentions.ts`.
+// The model reads older turns via the <earlier_conversation> block
+// in its SystemMessage. state.messages is NEVER touched.
 export async function prepareMessagesForInvoke(
   messages: BaseMessage[],
   summaries: ThreadSummariesPayload["summaries"],
   userId?: string,
+  options?: PrepareMessagesOptions,
 ): Promise<BaseMessage[]> {
   const resolved = userId ? await resolveKbRefs(messages, userId) : messages;
-  const noSystem = resolved.filter((m) => !(m instanceof SystemMessage));
+  const includeTool = options?.includeToolMessages ?? true;
+
+  const noSystem: BaseMessage[] = [];
+  for (const m of resolved) {
+    if (m instanceof SystemMessage) continue;
+
+    if (!includeTool) {
+      if (m instanceof ToolMessage || m.type === "tool" || m.type === "function") {
+        continue;
+      }
+      if (
+        (m instanceof AIMessage || m.type === "ai" || m.type === "assistant") &&
+        Array.isArray((m as AIMessage).tool_calls) &&
+        (m as AIMessage).tool_calls!.length > 0
+      ) {
+        continue;
+      }
+    }
+
+    noSystem.push(m);
+  }
+
   const humanIndices: number[] = [];
   for (let i = 0; i < noSystem.length; i++) {
     if (noSystem[i] instanceof HumanMessage) humanIndices.push(i);
@@ -134,11 +145,20 @@ export async function prepareMessagesForInvoke(
     if (s.endMessageIndex > maxEnd) maxEnd = s.endMessageIndex;
   }
 
-  // ponytail: no summary OR no human turns in the array → nothing to
-  // trim. Returning noSystem (not messages) still drops a stray
-  // SystemMessage if one slipped in — the strip pass is unconditional.
+  // ponytail: no summary OR no human turns in the array → nothing to trim.
   if (maxEnd < 0 || humanIndices.length === 0) return noSystem;
-  const trimTo = maxEnd + 1 < humanIndices.length ? humanIndices[maxEnd + 1] : noSystem.length;
+
+  // ponytail: retain bufferTurns recent human turns prior to maxEnd + 1
+  // to avoid sudden context drop right after compression.
+  const bufferTurns = MEMORY_THREAD_MESSAGES_BUFFER_RECENT_TURNS;
+  const effectiveTrimHumanIndex = Math.max(0, maxEnd + 1 - bufferTurns);
+
+  if (effectiveTrimHumanIndex <= 0) return noSystem;
+
+  const trimTo =
+    effectiveTrimHumanIndex < humanIndices.length
+      ? humanIndices[effectiveTrimHumanIndex]
+      : noSystem.length;
 
   return noSystem.slice(trimTo);
 }

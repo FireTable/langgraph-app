@@ -10,6 +10,7 @@ import { placeCryptoOrderTool } from "@/backend/tool/crypto/place-crypto-order";
 import { getOrderStatusTool } from "@/backend/tool/crypto/get-order-status";
 import { getNftHoldingsTool } from "@/backend/tool/crypto/get-nft-holdings";
 import { saveMemoryTool } from "@/backend/tool/memory/save-memory-tool";
+import { lookupThreadMessagesTool } from "@/backend/tool/memory/lookup-thread-messages-tool";
 import { executeCodeTool, writeCodeTool } from "@/backend/tool/code";
 import { listDocumentsTool, searchKbTool } from "@/backend/tool/kb";
 
@@ -33,7 +34,9 @@ import { listDocumentsTool, searchKbTool } from "@/backend/tool/kb";
 //   - search_KB — gated on pgvector extension (rule #10).
 //   - list_documents — pure SQL, always available.
 
-export const WEATHER_TOOLS = [askLocationTool, geocodeLocationTool, getWeatherTool, saveMemoryTool];
+export const MEMORY_TOOLS = [saveMemoryTool, lookupThreadMessagesTool];
+
+export const WEATHER_TOOLS = [askLocationTool, geocodeLocationTool, getWeatherTool, ...MEMORY_TOOLS];
 
 export const CRYPTO_TOOLS = [
   getCryptoPriceTool,
@@ -42,7 +45,7 @@ export const CRYPTO_TOOLS = [
   placeCryptoOrderTool,
   getOrderStatusTool,
   ...(getNftHoldingsTool ? [getNftHoldingsTool] : []),
-  saveMemoryTool,
+  ...MEMORY_TOOLS,
 ];
 
 // Code agent owns write_code (Step 1 — propose) and execute_code (Step 2 — run).
@@ -50,7 +53,7 @@ export const CRYPTO_TOOLS = [
 // backend/tool/code/execute-code.ts — a missing token drops the runner
 // from this list, the model keeps proposing code, and a friendly prose
 // fallback runs at click-time.
-export const CODE_TOOLS = [writeCodeTool, ...(executeCodeTool ? [executeCodeTool] : [])];
+export const CODE_TOOLS = [writeCodeTool, ...(executeCodeTool ? [executeCodeTool] : []), lookupThreadMessagesTool];
 
 // ponytail: KB tools — search_KB throws at runtime when pgvector is
 // missing (the tool is still registered so the LLM sees a consistent
@@ -78,6 +81,8 @@ export {
   placeCryptoOrderTool,
   getOrderStatusTool,
   getNftHoldingsTool,
+  saveMemoryTool,
+  lookupThreadMessagesTool,
   searchKbTool,
   listDocumentsTool,
 };

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { getChatModel } from "@/backend/model";
 import { ROUTER_AGENT_PROMPT } from "@/backend/prompt/system";
 import { hasUnprocessedFile, stripFileParts } from "@/lib/kb/extract";
-import { prepareMessagesForInvoke } from "@/backend/memory/template";
+import { prepareMessagesForInvoke, loadThreadSummariesForPrompt } from "@/backend/memory/template";
 import { extractUserId } from "@/backend/memory/recall";
 import { getAgentPrompt } from "@/backend/prompt/loader";
 
@@ -52,15 +52,19 @@ export async function routerAgentNode(
 
   const userId = extractUserId(config);
 
+
   const promptInfo = await getAgentPrompt("routerAgent", userId ?? undefined);
   const system = new SystemMessage(promptInfo.content);
-  const trimmed = await prepareMessagesForInvoke(state.messages, [], userId ?? undefined);
+  const threads = await loadThreadSummariesForPrompt(config);
+  const trimmed = await prepareMessagesForInvoke(state.messages, threads?.summaries ?? [], userId ?? undefined, {
+    includeToolMessages: false,
+  });
 
   const trimmedClean = trimmed.map(stripFileParts);
   const lastClean = lastUserMessage ? stripFileParts(lastUserMessage) : null;
 
   const invokeMessages = lastClean
-    ? [system, lastClean, ...trimmedClean.filter((m) => m.id !== lastClean.id)]
+    ? [system, ...trimmedClean.filter((m) => m.id !== lastClean.id), lastClean]
     : [system, ...trimmedClean];
 
   // LLM route — schema now includes kbAgent for completeness, but
