@@ -10,14 +10,14 @@ card — same rule as `docs/APIS.md`.
 
 ## Tool groups
 
-| Group   | Backend path           | Card path                                                                         |
-| ------- | ---------------------- | --------------------------------------------------------------------------------- |
-| Weather | `backend/tool/` (root) | `components/tool-ui/weather/`                                                     |
-| Crypto  | `backend/tool/crypto/` | `components/tool-ui/crypto/`                                                      |
-| Code    | `backend/tool/code/`   | `components/tool-ui/code/`                                                        |
-| Web     | `backend/tool/` (root) | — (plain tool messages)                                                           |
-| Memory  | `backend/tool/memory/` | `components/tool-ui/memory/` (profile diff + thread-message lookup cards)     |
-| Credit  | — (no backend tool)    | `components/tool-ui/credit/credit-card.tsx` (proxy-injected tool_call)            |
+| Group   | Backend path           | Card path                                                                 |
+| ------- | ---------------------- | ------------------------------------------------------------------------- |
+| Weather | `backend/tool/` (root) | `components/tool-ui/weather/`                                             |
+| Crypto  | `backend/tool/crypto/` | `components/tool-ui/crypto/`                                              |
+| Code    | `backend/tool/code/`   | `components/tool-ui/code/`                                                |
+| Web     | `backend/tool/` (root) | — (plain tool messages)                                                   |
+| Memory  | `backend/tool/memory/` | `components/tool-ui/memory/` (profile diff + thread-message lookup cards) |
+| Credit  | — (no backend tool)    | `components/tool-ui/credit/credit-card.tsx` (proxy-injected tool_call)    |
 
 ## Weather
 
@@ -67,10 +67,10 @@ instead of silently failing.
 
 ## Memory
 
-| Tool                     | Backend file                                    | Frontend card                                | Notes                                                                                                                                                                                                                                                           |
-| ------------------------ | ----------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `save_memory`            | `memory/save-memory-tool.ts`                    | `memory/save-memory-card.tsx`                | RFC 6902 patches against the user's profile at `[userId, "memory"] main`. Diff card reads the matching `ToolMessage`. Wired into every conversational sub-agent's tool list. See `docs/MEMORY.md`.                                                               |
-| `lookup_thread_messages` | `memory/lookup-thread-messages-tool.ts`         | `memory/lookup-thread-messages-card.tsx`     | Resolves `#N` labels or ranges from `<earlier_conversation>`, rehydrates original messages from the thread checkpointer, and falls back to persisted summary Q&A when raw state is unavailable. Tool payloads are omitted unless `includeToolMessages` is `true`. |
+| Tool                     | Backend file                            | Frontend card                            | Notes                                                                                                                                                                                                                                                             |
+| ------------------------ | --------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `save_memory`            | `memory/save-memory-tool.ts`            | `memory/save-memory-card.tsx`            | RFC 6902 patches against the user's profile at `[userId, "memory"] main`. Diff card reads the matching `ToolMessage`. Wired into every conversational sub-agent's tool list. See `docs/MEMORY.md`.                                                                |
+| `lookup_thread_messages` | `memory/lookup-thread-messages-tool.ts` | `memory/lookup-thread-messages-card.tsx` | Resolves `#N` labels or ranges from `<earlier_conversation>`, rehydrates original messages from the thread checkpointer, and falls back to persisted summary Q&A when raw state is unavailable. Tool payloads are omitted unless `includeToolMessages` is `true`. |
 
 `lookup_thread_messages` is available to the chat, weather, crypto, and code
 agents. Its result is read-only: it does not mutate `state.messages`, the

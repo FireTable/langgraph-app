@@ -34,16 +34,16 @@
 
 ## 技术栈
 
-| 架构层          | 选型                                                                      |
-| --------------- | ------------------------------------------------------------------------- |
-| Agent 运行时    | LangGraph.js (`StateGraph`)                                               |
-| LLM 客户端      | `@langchain/openai`（兼容 OpenAI 协议）                                   |
-| UI 框架         | assistant-ui (`useLangGraphRuntime`) + Tailwind v4 + shadcn/ui 组件库     |
-| 应用框架        | Next.js 16 (App Router, Turbopack)                                        |
-| ORM             | Drizzle ORM + postgres-js                                                 |
-| API 校验        | Zod (直接通过 `drizzle-zod` 从 Drizzle Schema 派生)                       |
-| 数据库          | Postgres 16                                                               |
-| 测试框架        | Vitest（配合真实的 Postgres 测试数据库）                                  |
+| 架构层       | 选型                                                                  |
+| ------------ | --------------------------------------------------------------------- |
+| Agent 运行时 | LangGraph.js (`StateGraph`)                                           |
+| LLM 客户端   | `@langchain/openai`（兼容 OpenAI 协议）                               |
+| UI 框架      | assistant-ui (`useLangGraphRuntime`) + Tailwind v4 + shadcn/ui 组件库 |
+| 应用框架     | Next.js 16 (App Router, Turbopack)                                    |
+| ORM          | Drizzle ORM + postgres-js                                             |
+| API 校验     | Zod (直接通过 `drizzle-zod` 从 Drizzle Schema 派生)                   |
+| 数据库       | Postgres 16                                                           |
+| 测试框架     | Vitest（配合真实的 Postgres 测试数据库）                              |
 
 ## 在线体验
 
@@ -209,7 +209,9 @@ tests/                        Vitest 测试目录 (NODE_ENV=test)
 数据持久化分为三大层级（均基于 Postgres）：
 
 ### 1. 应用数据表 (App Tables)
+
 由 `lib/<module>/schema.ts` 维护。完整字段说明参阅 [`docs/DB.md`](docs/DB.md)。
+
 - **`user`, `session`, `account`, `verification`** — Better Auth 账号与认证表。
 - **`threads`** — 对话会话表，包含标题、状态及最后更新时间。
 - **`attachments`** — 基于 Cloudflare R2 的附件元数据表（详见 [`docs/ATTACHMENTS.md`](docs/ATTACHMENTS.md)）。
@@ -219,6 +221,7 @@ tests/                        Vitest 测试目录 (NODE_ENV=test)
 - **`eval_*` / `prompt_*`** — Agent 评测工作室、提示词版本控制及 A/B 分流配置表。
 
 ### 2. LangGraph 检查点表 (Checkpoints)
+
 后端启动时由 `PostgresSaver.setup()` 自动创建：`checkpoints`, `checkpoint_blobs`, `checkpoint_writes` 以及迁移日志表 `__drizzle_migrations`。
 
 ## 开发与常用命令
@@ -244,21 +247,21 @@ tests/                        Vitest 测试目录 (NODE_ENV=test)
 
 ## 环境变量参考
 
-| 变量名                              | 作用模块                               | 是否必须                                                                                               |
-| ----------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `OPENAI_API_KEY`                    | 后端 Agent                             | 可选（数据库 `provider` 表为空时的初始兜底 Key；后续通过 Admin 面板加密管理）                          |
-| `OPENAI_MODEL`                      | 后端 Agent                             | 可选（默认 `gpt-4o-mini`）                                                                             |
-| `OPENAI_BASE_URL`                   | 后端 Agent                             | 可选（自定义 API Gateway）                                                                             |
-| `JINA_API_KEYS`                     | 网页搜索与抓取                         | 是（支持英文逗号分隔的密钥池）                                                                         |
-| `ALCHEMY_API_KEY`                   | NFT 画廊                               | 是（用于 `get_NFT_holdings`）                                                                          |
-| `LANGGRAPH_API_URL`                 | Next.js 代理                           | 可选（默认 `http://localhost:2024`）                                                                   |
-| `DATABASE_URL`                      | Drizzle ORM                            | 是                                                                                                     |
-| `DATABASE_URL_TEST`                 | Vitest                                 | 是                                                                                                     |
-| `BETTER_AUTH_SECRET`                | 身份认证 Cookie 加密                   | 是（详见 [docs/AUTH.md](docs/AUTH.md)）                                                                |
-| `LLM_KEY_ENCRYPTION_KEY`            | API Key 加密 (AES-256-GCM)             | 是（32 字节 Hex 字符串，由 `openssl rand -hex 32` 生成）                                              |
-| `INITIAL_ADMIN_EMAIL`               | 引导管理员邮箱                         | 可选（匹配该邮箱的首位注册用户将自动赋予 admin 角色）                                                  |
-| `RESEND_API_KEY`                    | 邮件发送服务                           | 是                                                                                                     |
-| `R2_*`                              | Cloudflare R2 附件存储                 | 是（开启附件上传功能需配置，详见 [docs/ATTACHMENTS.md](docs/ATTACHMENTS.md)）                         |
+| 变量名                   | 作用模块                   | 是否必须                                                                      |
+| ------------------------ | -------------------------- | ----------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`         | 后端 Agent                 | 可选（数据库 `provider` 表为空时的初始兜底 Key；后续通过 Admin 面板加密管理） |
+| `OPENAI_MODEL`           | 后端 Agent                 | 可选（默认 `gpt-4o-mini`）                                                    |
+| `OPENAI_BASE_URL`        | 后端 Agent                 | 可选（自定义 API Gateway）                                                    |
+| `JINA_API_KEYS`          | 网页搜索与抓取             | 是（支持英文逗号分隔的密钥池）                                                |
+| `ALCHEMY_API_KEY`        | NFT 画廊                   | 是（用于 `get_NFT_holdings`）                                                 |
+| `LANGGRAPH_API_URL`      | Next.js 代理               | 可选（默认 `http://localhost:2024`）                                          |
+| `DATABASE_URL`           | Drizzle ORM                | 是                                                                            |
+| `DATABASE_URL_TEST`      | Vitest                     | 是                                                                            |
+| `BETTER_AUTH_SECRET`     | 身份认证 Cookie 加密       | 是（详见 [docs/AUTH.md](docs/AUTH.md)）                                       |
+| `LLM_KEY_ENCRYPTION_KEY` | API Key 加密 (AES-256-GCM) | 是（32 字节 Hex 字符串，由 `openssl rand -hex 32` 生成）                      |
+| `INITIAL_ADMIN_EMAIL`    | 引导管理员邮箱             | 可选（匹配该邮箱的首位注册用户将自动赋予 admin 角色）                         |
+| `RESEND_API_KEY`         | 邮件发送服务               | 是                                                                            |
+| `R2_*`                   | Cloudflare R2 附件存储     | 是（开启附件上传功能需配置，详见 [docs/ATTACHMENTS.md](docs/ATTACHMENTS.md)） |
 
 ## 文档索引
 
@@ -280,11 +283,13 @@ tests/                        Vitest 测试目录 (NODE_ENV=test)
 ## 技能与运维
 
 `skills/` 目录下包含了 **Claude Code 技能文件**，提供自动化部署与维护指引：
+
 - [`skills/langgraph-app-maintain.md`](skills/langgraph-app-maintain.md) — VPS 部署、镜像升级、回滚与数据库重置维护指引。
 
 ## 工程规范
 
 详见 `CLAUDE.md`：
+
 - API 文档必须与代码保持同步（Per-commit 维护）。
 - 任何新功能、新路由与 Schema 变更必须采用 TDD 编写测试。
 - 优先选择标准、通用的工程解法，避免临时性的 Hack。

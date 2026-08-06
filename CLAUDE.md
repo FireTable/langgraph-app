@@ -13,7 +13,7 @@ Guidance for Claude Code in this repo. Features, layout, env vars, tech stack â†
 | Knowledge base, ingestion, hybrid search, Rerank | `docs/KNOWLEDGE_BASE.md` |
 | Observability panel design + retention           | `docs/OBSERVABILITY.md`  |
 | LangGraph tool inventory + frontend card wiring  | `docs/TOOLS.md`          |
-| Tiered router (rule / keyword / LLM) + decisions  | `docs/ROUTING.md`        |
+| Tiered router (rule / keyword / LLM) + decisions | `docs/ROUTING.md`        |
 | Interrupt-driven tool flow contract              | `docs/INTERRUPT.md`      |
 | Attachments backing (R2 + presign) design        | `docs/ATTACHMENTS.md`    |
 | Auth setup, OAuth, troubleshooting               | `docs/AUTH.md`           |

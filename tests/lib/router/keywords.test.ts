@@ -17,7 +17,8 @@ describe("matchKeywordRoute", () => {
     const result = matchKeywordRoute(msg);
     expect(result).toEqual({
       agent: "codeAgent",
-      matchedKey: "/(写|编写|生成|重构|优化|运行|调试|修复)[\\s\\S]{0,15}(代码|脚本|程序|函数|接口|正则)/i",
+      matchedKey:
+        "/(写|编写|生成|重构|优化|运行|调试|修复)[\\s\\S]{0,15}(代码|脚本|程序|函数|接口|正则)/i",
     });
   });
 

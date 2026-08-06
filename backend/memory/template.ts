@@ -1,5 +1,11 @@
 import { PromptTemplate } from "@langchain/core/prompts";
-import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
+import {
+  AIMessage,
+  HumanMessage,
+  SystemMessage,
+  ToolMessage,
+  type BaseMessage,
+} from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { getThreadSummaries, type MemoryDoc } from "@/lib/memory/queries";
 import type { SummaryEntry } from "@/lib/memory/validators";
@@ -93,7 +99,7 @@ export async function createSystemPromptWithMemoryTemplate(
 export function formatThreadsForPrompt(threads: ThreadSummariesPayload): string {
   const text = threads.summaries.map((s) => formatSummaryText(s.summary.entries)).join("\n\n");
   const note =
-    "Note: If you need full uncompressed details, raw code snippets, or original parameters for any historical turn referenced by #N above, call the `lookup_thread_messages` tool with the ref (e.g. refs: \"#3\" or refs: [\"#3\", \"#4\"]).";
+    'Note: If you need full uncompressed details, raw code snippets, or original parameters for any historical turn referenced by #N above, call the `lookup_thread_messages` tool with the ref (e.g. refs: "#3" or refs: ["#3", "#4"]).';
   return `${text}\n\n${note}`;
 }
 

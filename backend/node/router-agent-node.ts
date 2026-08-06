@@ -65,9 +65,14 @@ export async function routerAgentNode(
   const promptInfo = await getAgentPrompt("routerAgent", userId ?? undefined);
   const system = new SystemMessage(promptInfo.content);
   const threads = await loadThreadSummariesForPrompt(config);
-  const trimmed = await prepareMessagesForInvoke(state.messages, threads?.summaries ?? [], userId ?? undefined, {
-    includeToolMessages: false,
-  });
+  const trimmed = await prepareMessagesForInvoke(
+    state.messages,
+    threads?.summaries ?? [],
+    userId ?? undefined,
+    {
+      includeToolMessages: false,
+    },
+  );
 
   const trimmedClean = trimmed.map(stripFileParts);
   const lastClean = lastUserMessage ? stripFileParts(lastUserMessage) : null;
@@ -97,4 +102,3 @@ export async function routerAgentNode(
     },
   };
 }
-

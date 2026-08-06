@@ -70,10 +70,7 @@ function formatRoleName(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
-export const LookupThreadMessagesCard: ToolCallMessagePartComponent<Args> = ({
-  result,
-  args,
-}) => {
+export const LookupThreadMessagesCard: ToolCallMessagePartComponent<Args> = ({ result, args }) => {
   const parsed = parseResult(result);
   const refLabel = formatRefLabel(args?.refs);
 

@@ -36,7 +36,12 @@ import { listDocumentsTool, searchKbTool } from "@/backend/tool/kb";
 
 export const MEMORY_TOOLS = [saveMemoryTool, lookupThreadMessagesTool];
 
-export const WEATHER_TOOLS = [askLocationTool, geocodeLocationTool, getWeatherTool, ...MEMORY_TOOLS];
+export const WEATHER_TOOLS = [
+  askLocationTool,
+  geocodeLocationTool,
+  getWeatherTool,
+  ...MEMORY_TOOLS,
+];
 
 export const CRYPTO_TOOLS = [
   getCryptoPriceTool,
@@ -53,7 +58,11 @@ export const CRYPTO_TOOLS = [
 // backend/tool/code/execute-code.ts — a missing token drops the runner
 // from this list, the model keeps proposing code, and a friendly prose
 // fallback runs at click-time.
-export const CODE_TOOLS = [writeCodeTool, ...(executeCodeTool ? [executeCodeTool] : []), lookupThreadMessagesTool];
+export const CODE_TOOLS = [
+  writeCodeTool,
+  ...(executeCodeTool ? [executeCodeTool] : []),
+  lookupThreadMessagesTool,
+];
 
 // ponytail: KB tools — search_KB throws at runtime when pgvector is
 // missing (the tool is still registered so the LLM sees a consistent

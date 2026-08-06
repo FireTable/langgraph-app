@@ -49,7 +49,13 @@ export const AGENT_KEYWORD_RULES: AgentRuleGroup[] = [
       /\b(btc|eth|usdt|usdc|doge|shib)\b/i,
       // Explicit crypto terms
       /\b(bitcoin|ethereum|cryptocurrency|rainbowkit|coingecko)\b/i,
-      "比特币", "以太坊", "加密货币", "数字货币", "币价", "nft holdings", "connect_wallet",
+      "比特币",
+      "以太坊",
+      "加密货币",
+      "数字货币",
+      "币价",
+      "nft holdings",
+      "connect_wallet",
       // Trading / Swap phrases
       /(买|卖|换|交易|swap|buy|sell)\s*(btc|eth|usdt|sol|加密货币|代币)/i,
     ],
@@ -63,7 +69,15 @@ export const AGENT_KEYWORD_RULES: AgentRuleGroup[] = [
     agent: "weatherAgent",
     rules: [
       // Chinese weather terms
-      "天气", "天气预报", "气温", "空气质量", "穿衣指数", "aqi", "pm2.5", "摄氏度", "华氏度",
+      "天气",
+      "天气预报",
+      "气温",
+      "空气质量",
+      "穿衣指数",
+      "aqi",
+      "pm2.5",
+      "摄氏度",
+      "华氏度",
       // English weather terms with word boundaries
       /\b(weather|forecast|celsius|fahrenheit|air quality)\b/i,
       // Precipitation & typhoon phrases
@@ -90,9 +104,7 @@ function extractTextFromMessage(message: BaseMessage): string {
     return message.content
       .filter(
         (part) =>
-          typeof part === "object" &&
-          part !== null &&
-          (part as { type?: string }).type === "text",
+          typeof part === "object" && part !== null && (part as { type?: string }).type === "text",
       )
       .map((part) => (part as { text?: string }).text ?? "")
       .join(" ");

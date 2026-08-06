@@ -307,28 +307,47 @@ describe("prepareMessagesForInvoke", () => {
     // effectiveTrimHumanIndex = 9 + 1 - 5 = 5.
     // Trim starts at human index 5 (q5).
     const msgs = buildMessages([
-      "u", "a", // q0 (0)
-      "u", "a", // q1 (1)
-      "u", "a", // q2 (2)
-      "u", "a", // q3 (3)
-      "u", "a", // q4 (4)
-      "u", "a", // q5 (5)
-      "u", "a", // q6 (6)
-      "u", "a", // q7 (7)
-      "u", "a", // q8 (8)
-      "u", "a", // q9 (9)
-      "u", "a", // q10 (10)
-      "u", "a", // q11 (11)
+      "u",
+      "a", // q0 (0)
+      "u",
+      "a", // q1 (1)
+      "u",
+      "a", // q2 (2)
+      "u",
+      "a", // q3 (3)
+      "u",
+      "a", // q4 (4)
+      "u",
+      "a", // q5 (5)
+      "u",
+      "a", // q6 (6)
+      "u",
+      "a", // q7 (7)
+      "u",
+      "a", // q8 (8)
+      "u",
+      "a", // q9 (9)
+      "u",
+      "a", // q10 (10)
+      "u",
+      "a", // q11 (11)
     ]);
     const out = await prepareMessagesForInvoke(msgs, [summary(9)]);
     expect(out.map((m) => m.content)).toEqual([
-      "q5", "a5",
-      "q6", "a6",
-      "q7", "a7",
-      "q8", "a8",
-      "q9", "a9",
-      "q10", "a10",
-      "q11", "a11",
+      "q5",
+      "a5",
+      "q6",
+      "a6",
+      "q7",
+      "a7",
+      "q8",
+      "a8",
+      "q9",
+      "a9",
+      "q10",
+      "a10",
+      "q11",
+      "a11",
     ]);
   });
 
@@ -336,12 +355,7 @@ describe("prepareMessagesForInvoke", () => {
     // 4 human turns, maxEnd = 1. effectiveTrimHumanIndex = 1 + 1 - 5 = -3 <= 0 -> returns noSystem.
     const msgs = buildMessages(["u", "a", "u", "a", "u", "a", "u", "a"]);
     const out = await prepareMessagesForInvoke(msgs, [summary(1)]);
-    expect(out.map((m) => m.content)).toEqual([
-      "q0", "a0",
-      "q1", "a1",
-      "q2", "a2",
-      "q3", "a3",
-    ]);
+    expect(out.map((m) => m.content)).toEqual(["q0", "a0", "q1", "a1", "q2", "a2", "q3", "a3"]);
   });
 
   it("does not mutate the input array", async () => {

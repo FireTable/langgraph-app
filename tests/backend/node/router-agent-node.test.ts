@@ -83,7 +83,8 @@ describe("routerAgentNode", () => {
       routerDecision: {
         next: "codeAgent",
         source: "keyword",
-        matchedKey: "/(写|编写|生成|重构|优化|运行|调试|修复)[\\s\\S]{0,15}(代码|脚本|程序|函数|接口|正则)/i",
+        matchedKey:
+          "/(写|编写|生成|重构|优化|运行|调试|修复)[\\s\\S]{0,15}(代码|脚本|程序|函数|接口|正则)/i",
       },
     });
     expect(mockInvokeStructured).not.toHaveBeenCalled();
@@ -152,4 +153,3 @@ describe("routerAgentNode", () => {
     expect(callArgs?.[1]?.content).toBe("tell me a philosophy concept");
   });
 });
-

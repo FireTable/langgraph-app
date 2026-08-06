@@ -488,11 +488,11 @@ Full request / response / status codes in [`docs/APIS.md`](./APIS.md)
 
 Three env knobs (`lib/memory/constants.ts`, parsed once at module load):
 
-| Variable                                    | Default | Purpose                                                                                                                                    |
-| ------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `MEMORY_THREAD_SUMMARY_KEEP_RECENT`         | `10`    | Trigger cadence for `summarize`. Same number drives batch size and recent-floor. `< 1` collapses to no-op.                                |
-| `MEMORY_THREAD_MESSAGES_BUFFER_RECENT_TURNS` | `5`     | Number of recent human turns retained in the raw `messages` array even after compression, preventing sudden context loss.                   |
-| `MEMORY_PROFILE_MAX_BYTES`                  | `8192`  | Max `JSON.stringify(storeDoc).length` after a `save_memory` patch. Exceeding throws `MemorySizeError`.                                     |
+| Variable                                     | Default | Purpose                                                                                                                   |
+| -------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `MEMORY_THREAD_SUMMARY_KEEP_RECENT`          | `10`    | Trigger cadence for `summarize`. Same number drives batch size and recent-floor. `< 1` collapses to no-op.                |
+| `MEMORY_THREAD_MESSAGES_BUFFER_RECENT_TURNS` | `5`     | Number of recent human turns retained in the raw `messages` array even after compression, preventing sudden context loss. |
+| `MEMORY_PROFILE_MAX_BYTES`                   | `8192`  | Max `JSON.stringify(storeDoc).length` after a `save_memory` patch. Exceeding throws `MemorySizeError`.                    |
 
 Defaults match the docs / worked examples (K=10 means a fresh
 trigger fires every 10 turns past K). `lookup_thread_messages` is registered in `CHAT_TOOLS` to let the model rehydrate historical details from `#N` reference tags on demand.

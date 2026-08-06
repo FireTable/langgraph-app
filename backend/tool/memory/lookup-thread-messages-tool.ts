@@ -167,9 +167,7 @@ export const lookupThreadMessagesTool = tool(
             const entryTurnSet = parseRequestedTurnNumbers(entry.refs);
             const isMatch = Array.from(requestedTurns).some((t) => entryTurnSet.has(t));
             if (isMatch) {
-              const refsLabel = entry.refs
-                .map((r) => (r.startsWith("#") ? r : `#${r}`))
-                .join(", ");
+              const refsLabel = entry.refs.map((r) => (r.startsWith("#") ? r : `#${r}`)).join(", ");
               rehydratedTurns.push({
                 ref: refsLabel,
                 messages: [
