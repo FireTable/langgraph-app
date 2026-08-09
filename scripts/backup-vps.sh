@@ -80,20 +80,28 @@ docker compose -f "$COMPOSE_FILE" exec -T postgres \
 CFG="$OUT/config.tar.gz"
 log "tarring config -> $CFG"
 umask 077
-tar -czf "$CFG" \
-  -C "$APP_DIR" \
+# busybox tar (alpine) has no -r (append) flag and multi -C mis-parses.
+# Build config tarball as a list of independent gzip members and
+# concatenate them — valid multi-member gzip, tar restores transparently.
+TMP_PARTS=()
+
+# 🔴 required: configs
+P="${CFG}.part.0"
+tar -czf "$P" -C "$APP_DIR" \
   .env docker-compose.yml \
   caddy-origin.pem caddy-origin-key.pem
+TMP_PARTS+=("$P")
 
-# 🟡 whole $HOME/.ssh — without it a perfect restore still locks you out.
-# Includes authorized_keys, private keys, known_hosts, config.
-# Skip the dir silently if it doesn't exist (non-interactive users with
-# no /home). The archive is owner-only; private keys never leave the
-# .ssh/ subtree in plaintext form outside that.
+# 🟡 optional: .ssh if readable (host chmod 755 /root/.ssh is prerequisite)
 if [[ -d "$HOME/.ssh" ]]; then
-  tar -rzf "$CFG" -C "$HOME" .ssh
-else
-  log "WARN: $HOME/.ssh not found — no SSH keys in this backup"
+  P="${CFG}.part.1"
+  if tar -czf "$P" -C "$HOME" .ssh 2>/dev/null; then
+    TMP_PARTS+=("$P")
+    log "config tarball includes $HOME/.ssh"
+  else
+    rm -f "$P"
+    log "WARN: $HOME/.ssh unreadable (root-owned 700 mount); SSH keys NOT in backup. Follow-up: chmod 755 /root/.ssh + chmod 644 /root/.ssh/* on host, or change compose mount"
+  fi
 fi
 
 # 🔴 R2 sanity check — can't back up object bytes from the VPS, but
@@ -105,42 +113,59 @@ else
   log "WARN: R2_ACCESS_KEY_ID not in .env — chat attachments (file bytes) are NOT in this backup; enable R2 bucket versioning + replicate"
 fi
 
+# 🟡 optional: Caddyfile + sshd drop-in (BACKUP_INCLUDE_OPTIONAL)
 if [[ "$BACKUP_INCLUDE_OPTIONAL" == "1" ]]; then
   if [[ -f "$APP_DIR/Caddyfile" ]]; then
-    tar -rzf "$CFG" -C "$APP_DIR" Caddyfile
+    P="${CFG}.part.2"
+    tar -czf "$P" -C "$APP_DIR" Caddyfile
+    TMP_PARTS+=("$P")
   fi
   if [[ -f /etc/ssh/sshd_config.d/10-disable-password.conf ]]; then
-    tar -rzf "$CFG" -C /etc/ssh/sshd_config.d 10-disable-password.conf
+    P="${CFG}.part.3"
+    tar -czf "$P" -C /etc/ssh/sshd_config.d 10-disable-password.conf
+    TMP_PARTS+=("$P")
   fi
 fi
+
+# concatenate all parts into final tarball
+cat "${TMP_PARTS[@]}" > "$CFG"
+rm -f "${TMP_PARTS[@]}"
 chmod 600 "$CFG"
+log "config tarball built from ${#TMP_PARTS[@]} parts"
 
 # --- manifest ---
 log "writing manifest"
 MANIFEST="$OUT/manifest.json"
-node - <<EOF > "$MANIFEST"
-const fs = require("node:fs");
-const crypto = require("node:crypto");
-function sha256(p) {
-  return crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex");
+# ponytail: use sha256sum + heredoc (busybox/alpine has no node,
+# openssl, python, jq; but sha256sum from coreutils IS available).
+DB_SHA=$(sha256sum "$DUMP" | awk '{print $1}')
+DB_SIZE=$(stat -c %s "$DUMP" 2>/dev/null || stat -f %z "$DUMP")
+CFG_SHA=$(sha256sum "$CFG" | awk '{print $1}')
+CFG_SIZE=$(stat -c %s "$CFG" 2>/dev/null || stat -f %z "$CFG")
+cat > "$MANIFEST" <<JSON
+{
+  "stamp": "${STAMP}",
+  "appDir": "${APP_DIR}",
+  "composeFile": "${COMPOSE_FILE}",
+  "postgres": {
+    "user": "${POSTGRES_USER:-}",
+    "db": "${POSTGRES_DB:-}"
+  },
+  "files": {
+    "db": {
+      "path": "db.dump",
+      "size": ${DB_SIZE},
+      "sha256": "${DB_SHA}"
+    },
+    "config": {
+      "path": "config.tar.gz",
+      "size": ${CFG_SIZE},
+      "sha256": "${CFG_SHA}"
+    }
+  },
+  "optionalIncluded": $([ "${BACKUP_INCLUDE_OPTIONAL}" = "1" ] && echo true || echo false)
 }
-const dump = "$DUMP", cfg = "$CFG";
-const out = {
-  stamp: "$STAMP",
-  appDir: "$APP_DIR",
-  composeFile: "$COMPOSE_FILE",
-  postgres: {
-    user: process.env.POSTGRES_USER ?? null,
-    db: process.env.POSTGRES_DB ?? null,
-  },
-  files: {
-    db: { path: "db.dump", size: fs.statSync(dump).size, sha256: sha256(dump) },
-    config: { path: "config.tar.gz", size: fs.statSync(cfg).size, sha256: sha256(cfg) },
-  },
-  optionalIncluded: "$BACKUP_INCLUDE_OPTIONAL" === "1",
-};
-process.stdout.write(JSON.stringify(out, null, 2) + "\n");
-EOF
+JSON
 
 # --- rotate LATEST symlink + prune ---
 ln -sfn "$STAMP" "$BACKUP_DEST/LATEST"
