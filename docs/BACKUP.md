@@ -115,7 +115,7 @@ run is fire-and-forget via supercronic.
 
 ### GID alignment
 
-The container's `docker` group is **GID 998** (set in `Dockerfile.backup`).
+The container's `docker` group is **GID 1001** (set in `Dockerfile.backup`).
 The host's `docker.sock` must match — on most distros the default
 `docker` group is GID 999, so the first run typically fails with
 `permission denied while trying to connect to the Docker daemon socket`.
@@ -124,15 +124,15 @@ Fix on the host:
 
 ```bash
 stat -c '%g' /var/run/docker.sock          # expect 999
-sudo groupmod -g 998 docker                # renumber host's docker group
-sudo chown :998 /var/run/docker.sock
+sudo groupmod -g 1001 docker                # renumber host's docker group
+sudo chown :1001 /var/run/docker.sock
 # Logout/login, or:
 newgrp docker
 ```
 
 Or, simpler if 999 is taken by something else: change `Dockerfile.backup`'s
-`addgroup -g 998 docker` to whatever free GID you want, and update
-`docker-compose.yml`'s `user: "1000:998"` to match. They must agree.
+`addgroup -g 1001 docker` to whatever free GID you want, and update
+`docker-compose.yml`'s `user: "1000:1001"` to match. They must agree.
 
 ## Configuration
 
@@ -411,7 +411,7 @@ Last line lists the past week's stamp dirs. If there's a gap, look at
 
 | Symptom                                             | First check                                                                                    |
 | --------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `pg_dump`: permission denied accessing socket       | `stat -c '%g' /var/run/docker.sock` — fix to GID 998 (see [GID alignment](#gid-alignment))     |
+| `pg_dump`: permission denied accessing socket       | `stat -c '%g' /var/run/docker.sock` — fix to GID 1001 (see [GID alignment](#gid-alignment))    |
 | `bash .../backup-vps.sh: No such file or directory` | `docker compose --profile backup exec backup ls /opt/langgraph-app/scripts/` — bind mount lost |
 | `rclone sync` silent / log says `401 Unauthorized`  | OAuth token revoked. Re-run `rclone config` (see [Token expiry](#token-expiry))                |
 | supercronic never fires                             | `docker compose logs backup` — "crontab is valid" should appear on first start                 |

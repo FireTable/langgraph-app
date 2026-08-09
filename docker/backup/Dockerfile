@@ -28,7 +28,7 @@ RUN curl -fsSL \
 # (verify with `stat -c '%g' /var/run/docker.sock`; on mismatch, run
 # `chown :998 /var/run/docker.sock` on the host). UID 1000 matches the
 # `user: "1000:998"` line in docker-compose.yml.
-RUN addgroup -g 998 docker \
+RUN addgroup -g 1001 docker \
     && adduser -u 1000 -G docker -D -h /home/backup backup
 
 USER backup

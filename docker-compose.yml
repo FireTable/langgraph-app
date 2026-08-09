@@ -117,7 +117,7 @@ services:
       - ${HOME}/.ssh:/home/backup/.ssh:ro
       - ./backup-crontab:/etc/crontabs/root:ro
       - rclone-config:/home/backup/.config/rclone
-    user: "1000:998"
+    user: "1000:1001"
     read_only: true
     tmpfs:
       - /tmp
