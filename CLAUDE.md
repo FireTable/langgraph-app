@@ -4,25 +4,26 @@ Guidance for Claude Code in this repo. Features, layout, env vars, tech stack â†
 
 ## Docs index
 
-| Topic                                            | File                     |
-| ------------------------------------------------ | ------------------------ |
-| Features, quick-start, layout, env vars, deps    | `README.md`              |
-| Marketing landing page sections + assets         | `docs/LANDING.md`        |
-| Every HTTP endpoint under `app/api/`             | `docs/APIS.md`           |
-| Memory + thread-summarize design                 | `docs/MEMORY.md`         |
-| Knowledge base, ingestion, hybrid search, Rerank | `docs/KNOWLEDGE_BASE.md` |
-| Observability panel design + retention           | `docs/OBSERVABILITY.md`  |
-| LangGraph tool inventory + frontend card wiring  | `docs/TOOLS.md`          |
-| Tiered router (rule / keyword / LLM) + decisions | `docs/ROUTING.md`        |
-| Interrupt-driven tool flow contract              | `docs/INTERRUPT.md`      |
-| Attachments backing (R2 + presign) design        | `docs/ATTACHMENTS.md`    |
-| Auth setup, OAuth, troubleshooting               | `docs/AUTH.md`           |
-| DB schema, ownership, indexes                    | `docs/DB.md`             |
-| Provider registry (round-robin + withFallbacks)  | `docs/PROVIDERS.md`      |
-| Credit / LLM-call quota system                   | `docs/CREDIT.md`         |
-| Admin UI + endpoints for providers/users/roles   | `docs/ADMIN.md`          |
-| Production deploys (Docker, env, Caddy)          | `docs/DEPLOY.md`         |
-| CI/CD, Docker, deploys                           | `docs/CI.md`             |
+| Topic                                             | File                     |
+| ------------------------------------------------- | ------------------------ |
+| Features, quick-start, layout, env vars, deps     | `README.md`              |
+| Marketing landing page sections + assets          | `docs/LANDING.md`        |
+| Every HTTP endpoint under `app/api/`              | `docs/APIS.md`           |
+| Memory + thread-summarize design                  | `docs/MEMORY.md`         |
+| Knowledge base, ingestion, hybrid search, Rerank  | `docs/KNOWLEDGE_BASE.md` |
+| Observability panel design + retention            | `docs/OBSERVABILITY.md`  |
+| LangGraph tool inventory + frontend card wiring   | `docs/TOOLS.md`          |
+| Tiered router (rule / keyword / LLM) + decisions  | `docs/ROUTING.md`        |
+| Interrupt-driven tool flow contract               | `docs/INTERRUPT.md`      |
+| Attachments backing (R2 + presign) design         | `docs/ATTACHMENTS.md`    |
+| Auth setup, OAuth, troubleshooting                | `docs/AUTH.md`           |
+| DB schema, ownership, indexes                     | `docs/DB.md`             |
+| Provider registry (round-robin + withFallbacks)   | `docs/PROVIDERS.md`      |
+| Credit / LLM-call quota system                    | `docs/CREDIT.md`         |
+| Admin UI + endpoints for providers/users/roles    | `docs/ADMIN.md`          |
+| Production deploys (Docker, env, Caddy)           | `docs/DEPLOY.md`         |
+| VPS daily backup (sidecar cron + rclone to Drive) | `docs/BACKUP.md`         |
+| CI/CD, Docker, deploys                            | `docs/CI.md`             |
 
 API changes update `docs/APIS.md` in the same commit (rule 1). Tool changes update `docs/TOOLS.md` (rule 10).
 

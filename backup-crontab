@@ -1,0 +1,1 @@
+0 4 * * * bash /opt/langgraph-app/scripts/backup-vps.sh >> /var/backups/langgraph/backup.log 2>&1

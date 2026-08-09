@@ -91,5 +91,40 @@ services:
       redis:
         condition: service_healthy
 
+  # ponytail: VPS-only sidecar cron. `profiles: [backup]` keeps it out of
+  # dev `docker compose up` — VPS runs `docker compose --profile backup up -d`
+  # once per deploy. Mounts the host docker socket so the script can
+  # `docker compose exec postgres pg_dump` against the live app container;
+  # the .ssh mount is read-only and never leaves the host's key tree.
+  # See scripts/backup-vps.sh.
+  backup:
+    profiles: ["backup"]
+    build:
+      context: ./docker/backup
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_DIR: /opt/langgraph-app
+      COMPOSE_FILE: /opt/langgraph-app/docker-compose.yml
+      BACKUP_DEST: /var/backups/langgraph
+      BACKUP_RETAIN_DAYS: "30"
+      RCLONE_REMOTE: ${RCLONE_REMOTE:-}
+      RCLONE_BWLIMIT: "${RCLONE_BWLIMIT:-0}"
+    volumes:
+      - /opt/langgraph-app:/opt/langgraph-app:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/backups/langgraph:/var/backups/langgraph
+      - ${HOME}/.ssh:/home/backup/.ssh:ro
+      - ./backup-crontab:/etc/crontabs/root:ro
+      - rclone-config:/home/backup/.config/rclone
+    user: "1000:998"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   postgres-data:
+  rclone-config:

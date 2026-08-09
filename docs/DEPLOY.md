@@ -449,12 +449,25 @@ secret of the same name.
 
 ## Backups
 
-The only persistent state is the `postgres-data` volume. A nightly
-`pg_dump` is the standard pattern:
+This repo ships a dedicated sidecar (`backup` profile in
+`docker-compose.yml`) that runs at 04:00 UTC and dumps Postgres +
+tars every deploy secret + (optionally) syncs to Google Drive via
+`rclone`. Bring it up once per deploy:
+
+```bash
+docker compose --profile backup up -d --build
+echo 'RCLONE_REMOTE=gdrive:langgraph-backups' >> .env   # optional, for off-host
+docker compose --profile backup up -d
+```
+
+See [`docs/BACKUP.md`](BACKUP.md) for the full setup (OAuth,
+retention, restore procedure, post-deploy verification) and what is
+**not** backed up (notably R2 chat attachment bytes — enable R2
+Object Versioning separately).
+
+For a one-off `pg_dump` without the sidecar:
 
 ```bash
 docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" \
   | gzip > "/backups/langgraph-$(date +%F).sql.gz"
 ```
-
-Hook that up to cron or your backup tool of choice.
