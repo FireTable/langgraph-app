@@ -185,7 +185,8 @@ if [[ -n "${RCLONE_REMOTE:-}" ]]; then
   BUNDLE_DIR="$BACKUP_DEST/bundles"
   mkdir -p "$BUNDLE_DIR"
   BUNDLE="$BUNDLE_DIR/backup.${STAMP}.tar.gz"
-  tar -czf "$BUNDLE" -C "$BACKUP_DEST" .
+  # --exclude=bundles: do not include the bundle file being written
+  tar -czf "$BUNDLE" -C "$BACKUP_DEST" --exclude=bundles .
   # rclone copy one big file. --drive-chunk-size 64M: larger chunks =
   # fewer HTTP requests. --transfers 1: don't saturate the slow link.
   rclone copy "$BUNDLE" "$RCLONE_REMOTE/bundles/" \
