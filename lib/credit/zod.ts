@@ -14,9 +14,9 @@ export const providerApiKeySchema = z.object({
 // chat model used to extract text from rendered PDF pages, embed =
 // embedding model for KB chunks, extract = chat model earmarked for
 // structured-output extraction (entity/relationship/theme triples
-// from KB chunks). A single upstream model can serve multiple kinds
-// (gpt-4o-mini is both chat + ocr + extract).
-export const modelKindSchema = z.enum(["chat", "ocr", "embed", "extract", "rerank"]);
+// from KB chunks), eval = LLM-as-a-Judge, rerank = document reranking.
+// A single upstream model can serve multiple kinds.
+export const modelKindSchema = z.enum(["chat", "ocr", "embed", "extract", "rerank", "eval"]);
 
 export const modelConfigSchema = z.object({
   name: z.string().min(1).max(128),
@@ -30,18 +30,39 @@ export const modelConfigSchema = z.object({
   kind: z.array(modelKindSchema).default(["chat"]),
 });
 
-export const providerInputSchema = z.object({
-  id: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-z0-9_-]+$/, "id must be lowercase alphanum/_/-"),
-  name: z.string().min(1).max(128),
-  enabled: z.boolean().default(true),
-  baseUrl: z.url(),
-  apiKeys: z.array(providerApiKeySchema).default([]),
-  models: z.array(modelConfigSchema).default([]),
-});
+const providerIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9_-]+$/, "id must be lowercase alphanum/_/-");
+
+function slugifyProviderName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export const providerInputSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+    const input = value as Record<string, unknown>;
+    if ("id" in input) return input;
+    return {
+      ...input,
+      id: typeof input.name === "string" ? slugifyProviderName(input.name) : "",
+    };
+  },
+  z.object({
+    id: providerIdSchema,
+    name: z.string().min(1).max(128),
+    enabled: z.boolean().default(true),
+    baseUrl: z.url(),
+    apiKeys: z.array(providerApiKeySchema).default([]),
+    models: z.array(modelConfigSchema).default([]),
+  }),
+);
 
 export const roleInputSchema = z.object({
   id: z
@@ -66,12 +87,7 @@ export const roleInputSchema = z.object({
 // at `aesGcmDecrypt` with no signal. `models` stays — it carries no
 // secrets, only rate config.
 const providerNoDefaults = z.object({
-  id: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-z0-9_-]+$/)
-    .optional(),
+  id: providerIdSchema.optional(),
   name: z.string().min(1).max(128).optional(),
   enabled: z.boolean().optional(),
   baseUrl: z.url().optional(),

@@ -123,6 +123,21 @@ describe("POST /api/admin/providers", () => {
     expect(row).toBeDefined();
   });
 
+  it("derives the provider id from the display name when omitted", async () => {
+    const res = await POST(
+      jsonRequest({
+        name: "Open AI",
+        baseUrl: "https://api.openai.com/v1",
+      }),
+      ctx,
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.id).toBe("open-ai");
+    const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "open-ai") });
+    expect(row?.name).toBe("Open AI");
+  });
+
   it("returns 400 on missing required fields", async () => {
     const res = await POST(jsonRequest({ id: "x" }), ctx);
     expect(res.status).toBe(400);
@@ -397,13 +412,13 @@ describe("POST /api/admin/providers/[id]/models", () => {
         enabled: true,
         inputPer1k: 0,
         outputPer1k: 0,
-        kind: ["chat", "ocr"],
+        kind: ["chat", "ocr", "eval"],
       }),
       ctxId("openai"),
     );
     expect(res.status).toBe(201);
     const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
-    expect(row?.models[0].kind).toEqual(["chat", "ocr"]);
+    expect(row?.models[0].kind).toEqual(["chat", "ocr", "eval"]);
   });
 
   it("rejects an unknown kind value with 400", async () => {
@@ -478,13 +493,10 @@ describe("PATCH /api/admin/providers/[id]/models/[modelName] (rename + edit)", (
 
   it("updates kind when explicitly provided (200, DB persists)", async () => {
     await seedTwoModels();
-    const res = await EditModel(
-      jsonRequest({ kind: ["chat", "ocr"] }),
-      ctxModel("openai", "gpt-4o-mini"),
-    );
+    const res = await EditModel(jsonRequest({ kind: ["eval"] }), ctxModel("openai", "gpt-4o-mini"));
     expect(res.status).toBe(200);
     const row = await db.query.provider.findFirst({ where: (p, { eq }) => eq(p.id, "openai") });
-    expect(row?.models.find((m) => m.name === "gpt-4o-mini")?.kind).toEqual(["chat", "ocr"]);
+    expect(row?.models.find((m) => m.name === "gpt-4o-mini")?.kind).toEqual(["eval"]);
   });
 
   it("leaves kind unchanged when omitted from PATCH body (idempotent on other fields)", async () => {

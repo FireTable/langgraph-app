@@ -20,7 +20,7 @@ import { Switch } from "@/components/ui/switch";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
 import {
   type PublicProviderRow,
@@ -762,7 +762,6 @@ export function ProviderDialog(
   const [name, setName] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [baseUrl, setBaseUrl] = useState("");
-  const [newId, setNewId] = useState("");
   const [saving, start] = useTransition();
 
   const initialName = isEdit ? props.provider.name : "";
@@ -778,7 +777,6 @@ export function ProviderDialog(
       setName("");
       setEnabled(true);
       setBaseUrl("");
-      setNewId("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -812,7 +810,6 @@ export function ProviderDialog(
         r = await jsonFetch("/api/admin/providers", {
           method: "POST",
           body: JSON.stringify({
-            ...(newId.trim() ? { id: newId.trim() } : {}),
             name: name.trim(),
             enabled,
             baseUrl: baseUrl.trim(),
@@ -883,18 +880,6 @@ export function ProviderDialog(
             className="font-mono"
           />
         </label>
-        {!isEdit ? (
-          <label className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">Custom ID (optional)</span>
-            <Input
-              value={newId}
-              onChange={(e) => setNewId(e.target.value)}
-              disabled={saving}
-              placeholder="openai (leave blank to auto-slugify display name)"
-              className="font-mono text-xs"
-            />
-          </label>
-        ) : null}
       </div>
     </FormDialog>
   );

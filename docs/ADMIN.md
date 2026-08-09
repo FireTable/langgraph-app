@@ -22,11 +22,11 @@ List every row in `provider`, ordered by `id`. The `encryptedKey` + `iv` fields 
 
 Create a new provider row. `apiKeys` / `models` default to `[]`; new providers are typically created empty and populated via the keys/models sub-routes.
 
-|               |                                                                                                                                                                                               |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Request body  | `ProviderInput` — `id` (`^[a-z0-9_-]+$`, 1..64), `name` (1..128), `enabled` (bool, default `true`), `apiKeys?` (`ProviderApiKey[]`, default `[]`), `models?` (`ModelConfig[]`, default `[]`). |
-| 201 response  | `PublicProvider`                                                                                                                                                                              |
-| Failure codes | 400 `BAD_REQUEST` (Zod), 401, 403, 409 `DUPLICATE` (PK collision on `id`).                                                                                                                    |
+|               |                                                                                                                                                                                                                                        |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `ProviderInput` — `id?` (`^[a-z0-9_-]+$`, 1..64; defaults to a slug derived from `name`), `name` (1..128), `enabled` (bool, default `true`), `apiKeys?` (`ProviderApiKey[]`, default `[]`), `models?` (`ModelConfig[]`, default `[]`). |
+| 201 response  | `PublicProvider`                                                                                                                                                                                                                       |
+| Failure codes | 400 `BAD_REQUEST` (Zod), 401, 403, 409 `DUPLICATE` (PK collision on the derived or supplied `id`).                                                                                                                                     |
 
 ### `PATCH /api/admin/providers/[id]`
 
@@ -84,21 +84,21 @@ Rotate and/or rename an existing key. The path is keyed on the **original** `key
 
 Append a new model + rate config. `inputPer1k` / `outputPer1k` are credits-per-1k-tokens (see [`docs/CREDIT.md`](./CREDIT.md) § How a credit is computed).
 
-|               |                                                                                                                                                              |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Request body  | `ModelConfig` — `name` (1..128), `enabled` (bool), `inputPer1k` (number ≥0), `outputPer1k` (number ≥0).                                                      |
-| 201 response  | `PublicProvider`                                                                                                                                             |
-| Failure codes | 400 `BAD_REQUEST` (Zod), 401, 403, 404 `NOT_FOUND` (provider missing), 409 `DUPLICATE_MODEL` (a model with the same `name` already exists on this provider). |
+|               |                                                                                                                                                                                              |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | `ModelConfig` — `name` (1..128), `enabled` (bool), `inputPer1k` (number ≥0), `outputPer1k` (number ≥0), `kind?` (`chat`\|`ocr`\|`embed`\|`extract`\|`rerank`\|`eval`[], default `["chat"]`). |
+| 201 response  | `PublicProvider`                                                                                                                                                                             |
+| Failure codes | 400 `BAD_REQUEST` (Zod), 401, 403, 404 `NOT_FOUND` (provider missing), 409 `DUPLICATE_MODEL` (a model with the same `name` already exists on this provider).                                 |
 
 ### `PATCH /api/admin/providers/[id]/models/[modelName]`
 
 Partial update of a model row. Rate changes after a call are NOT retroactively applied to historical credit rows — see [`docs/CREDIT.md`](./CREDIT.md) § How a credit is computed.
 
-|               |                                                                                                |
-| ------------- | ---------------------------------------------------------------------------------------------- |
-| Request body  | Any subset of `{ enabled?, inputPer1k?, outputPer1k? }`. Empty body returns 400 `BAD_REQUEST`. |
-| 200 response  | `PublicProvider`                                                                               |
-| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or model missing).                      |
+|               |                                                                                                                                                           |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Request body  | Any subset of `{ name?, enabled?, inputPer1k?, outputPer1k?, kind?: (chat\|ocr\|embed\|extract\|rerank\|eval)[] }`. Empty body returns 400 `BAD_REQUEST`. |
+| 200 response  | `PublicProvider`                                                                                                                                          |
+| Failure codes | 400 `BAD_REQUEST`, 401, 403, 404 `NOT_FOUND` (provider or model missing).                                                                                 |
 
 ### `DELETE /api/admin/providers/[id]/models/[modelName]`
 
@@ -212,6 +212,7 @@ type ModelConfig = {
   enabled: boolean;
   inputPer1k: number; // credits per 1k input tokens
   outputPer1k: number; // credits per 1k output tokens
+  kind?: ("chat" | "ocr" | "embed" | "extract" | "rerank" | "eval")[];
 };
 
 type Provider = {
