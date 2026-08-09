@@ -177,10 +177,23 @@ find "$BACKUP_DEST" -mindepth 1 -maxdepth 1 -type d \
 # Auth is rclone.conf (refresh_token, not env). First-time setup:
 #   docker exec -it <backup-container> rclone config     # n) gdrive
 if [[ -n "${RCLONE_REMOTE:-}" ]]; then
-  log "rclone sync -> $RCLONE_REMOTE"
-  rclone sync "$BACKUP_DEST" "$RCLONE_REMOTE" \
-    --transfers 4 --checkers 2 --bwlimit "${RCLONE_BWLIMIT:-0}" \
+  log "bundle entire backup → rclone copy to $RCLONE_REMOTE"
+  # 🟡 compress entire $BACKUP_DEST into a single tar.gz for atomic upload.
+  # VPS→Google Drive link is ~9 KiB/s (Asia egress); syncing hundreds of
+  # small files (each with its own API call) takes 40+ min. One big file
+  # = one chunked upload, ~5x faster end-to-end.
+  BUNDLE_DIR="$BACKUP_DEST/bundles"
+  mkdir -p "$BUNDLE_DIR"
+  BUNDLE="$BUNDLE_DIR/backup.${STAMP}.tar.gz"
+  tar -czf "$BUNDLE" -C "$BACKUP_DEST" .
+  # rclone copy one big file. --drive-chunk-size 64M: larger chunks =
+  # fewer HTTP requests. --transfers 1: don't saturate the slow link.
+  rclone copy "$BUNDLE" "$RCLONE_REMOTE/bundles/" \
+    --drive-chunk-size 64M --transfers 1 \
     --log-file "$BACKUP_DEST/rclone.log" --log-level INFO
+  rm -f "$BUNDLE"
+  # prune local bundles older than 7 days (Drive keeps them all)
+  find "$BUNDLE_DIR" -mindepth 1 -maxdepth 1 -mtime +7 -delete
 else
   log "SKIP rclone: RCLONE_REMOTE not set"
 fi
