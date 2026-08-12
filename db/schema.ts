@@ -10,3 +10,4 @@ export * from "@/lib/provider/schema";
 export * from "@/lib/credit/schema";
 export * from "@/lib/kb/schema";
 export * from "@/lib/eval/schema";
+export * from "@/lib/canvas/schema";

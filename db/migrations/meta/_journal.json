@@ -155,6 +155,13 @@
       "when": 1785070142857,
       "tag": "0021_medical_outlaw_kid",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786521626848,
+      "tag": "0022_nostalgic_stephen_strange",
+      "breakpoints": true
     }
   ]
 }
