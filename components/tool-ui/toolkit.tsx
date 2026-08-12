@@ -15,6 +15,7 @@ import {
 import { WriteCodeCard, ExecuteCodeResult } from "@/components/tool-ui/code";
 import { LookupThreadMessagesCard, SaveMemoryCard } from "@/components/tool-ui/memory";
 import { CreditCard } from "@/components/tool-ui/credit";
+import { GenerateImageCard } from "@/components/tool-ui/image";
 import { KbListDocumentsToolUI, KbSearchToolUI } from "@/components/tool-ui/kb";
 
 // Frontend-side tool registrations. `execute` lives on the LangGraph
@@ -198,11 +199,34 @@ const kbToolkit = defineToolkit({
   },
 });
 
+const imageToolkit = defineToolkit({
+  // ponytail: generate_image tool result auto-renders with an
+  // "Add to canvas" button. The button calls `useCanvas().insertImage`
+  // (lib/canvas/context.tsx) which routes into `editor.createShape({type:"image"})`
+  // when the canvas is open; when closed the bridge returns false and
+  // the button renders disabled with the "Open canvas to add" hint.
+  generate_image: {
+    description:
+      "Render the generated image with a prompt caption and an Add-to-canvas button. Disabled until the user opens the canvas.",
+    parameters: z.object({
+      // ponytail: skip the URL validator — zod's string URL helper is
+      // deprecated and the runtime tldraw shape will fail to fetch
+      // invalid URLs anyway.
+      url: z.string(),
+      mock: z.boolean().optional(),
+      prompt: z.string(),
+      aspect_ratio: z.enum(["square", "portrait", "landscape"]).optional(),
+    }),
+    render: GenerateImageCard,
+  },
+});
+
 export default defineToolkit({
   ...weatherToolkit,
   ...cryptoToolkit,
   ...codeToolkit,
   ...memoryToolkit,
   ...creditToolkit,
+  ...imageToolkit,
   ...kbToolkit,
 });
