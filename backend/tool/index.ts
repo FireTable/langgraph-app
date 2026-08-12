@@ -13,6 +13,7 @@ import { saveMemoryTool } from "@/backend/tool/memory/save-memory-tool";
 import { lookupThreadMessagesTool } from "@/backend/tool/memory/lookup-thread-messages-tool";
 import { executeCodeTool, writeCodeTool } from "@/backend/tool/code";
 import { listDocumentsTool, searchKbTool } from "@/backend/tool/kb";
+import { generateImageTool } from "@/backend/tool/image";
 
 // ponytail: keep the tool list in one place so the graph binds it from a
 // single source. Adding a tool = drop a file + add one line here.
@@ -76,6 +77,16 @@ export const CHAT_TOOLS = [
   ...WEATHER_TOOLS,
   ...CRYPTO_TOOLS,
   ...KB_TOOLS,
+  // ponytail: generate_image registered unconditionally — mock-first
+  // pattern. The impl returns a placehold.co URL when FAL_KEY is
+  // missing so local dev works end-to-end without a key. This is NOT
+  // rule #10's free-tier exemption (that's fetch_url → r.jina.ai,
+  // which genuinely serves unauthenticated traffic); fal.ai is paid,
+  // we just ship a mock so dev doesn't need a key. Last in the list
+  // so chatAgent's primary tool surface stays text-first. Future
+  // image skills (regenerate, edit) drop into backend/tool/image/
+  // and re-export from the barrel.
+  generateImageTool,
 ];
 
 export {
@@ -94,4 +105,8 @@ export {
   lookupThreadMessagesTool,
   searchKbTool,
   listDocumentsTool,
+  // ponytail: image tools live in backend/tool/image/; import above
+  // pulls them via the barrel so future skills (regenerate, edit)
+  // just need a re-export from the barrel.
+  generateImageTool,
 };

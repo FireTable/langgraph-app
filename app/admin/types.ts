@@ -1,5 +1,10 @@
 export type PublicProviderApiKey = { name: string };
-export type ModelKind = "chat" | "ocr" | "embed" | "extract" | "rerank" | "eval";
+// ponytail: mirrors lib/provider/schema.ts ModelKind + the new "pic"
+// kind (canvas image generation, fal.ai-backed). Keeping the local
+// re-declaration here lets the admin bundle ship without pulling in
+// drizzle schema types — and the kind union stays in lockstep with
+// lib/credit/zod.ts modelKindSchema.
+export type ModelKind = "chat" | "ocr" | "embed" | "extract" | "rerank" | "eval" | "pic";
 
 export type PublicModel = {
   name: string;

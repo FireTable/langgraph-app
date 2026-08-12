@@ -32,7 +32,16 @@ export type ProviderApiKey = {
 //             cheaper model (e.g. gpt-4o-mini) as the canonical
 //             extraction surface without forcing it to also be the
 //             chat default.
-export type ModelKind = "chat" | "ocr" | "embed" | "extract" | "rerank" | "eval";
+//   pic    — image generation (fal.ai flux / sdxl / ...). The
+//             generate_image tool (backend/tool/image/generate-image.ts)
+//             is registered unconditionally — mock-first pattern:
+//             the impl returns a placehold.co placeholder when FAL_KEY
+//             is missing so local dev / demos still work end-to-end.
+//             This is NOT rule #10's free-tier exemption (that's
+//             fetch_url → r.jina.ai, which serves unauthenticated
+//             traffic); fal.ai is paid, we just ship a mock fallback
+//             so dev doesn't need a key.
+export type ModelKind = "chat" | "ocr" | "embed" | "extract" | "rerank" | "eval" | "pic";
 
 /**
  * Per-model rate config inside `provider.models`.

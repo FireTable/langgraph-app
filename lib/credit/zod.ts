@@ -14,9 +14,10 @@ export const providerApiKeySchema = z.object({
 // chat model used to extract text from rendered PDF pages, embed =
 // embedding model for KB chunks, extract = chat model earmarked for
 // structured-output extraction (entity/relationship/theme triples
-// from KB chunks), eval = LLM-as-a-Judge, rerank = document reranking.
+// from KB chunks), eval = LLM-as-a-Judge, rerank = document reranking,
+// pic = image generation (fal.ai flux / etc. — see backend/tool/image/generate-image.ts).
 // A single upstream model can serve multiple kinds.
-export const modelKindSchema = z.enum(["chat", "ocr", "embed", "extract", "rerank", "eval"]);
+export const modelKindSchema = z.enum(["chat", "ocr", "embed", "extract", "rerank", "eval", "pic"]);
 
 export const modelConfigSchema = z.object({
   name: z.string().min(1).max(128),
