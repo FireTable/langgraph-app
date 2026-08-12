@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
-import type { Editor } from "tldraw";
+import { createShapeId, type Editor, type TLShapeId } from "tldraw";
 
 // ponytail: cross-component bridge from tool-ui cards (rendered inside
 // the right-hand <Thread>) to the tldraw editor (which only mounts when
@@ -25,14 +25,37 @@ export type InsertImageOpts = {
   h?: number;
 };
 
+export type CreateNodeOpts = {
+  // node type literal — must match a key in nodeTypes.NodeDefinitions
+  type: "prompt" | "generate" | "preview";
+  // node props (the typed payload of the node schema). The shape
+  // depends on the type — the caller is responsible for matching it.
+  // We pass `any` through; the NodeShapeUtil's validator re-parses on
+  // every update so a malformed payload won't crash the canvas.
+  // ponytail: intentionally loose. The validator is the source of
+  // truth — we just plumb the JSON through.
+  props?: Record<string, unknown>;
+  // ponytail: optional (x, y) in page coords. Defaults to the viewport
+  // center so the agent's dropped nodes land somewhere visible.
+  x?: number;
+  y?: number;
+};
+
 export type CanvasApi = {
   ready: boolean;
   insertImage: (opts: InsertImageOpts) => boolean;
+  // ponytail: drop a node on the canvas. Returns the new shape id
+  // (so the caller can bind results back to it later) or null if the
+  // canvas isn't mounted. Use this from the agent — generate_image
+  // tool UI cards call it to spawn the [Prompt] → [Generate] →
+  // [Preview] pipeline.
+  createNode: (opts: CreateNodeOpts) => TLShapeId | null;
 };
 
 const noopApi: CanvasApi = {
   ready: false,
   insertImage: () => false,
+  createNode: () => null,
 };
 
 const CanvasContext = createContext<CanvasApi | null>(null);
@@ -73,9 +96,30 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
+  const createNode = useCallback((opts: CreateNodeOpts): TLShapeId | null => {
+    const ed = editorRef.current;
+    if (!ed) return null;
+    const center = ed.getViewportPageBounds().center;
+    const id = createShapeId();
+    ed.createShape({
+      id,
+      type: "node",
+      x: opts.x ?? center.x - 130,
+      y: opts.y ?? center.y - 100,
+      // ponytail: the validator's default props are the ground truth —
+      // if the caller passes garbage, tldraw will reject the update.
+      // We pass the props through and let the validator handle it.
+      props: {
+        node: { type: opts.type, ...opts.props },
+        isOutOfDate: false,
+      } as any,
+    });
+    return id;
+  }, []);
+
   return (
     <CanvasRegisterContext.Provider value={setEditor}>
-      <CanvasContext.Provider value={{ ready: editor !== null, insertImage }}>
+      <CanvasContext.Provider value={{ ready: editor !== null, insertImage, createNode }}>
         {children}
       </CanvasContext.Provider>
     </CanvasRegisterContext.Provider>

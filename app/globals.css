@@ -433,3 +433,9 @@
   box-shadow: none !important;
   padding: 0 !important;
 }
+
+/* canvas node editor — NodeShape / .Port / .ConnectionShape styles live
+   in canvas-nodes.css. We import here so the rules apply to the global
+   tldraw container. The starter ships these as a single CSS file; we
+   split the import so the rest of globals.css stays minimal. */
+@import "./canvas-nodes.css";

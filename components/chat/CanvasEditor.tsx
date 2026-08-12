@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Tldraw, type Editor, type TLEditorSnapshot } from "tldraw";
 import "tldraw/tldraw.css";
 
+import { NodeShapeUtil } from "@/components/canvas/nodes/NodeShapeUtil";
+import { ConnectionBindingUtil } from "@/components/canvas/connection/ConnectionBindingUtil";
+import { ConnectionShapeUtil } from "@/components/canvas/connection/ConnectionShapeUtil";
+import { ConnectionCenterHandleOverlayUtil } from "@/components/canvas/connection/ConnectionCenterHandleOverlayUtil";
+import { PointingPort } from "@/components/canvas/ports/PointingPort";
 import { useCanvasAutoSave, type SaveStatus } from "@/lib/canvas/auto-save";
 import { useCanvasRegister } from "@/lib/canvas/context";
 import { EMPTY_SNAPSHOT, getSnapshot, loadSnapshot } from "@/lib/canvas/snapshot";
@@ -25,6 +30,16 @@ const TLDRAW_LICENSE_KEY = isBrowser
 // directly. Initial-load fetch resolves the snapshot, then `loadSnapshot`
 // merges it into the editor. We register a store-change listener that
 // funnels every change into the debounced auto-save.
+
+// ponytail: node-editor wiring. The Image pipeline starter is the
+// source for these — we register NodeShape + ConnectionShape +
+// ConnectionBinding + ConnectionCenterHandleOverlay so users can drop
+// nodes on the canvas and wire them. We mount the custom PointingPort
+// tool into the `select` state so dragging from a port starts a
+// connection. See docs/CANVAS_NODES.md for the architecture.
+const shapeUtils = [NodeShapeUtil, ConnectionShapeUtil];
+const bindingUtils = [ConnectionBindingUtil];
+const overlayUtils = [ConnectionCenterHandleOverlayUtil];
 
 export type CanvasEditorProps = {
   threadId: string;
@@ -157,9 +172,18 @@ export function CanvasEditor({ threadId, onStatusChangeAction }: CanvasEditorPro
         // they're the affordances users still want.
         components={{ PageMenu: null, MainMenu: null, StylePanel: null }}
         hideUi={false}
+        // ponytail: node editor wiring (see docs/CANVAS_NODES.md).
+        shapeUtils={shapeUtils}
+        bindingUtils={bindingUtils}
+        overlayUtils={overlayUtils}
         onMount={(editor) => {
           editorRef.current = editor;
           register(editor);
+          // ponytail: install the PointingPort tool under the `select`
+          // state so dragging from a port starts a connection. The
+          // original starter does this in App.tsx; we move it here so
+          // the wiring lives next to the shape utils that depend on it.
+          editor.getStateDescendant("select")!.addChild(PointingPort);
           // ponytail: subscribe to store changes. Every shape add /
           // move / edit / delete fires `change`; we funnel it into the
           // debounced auto-save. `change` is emitted with the diff; we
