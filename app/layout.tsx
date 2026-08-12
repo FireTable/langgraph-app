@@ -57,6 +57,7 @@ export default async function RootLayout({
             R2_ALLOWED_CONTENT_TYPES: process.env.R2_ALLOWED_CONTENT_TYPES,
             ATTACHMENTS_ENABLED: process.env.ATTACHMENTS_ENABLED,
             USER_ROLE_NAME: userRoleName ?? undefined,
+            TLDRAW_LICENSE_KEY: process.env.TLDRAW_LICENSE_KEY,
           })};`}
         </Script>
         <AuthShell>

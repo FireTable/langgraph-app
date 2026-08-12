@@ -14,6 +14,7 @@ declare global {
       R2_ALLOWED_CONTENT_TYPES?: string;
       ATTACHMENTS_ENABLED?: string;
       USER_ROLE_NAME?: string;
+      TLDRAW_LICENSE_KEY?: string;
     };
   }
 }

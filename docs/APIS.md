@@ -59,6 +59,22 @@ Response shape (single row, same for list / fetch / create / update):
 | `PATCH /api/threads/[id]`  | Rename, archive, unarchive, or replace `custom` jsonb (owner-only).                                                                                                                                                                                                 | 200 / 400 / 401 / 404 |
 | `DELETE /api/threads/[id]` | Remove the thread metadata row plus its LangGraph checkpointer rows and PostgresStore thread summaries (owner-only; `observability_spans` ride on the threads FK cascade). Best-effort — a checkpointer/store failure leaves orphans on disk but still returns 204. | 204 / 401 / 404       |
 
+## Canvas
+
+Per-thread tldraw snapshot (issue: chat-first app that expands to a split-view canvas where the user can paste / regenerate images). One row per thread; FK to `threads` cascades on delete. Design doc: [`docs/CANVAS.md`](./CANVAS.md) (auto-save cadence, layout, image-gen tool).
+
+**Auth + isolation contract**: every endpoint is wrapped in `withAuth` (rule #9). Reads JOIN against `threads.userId` so cross-user access returns 404 (no enumeration of other users' thread ids — same shape as `/api/threads/[id]`). `upsertCanvasSnapshot` pre-checks ownership inside the query; the route maps the `thread not owned by user` error back to a 404.
+
+The `document` field is the full tldraw `store.serialize('document')` payload — a typed record of shapes / pages / bindings / asset refs. We don't re-validate it server-side: tldraw's loader is the single source of truth and would re-parse anything we stored here anyway (see `lib/canvas/snapshot.ts` comment). The route only rejects a non-object body.
+
+| Endpoint                        | Purpose                                                                                                                                                                                                     | Status codes          |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| `GET /api/canvas/[threadId]`    | Fetch the saved snapshot for a thread (owner-only). 404 covers both "no row" and "not yours".                                                                                                               | 200 / 401 / 404       |
+| `PUT /api/canvas/[threadId]`    | Upsert the snapshot — first save creates the row, subsequent saves overwrite (`onConflictDoUpdate` on `thread_id`). 2s debounce on the client; `navigator.sendBeacon` flush on `beforeunload` / `pagehide`. | 200 / 400 / 401 / 404 |
+| `DELETE /api/canvas/[threadId]` | Best-effort removal (owner-only; idempotent — silent no-op on non-owned threads).                                                                                                                           | 204 / 401 / 404       |
+
+`GET` / `PUT` response (200): `{ threadId, document, createdAt, updatedAt }`. PUT 400 is `{ code: "BAD_REQUEST", error: ZodIssues }` — fires when the body isn't an object or is missing `document`.
+
 ## Attachments
 
 Chat attachments backed by Cloudflare R2 (issue #12). The browser uploads directly to R2 via a presigned PUT — bytes never touch the Next.js server. Design doc: [`docs/ATTACHMENTS.md`](./ATTACHMENTS.md) (key convention, lazy-register, Content-Disposition per-object).
