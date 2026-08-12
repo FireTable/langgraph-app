@@ -347,6 +347,7 @@ Test database stays isolated from dev — never put production-like data in `lan
 - [`docs/TOOLS.md`](docs/TOOLS.md) — LangGraph tool inventory and frontend card wiring. Update whenever a tool or card is added/removed/rerouted.
 - [`docs/ROUTING.md`](docs/ROUTING.md) — intent recognition & tiered router design: Tier 1 Rule short-circuit, Tier 2 Priority Keyword matching engine, Tier 3 LLM structured-output fallback, and decision source tagging (`rule` | `keyword` | `llm`).
 - [`docs/INTERRUPT.md`](docs/INTERRUPT.md) — interrupt-driven tool flows (ask_location, connect_wallet, place_crypto_order, get_order_status) — the two runtime paths the cards can take.
+- [`docs/CANVAS.md`](docs/CANVAS.md) — chat-first → canvas split view: tldraw integration, one-row `canvas_snapshots` schema, debounce + `sendBeacon` auto-save, the `generate_image` LangGraph tool (FAL_KEY gated, `kind: "pic"` credit attribution).
 - [`docs/AUTH.md`](docs/AUTH.md) — operator guide for the auth layer: env vars, OAuth app setup, Resend, role mechanism, `INITIAL_ADMIN_EMAIL` bootstrap, troubleshooting.
 - [`docs/ATTACHMENTS.md`](docs/ATTACHMENTS.md) — chat attachments backed by Cloudflare R2: direct-upload architecture, key convention, lazy-register on missing env, `Content-Disposition` XSS guard, `messageId`-deferred decision.
 - [`docs/DB.md`](docs/DB.md) — database schema (Better Auth + `threads` + `attachments` + `role` + `provider` + `credit_usage_log` + `prompt_*` / `eval_*`), ownership model, indexes. Source of truth: `db/migrations/0000_*.sql`.
