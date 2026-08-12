@@ -11,7 +11,7 @@ import {
 import { useLangGraphRuntime } from "@assistant-ui/react-langgraph";
 import { Client } from "@langchain/langgraph-sdk";
 import { ThreadListPrimitive } from "@assistant-ui/react";
-import { BookOpen, Brain, MenuIcon, PanelLeftIcon, PlusIcon, ShareIcon } from "lucide-react";
+import { BookOpen, Brain, MenuIcon, PanelLeftIcon, PlusIcon } from "lucide-react";
 
 import { BrandMark } from "@/components/brand-mark";
 
@@ -19,6 +19,11 @@ import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadList } from "@/components/assistant-ui/thread-list";
 import { mergeSubgraphMessages } from "@/lib/langgraph/merge-subgraph-messages";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { CanvasToggleButton } from "@/components/chat/CanvasToggleButton";
+import { CanvasSplitLayout } from "@/components/chat/CanvasSplitLayout";
+// ThreadDropdown removed — the thread list is reachable via the
+// sidebar, the dropdown was redundant UI that competed with the
+// canvas toggle.
 import { UserButton } from "@/components/auth/user/user-button";
 import { CreditUsageSlot } from "@/components/auth/user/credit-usage-slot";
 import weatherToolkit from "@/components/tool-ui/toolkit";
@@ -152,7 +157,18 @@ const ThreadTitle: FC = () => {
 const Header: FC<{
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
-}> = ({ sidebarCollapsed, onToggleSidebar }) => {
+  canvasOpen: boolean;
+  onToggleCanvasAction: () => void;
+}> = ({ sidebarCollapsed, onToggleSidebar, canvasOpen, onToggleCanvasAction }) => {
+  // ponytail: the canvas toggle only makes sense once a thread exists
+  // — `CanvasSplitLayout` shows the bare `<Thread />` (not the canvas)
+  // when `mainThreadId` is null / `__LOCAL_*`, and toggling into canvas
+  // mode there would render nothing. Hiding the button on a fresh
+  // thread keeps the header honest. `__LOCAL` covers both `__LOCAL_*`
+  // shapes the adapter can emit (see ChatBody below).
+  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
+  const hasRealThread = !!mainThreadId && !mainThreadId.startsWith("__LOCAL");
+
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 px-4">
       <MobileSidebar />
@@ -167,22 +183,25 @@ const Header: FC<{
         <PanelLeftIcon className="size-4" />
       </TooltipIconButton>
       <ThreadTitle />
-      <TooltipIconButton
-        variant="ghost"
-        size="icon"
-        tooltip="Share"
-        side="bottom"
-        disabled
-        className="ml-auto size-8"
-      >
-        <ShareIcon className="size-4" />
-      </TooltipIconButton>
+      {hasRealThread && (
+        <CanvasToggleButton
+          open={canvasOpen}
+          onToggleAction={onToggleCanvasAction}
+          className="ml-auto"
+        />
+      )}
     </header>
   );
 };
 
 export function Assistant() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // ponytail: canvas mode is a per-tab session toggle (not persisted) —
+  // closing the browser resets to chat-only. The header toggle is
+  // hidden < 768px so this stays effectively desktop-only. We keep the
+  // state at this level so the Header (toggle + dropdown) and the
+  // main area (canvas vs thread) can both read it without prop drilling.
+  const [canvasOpen, setCanvasOpen] = useState(false);
 
   // Default to the in-app /api proxy so CORS + x-api-key stay in Next.js;
   // LANGGRAPH_PUBLIC_URL bypasses it (e.g. behind Cloudflare Tunnel).
@@ -345,9 +364,11 @@ export function Assistant() {
             <Header
               sidebarCollapsed={sidebarCollapsed}
               onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+              canvasOpen={canvasOpen}
+              onToggleCanvasAction={() => setCanvasOpen((v) => !v)}
             />
             <main className="flex-1 overflow-hidden">
-              <Thread />
+              <ChatBody canvasOpen={canvasOpen} />
             </main>
           </div>
         </div>
@@ -363,6 +384,55 @@ const AuiRefCapture: FC<{ bridgeRef: RefObject<RuntimeBridge> }> = ({ bridgeRef 
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
   bridgeRef.current = { api, mainThreadId };
   return null;
+};
+
+// ponytail: the body needs `mainThreadId` from aUI's runtime, so it
+// lives INSIDE `<AssistantRuntimeProvider>` — that hook throws
+// "requires an AuiProvider" if called outside the provider tree.
+// The parent (`Assistant`) just owns the `canvasOpen` toggle state
+// and passes it down; reading the active thread id happens here.
+//
+// aUI uses `__LOCALID_*` placeholders until the user creates +
+// persists a thread (see `lib/threads/adapter.ts` and the issue #27
+// note — the adapter calls `threadListAdapter.initialize!("local")`
+// which returns a `__LOCAL_*` externalId). Canvas rows are FK-bound
+// to `threads.id`, so a placeholder id has no real thread in the DB
+// → fetching its snapshot 404s and the split layout would render
+// against a row that can't be written back. We gate canvas on a
+// non-placeholder id; the toggle button stays visible so users on a
+// fresh thread can see it's there, but the split layout only mounts
+// once a real thread is active.
+//
+// Prefix is `__LOCAL` (no trailing underscore) — the actual aUI
+// placeholder is `__LOCALID_<rand>`, not `__LOCAL_<rand>`; a tighter
+// `__LOCAL_` prefix would miss it (see components/observability/button.tsx
+// for the same pattern). Using `__LOCAL` matches both shapes.
+const ChatBody: FC<{ canvasOpen: boolean }> = ({ canvasOpen }) => {
+  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
+  const hasRealThread = !!mainThreadId && !mainThreadId.startsWith("__LOCAL");
+  // ponytail: canvas mode is desktop-only. The toggle button itself
+  // is `hidden md:flex` so users on mobile can't open it from a fresh
+  // state, but if canvasOpen was already true (e.g. desktop session
+  // resized to a narrow window) the split layout would still mount.
+  // matchMedia + state mirrors the CSS breakpoint so a viewport flip
+  // tears the canvas down without the user clicking anything.
+  const [isDesktop, setIsDesktop] = useState(true);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width: 768px)");
+    const sync = () => setIsDesktop(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  if (canvasOpen && hasRealThread && isDesktop) {
+    // ponytail: canvas mode renders the split layout; the Thread is
+    // mounted as the right-panel child. We pass it through
+    // CanvasSplitLayout so the canvas unmounts cleanly when the
+    // toggle flips off (the editor's tldraw / listeners tear down).
+    return <CanvasSplitLayout threadId={mainThreadId} threadPanel={<Thread />} />;
+  }
+  return <Thread />;
 };
 
 // ponytail: the URL is a shadow of the active aUI thread (issue #27).
