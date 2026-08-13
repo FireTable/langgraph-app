@@ -326,7 +326,9 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
   // ponytail: fit the camera to the content after a snapshot loads,
   // then dial zoom back to 1.0 (user: "zoom 100%, position to all
   // elements center"). Default zoomToFit is too tight; the simpler
-  // ask is "centered, zoom 1" — that is what we implement.
+  // ask is "centered, zoom 1" — that is what we implement. The
+  // once-only guarantee lives in FitOnMount's own ref so the parent
+  // doesn't have to know.
   const onAfterLoad = useCallback(() => {
     const eds = nodesRef.current;
     if (eds.length === 0) return;
@@ -351,12 +353,10 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
     fromNodeId?: string;
     fromHandleId?: string | null;
   } | null>(null);
-  // ponytail: the node-shell is ~220x100 (min-w + content). The
-  // React Flow renderer positions by top-left, so to drop a node
-  // CENTERED on the cursor we subtract half its dimensions from the
-  // click's flow position. This way the click point lines up with
-  // the visual center, not the corner.
-  const NODE_CENTER_OFFSET = { x: 110, y: 50 };
+  // ponytail: React Flow positions nodes by top-left, so the cursor
+  // anchors the node's TOP-LEFT corner directly — no centering offset.
+  // The user clicks where they want the node's corner; the node grows
+  // down-right from there.
   const onWrapperDoubleClick = useCallback(
     (event: React.MouseEvent) => {
       const target = event.target as HTMLElement;
@@ -365,7 +365,7 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
       setPicker({
         x: event.clientX,
         y: event.clientY,
-        flow: { x: flow.x - NODE_CENTER_OFFSET.x, y: flow.y - NODE_CENTER_OFFSET.y },
+        flow,
       });
     },
     [rf],
@@ -430,12 +430,12 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
       // ponytail: show the same picker the dblclick uses — user
       // picks Prompt / Generate / Preview. We stash the source
       // handle + node so pickKind wires the edge when the user
-      // makes a choice. Same center-on-cursor offset as the
-      // dblclick handler so the new node lands centered.
+      // makes a choice. Top-left anchoring matches the dblclick
+      // handler — the cursor lands on the new node's top-left.
       setPicker({
         x: cx,
         y: cy,
-        flow: { x: flow.x - NODE_CENTER_OFFSET.x, y: flow.y - NODE_CENTER_OFFSET.y },
+        flow,
         fromNodeId: connectionState.fromNode.id,
         fromHandleId: connectionState.fromHandle?.id ?? null,
       });
@@ -474,10 +474,12 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
         </div>
       )}
 
-      {/* run fitView once after a fresh load completes — only when the
-          hydration itself produced these nodes, not when a user-driven
-          picker add grew the canvas from empty to one node. */}
-      {ready && hydrated && nodes.length > 0 && <FitOnMount onAfter={onAfterLoad} />}
+      {/* Mount FitOnMount exactly once — right after hydration finishes
+          (`hydrated` flips true the same tick `ready` does). Its own
+          ref guards re-firing; subsequent node adds don't remount it,
+          so the ref survives. The `enabled` prop is a no-op gate for
+          empty docs (hydration with 0 nodes — nothing to fit). */}
+      {ready && hydrated && <FitOnMount enabled={nodes.length > 0} onAfter={onAfterLoad} />}
 
       {picker && (
         <div
@@ -512,13 +514,14 @@ function PickerButton({ label, onClick }: { label: string; onClick: () => void }
 // ponytail: render-once effect that fires the centering once after
 // the `ready` / `nodes.length` flip. Lives under a separate component
 // so the parent's render doesn't keep re-triggering on each node change.
-function FitOnMount({ onAfter }: { onAfter: () => void }) {
+function FitOnMount({ enabled, onAfter }: { enabled: boolean; onAfter: () => void }) {
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return;
+    if (!enabled) return;
     fired.current = true;
     onAfter();
-  }, [onAfter]);
+  }, [enabled, onAfter]);
   return null;
 }
 
