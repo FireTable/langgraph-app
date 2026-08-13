@@ -478,7 +478,19 @@ const AuiRefCapture: FC<{
 // for the same pattern). Using `__LOCAL` matches both shapes.
 const ChatBody: FC<{ canvasOpen: boolean }> = ({ canvasOpen }) => {
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
-  const hasRealThread = !!mainThreadId && !mainThreadId.startsWith("__LOCAL");
+  // ponytail: mirror the Header's messageCount gate so the canvas
+  // button and the split-layout mount are driven by the same signal.
+  // aUI pushes the new user message into `thread.messages` synchronously
+  // (so the button appears immediately), but `mainThreadId` only flips
+  // from `__LOCAL_*` to the real id after the server round-trip —
+  // mounting CanvasEditor with a placeholder id would 404 the canvas
+  // state fetch. We wait for the real id before mounting, while still
+  // letting the toggle button appear (and be clicked) instantly.
+  const messageCount = useAuiState((s) => s.thread.messages.length);
+  const [realId, setRealId] = useState<string | null>(null);
+  useEffect(() => {
+    setRealId(mainThreadId && !mainThreadId.startsWith("__LOCAL") ? mainThreadId : null);
+  }, [mainThreadId]);
   // ponytail: canvas mode is desktop-only. The toggle button itself
   // is `hidden md:flex` so users on mobile can't open it from a fresh
   // state, but if canvasOpen was already true (e.g. desktop session
@@ -494,12 +506,12 @@ const ChatBody: FC<{ canvasOpen: boolean }> = ({ canvasOpen }) => {
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, []);
-  if (canvasOpen && hasRealThread && isDesktop) {
+  if (canvasOpen && messageCount > 0 && realId && isDesktop) {
     // ponytail: canvas mode renders the split layout; the Thread is
     // mounted as the right-panel child. We pass it through
     // CanvasSplitLayout so the canvas unmounts cleanly when the
     // toggle flips off (the editor's tldraw / listeners tear down).
-    return <CanvasSplitLayout threadId={mainThreadId} threadPanel={<Thread />} />;
+    return <CanvasSplitLayout threadId={realId} threadPanel={<Thread />} />;
   }
   return <Thread />;
 };
