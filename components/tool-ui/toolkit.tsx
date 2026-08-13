@@ -200,22 +200,23 @@ const kbToolkit = defineToolkit({
 });
 
 const imageToolkit = defineToolkit({
-  // ponytail: generate_image tool result auto-renders with an
-  // "Add to canvas" button. The button calls `useCanvas().insertImage`
-  // (lib/canvas/context.tsx) which routes into `editor.createShape({type:"image"})`
-  // when the canvas is open; when closed the bridge returns false and
-  // the button renders disabled with the "Open canvas to add" hint.
+  // ponytail: generate_image tool result auto-renders as a card with
+  // every variant stacked (urls[]). The card reads `useCanvas().insertImage`
+  // (lib/canvas/context.tsx) which drops each variant on the canvas;
+  // when the canvas is closed the bridge returns false and the
+  // "Open canvas to add" hint shows in place of the Add buttons.
   generate_image: {
     description:
-      "Render the generated image with a prompt caption and an Add-to-canvas button. Disabled until the user opens the canvas.",
+      "Render the generated image(s) with a prompt/aspect/num parameter panel and an Add-to-canvas button per variant. Disabled until the user opens the canvas.",
     parameters: z.object({
       // ponytail: skip the URL validator — zod's string URL helper is
-      // deprecated and the runtime tldraw shape will fail to fetch
+      // deprecated and the runtime image renderer will fail to fetch
       // invalid URLs anyway.
-      url: z.string(),
+      urls: z.array(z.string()),
       mock: z.boolean().optional(),
       prompt: z.string(),
       aspect_ratio: z.enum(["square", "portrait", "landscape"]).optional(),
+      num: z.number().int().min(1).max(4).optional(),
     }),
     render: GenerateImageCard,
   },

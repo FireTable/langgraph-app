@@ -100,9 +100,21 @@ payload the `SaveMemoryCard` renders as a per-row diff.
 
 ## Image
 
-| Tool             | Backend file                           | Frontend card                                      | Notes                                                                                                                                                                                                                                                                                                                    |
-| ---------------- | -------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `generate_image` | `backend/tool/image/generate-image.ts` | `components/tool-ui/image/generate-image-card.tsx` | fal.ai `fal-ai/flux/schnell` when `FAL_KEY` is set; otherwise a `placehold.co` mock URL with `mock: true` so the canvas flow still demos in local dev. Tool result drops the image onto the active tldraw editor (centered in viewport) via the `CanvasProvider` bridge — see `docs/CANVAS.md` § Cross-component wiring. |
+| Tool             | Backend file                           | Frontend card                                      | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------- | -------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `generate_image` | `backend/tool/image/generate-image.ts` | `components/tool-ui/image/generate-image-card.tsx` | fal.ai `fal-ai/flux/schnell` when `FAL_KEY` is set; otherwise per-variant `placehold.co` mock URLs with `mock: true` so the canvas flow still demos in local dev. Tool description explicitly tells the chat model **not** to echo the URLs in its reply — the canvas card already renders each variant inline, and re-listing them would show the user the same image twice. Args: `prompt` (required, non-empty), `aspect_ratio` (`square` / `portrait` / `landscape`, default `square`), `num` (1-4, default 1) for variants. Result drops every variant onto the canvas (centered in viewport) via the `CanvasProvider` bridge and wires a system edge from the most recent Generate node — see `docs/CANVAS.md` § Cross-component wiring. |
+
+### ToolMessage shape
+
+`generate_image` returns a JSON string with five top-level keys:
+
+- `urls[]` — array of fal.ai (or `placehold.co` mock) image URLs, one entry per variant. The card renders them in a 1/2/2-column grid depending on count.
+- `mock` — `true` when `FAL_KEY` was missing and the impl fell through to `placehold.co`; the card shows a "Demo image" badge in this case.
+- `prompt` — the verbatim prompt the model passed to the tool (also surfaced in the collapsible parameter panel on the card).
+- `aspect_ratio` — echoes the model arg so the card can render the right pixel grid.
+- `num` — echoes the model arg so the card subtitle reads "3 variants · portrait · 384×512" without re-counting `urls[]`.
+
+Auto-insert dedup is keyed by `toolCallId` (a module-level `Set` in the card file) — StrictMode dev double-mount, thread rehydrate, and result-streaming re-renders all hit the same dedup key so the canvas never stacks duplicate Preview nodes from the same tool call.
 
 ## Credit
 

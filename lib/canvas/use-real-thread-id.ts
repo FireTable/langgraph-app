@@ -2,6 +2,8 @@
 
 import { useAuiState } from "@assistant-ui/react";
 
+import { LOCAL_THREAD_PREFIX } from "@/lib/canvas/thread-id";
+
 // ponytail: aUI's `threads.mainThreadId` is an INTERNAL id that the
 // runtime uses to key into `threads.threadItems[]`. The actual id we
 // hand to the backend (LangGraph server, /api/canvas/{id}, localStorage
@@ -15,8 +17,6 @@ import { useAuiState } from "@assistant-ui/react";
 //
 // Returns null when no real id is available yet, so callers don't
 // accidentally feed a placeholder into the canvas API.
-
-export const LOCAL_THREAD_PREFIX = "__LOCAL_";
 
 export function useRealThreadId(): string | null {
   return useAuiState((s) => {

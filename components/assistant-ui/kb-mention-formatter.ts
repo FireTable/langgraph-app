@@ -19,8 +19,10 @@ export const kbMentionFormatter: Unstable_DirectiveFormatter = {
     // older {id=…} so existing transcript lines (and tests pinned to
     // the old format) keep rendering. The LLM only sees the wire
     // form, so newly serialised chips will all use the typed keys.
+    // `nodeId` covers canvas-node references emitted by the Generate
+    // node's auto-inserted upstream refs.
     const regex =
-      /:([\w-]{1,64})\[([^\]\n]{1,1024})\](?:\{(?:documentId|folderId|id)=([^}\n]{1,1024})\})?/g;
+      /:([\w-]{1,64})\[([^\]\n]{1,1024})\](?:\{(?:documentId|folderId|nodeId|id)=([^}\n]{1,1024})\})?/g;
     const segments: Unstable_DirectiveSegment[] = [];
     let lastIndex = 0;
     let match: RegExpExecArray | null;

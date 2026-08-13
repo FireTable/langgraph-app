@@ -58,7 +58,9 @@ async function makeOtherUser(): Promise<{ id: string; email: string }> {
 }
 
 const SAMPLE_DOC = {
-  nodes: [{ id: "n1", position: { x: 0, y: 0 }, data: { type: "prompt", fields: { text: "hi" } } }],
+  nodes: [
+    { id: "n1", position: { x: 0, y: 0 }, data: { type: "generate", fields: { text: "hi" } } },
+  ],
   edges: [],
 };
 

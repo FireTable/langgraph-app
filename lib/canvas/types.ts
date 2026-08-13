@@ -8,12 +8,12 @@ import { z } from "zod";
 // (each node type's React component validates on render).
 export const CanvasNodeData = z.object({
   // node type — discriminator for the React Flow custom node renderer.
-  type: z.enum(["prompt", "generate", "preview"]),
+  type: z.enum(["text", "generate", "preview"]),
   // node-type-specific fields. Free record; the renderer reads what
-  // it needs. For "prompt" the field is { text }. For "generate" the
-  // fields are { aspectRatio }. For "preview" the field is { url? }.
-  // We accept any object so adding a new node type doesn't require
-  // touching this schema.
+  // it needs. For "text" the field is { text? }. For "generate" the
+  // fields are { text?, aspectRatio?, num? }. For "preview" the field
+  // is { url? }. We accept any object so adding a new node type
+  // doesn't require touching this schema.
   fields: z.record(z.string(), z.unknown()).default({}),
 });
 

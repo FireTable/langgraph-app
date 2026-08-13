@@ -61,11 +61,12 @@ describe("GET /api/canvas/[threadId]", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns 404 when no snapshot exists for an owned thread", async () => {
+  it("returns 200 + empty document when no snapshot exists for an owned thread", async () => {
     const res = await GET(new Request("http://localhost"), CTX(threadId));
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.code).toBe("NOT_FOUND");
+    expect(body.threadId).toBe(threadId);
+    expect(body.document).toEqual({ nodes: [], edges: [] });
   });
 
   it("returns the saved snapshot", async () => {
@@ -74,7 +75,11 @@ describe("GET /api/canvas/[threadId]", () => {
       userId: owner,
       document: {
         nodes: [
-          { id: "n1", position: { x: 0, y: 0 }, data: { type: "prompt", fields: { text: "hi" } } },
+          {
+            id: "n1",
+            position: { x: 0, y: 0 },
+            data: { type: "generate", fields: { text: "hi" } },
+          },
         ],
         edges: [],
       },
@@ -85,7 +90,7 @@ describe("GET /api/canvas/[threadId]", () => {
     expect(body.threadId).toBe(threadId);
     expect(body.document).toEqual({
       nodes: [
-        { id: "n1", position: { x: 0, y: 0 }, data: { type: "prompt", fields: { text: "hi" } } },
+        { id: "n1", position: { x: 0, y: 0 }, data: { type: "generate", fields: { text: "hi" } } },
       ],
       edges: [],
     });
@@ -127,7 +132,7 @@ describe("PUT /api/canvas/[threadId]", () => {
 
   it("creates the row on first save", async () => {
     const doc = {
-      nodes: [{ id: "n1", position: { x: 0, y: 0 }, data: { type: "prompt", fields: {} } }],
+      nodes: [{ id: "n1", position: { x: 0, y: 0 }, data: { type: "generate", fields: {} } }],
       edges: [],
     };
     const res = await PUT(jsonPut({ document: doc }), CTX(threadId));
@@ -138,7 +143,7 @@ describe("PUT /api/canvas/[threadId]", () => {
 
   it("upserts on second save (last write wins)", async () => {
     const doc1 = {
-      nodes: [{ id: "n1", position: { x: 0, y: 0 }, data: { type: "prompt", fields: {} } }],
+      nodes: [{ id: "n1", position: { x: 0, y: 0 }, data: { type: "generate", fields: {} } }],
       edges: [],
     };
     const doc2 = {
@@ -177,8 +182,13 @@ describe("DELETE /api/canvas/[threadId]", () => {
     await upsertCanvasSnapshot({ threadId, userId: owner, document: {} });
     const res = await DELETE(new Request("http://localhost"), CTX(threadId));
     expect(res.status).toBe(204);
+    // ponytail: after delete the row is gone but the thread is still
+    // owned by us, so GET returns 200 + empty document (the canvas
+    // editor treats that as "no nodes yet"); see route.ts.
     const after = await GET(new Request("http://localhost"), CTX(threadId));
-    expect(after.status).toBe(404);
+    expect(after.status).toBe(200);
+    const afterBody = await after.json();
+    expect(afterBody.document).toEqual({ nodes: [], edges: [] });
   });
 
   it("returns 204 even when no row exists (idempotent)", async () => {

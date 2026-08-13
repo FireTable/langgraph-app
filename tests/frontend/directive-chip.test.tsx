@@ -62,6 +62,33 @@ describe("renderDirectiveSegments", () => {
     expect(chip).not.toBeNull();
   });
 
+  it("parses {nodeId=…} for canvas-node references emitted by Generate's self-ref + upstream Text/Image refs", () => {
+    // ponytail: the Generate node's Send emits `:text[…]{nodeId=…}`,
+    // `:generate-image[…]{nodeId=…}`, and `:image[…]{nodeId=…}` chips
+    // into the user message. The parser accepts `nodeId` as a key
+    // alongside `documentId` / `folderId` / legacy `id`. Without this
+    // branch the {nodeId=…} tail would leak out as plain text next to
+    // the chip.
+    const c = renderToContainer(
+      ":generate-image[生成图片 1:1 x2]{nodeId=n-1} :text[label]{nodeId=n-2} :image[Image]{nodeId=n-3}",
+    );
+    const generate = c.querySelector("[data-directive-id='n-1']");
+    expect(generate).not.toBeNull();
+    expect(generate!.getAttribute("data-directive-type")).toBe("generate-image");
+    const text = c.querySelector("[data-directive-id='n-2']");
+    expect(text).not.toBeNull();
+    expect(text!.getAttribute("data-directive-type")).toBe("text");
+    // ponytail: upstream Preview (Image) node reference for image-to-
+    // image generation flows. Same directive parser path, different
+    // visual treatment in the chip renderer.
+    const image = c.querySelector("[data-directive-id='n-3']");
+    expect(image).not.toBeNull();
+    expect(image!.getAttribute("data-directive-type")).toBe("image");
+    // ponytail: assert the leftover wire tail is gone — the trailing
+    // literal `{nodeId=…}` doesn't survive the parse.
+    expect(c.textContent).not.toContain("{nodeId=");
+  });
+
   it("renders multiple directives interleaved with text in order", () => {
     const c = renderToContainer("a :kb-document[A]{documentId=da} b :kb-folder[B]{folderId=fb} c");
     const chips = c.querySelectorAll("[data-directive-id]");

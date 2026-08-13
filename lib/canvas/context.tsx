@@ -15,9 +15,10 @@ import type { Edge, Node } from "@xyflow/react";
 // debounce) fires on every mutation.
 
 export type AddNodeOpts = {
-  type: "prompt" | "generate" | "preview";
-  // node-type-specific data fields. For "prompt" the field is
-  // { text }. For "generate" the field is { aspectRatio }. For
+  type: "text" | "generate" | "preview";
+  // node-type-specific data fields. For "text" the field is
+  // { text? }. For "generate" the fields are { text?, aspectRatio?,
+  // num? } (text is the prompt body, others are tool args). For
   // "preview" the field is { url? }. We pass through as
   // `Record<string, unknown>` and let the node component validate
   // on render.
@@ -34,6 +35,11 @@ export type InsertImageOpts = {
   // the same dims the user requested.
   w?: number;
   h?: number;
+  // ponytail: drop position in flow space. When the caller knows where
+  // it wants the preview (e.g. the generate_image tool card lays it
+  // out below the upstream Generate node), it can hand the coords in
+  // and skip the viewportCenter default. Omitted = viewport center.
+  position?: { x: number; y: number };
 };
 
 export type SystemEdgeOpts = {
@@ -63,6 +69,11 @@ type Registration = {
   // reference; the canvas exposes this so they can drop new nodes
   // without importing React Flow.
   viewportCenter: () => { x: number; y: number };
+  // ponytail: pan/zoom the canvas to center a given node. Used by the
+  // directive-chip renderer for `:text[...]{nodeId=...}` mentions to
+  // jump to the source Text node when the user clicks the chip in
+  // their own message bubble.
+  focusNode: (nodeId: string) => void;
 };
 
 export type CanvasApi = {
@@ -81,12 +92,29 @@ export type CanvasApi = {
   // on data change. Returns true on success, false if the node id
   // is unknown.
   updateNodeData: (id: string, fields: Record<string, unknown>) => boolean;
-  // ponytail: track the most recently clicked Generate node id.
-  // The generate_image tool UI card reads this to wire a system
-  // edge from the user's source Generate node to the new Preview
-  // node. Sticky per-session; cleared on unmount.
-  setSourceNodeId: (id: string | null) => void;
-  getSourceNodeId: () => string | null;
+  // ponytail: track the most recently clicked Generate node. The
+  // generate_image tool UI card reads both the id (to wire a system
+  // edge) and the position + size (to drop the Preview below the
+  // source rather than at viewport center). Sticky per-session;
+  // cleared on unmount.
+  setSourceNode: (
+    node: {
+      id: string;
+      position: { x: number; y: number };
+      width?: number;
+      height?: number;
+    } | null,
+  ) => void;
+  getSourceNode: () => {
+    id: string;
+    position: { x: number; y: number };
+    width?: number;
+    height?: number;
+  } | null;
+  // ponytail: pan/zoom to a node on the canvas. No-op if the canvas
+  // isn't mounted or the id is unknown. Used by directive chips to
+  // navigate from a rendered message bubble back to the source.
+  focusNode: (nodeId: string) => void;
 };
 
 const noopApi: CanvasApi = {
@@ -95,8 +123,9 @@ const noopApi: CanvasApi = {
   addNode: () => null,
   addEdge: () => null,
   updateNodeData: () => false,
-  setSourceNodeId: () => undefined,
-  getSourceNodeId: () => null,
+  setSourceNode: () => undefined,
+  getSourceNode: () => null,
+  focusNode: () => undefined,
 };
 
 const CanvasContext = createContext<CanvasApi | null>(null);
@@ -119,7 +148,12 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
   // generate_image tool UI card to wire a system edge between the
   // source Generate and the new Preview. Module-level ref so the
   // card can read it without prop drilling.
-  const sourceNodeIdRef = useRef<string | null>(null);
+  const sourceNodeRef = useRef<{
+    id: string;
+    position: { x: number; y: number };
+    width?: number;
+    height?: number;
+  } | null>(null);
 
   // ponytail: returns the new preview node id so callers can wire a
   // system edge to it. Dropped at the viewport center; the caller
@@ -131,12 +165,18 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
     const h = opts.h ?? 512;
     const vp = reg.viewportCenter();
     const id = crypto.randomUUID();
+    // ponytail: caller-supplied position wins (used by the
+    // generate_image card to drop the preview below the source
+    // Generate node). Fall back to viewport-center when nothing
+    // was passed — matches the original behavior for any consumer
+    // that doesn't know where it wants the node.
+    const position = opts.position ?? { x: vp.x - w / 2, y: vp.y - h / 2 };
     reg.setNodes((nodes) => [
       ...nodes,
       {
         id,
         type: "preview",
-        position: { x: vp.x - w / 2, y: vp.y - h / 2 },
+        position,
         data: { type: "preview", fields: { url: opts.url, w, h } },
       } as Node,
     ]);
@@ -206,10 +246,20 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
     return found;
   }, []);
 
-  const setSourceNodeId = useCallback((id: string | null) => {
-    sourceNodeIdRef.current = id;
-  }, []);
-  const getSourceNodeId = useCallback(() => sourceNodeIdRef.current, []);
+  const setSourceNode = useCallback(
+    (
+      node: {
+        id: string;
+        position: { x: number; y: number };
+        width?: number;
+        height?: number;
+      } | null,
+    ) => {
+      sourceNodeRef.current = node;
+    },
+    [],
+  );
+  const getSourceNode = useCallback(() => sourceNodeRef.current, []);
 
   const register = useCallback((reg: Registration | null) => {
     regRef.current = reg;
@@ -232,8 +282,13 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
           addNode,
           addEdge,
           updateNodeData,
-          setSourceNodeId,
-          getSourceNodeId,
+          setSourceNode,
+          getSourceNode,
+          focusNode: (nodeId: string) => {
+            const reg = regRef.current;
+            if (!reg) return;
+            reg.focusNode(nodeId);
+          },
         }}
       >
         {children}

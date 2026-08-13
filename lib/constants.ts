@@ -60,3 +60,22 @@ export const KB_ENTITY_CONCURRENCY = 10;
 // The Settings → KB table and the per-doc Preview dialog both use
 // this single knob; bump it if backend load warrants.
 export const KB_POLL_INTERVAL_MS = 5000;
+
+// ponytail: directive types that appear in the `:type[…]{…}` wire
+// format. Defined here so CanvasEditor (which EMITS them on Send) and
+// directive-chip (which RENDERS them) share a single source of truth —
+// a typo in either side silently produces a plain-text leak instead
+// of a chip. The directive-chip `CANVAS_NODE_DIRECTIVES` set picks
+// the canvas-node kinds from this list; KB types are defined inline
+// because they're stable and don't need to coordinate with another
+// emitter.
+//
+// `image` is the directive name for the canvas's `preview` node — the
+// wire form matches the chip's user-visible "Image" label, while the
+// internal canvas type stays `preview` (its role on the canvas is
+// previewing the generated image). The two are decoupled on purpose:
+// the canvas type names the behaviour, the directive names the
+// semantic content.
+export const CANVAS_DIRECTIVE_TEXT = "text";
+export const CANVAS_DIRECTIVE_IMAGE = "image";
+export const CANVAS_DIRECTIVE_GENERATE_IMAGE = "generate-image";

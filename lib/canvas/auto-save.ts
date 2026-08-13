@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import type { CanvasDocumentT } from "@/lib/canvas/types";
+import { isPlaceholderThread } from "@/lib/canvas/thread-id";
 
 // ponytail: debounced canvas snapshot writer. React Flow version.
 // Caller passes `getDocumentAction` — a stable getter that returns
@@ -10,6 +11,10 @@ import type { CanvasDocumentT } from "@/lib/canvas/types";
 // JSON to /api/canvas/:threadId. The same debounce / beforeunload /
 // pagehide / unmount-flush logic as before, just reading from
 // React Flow's state instead of tldraw's store.
+//
+// Every outgoing path guards on `isPlaceholderThread` so a stray
+// aUI `__LOCAL_<rand>` id never creates an orphan row or spams the
+// server with PUTs against a non-existent thread.
 
 const DEBOUNCE_MS = 2000;
 
@@ -33,7 +38,7 @@ export function useCanvasAutoSave({ threadId, getDocumentAction, enabled = true 
 
   const send = useCallback(
     async (payload: CanvasDocumentT) => {
-      if (!threadId) return;
+      if (!threadId || isPlaceholderThread(threadId)) return;
       setStatus("saving");
       try {
         const res = await fetch(`/api/canvas/${threadId}`, {
@@ -87,7 +92,7 @@ export function useCanvasAutoSave({ threadId, getDocumentAction, enabled = true 
   // drag fires ONE save 2s after the user stops moving — not 100s
   // while they drag.
   const schedule = useCallback(() => {
-    if (!enabled || !threadId) return;
+    if (!enabled || !threadId || isPlaceholderThread(threadId)) return;
     pendingRef.current = getDocumentAction();
     if (!pendingRef.current) return;
     dirtyRef.current = true;
@@ -107,7 +112,7 @@ export function useCanvasAutoSave({ threadId, getDocumentAction, enabled = true 
   useEffect(() => {
     if (!enabled) return;
     const beacon = () => {
-      if (!dirtyRef.current || !threadId) return;
+      if (!dirtyRef.current || !threadId || isPlaceholderThread(threadId)) return;
       const payload = pendingRef.current;
       if (!payload) return;
       const blob = new Blob([JSON.stringify({ document: payload })], {
@@ -187,8 +192,8 @@ export function toCanvasDocument(nodes: Node[], edges: Edge[]): CanvasDocumentT 
       id: n.id,
       position: { x: n.position.x, y: n.position.y },
       data: {
-        type: ((n.data as { type?: string })?.type ?? (n.type as string) ?? "prompt") as
-          | "prompt"
+        type: ((n.data as { type?: string })?.type ?? (n.type as string) ?? "text") as
+          | "text"
           | "generate"
           | "preview",
         fields: ((n.data as { fields?: Record<string, unknown> })?.fields ?? {}) as Record<

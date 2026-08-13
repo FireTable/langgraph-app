@@ -2,21 +2,40 @@ import { NextResponse } from "next/server";
 
 import {
   getCanvasSnapshotForUser,
+  threadOwnedByUser,
   upsertCanvasSnapshot,
   deleteCanvasSnapshot,
 } from "@/lib/canvas/queries";
 import { PutCanvasBody } from "@/lib/canvas/validators";
 import { withAuth } from "@/lib/auth/with-auth";
 import type { CanvasSnapshot } from "@/lib/canvas/schema";
+import { EMPTY_DOCUMENT } from "@/lib/canvas/snapshot";
 
 type Params = { threadId: string };
 
-// ponytail: GET returns either the saved snapshot or 404. A missing row
-// is indistinguishable from "not yours" — both return 404 to prevent
-// enumeration of other users' thread ids.
+// ponytail: GET returns the saved snapshot, an empty React Flow
+// document for an OWNED thread without a snapshot yet, or 404 for a
+// thread that doesn't exist / belongs to another user. The 200+empty
+// case for "owned + no snapshot" matches what the canvas editor
+// already expects on first open (it renders empty + creates the row
+// on first save), and avoids the 404 in the network panel /
+// observability waterfall for every fresh thread.
+//
+// Foreign threads still return 404 — the ownership check (`getCanvasSnapshotForUser`
+// joins on threads.userId) means a non-owner can't tell whether the
+// row exists or not.
 export const GET = withAuth<Params>(async (_req, { user, params }) => {
-  const row = await getCanvasSnapshotForUser(params.threadId, user.id);
-  if (!row) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
+  const [owned, row] = await Promise.all([
+    threadOwnedByUser(params.threadId, user.id),
+    getCanvasSnapshotForUser(params.threadId, user.id),
+  ]);
+  if (!owned) return NextResponse.json({ code: "NOT_FOUND" }, { status: 404 });
+  if (!row) {
+    return NextResponse.json({
+      threadId: params.threadId,
+      document: EMPTY_DOCUMENT,
+    });
+  }
   return NextResponse.json(toCanvasPayload(row));
 });
 
