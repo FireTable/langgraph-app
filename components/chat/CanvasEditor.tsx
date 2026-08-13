@@ -393,7 +393,12 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
   }, [picker]);
 
   const pickKind = useCallback(
-    (kind: "prompt" | "generate" | "preview") => {
+    // ponytail: Preview is intentionally NOT a picker option. It only
+    // appears after a `generate_image` tool call returns — the tool
+    // card's "Add to canvas" button calls `canvas.insertImage()` to
+    // drop it. Letting users hand-place Preview nodes invites empty
+    // placeholders with no upstream Generate and no image to render.
+    (kind: "prompt" | "generate") => {
       if (!picker) return;
       const newId = canvas.addNode({ type: kind, position: picker.flow });
       // ponytail: if the picker was opened from a handle-drag, also
@@ -522,7 +527,6 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
         >
           <PickerButton label="Prompt" onClick={() => pickKind("prompt")} />
           <PickerButton label="Generate" onClick={() => pickKind("generate")} />
-          <PickerButton label="Preview" onClick={() => pickKind("preview")} />
         </div>
       )}
     </div>

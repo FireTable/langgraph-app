@@ -14,7 +14,17 @@ export function getCanvasOpen(threadId: string | null): boolean {
     return window.localStorage.getItem(KEY_PREFIX + threadId + ":open") === "1";
   } catch {
     // ponytail: Safari private mode / quota errors throw on getItem;
-    // fall through to closed so the toggle still works in-session.
+    // fall through to closed so the toggle still works in-in.
+    return false;
+  }
+}
+
+export function hasCanvasPref(threadId: string | null): boolean {
+  if (!threadId) return false;
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(KEY_PREFIX + threadId + ":open") !== null;
+  } catch {
     return false;
   }
 }

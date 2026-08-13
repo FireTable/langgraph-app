@@ -21,7 +21,11 @@ import { mergeSubgraphMessages } from "@/lib/langgraph/merge-subgraph-messages";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { CanvasToggleButton } from "@/components/chat/CanvasToggleButton";
 import { CanvasSplitLayout } from "@/components/chat/CanvasSplitLayout";
-import { getCanvasOpen, setCanvasOpen as persistCanvasOpen } from "@/lib/canvas/prefs";
+import {
+  getCanvasOpen,
+  hasCanvasPref,
+  setCanvasOpen as persistCanvasOpen,
+} from "@/lib/canvas/prefs";
 // ThreadDropdown removed — the thread list is reachable via the
 // sidebar, the dropdown was redundant UI that competed with the
 // canvas toggle.
@@ -161,14 +165,7 @@ const Header: FC<{
   canvasOpen: boolean;
   onToggleCanvasAction: () => void;
 }> = ({ sidebarCollapsed, onToggleSidebar, canvasOpen, onToggleCanvasAction }) => {
-  // ponytail: the canvas toggle only makes sense once a thread exists
-  // — `CanvasSplitLayout` shows the bare `<Thread />` (not the canvas)
-  // when `mainThreadId` is null / `__LOCAL_*`, and toggling into canvas
-  // mode there would render nothing. Hiding the button on a fresh
-  // thread keeps the header honest. `__LOCAL` covers both `__LOCAL_*`
-  // shapes the adapter can emit (see ChatBody below).
-  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
-  const hasRealThread = !!mainThreadId && !mainThreadId.startsWith("__LOCAL");
+  const messageCount = useAuiState((s) => s.thread.messages.length);
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 px-4">
@@ -184,7 +181,7 @@ const Header: FC<{
         <PanelLeftIcon className="size-4" />
       </TooltipIconButton>
       <ThreadTitle />
-      {hasRealThread && (
+      {messageCount && (
         <CanvasToggleButton
           open={canvasOpen}
           onToggleAction={onToggleCanvasAction}
@@ -220,6 +217,16 @@ export function Assistant() {
       const next = !prev;
       persistCanvasOpen(activeThreadIdRef.current, next);
       return next;
+    });
+  }, []);
+  // ponytail: programmatic open (no toggle). Used by the "first
+  // message on a new thread" auto-open below. Persists so a refresh
+  // keeps the canvas open for that thread.
+  const openCanvasForActive = useCallback(() => {
+    setCanvasOpen((prev) => {
+      if (prev) return prev;
+      persistCanvasOpen(activeThreadIdRef.current, true);
+      return true;
     });
   }, []);
 
@@ -379,6 +386,7 @@ export function Assistant() {
         bridgeRef={bridgeRef}
         activeThreadIdRef={activeThreadIdRef}
         onCanvasPrefsChange={setCanvasOpen}
+        onAutoOpenCanvas={openCanvasForActive}
       />
       <ThreadUrlShadow />
       <div className="bg-muted/30 flex h-dvh w-full">
@@ -409,9 +417,11 @@ const AuiRefCapture: FC<{
   bridgeRef: RefObject<RuntimeBridge>;
   activeThreadIdRef: RefObject<string | null>;
   onCanvasPrefsChange: (open: boolean) => void;
-}> = ({ bridgeRef, activeThreadIdRef, onCanvasPrefsChange }) => {
+  onAutoOpenCanvas: () => void;
+}> = ({ bridgeRef, activeThreadIdRef, onCanvasPrefsChange, onAutoOpenCanvas }) => {
   const api = useAui();
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
+  const messageCount = useAuiState((s) => s.thread.messages.length);
   bridgeRef.current = { api, mainThreadId };
   const realId = mainThreadId && !mainThreadId.startsWith("__LOCAL") ? mainThreadId : null;
   // ponytail: only update the ref + notify when the resolved threadId
@@ -425,6 +435,23 @@ const AuiRefCapture: FC<{
     activeThreadIdRef.current = realId;
     onCanvasPrefsChange(getCanvasOpen(realId));
   }, [realId, activeThreadIdRef, onCanvasPrefsChange]);
+  // ponytail: on a fresh thread (no localStorage entry), auto-open
+  // the canvas the moment the first user message lands — that's the
+  // whole "canvas-first" pitch. Skip when a saved preference exists
+  // (the user already closed it intentionally last time), and skip
+  // on placeholder thread ids.
+  const lastSeenCountRef = useRef(0);
+  useEffect(() => {
+    if (!realId) return;
+    if (messageCount <= lastSeenCountRef.current) {
+      lastSeenCountRef.current = messageCount;
+      return;
+    }
+    lastSeenCountRef.current = messageCount;
+    if (messageCount > 0 && !hasCanvasPref(realId)) {
+      onAutoOpenCanvas();
+    }
+  }, [messageCount, realId, onAutoOpenCanvas]);
   return null;
 };
 
