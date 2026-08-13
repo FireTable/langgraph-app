@@ -26,6 +26,7 @@ import {
   hasCanvasPref,
   setCanvasOpen as persistCanvasOpen,
 } from "@/lib/canvas/prefs";
+import { useRealThreadId } from "@/lib/canvas/use-real-thread-id";
 // ThreadDropdown removed — the thread list is reachable via the
 // sidebar, the dropdown was redundant UI that competed with the
 // canvas toggle.
@@ -423,7 +424,11 @@ const AuiRefCapture: FC<{
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
   const messageCount = useAuiState((s) => s.thread.messages.length);
   bridgeRef.current = { api, mainThreadId };
-  const realId = mainThreadId && !mainThreadId.startsWith("__LOCAL") ? mainThreadId : null;
+  // ponytail: realId comes from threadItems[].externalId (the server-side
+  // id), not mainThreadId (aUI's internal id). When the thread is still
+  // a placeholder, externalId is null and mainThreadId is __LOCAL_* —
+  // useRealThreadId returns null and we skip the localStorage sync.
+  const realId = useRealThreadId();
   // ponytail: only update the ref + notify when the resolved threadId
   // actually changes. useAuiState returns the same reference for an
   // unchanged id, so this effect skips on every aUI tick that doesn't
@@ -433,7 +438,7 @@ const AuiRefCapture: FC<{
     if (lastIdRef.current === realId) return;
     lastIdRef.current = realId;
     activeThreadIdRef.current = realId;
-    onCanvasPrefsChange(getCanvasOpen(realId));
+    if (realId) onCanvasPrefsChange(getCanvasOpen(realId));
   }, [realId, activeThreadIdRef, onCanvasPrefsChange]);
   // ponytail: on a fresh thread (no localStorage entry), auto-open
   // the canvas the moment the first user message lands — that's the
@@ -477,20 +482,17 @@ const AuiRefCapture: FC<{
 // `__LOCAL_` prefix would miss it (see components/observability/button.tsx
 // for the same pattern). Using `__LOCAL` matches both shapes.
 const ChatBody: FC<{ canvasOpen: boolean }> = ({ canvasOpen }) => {
-  const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
   // ponytail: mirror the Header's messageCount gate so the canvas
   // button and the split-layout mount are driven by the same signal.
   // aUI pushes the new user message into `thread.messages` synchronously
-  // (so the button appears immediately), but `mainThreadId` only flips
-  // from `__LOCAL_*` to the real id after the server round-trip —
-  // mounting CanvasEditor with a placeholder id would 404 the canvas
-  // state fetch. We wait for the real id before mounting, while still
-  // letting the toggle button appear (and be clicked) instantly.
+  // (so the button appears immediately), but the real server-side id
+  // (threadItems[mainThreadId].externalId) only lands after the server
+  // round-trip — mounting CanvasEditor with the placeholder id would
+  // 404 the canvas state fetch. We wait for the real id before
+  // mounting, while still letting the toggle button appear (and be
+  // clicked) instantly.
   const messageCount = useAuiState((s) => s.thread.messages.length);
-  const [realId, setRealId] = useState<string | null>(null);
-  useEffect(() => {
-    setRealId(mainThreadId && !mainThreadId.startsWith("__LOCAL") ? mainThreadId : null);
-  }, [mainThreadId]);
+  const realId = useRealThreadId();
   // ponytail: canvas mode is desktop-only. The toggle button itself
   // is `hidden md:flex` so users on mobile can't open it from a fresh
   // state, but if canvasOpen was already true (e.g. desktop session
