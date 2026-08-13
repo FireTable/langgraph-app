@@ -488,8 +488,14 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
         zoomOnDoubleClick={false}
       >
         <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
-        <Controls showInteractive={false} position="bottom-right" />
-        <MiniMap pannable zoomable className="!bg-card" position="bottom-left" />
+        <Controls showInteractive={false} position="bottom-left" />
+        <MiniMap
+          pannable
+          zoomable
+          className="!bg-card"
+          position="bottom-left"
+          style={{ marginLeft: 60 }}
+        />
       </ReactFlow>
 
       {!ready && (
