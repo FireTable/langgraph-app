@@ -459,22 +459,24 @@ function ModelDialog(
           <p className="text-muted-foreground text-xs">
             Determines which tasks reach this model. Chat is standard reasoning; OCR is PDF vision
             page-to-markdown; Embed is dense vector; Extract is structured-output triples; Eval is
-            LLM-as-a-Judge.
+            LLM-as-a-Judge; Pic is canvas image generation (fal.ai-backed).
           </p>
           <div className="mt-1 grid grid-cols-2 gap-2">
-            {(["chat", "ocr", "embed", "extract", "rerank", "eval"] as ModelKind[]).map((k) => (
-              <label
-                key={k}
-                className="bg-muted/30 border-border/60 hover:bg-muted/60 flex cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-xs"
-              >
-                <Checkbox
-                  checked={kind.includes(k)}
-                  onCheckedChange={() => toggleKind(k)}
-                  disabled={saving}
-                />
-                <span className="font-mono font-medium">{k}</span>
-              </label>
-            ))}
+            {(["chat", "ocr", "embed", "extract", "rerank", "eval", "pic"] as ModelKind[]).map(
+              (k) => (
+                <label
+                  key={k}
+                  className="bg-muted/30 border-border/60 hover:bg-muted/60 flex cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-xs"
+                >
+                  <Checkbox
+                    checked={kind.includes(k)}
+                    onCheckedChange={() => toggleKind(k)}
+                    disabled={saving}
+                  />
+                  <span className="font-mono font-medium">{k}</span>
+                </label>
+              ),
+            )}
           </div>
         </div>
 
