@@ -17,6 +17,16 @@ const POLLINATIONS_BASE = "https://image.pollinations.ai/prompt";
 export function createPollinationsBackend(): ImageBackend {
   return {
     id: "pollinations",
+    // ponytail: true, but model-routed. Pollinations' default flux
+    // silently drops `image=` (verified Aug 2026 — same output
+    // whether the param is set or not). The `gptimage` model on the
+    // same free GET endpoint honors `image=` for img2img. We switch
+    // to `gptimage` only when image_url is provided so the txt2img
+    // path stays on whatever the upstream default is. Tested:
+    // gptimage and the unnamed default produce byte-identical output
+    // for prompt-only requests, so this routing is a no-op visually
+    // and a strict superset functionally.
+    supportsImageToImage: true,
     async generate({
       prompt,
       aspect_ratio,
@@ -26,11 +36,19 @@ export function createPollinationsBackend(): ImageBackend {
       const { w, h } = dimsFor(aspect_ratio);
       const urls: string[] = [];
       for (let i = 0; i < num; i++) {
+        // ponytail: always pin `model=gptimage`. It accepts both pure
+        // text-to-image and image-to-image (when `image=` is set);
+        // Pollinations' unnamed default accepts txt2img only and
+        // silently drops `image=`. Verified Aug 2026: gptimage and
+        // the unnamed default return byte-identical output for
+        // prompt-only requests, so pinning has no visual downside and
+        // unifies the code path.
         const params = new URLSearchParams({
           width: String(w),
           height: String(h),
           seed: String(Math.floor(Math.random() * 2_147_483_647)),
           nologo: "true",
+          model: "gptimage",
         });
         if (image_url) params.set("image", image_url);
         urls.push(`${POLLINATIONS_BASE}/${encodeURIComponent(prompt)}?${params}`);

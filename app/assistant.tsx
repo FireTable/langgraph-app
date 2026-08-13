@@ -21,11 +21,7 @@ import { mergeSubgraphMessages } from "@/lib/langgraph/merge-subgraph-messages";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { CanvasToggleButton } from "@/components/chat/CanvasToggleButton";
 import { CanvasSplitLayout } from "@/components/chat/CanvasSplitLayout";
-import {
-  getCanvasOpen,
-  hasCanvasPref,
-  setCanvasOpen as persistCanvasOpen,
-} from "@/lib/canvas/prefs";
+import { getCanvasOpen, setCanvasOpen as persistCanvasOpen } from "@/lib/canvas/prefs";
 import { useRealThreadId } from "@/lib/canvas/use-real-thread-id";
 // ThreadDropdown removed — the thread list is reachable via the
 // sidebar, the dropdown was redundant UI that competed with the
@@ -220,16 +216,6 @@ export function Assistant() {
       return next;
     });
   }, []);
-  // ponytail: programmatic open (no toggle). Used by the "first
-  // message on a new thread" auto-open below. Persists so a refresh
-  // keeps the canvas open for that thread.
-  const openCanvasForActive = useCallback(() => {
-    setCanvasOpen((prev) => {
-      if (prev) return prev;
-      persistCanvasOpen(activeThreadIdRef.current, true);
-      return true;
-    });
-  }, []);
 
   // Default to the in-app /api proxy so CORS + x-api-key stay in Next.js;
   // LANGGRAPH_PUBLIC_URL bypasses it (e.g. behind Cloudflare Tunnel).
@@ -387,7 +373,6 @@ export function Assistant() {
         bridgeRef={bridgeRef}
         activeThreadIdRef={activeThreadIdRef}
         onCanvasPrefsChange={setCanvasOpen}
-        onAutoOpenCanvas={openCanvasForActive}
       />
       <ThreadUrlShadow />
       <div className="bg-muted/30 flex h-dvh w-full">
@@ -418,21 +403,22 @@ const AuiRefCapture: FC<{
   bridgeRef: RefObject<RuntimeBridge>;
   activeThreadIdRef: RefObject<string | null>;
   onCanvasPrefsChange: (open: boolean) => void;
-  onAutoOpenCanvas: () => void;
-}> = ({ bridgeRef, activeThreadIdRef, onCanvasPrefsChange, onAutoOpenCanvas }) => {
+}> = ({ bridgeRef, activeThreadIdRef, onCanvasPrefsChange }) => {
   const api = useAui();
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
-  const messageCount = useAuiState((s) => s.thread.messages.length);
   bridgeRef.current = { api, mainThreadId };
   // ponytail: realId comes from threadItems[].externalId (the server-side
   // id), not mainThreadId (aUI's internal id). When the thread is still
   // a placeholder, externalId is null and mainThreadId is __LOCAL_* —
   // useRealThreadId returns null and we skip the localStorage sync.
   const realId = useRealThreadId();
-  // ponytail: only update the ref + notify when the resolved threadId
-  // actually changes. useAuiState returns the same reference for an
-  // unchanged id, so this effect skips on every aUI tick that doesn't
-  // touch thread identity.
+  // ponytail: restore the user's last open/closed preference for this
+  // thread on id change. localStorage is the single source of truth
+  // — no auto-open on first message, no first-run heuristic. The user
+  // clicks the toggle; we remember. Skip when realId is still null
+  // (placeholder thread) so we don't pollute the next thread's state.
+  // useAuiState returns the same reference for an unchanged id, so
+  // this effect skips on every aUI tick that doesn't touch identity.
   const lastIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (lastIdRef.current === realId) return;
@@ -440,23 +426,6 @@ const AuiRefCapture: FC<{
     activeThreadIdRef.current = realId;
     if (realId) onCanvasPrefsChange(getCanvasOpen(realId));
   }, [realId, activeThreadIdRef, onCanvasPrefsChange]);
-  // ponytail: on a fresh thread (no localStorage entry), auto-open
-  // the canvas the moment the first user message lands — that's the
-  // whole "canvas-first" pitch. Skip when a saved preference exists
-  // (the user already closed it intentionally last time), and skip
-  // on placeholder thread ids.
-  const lastSeenCountRef = useRef(0);
-  useEffect(() => {
-    if (!realId) return;
-    if (messageCount <= lastSeenCountRef.current) {
-      lastSeenCountRef.current = messageCount;
-      return;
-    }
-    lastSeenCountRef.current = messageCount;
-    if (messageCount > 0 && !hasCanvasPref(realId)) {
-      onAutoOpenCanvas();
-    }
-  }, [messageCount, realId, onAutoOpenCanvas]);
   return null;
 };
 
@@ -512,7 +481,7 @@ const ChatBody: FC<{ canvasOpen: boolean }> = ({ canvasOpen }) => {
     // ponytail: canvas mode renders the split layout; the Thread is
     // mounted as the right-panel child. We pass it through
     // CanvasSplitLayout so the canvas unmounts cleanly when the
-    // toggle flips off (the editor's tldraw / listeners tear down).
+    // toggle flips off (the editor's React Flow listeners tear down).
     return <CanvasSplitLayout threadId={realId} threadPanel={<Thread />} />;
   }
   return <Thread />;

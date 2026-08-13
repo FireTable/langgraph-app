@@ -5,12 +5,11 @@ import type { Edge, Node } from "@xyflow/react";
 import type { CanvasDocumentT } from "@/lib/canvas/types";
 import { isPlaceholderThread } from "@/lib/canvas/thread-id";
 
-// ponytail: debounced canvas snapshot writer. React Flow version.
-// Caller passes `getDocumentAction` — a stable getter that returns
-// `{ nodes, edges }` from the live React Flow state. We PUT it as
-// JSON to /api/canvas/:threadId. The same debounce / beforeunload /
-// pagehide / unmount-flush logic as before, just reading from
-// React Flow's state instead of tldraw's store.
+// ponytail: debounced canvas snapshot writer. Caller passes
+// `getDocumentAction` — a stable getter that returns `{ nodes, edges }`
+// from the live React Flow state. We PUT it as JSON to
+// /api/canvas/:threadId. The same debounce / beforeunload / pagehide /
+// unmount-flush logic applies.
 //
 // Every outgoing path guards on `isPlaceholderThread` so a stray
 // aUI `__LOCAL_<rand>` id never creates an orphan row or spams the

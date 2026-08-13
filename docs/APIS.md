@@ -61,11 +61,11 @@ Response shape (single row, same for list / fetch / create / update):
 
 ## Canvas
 
-Per-thread tldraw snapshot (issue: chat-first app that expands to a split-view canvas where the user can paste / regenerate images). One row per thread; FK to `threads` cascades on delete. Design doc: [`docs/CANVAS.md`](./CANVAS.md) (auto-save cadence, layout, image-gen tool).
+Per-thread React Flow snapshot (issue: chat-first app that expands to a split-view canvas where the user can paste / regenerate images). One row per thread; FK to `threads` cascades on delete. Design doc: [`docs/CANVAS.md`](./CANVAS.md) (auto-save cadence, layout, image-gen tool).
 
 **Auth + isolation contract**: every endpoint is wrapped in `withAuth` (rule #9). Reads JOIN against `threads.userId` so cross-user access returns 404 (no enumeration of other users' thread ids — same shape as `/api/threads/[id]`). `upsertCanvasSnapshot` pre-checks ownership inside the query; the route maps the `thread not owned by user` error back to a 404.
 
-The `document` field is the full tldraw `store.serialize('document')` payload — a typed record of shapes / pages / bindings / asset refs. We don't re-validate it server-side: tldraw's loader is the single source of truth and would re-parse anything we stored here anyway (see `lib/canvas/snapshot.ts` comment). The route only rejects a non-object body.
+The `document` field is the full React Flow `{ nodes, edges }` payload. We don't re-validate it server-side: React Flow's loader is the single source of truth and would re-parse anything we stored here anyway (see `lib/canvas/snapshot.ts` comment). The route only rejects a non-object body.
 
 | Endpoint                        | Purpose                                                                                                                                                                                                     | Status codes          |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |

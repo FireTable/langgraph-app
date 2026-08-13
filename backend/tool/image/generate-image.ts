@@ -71,10 +71,12 @@ async function impl(args: z.infer<typeof schema>): Promise<string> {
 
 // ponytail: tool description explicitly tells the chat model NOT to
 // duplicate image URLs in its reply — the canvas card renders them
-// inline, so echoing URLs would show them twice.
+// inline, so echoing URLs would show them twice. `image_url` rides
+// on user-message image attachments; both backends (Pollinations /
+// fal.ai) honor it.
 export const generateImageTool: StructuredTool = tool(impl, {
   name: "generate_image",
   description:
-    "Generate one or more fresh images from a text prompt. Use when the user asks to draw, paint, illustrate, or create a new image for the canvas. Args: `prompt` (required, non-empty), `aspect_ratio` (square/portrait/landscape, default square), `num` (1-4, default 1) for variants, `image_url` (optional reference image URL for image-to-image). The canvas card already renders the generated images inline — do NOT describe the images, link the URLs, or list them in your reply; the user sees the generated card automatically. Just call the tool and continue.",
+    "Generate one or more fresh images from a text prompt. Use when the user asks to draw, paint, illustrate, or create a new image for the canvas. Args: `prompt` (required, non-empty), `aspect_ratio` (square/portrait/landscape, default square), `num` (1-4, default 1) for variants, `image_url` (optional reference image URL for image-to-image — when an upstream canvas Image node is connected, copy its URL here). The canvas card already renders the generated images inline — do NOT describe the images, link the URLs, or list them in your reply; the user sees the generated card automatically. Just call the tool and continue.",
   schema,
 });

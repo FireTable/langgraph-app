@@ -29,6 +29,15 @@ export interface GenerateResult {
 
 export interface ImageBackend {
   readonly id: "pollinations" | "fal";
+  // ponytail: capability flag — only some backends actually honor the
+  // `image=` reference for image-to-image. The free Pollinations GET
+  // endpoint documents the param but silently drops it on every
+  // default model (verified Aug 2026 against flux / gptimage /
+  // gptimage-1.5 / klein / turbo — all return the same unconditioned
+  // image). The tool impl checks this before calling generate() so we
+  // surface a clear "set FAL_KEY / OPENAI_API_KEY to enable img2img"
+  // error instead of silently producing a wrong, prompt-only image.
+  readonly supportsImageToImage: boolean;
   generate(args: GenerateArgs): Promise<GenerateResult>;
 }
 

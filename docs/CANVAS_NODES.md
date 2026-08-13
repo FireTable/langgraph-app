@@ -1,8 +1,8 @@
 # Canvas Nodes (Design)
 
-The canvas ([docs/CANVAS.md](./CANVAS.md)) lets the user fill a tldraw
-stage with shapes. The **node editor** layer adds a small set of
-purpose-built shapes — draggable cards with typed inputs and typed
+The canvas ([docs/CANVAS.md](./CANVAS.md)) lets the user fill a React Flow
+stage with nodes + edges. The **node editor** layer adds a small set of
+purpose-built nodes — draggable cards with typed inputs and typed
 output ports — that the user can wire together like a ComfyUI
 pipeline. Visual layout, no execution engine.
 
@@ -66,10 +66,10 @@ Three shipped, more slot in trivially:
 | `generate` | `prompt` (text, multi), `image` (optional ref) | `image` | Calls `generate_image` (fal.ai via the LangGraph tool). `aspectRatio` selector (square / portrait / landscape). |
 | `preview`  | `image` (or `text`)                            | —       | Renders the upstream image. Has an optional caption field.                                                      |
 
-The `Connection` shape + `ConnectionBinding` system come from the
-tldraw Image pipeline starter — they handle the visual line + the
-binding record that links upstream `output` to downstream `input` by
-port id. `keepConnectionsAtBottom` keeps the connections under the
+The edge + handle system is plain `@xyflow/react` — the line is
+xyflow's `Edge` component; the port record is implicit in `sourceHandle`
+/ `targetHandle` strings (e.g. `"output"`, `"input"`). `zIndex` keeps the
+edges under the nodes so drag handles stay clickable.
 nodes in the z-order.
 
 ## What we don't ship (yet)
@@ -195,9 +195,9 @@ the right place.
   a new node is `NodeDefinitions.newNode = NewNodeDefinition`. The
   serialiser walks the same registry.
 - **Canvas persistence is unchanged.** `canvas_snapshots` is the same
-  row; the tldraw document JSON just happens to contain a few node
-  shapes mixed with rectangles / arrows. The auto-save debounce
-  covers both.
+  row; the React Flow document JSON just happens to contain a few
+  typed nodes mixed with whatever the user adds. The auto-save
+  debounce covers both.
 
 ## Future work
 

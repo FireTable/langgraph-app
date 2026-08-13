@@ -10,6 +10,10 @@ const FAL_BASE = "https://fal.run/fal-ai/flux/schnell";
 export function createFalBackend(apiKey: string): ImageBackend {
   return {
     id: "fal",
+    // ponytail: true. fal's flux-schnell model accepts the
+    // `image_url` body key for image-to-image. The tool layer
+    // forwards image_url verbatim.
+    supportsImageToImage: true,
     async generate({
       prompt,
       aspect_ratio,

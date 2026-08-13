@@ -19,16 +19,6 @@ export function getCanvasOpen(threadId: string | null): boolean {
   }
 }
 
-export function hasCanvasPref(threadId: string | null): boolean {
-  if (!threadId) return false;
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(KEY_PREFIX + threadId + ":open") !== null;
-  } catch {
-    return false;
-  }
-}
-
 export function setCanvasOpen(threadId: string | null, open: boolean): void {
   if (!threadId) return;
   if (typeof window === "undefined") return;
