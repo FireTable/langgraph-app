@@ -19,12 +19,18 @@ const FAL_BASE = `https://fal.run/${FAL_MODEL}`;
 const aspectRatios = ["square", "portrait", "landscape"] as const;
 
 const schema = z.object({
+  // ponytail: `prompt` accepts missing/empty so the model can recover
+  // from a partial first tool_call (some reasoning-style models emit an
+  // empty arguments stub before the real call). We re-validate inside
+  // `impl` and return a structured error — the LLM then retries with
+  // the actual prompt on the next turn. `aspect_ratio` defaults to
+  // "square" so the LLM can omit it too.
   prompt: z
     .string()
-    .min(1)
     .max(2000)
+    .default("")
     .describe(
-      "What to draw. Be specific: subject, style, lighting, framing. Example: 'a moody flat-lay of a vintage leather journal on a walnut desk, morning light, 35mm'.",
+      "What to draw. Be specific: subject, style, lighting, framing. Example: 'a moody flat-lay of a vintage leather journal on a walnut desk, morning light, 35mm'. Required — pass non-empty or the tool returns an error.",
     ),
   aspect_ratio: z
     .enum(aspectRatios)
@@ -40,6 +46,17 @@ type GenerateResult = {
 };
 
 async function impl({ prompt, aspect_ratio }: z.infer<typeof schema>): Promise<string> {
+  // ponytail: gate on empty prompt. Returning a structured error (vs
+  // throwing) keeps the tool call inside the LLM's reasoning loop —
+  // it can see "missing prompt" and re-emit a complete tool_call next
+  // turn. Throwing would bubble up as a hard failure and abort the run.
+  if (!prompt.trim()) {
+    return JSON.stringify({
+      success: false,
+      error: "missing required field: prompt (non-empty string describing the image to generate)",
+    });
+  }
+
   // ponytail: mock-first path. With no key we hand back a deterministic
   // placeholder so the canvas flow end-to-end works on local dev. The
   // `mock: true` flag tells the UI to render a "demo image" badge so
