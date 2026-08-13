@@ -18,6 +18,7 @@ import {
   type Node,
   type NodeChange,
   type NodeProps,
+  type OnConnectEnd,
   type OnNodesChange,
   type OnEdgesChange,
 } from "@xyflow/react";
@@ -36,8 +37,6 @@ import { cn } from "@/lib/utils";
 // — the agent's generate_image UI card is the only thing that calls
 // `addEdge`, and it sets `data.system = true` so deletion is locked.
 
-type NodeKind = "prompt" | "generate" | "preview";
-
 const nodeShellBase =
   "min-w-[220px] rounded-lg border bg-card p-3 text-sm shadow-sm transition-colors";
 
@@ -47,7 +46,16 @@ function PromptNode({ id, data, selected }: NodeProps) {
   const text = fields.text ?? "";
   return (
     <div className={cn(nodeShellBase, selected ? "border-primary" : "border-border")}>
-      <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground" />
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="!h-3 !w-3 !border-2 !border-background !bg-muted-foreground"
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="!h-3 !w-3 !border-2 !border-background !bg-muted-foreground"
+      />
       <div className="mb-1 text-xs font-medium text-muted-foreground">Prompt</div>
       <textarea
         className="w-full resize-none rounded border border-border bg-background px-2 py-1 text-xs outline-none focus:border-primary"
@@ -60,6 +68,15 @@ function PromptNode({ id, data, selected }: NodeProps) {
   );
 }
 
+// ponytail: every node has BOTH a target (input, top) and a source
+// (output, bottom) handle. Edges wire output→input — the same
+// uniform data-flow model regardless of node type. Prompt and
+// Preview keep their semantic meaning but can still participate in
+// arbitrary graphs (Prompt can sit mid-pipeline as a literal
+// interpolation, Preview can fan out to multiple downstream nodes).
+// Render is identical to before for the half of the data flow we
+// use; the other half is just exposed.
+
 function GenerateNode({ id, data, selected }: NodeProps) {
   const { updateNodeData } = useReactFlow();
   const aui = useAui();
@@ -68,8 +85,16 @@ function GenerateNode({ id, data, selected }: NodeProps) {
   const aspectRatio = fields.aspectRatio ?? "1:1";
   return (
     <div className={cn(nodeShellBase, selected ? "border-primary" : "border-border")}>
-      <Handle type="target" position={Position.Top} className="!bg-muted-foreground" />
-      <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground" />
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="!h-3 !w-3 !border-2 !border-background !bg-muted-foreground"
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="!h-3 !w-3 !border-2 !border-background !bg-muted-foreground"
+      />
       <div className="mb-1 text-xs font-medium text-muted-foreground">Generate</div>
       <label className="mb-2 block text-xs">
         <span className="text-muted-foreground">Aspect ratio</span>
@@ -113,7 +138,16 @@ function PreviewNode({ data, selected }: NodeProps) {
   const url = fields.url;
   return (
     <div className={cn(nodeShellBase, selected ? "border-primary" : "border-border")}>
-      <Handle type="target" position={Position.Top} className="!bg-muted-foreground" />
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="!h-3 !w-3 !border-2 !border-background !bg-muted-foreground"
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="!h-3 !w-3 !border-2 !border-background !bg-muted-foreground"
+      />
       <div className="mb-1 text-xs font-medium text-muted-foreground">Preview</div>
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -292,46 +326,134 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
     rf.setViewport({ x: window.innerWidth / 2 - cx, y: window.innerHeight / 2 - cy, zoom: 1 });
   }, [rf]);
 
-  const handleAdd = useCallback(
-    (type: NodeKind) => {
-      canvas.addNode({ type });
+  // ponytail: double-click an empty pane (or drop a handle on empty
+  // space) → show the same picker menu (Input / Prompt / Generate /
+  // Preview). We stash the screen position (menu anchor), the flow
+  // position (where the new node lands), and — when invoked from a
+  // drag — the source node + handle so pickKind can wire the edge.
+  const [picker, setPicker] = useState<{
+    x: number;
+    y: number;
+    flow: { x: number; y: number };
+    fromNodeId?: string;
+    fromHandleId?: string | null;
+  } | null>(null);
+  // ponytail: the node-shell is ~220x100 (min-w + content). The
+  // React Flow renderer positions by top-left, so to drop a node
+  // CENTERED on the cursor we subtract half its dimensions from the
+  // click's flow position. This way the click point lines up with
+  // the visual center, not the corner.
+  const NODE_CENTER_OFFSET = { x: 110, y: 50 };
+  const onWrapperDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest(".react-flow__node")) return;
+      const flow = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      setPicker({
+        x: event.clientX,
+        y: event.clientY,
+        flow: { x: flow.x - NODE_CENTER_OFFSET.x, y: flow.y - NODE_CENTER_OFFSET.y },
+      });
     },
-    [canvas],
+    [rf],
+  );
+
+  // ponytail: dismiss the picker on Esc or on a click outside the
+  // menu. We listen on the document (the menu is a fixed-position
+  // div, not a child of the dblclick target) and bail when the click
+  // is inside `.canvas-picker` so menu clicks don't self-dismiss.
+  useEffect(() => {
+    if (!picker) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPicker(null);
+    };
+    const onClick = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest(".canvas-picker")) return;
+      setPicker(null);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+    };
+  }, [picker]);
+
+  const pickKind = useCallback(
+    (kind: "prompt" | "generate" | "preview") => {
+      if (!picker) return;
+      const newId = canvas.addNode({ type: kind, position: picker.flow });
+      // ponytail: if the picker was opened from a handle-drag, also
+      // wire an edge from the source handle to the new node's top.
+      if (newId && picker.fromNodeId) {
+        canvas.addEdge({
+          source: picker.fromNodeId,
+          target: newId,
+          sourceHandle: picker.fromHandleId ?? null,
+          targetHandle: null,
+        });
+      }
+      setPicker(null);
+    },
+    [canvas, picker],
+  );
+
+  // ponytail: dragging from a handle onto empty space should grow the
+  // graph at the drop point — drop a new Prompt node and wire the
+  // source handle to its top. We bail when the user lands on a real
+  // target handle (React Flow's default onConnect handles that case)
+  // or when there's no source node (no-op drag). xyflow's
+  // `connectionState.toPosition` is a HANDLE ENUM, not cursor coords,
+  // so we read clientX/Y off the raw event instead.
+  const onConnectEnd = useCallback<OnConnectEnd>(
+    (event, connectionState) => {
+      if (!connectionState.fromNode) return;
+      if (connectionState.toHandle) return;
+      const ev = event as MouseEvent;
+      const touch = (event as TouchEvent).changedTouches?.[0];
+      const cx = ev.clientX ?? touch?.clientX ?? 0;
+      const cy = ev.clientY ?? touch?.clientY ?? 0;
+      const flow = rf.screenToFlowPosition({ x: cx, y: cy });
+      // ponytail: show the same picker the dblclick uses — user
+      // picks Prompt / Generate / Preview. We stash the source
+      // handle + node so pickKind wires the edge when the user
+      // makes a choice. Same center-on-cursor offset as the
+      // dblclick handler so the new node lands centered.
+      setPicker({
+        x: cx,
+        y: cy,
+        flow: { x: flow.x - NODE_CENTER_OFFSET.x, y: flow.y - NODE_CENTER_OFFSET.y },
+        fromNodeId: connectionState.fromNode.id,
+        fromHandleId: connectionState.fromHandle?.id ?? null,
+      });
+    },
+    [rf],
   );
 
   const defaultEdgeOptions = useMemo(() => ({ animated: false }), []);
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div className="relative h-full w-full overflow-hidden" onDoubleClick={onWrapperDoubleClick}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onConnectEnd={onConnectEnd}
         nodeTypes={nodeTypes}
         defaultEdgeOptions={defaultEdgeOptions}
         fitView={false}
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={["Backspace", "Delete"]}
         nodesDraggable
-        nodesConnectable={false}
+        nodesConnectable
         edgesFocusable={false}
+        zoomOnDoubleClick={false}
       >
         <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
         <Controls showInteractive={false} />
         <MiniMap pannable zoomable className="!bg-card" />
       </ReactFlow>
-
-      {/*
-        Toolbar. Fixed top-left, three buttons for the three node
-        kinds. Calls `handleAdd` → `canvas.addNode` → instance
-        `setNodes` (drop at viewport center).
-      */}
-      <div className="absolute left-3 top-3 z-10 flex gap-1 rounded-md border border-border/60 bg-card/80 p-1 shadow-sm backdrop-blur-md">
-        <ToolbarButton label="+ Prompt" onClick={() => handleAdd("prompt")} />
-        <ToolbarButton label="+ Generate" onClick={() => handleAdd("generate")} />
-        <ToolbarButton label="+ Preview" onClick={() => handleAdd("preview")} />
-      </div>
 
       {!ready && (
         <div className="bg-background/60 pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
@@ -341,7 +463,34 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
 
       {/* run fitView once after a fresh load completes */}
       {ready && nodes.length > 0 && <FitOnMount onAfter={onAfterLoad} />}
+
+      {picker && (
+        <div
+          // ponytail: double-click picker. fixed at the cursor, offset
+          // by a few px so it doesn't sit under the pointer and steal
+          // the click. `canvas-picker` class is the dismiss-bailout
+          // marker for the document mousedown listener above.
+          className="canvas-picker fixed z-50 flex flex-col gap-1 rounded-md border border-border/60 bg-card p-1 shadow-md"
+          style={{ left: picker.x + 8, top: picker.y + 8 }}
+        >
+          <PickerButton label="Prompt" onClick={() => pickKind("prompt")} />
+          <PickerButton label="Generate" onClick={() => pickKind("generate")} />
+          <PickerButton label="Preview" onClick={() => pickKind("preview")} />
+        </div>
+      )}
     </div>
+  );
+}
+
+function PickerButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded px-3 py-1 text-left text-xs hover:bg-muted"
+    >
+      {label}
+    </button>
   );
 }
 
@@ -356,14 +505,6 @@ function FitOnMount({ onAfter }: { onAfter: () => void }) {
     onAfter();
   }, [onAfter]);
   return null;
-}
-
-function ToolbarButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} className="rounded px-2 py-1 text-xs hover:bg-muted">
-      {label}
-    </button>
-  );
 }
 
 // ponytail: wrap in ReactFlowProvider so any descendant node component

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FC, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FC, type RefObject } from "react";
 import {
   AssistantRuntimeProvider,
   Suggestions,
@@ -21,6 +21,7 @@ import { mergeSubgraphMessages } from "@/lib/langgraph/merge-subgraph-messages";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { CanvasToggleButton } from "@/components/chat/CanvasToggleButton";
 import { CanvasSplitLayout } from "@/components/chat/CanvasSplitLayout";
+import { getCanvasOpen, setCanvasOpen as persistCanvasOpen } from "@/lib/canvas/prefs";
 // ThreadDropdown removed — the thread list is reachable via the
 // sidebar, the dropdown was redundant UI that competed with the
 // canvas toggle.
@@ -196,12 +197,31 @@ const Header: FC<{
 
 export function Assistant() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  // ponytail: canvas mode is a per-tab session toggle (not persisted) —
-  // closing the browser resets to chat-only. The header toggle is
-  // hidden < 768px so this stays effectively desktop-only. We keep the
-  // state at this level so the Header (toggle + dropdown) and the
-  // main area (canvas vs thread) can both read it without prop drilling.
+  // ponytail: canvas open/closed is persisted per-threadId in
+  // localStorage (see lib/canvas/prefs.ts) so a refresh doesn't
+  // re-collapse the panel. The actual threadId read + localStorage
+  // sync happens INSIDE the runtime provider (see
+  // CanvasPrefsBridge) — useAuiState throws outside the provider, and
+  // we can't move the provider up because it depends on `runtime` /
+  // `aui` which we build here. We keep the state at this level so
+  // the Header (toggle) and the main area (canvas vs thread) can
+  // both read it without prop drilling.
   const [canvasOpen, setCanvasOpen] = useState(false);
+  // ponytail: write the flip back to localStorage. Only persist for
+  // real (non-placeholder) thread ids — a placeholder thread has no
+  // stable identity, so storing its open-state would leak across the
+  // session boundary when the placeholder is replaced by a real id.
+  // We mirror the active threadId into a ref so the toggle reads the
+  // current value (not a stale closure) and runs without re-creating
+  // the callback on every aUI tick.
+  const activeThreadIdRef = useRef<string | null>(null);
+  const toggleCanvas = useCallback(() => {
+    setCanvasOpen((prev) => {
+      const next = !prev;
+      persistCanvasOpen(activeThreadIdRef.current, next);
+      return next;
+    });
+  }, []);
 
   // Default to the in-app /api proxy so CORS + x-api-key stay in Next.js;
   // LANGGRAPH_PUBLIC_URL bypasses it (e.g. behind Cloudflare Tunnel).
@@ -355,7 +375,11 @@ export function Assistant() {
 
   return (
     <AssistantRuntimeProvider aui={aui} runtime={runtime}>
-      <AuiRefCapture bridgeRef={bridgeRef} />
+      <AuiRefCapture
+        bridgeRef={bridgeRef}
+        activeThreadIdRef={activeThreadIdRef}
+        onCanvasPrefsChange={setCanvasOpen}
+      />
       <ThreadUrlShadow />
       <div className="bg-muted/30 flex h-dvh w-full">
         <Sidebar collapsed={sidebarCollapsed} />
@@ -365,7 +389,7 @@ export function Assistant() {
               sidebarCollapsed={sidebarCollapsed}
               onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
               canvasOpen={canvasOpen}
-              onToggleCanvasAction={() => setCanvasOpen((v) => !v)}
+              onToggleCanvasAction={toggleCanvas}
             />
             <main className="flex-1 overflow-hidden">
               <ChatBody canvasOpen={canvasOpen} />
@@ -378,11 +402,29 @@ export function Assistant() {
 }
 
 // Sets bridgeRef during render; useAui / useAuiState return stable
-// references, so the value is identical on every render.
-const AuiRefCapture: FC<{ bridgeRef: RefObject<RuntimeBridge> }> = ({ bridgeRef }) => {
+// references, so the value is identical on every render. Also
+// mirrors the active threadId into `activeThreadIdRef` so the canvas
+// toggle's `useCallback` closure stays stable across aUI ticks.
+const AuiRefCapture: FC<{
+  bridgeRef: RefObject<RuntimeBridge>;
+  activeThreadIdRef: RefObject<string | null>;
+  onCanvasPrefsChange: (open: boolean) => void;
+}> = ({ bridgeRef, activeThreadIdRef, onCanvasPrefsChange }) => {
   const api = useAui();
   const mainThreadId = useAuiState((s) => s.threads.mainThreadId);
   bridgeRef.current = { api, mainThreadId };
+  const realId = mainThreadId && !mainThreadId.startsWith("__LOCAL") ? mainThreadId : null;
+  // ponytail: only update the ref + notify when the resolved threadId
+  // actually changes. useAuiState returns the same reference for an
+  // unchanged id, so this effect skips on every aUI tick that doesn't
+  // touch thread identity.
+  const lastIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastIdRef.current === realId) return;
+    lastIdRef.current = realId;
+    activeThreadIdRef.current = realId;
+    onCanvasPrefsChange(getCanvasOpen(realId));
+  }, [realId, activeThreadIdRef, onCanvasPrefsChange]);
   return null;
 };
 
