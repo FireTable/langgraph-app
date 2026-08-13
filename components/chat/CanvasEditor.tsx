@@ -177,6 +177,16 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [ready, setReady] = useState(false);
+  // ponytail: distinguishes "hydration produced these nodes" from
+  // "the user just dblclicked and added the first one". On an empty
+  // canvas, hydration completes with `nodes.length === 0`; when the
+  // user then dblclicks, the conditional
+  // `{ready && nodes.length > 0 && <FitOnMount/>}` would flip
+  // false→true and recenter the viewport around the new node —
+  // making it appear to land at screen center instead of the click
+  // point. Gating on `hydrated` keeps FitOnMount out of that path.
+  // State (not a ref) so the conditional re-evaluates.
+  const [hydrated, setHydrated] = useState(false);
   const register = useCanvasRegister();
   const canvas = useCanvas();
   const rf = useReactFlow();
@@ -271,7 +281,10 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
       } catch (err) {
         console.error("CanvasEditor: failed to hydrate snapshot", err);
       } finally {
-        if (!cancelled) setReady(true);
+        if (!cancelled) {
+          setHydrated(true);
+          setReady(true);
+        }
       }
     })();
     return () => {
@@ -461,8 +474,10 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
         </div>
       )}
 
-      {/* run fitView once after a fresh load completes */}
-      {ready && nodes.length > 0 && <FitOnMount onAfter={onAfterLoad} />}
+      {/* run fitView once after a fresh load completes — only when the
+          hydration itself produced these nodes, not when a user-driven
+          picker add grew the canvas from empty to one node. */}
+      {ready && hydrated && nodes.length > 0 && <FitOnMount onAfter={onAfterLoad} />}
 
       {picker && (
         <div
