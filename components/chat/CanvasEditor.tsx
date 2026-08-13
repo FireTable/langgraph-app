@@ -443,6 +443,29 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
     [rf],
   );
 
+  // ponytail: handle→handle connection completes here. xyflow's default
+  // `onConnect` would mutate internal state and bypass our `edges`
+  // controlled prop, which would skip `onEdgesChange` and miss the
+  // auto-save. We route through `canvas.addEdge` instead so the edge
+  // enters via setEdges (same source of truth as the picker path).
+  const onConnect = useCallback(
+    (connection: {
+      source: string | null;
+      target: string | null;
+      sourceHandle?: string | null;
+      targetHandle?: string | null;
+    }) => {
+      if (!connection.source || !connection.target) return;
+      canvas.addEdge({
+        source: connection.source,
+        target: connection.target,
+        sourceHandle: connection.sourceHandle ?? null,
+        targetHandle: connection.targetHandle ?? null,
+      });
+    },
+    [canvas],
+  );
+
   const defaultEdgeOptions = useMemo(() => ({ animated: false }), []);
 
   return (
@@ -452,6 +475,7 @@ function CanvasEditorInner({ threadId }: { threadId: string }) {
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
         onConnectEnd={onConnectEnd}
         nodeTypes={nodeTypes}
         defaultEdgeOptions={defaultEdgeOptions}
