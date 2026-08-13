@@ -1,21 +1,19 @@
-// tldraw snapshot helpers — a thin wrapper over tldraw's getSnapshot /
-// loadSnapshot that keeps the import surface in one place.
-//
-// ponytail: tldraw is heavy (it's a full canvas SDK, ~MB gzipped) —
-// import it from this file only, never directly from feature code.
-// Component-level usage goes through `dynamic(() => import('./...'), { ssr: false })`
-// to keep Next.js server bundles free of tldraw's canvas/wasm code.
+import { CanvasDocumentBody, type CanvasDocumentT } from "@/lib/canvas/types";
 
-import { getSnapshot, loadSnapshot, type TLEditorSnapshot } from "tldraw";
+// ponytail: thin loader for the persisted canvas document. The
+// shape on disk is `{ nodes, edges }` per `lib/canvas/types.ts`.
+// We accept any unknown JSON, parse through zod, and return either
+// a clean document or `null` on failure. The CanvasEditor calls
+// this after a successful GET to `/api/canvas/:threadId` and
+// passes the result to React Flow's `defaultNodes` / `defaultEdges`.
+// A missing row → 404 → null → caller skips the load and starts
+// with an empty canvas (the first save creates the row).
 
-export type { TLEditorSnapshot };
+export const EMPTY_DOCUMENT: CanvasDocumentT = { nodes: [], edges: [] };
 
-// ponytail: a blank canvas snapshot is `{ document: {}, session: {} }`.
-// Returning this from a missing-row path lets the client mount tldraw
-// immediately without a 404 — first save then creates the row.
-export const EMPTY_SNAPSHOT: TLEditorSnapshot = {
-  document: {},
-  session: {},
-} as unknown as TLEditorSnapshot;
-
-export { getSnapshot, loadSnapshot };
+export function parseCanvasDocument(raw: unknown): CanvasDocumentT {
+  if (!raw || typeof raw !== "object") return EMPTY_DOCUMENT;
+  const parsed = CanvasDocumentBody.safeParse(raw);
+  if (!parsed.success) return EMPTY_DOCUMENT;
+  return parsed.data;
+}

@@ -57,7 +57,10 @@ async function makeOtherUser(): Promise<{ id: string; email: string }> {
   return u;
 }
 
-const SAMPLE_DOC = { "shape:abc": { id: "shape:abc", typeName: "shape", x: 0, y: 0 } };
+const SAMPLE_DOC = {
+  nodes: [{ id: "n1", position: { x: 0, y: 0 }, data: { type: "prompt", fields: { text: "hi" } } }],
+  edges: [],
+};
 
 describe("lib/canvas/queries — getCanvasSnapshotForUser", () => {
   it("returns undefined when no row exists", async () => {
@@ -111,7 +114,12 @@ describe("lib/canvas/queries — upsertCanvasSnapshot", () => {
   it("updates an existing row in place on second save (no duplicate row)", async () => {
     const id = await makeThread(owner);
     await upsertCanvasSnapshot({ threadId: id, userId: owner, document: SAMPLE_DOC });
-    const v2 = { "shape:def": { id: "shape:def", typeName: "shape", x: 5, y: 5 } };
+    const v2 = {
+      nodes: [
+        { id: "n2", position: { x: 5, y: 5 }, data: { type: "preview", fields: { url: "x" } } },
+      ],
+      edges: [],
+    };
     const row = await upsertCanvasSnapshot({ threadId: id, userId: owner, document: v2 });
     expect(row.document).toEqual(v2);
     const all = await db.select().from(canvasSnapshots).where(eq(canvasSnapshots.threadId, id));

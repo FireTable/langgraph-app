@@ -1,17 +1,13 @@
 import { z } from "zod";
+import { CanvasDocumentBody } from "@/lib/canvas/types";
 
-// ponytail: the API accepts an arbitrary tldraw TLDocument payload. We
-// don't restate the shape here — tldraw's loader validates the document
-// when the client calls loadSnapshot (see lib/canvas/snapshot.ts). A
-// tighter zod schema would duplicate tldraw's validation and drift as
-// tldraw evolves.
-//
-// The only thing we DO enforce is "this is a non-null object" — a
-// malformed PUT (string, null, array) is a 400. z.record() rejects
-// arrays (number keys, not string) and primitives, accepts {} and any
-// shape, so we lean on that.
-export const CanvasDocumentBody = z.record(z.string(), z.unknown());
+export { CanvasDocumentBody };
 
+// ponytail: the API accepts a `{ nodes, edges }` canvas document
+// matching `lib/canvas/types.ts`. The full React Flow state
+// (viewport, selection) is intentionally NOT persisted — those are
+// per-session. Nodes / edges are sufficient to round-trip the
+// pipeline graph.
 export const PutCanvasBody = z.object({
   document: CanvasDocumentBody,
 });

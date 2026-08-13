@@ -1,21 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Edge, Node } from "@xyflow/react";
+import type { CanvasDocumentT } from "@/lib/canvas/types";
 
-// ponytail: debounced canvas snapshot writer.
-//   - getDocumentAction (renamed per the "use client" rule that
-//     function props from server → client must look like Server
-//     Actions): caller passes a getter so we read the latest store
-//     snapshot inside the debounced fn, never a stale closure.
-//   - threadId is the canvas row key. Drops to no-op when null (e.g.
-//     the user hasn't picked a thread yet).
-//   - beforeunload + visibilitychange flush via sendBeacon — JSON
-//     payload, POST /api/canvas/:threadId. sendBeacon survives
-//     navigation without blocking the unload.
-//
-// We expose `flush()` so callers can force a save (cover image attach,
-// "save" button). `status` is a simple state machine for UI badges
-// (idle → pending → saving → saved | error).
+// ponytail: debounced canvas snapshot writer. React Flow version.
+// Caller passes `getDocumentAction` — a stable getter that returns
+// `{ nodes, edges }` from the live React Flow state. We PUT it as
+// JSON to /api/canvas/:threadId. The same debounce / beforeunload /
+// pagehide / unmount-flush logic as before, just reading from
+// React Flow's state instead of tldraw's store.
 
 const DEBOUNCE_MS = 2000;
 
@@ -23,23 +17,22 @@ export type SaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
 
 type Args = {
   threadId: string | null;
-  getDocumentAction: () => Record<string, unknown> | undefined;
+  getDocumentAction: () => CanvasDocumentT | undefined;
   enabled?: boolean;
 };
 
 export function useCanvasAutoSave({ threadId, getDocumentAction, enabled = true }: Args) {
   const [status, setStatus] = useState<SaveStatus>("idle");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inflightRef = useRef<Promise<void> | null>(null);
   // ponytail: latest-tick-wins — overwrite the queued payload on each
   // store change so the next flush sends the freshest document. We
   // hold it in a ref instead of state to avoid re-rendering on every
   // keystroke / drag.
-  const pendingRef = useRef<Record<string, unknown> | undefined>(undefined);
+  const pendingRef = useRef<CanvasDocumentT | undefined>(undefined);
   const dirtyRef = useRef(false);
 
   const send = useCallback(
-    async (payload: Record<string, unknown>) => {
+    async (payload: CanvasDocumentT) => {
       if (!threadId) return;
       setStatus("saving");
       try {
@@ -89,10 +82,10 @@ export function useCanvasAutoSave({ threadId, getDocumentAction, enabled = true 
     void send(payload);
   }, [send]);
 
-  // ponytail: called by the canvas component on every store change.
-  // Resets the debounce window each call so a continuous drag fires
-  // ONE save 2s after the user stops moving — not 100s while they
-  // drag.
+  // ponytail: called by the canvas component on every node/edge
+  // change. Resets the debounce window each call so a continuous
+  // drag fires ONE save 2s after the user stops moving — not 100s
+  // while they drag.
   const schedule = useCallback(() => {
     if (!enabled || !threadId) return;
     pendingRef.current = getDocumentAction();
@@ -121,19 +114,11 @@ export function useCanvasAutoSave({ threadId, getDocumentAction, enabled = true 
         type: "application/json",
       });
       // ponytail: sendBeacon returns false when the browser refuses
-      // (e.g. payload > 64KB). Our snapshots are tldraw JSON
-      // documents — small — but a future "paste 100 images" flow
-      // could blow it. fall back to fetch with keepalive, which has
-      // no hard cap but blocks unload until the request resolves.
+      // (e.g. payload > 64KB). React Flow documents are small
+      // (a few hundred bytes of node/edge JSON) so this is rare,
+      // but fall back to a keepalive fetch for safety.
       const ok = navigator.sendBeacon(`/api/canvas/${threadId}`, blob);
       if (!ok) {
-        // ponytail: best-effort flush. sendBeacon returned false (payload
-        // > 64KB is the common cause); fall through to a keepalive
-        // fetch. The handler fires during page-unload transitions and
-        // any of those can abort the request before it lands — swallow
-        // the rejection so an aborted flush doesn't surface as a
-        // "Failed to fetch" in the console. The next debounced save
-        // reconciles any drop.
         void fetch(`/api/canvas/${threadId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -173,13 +158,6 @@ export function useCanvasAutoSave({ threadId, getDocumentAction, enabled = true 
       });
       const ok = navigator.sendBeacon(`/api/canvas/${threadId}`, blob);
       if (!ok) {
-        // ponytail: best-effort flush. sendBeacon returned false (payload
-        // > 64KB is the common cause); fall through to a keepalive
-        // fetch. The handler fires during page-unload transitions and
-        // any of those can abort the request before it lands — swallow
-        // the rejection so an aborted flush doesn't surface as a
-        // "Failed to fetch" in the console. The next debounced save
-        // reconciles any drop.
         void fetch(`/api/canvas/${threadId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -192,5 +170,45 @@ export function useCanvasAutoSave({ threadId, getDocumentAction, enabled = true 
     };
   }, [threadId]);
 
-  return { status, schedule, flush, inflight: inflightRef.current };
+  return { status, schedule, flush };
+}
+
+// ponytail: shared serializer — converts a React Flow `nodes`/`edges`
+// array to the `{ nodes, edges }` shape we persist. The persisted
+// shape strips React Flow's runtime fields (selected, dragging, etc.)
+// and keeps only `id`, `position`, and `data` per node, plus `id` /
+// `source` / `target` / handles per edge. We cast through unknown to
+// a plain record because React Flow's typed nodes have a generic
+// `data` we can't narrow at this layer — the renderer reads `data`
+// as `{ type, fields }` per CanvasNodeData.
+export function toCanvasDocument(nodes: Node[], edges: Edge[]): CanvasDocumentT {
+  return {
+    nodes: nodes.map((n) => ({
+      id: n.id,
+      position: { x: n.position.x, y: n.position.y },
+      data: {
+        type: ((n.data as { type?: string })?.type ?? (n.type as string) ?? "prompt") as
+          | "prompt"
+          | "generate"
+          | "preview",
+        fields: ((n.data as { fields?: Record<string, unknown> })?.fields ?? {}) as Record<
+          string,
+          unknown
+        >,
+      },
+    })),
+    edges: edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      // ponytail: persist `data.system` so reloads preserve the lock.
+      // Without this, a system edge becomes user-deletable after a
+      // page refresh — the user wouldn't be able to disconnect
+      // Generate from its Preview, which is the whole point.
+      data:
+        e.data && (e.data as { system?: boolean }).system === true ? { system: true } : undefined,
+      sourceHandle: e.sourceHandle ?? null,
+      targetHandle: e.targetHandle ?? null,
+    })),
+  };
 }

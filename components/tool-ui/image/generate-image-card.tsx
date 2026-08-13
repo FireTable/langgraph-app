@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ImageIcon } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
@@ -80,11 +80,32 @@ function dimsFor(aspect: Success["aspect_ratio"]): { w: number; h: number } {
 
 export const GenerateImageCard: ToolCallMessagePartComponent<Args, Result> = ({ result }) => {
   const parsed = parseResult(result);
-  const { ready: canvasReady, insertImage } = useCanvas();
+  const { ready: canvasReady, insertImage, addEdge, getSourceNodeId } = useCanvas();
   // ponytail: one-shot success flag — flips after the first click and
   // stays flipped so the button text reads "Added to canvas". Repeated
   // clicks would just stack more shapes (user's choice, not a bug).
   const [added, setAdded] = useState(false);
+
+  // ponytail: ALL hooks above early returns. The auto-add below only
+  // fires when the result is "ok" (loading/error return before we
+  // touch insertImage). The effect itself is a no-op in those cases
+  // because `url` and other deps are undefined — the early returns
+  // above handle the "don't insert" semantics for the visual UI.
+  useEffect(() => {
+    if (!canvasReady || added) return;
+    if (parsed.kind !== "ok") return;
+    const { url, aspect_ratio } = parsed.payload;
+    const dims = dimsFor(aspect_ratio);
+    const previewId = insertImage({ url, w: dims.w, h: dims.h });
+    if (previewId) {
+      const sourceId = getSourceNodeId();
+      if (sourceId) {
+        addEdge({ source: sourceId, target: previewId, system: true });
+      }
+      setAdded(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasReady, parsed.kind]);
 
   if (parsed.kind === "loading") {
     return <ToolCardSkeleton label="Generating image…" />;
@@ -102,7 +123,13 @@ export const GenerateImageCard: ToolCallMessagePartComponent<Args, Result> = ({ 
 
   const handleAdd = () => {
     if (!canvasReady || added) return;
-    insertImage({ url, w: dims.w, h: dims.h });
+    const previewId = insertImage({ url, w: dims.w, h: dims.h });
+    if (previewId) {
+      const sourceId = getSourceNodeId();
+      if (sourceId) {
+        addEdge({ source: sourceId, target: previewId, system: true });
+      }
+    }
     setAdded(true);
   };
 
@@ -113,7 +140,7 @@ export const GenerateImageCard: ToolCallMessagePartComponent<Args, Result> = ({ 
     ? "Open canvas to add"
     : added
       ? "Added to canvas"
-      : "Add to canvas";
+      : "Add another";
 
   return (
     <CardShell data-slot="generate-image">

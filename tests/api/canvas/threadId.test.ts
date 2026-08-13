@@ -72,13 +72,23 @@ describe("GET /api/canvas/[threadId]", () => {
     await upsertCanvasSnapshot({
       threadId,
       userId: owner,
-      document: { "shape:a": { id: "shape:a", typeName: "shape" } },
+      document: {
+        nodes: [
+          { id: "n1", position: { x: 0, y: 0 }, data: { type: "prompt", fields: { text: "hi" } } },
+        ],
+        edges: [],
+      },
     });
     const res = await GET(new Request("http://localhost"), CTX(threadId));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.threadId).toBe(threadId);
-    expect(body.document).toEqual({ "shape:a": { id: "shape:a", typeName: "shape" } });
+    expect(body.document).toEqual({
+      nodes: [
+        { id: "n1", position: { x: 0, y: 0 }, data: { type: "prompt", fields: { text: "hi" } } },
+      ],
+      edges: [],
+    });
   });
 
   it("returns 404 for a thread owned by another user", async () => {
@@ -116,18 +126,32 @@ describe("PUT /api/canvas/[threadId]", () => {
   });
 
   it("creates the row on first save", async () => {
-    const res = await PUT(jsonPut({ document: { "shape:a": { id: "shape:a" } } }), CTX(threadId));
+    const doc = {
+      nodes: [{ id: "n1", position: { x: 0, y: 0 }, data: { type: "prompt", fields: {} } }],
+      edges: [],
+    };
+    const res = await PUT(jsonPut({ document: doc }), CTX(threadId));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.document).toEqual({ "shape:a": { id: "shape:a" } });
+    expect(body.document).toEqual(doc);
   });
 
   it("upserts on second save (last write wins)", async () => {
-    await PUT(jsonPut({ document: { "shape:a": { v: 1 } } }), CTX(threadId));
-    const res = await PUT(jsonPut({ document: { "shape:b": { v: 2 } } }), CTX(threadId));
+    const doc1 = {
+      nodes: [{ id: "n1", position: { x: 0, y: 0 }, data: { type: "prompt", fields: {} } }],
+      edges: [],
+    };
+    const doc2 = {
+      nodes: [
+        { id: "n2", position: { x: 10, y: 10 }, data: { type: "preview", fields: { url: "x" } } },
+      ],
+      edges: [],
+    };
+    await PUT(jsonPut({ document: doc1 }), CTX(threadId));
+    const res = await PUT(jsonPut({ document: doc2 }), CTX(threadId));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.document).toEqual({ "shape:b": { v: 2 } });
+    expect(body.document).toEqual(doc2);
   });
 
   it("returns 404 for a thread owned by another user", async () => {
