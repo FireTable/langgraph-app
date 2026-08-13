@@ -29,7 +29,6 @@ viewport's bottom-right (click it to reopen the chat).
 - The `<Thread>` is mounted _inside_ the canvas overlay (`CanvasSplitLayout`) — toggling off the canvas teardown unmounts the editor (and its React Flow listeners) and switches to plain `<Thread />`. `key={threadId}` on `CanvasEditor` forces a remount per thread so xyflow's internal store doesn't leak nodes across threads.
 - Collapse control lives INSIDE the chat card at its bottom-left (`PanelRightCloseIcon`, `size-5`); collapsed → chat-bubble button at the viewport's bottom-right (`MessageCircleIcon`, `size-10`). Both transitions are CSS-driven (`transition-all duration-200 ease-out`) on `translate-x`/`opacity`/`scale` — no `tw-animate-css` keyframes (they don't pin final state when the element stays mounted).
 - The React Flow editor uses three custom node types — `text`, `generate`, `preview` — registered in `nodeTypes`. Edges flow top→bottom; `Background` (dots) + `Controls` (zoom/pan) + `MiniMap` round out the chrome. No multi-page, no theme switching — one thread = one canvas.
-- **No license key.** React Flow is MIT-licensed and ships without runtime gating. The previous tldraw integration needed `TLDRAW_LICENSE_KEY`; the switch dropped that requirement entirely.
 
 ## Data model
 
