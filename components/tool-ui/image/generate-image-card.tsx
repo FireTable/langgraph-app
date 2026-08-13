@@ -11,12 +11,13 @@ import {
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
 import { useCanvas } from "@/lib/canvas/context";
+import { ASPECT_RATIOS, dimsFor as libDimsFor } from "@/lib/image";
 import { CardHeader, CardShell } from "@/components/tool-ui/primitives/card";
 import { ErrorBanner } from "@/components/tool-ui/primitives/banners";
 import { unwrapToolResult } from "@/components/tool-ui/tool-result";
 
 // ponytail: generate_image tool result lands as either a success
-// payload ({ urls[], mock, prompt, aspect_ratio, num }) or a failure
+// payload ({ urls[], backend, prompt, aspect_ratio, num }) or a failure
 // payload ({ success: false, error }). The card reads useCanvas() to
 // wire the "Add to canvas" button — when the canvas is closed
 // (ready: false) the button is disabled with a tooltip rather than
@@ -24,21 +25,21 @@ import { unwrapToolResult } from "@/components/tool-ui/tool-result";
 //
 // Dedup: `useState` resets every remount; StrictMode dev double-mount,
 // thread-switch rehydrate, and result-streaming re-renders would all
-// re-fire the auto-add effect and stack duplicate Preview nodes on
-// the canvas. We keep a module-level Set keyed by toolCallId so the
-// effect can short-circuit on subsequent mounts of the same call.
+// re-fire the auto-add effect and stack duplicate Preview nodes on the
+// canvas. We keep a module-level Set keyed by toolCallId so the effect
+// can short-circuit on subsequent mounts of the same call.
 
 type Args = {
   prompt: string;
-  aspect_ratio?: "square" | "portrait" | "landscape";
+  aspect_ratio?: (typeof ASPECT_RATIOS)[number];
   num?: number;
 };
 
 type Success = {
   urls: string[];
-  mock: boolean;
+  backend: "pollinations" | "fal";
   prompt: string;
-  aspect_ratio: "square" | "portrait" | "landscape";
+  aspect_ratio: (typeof ASPECT_RATIOS)[number];
   num: number;
 };
 
@@ -72,11 +73,12 @@ function parseResult(raw: unknown): Parsed {
       obj.aspect_ratio === "portrait" ||
       obj.aspect_ratio === "landscape")
   ) {
+    const backend = obj.backend === "fal" ? "fal" : "pollinations";
     return {
       kind: "ok",
       payload: {
         urls: obj.urls,
-        mock: obj.mock === true,
+        backend,
         prompt: obj.prompt,
         aspect_ratio: obj.aspect_ratio,
         num: typeof obj.num === "number" ? obj.num : obj.urls.length,
@@ -86,21 +88,41 @@ function parseResult(raw: unknown): Parsed {
   return { kind: "loading" };
 }
 
-// ponytail: aspect_ratio → image w/h. Square stays at the 512 default;
-// portrait / landscape scale one axis. We don't try to fetch the image
-// to read its real dimensions — the LLM promises the schema, the tool
-// returns it, and the renderer happily re-renders if the URL turns out
-// to be the wrong size.
-function dimsFor(aspect: Success["aspect_ratio"]): { w: number; h: number } {
-  switch (aspect) {
-    case "portrait":
-      return { w: 384, h: 512 };
-    case "landscape":
-      return { w: 512, h: 384 };
-    case "square":
-    default:
-      return { w: 512, h: 512 };
+// ponytail: aspect_ratio → image w/h. Lives in lib/image now
+// (libDimsFor) — single source shared with the backend tool. We
+// re-import under a short name so the call sites below stay readable.
+const dimsFor = libDimsFor;
+
+// ponytail: per-variant <img> with onError fallback. When the upstream
+// URL 4xx/5xx (Pollinations rate-limited, CDN blip, …) the browser
+// would otherwise render the broken-image icon at natural size —
+// collapsing the card to an empty box. Swapping in a placeholder keeps
+// the card sized to the requested dims and gives the user a visible
+// "failed" cue. `useState` is the right tool here (one bit, no shared
+// state); no need for the canvas-wide error tracker.
+function VariantImage({ url, alt, w, h }: { url: string; alt: string; w: number; h: number }) {
+  const [errored, setErrored] = useState(false);
+  if (errored) {
+    return (
+      <div
+        style={{ width: w, height: h }}
+        className="flex items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-xs text-muted-foreground"
+      >
+        image unavailable
+      </div>
+    );
   }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt={alt}
+      width={w}
+      height={h}
+      className="block h-auto w-full rounded-lg border border-border/60"
+      onError={() => setErrored(true)}
+    />
+  );
 }
 
 // ponytail: kb-card-style collapsible panel that lists the args the
@@ -254,7 +276,7 @@ export const GenerateImageCard: ToolCallMessagePartComponent<Args, Result> = ({
     );
   }
 
-  const { urls, prompt, aspect_ratio, mock, num } = parsed.payload;
+  const { urls, aspect_ratio, backend, num } = parsed.payload;
   const dims = dimsFor(aspect_ratio);
   // ponytail: 1 → single column full-width. 2 → side-by-side. 3-4 →
   // 2-column grid. The grid keeps the card visually compact when the
@@ -272,9 +294,7 @@ export const GenerateImageCard: ToolCallMessagePartComponent<Args, Result> = ({
   // added noise — the user has no reason to re-add what already exists,
   // and the source URL is right there as the <img> src.
 
-  const subtitle = mock
-    ? `Demo image${num > 1 ? "s" : ""} (no FAL_KEY configured)`
-    : `${num > 1 ? `${num} variants · ` : ""}${aspect_ratio} · ${dims.w}×${dims.h}`;
+  const subtitle = `${backend === "pollinations" ? "Pollinations · " : "fal.ai · "}${num > 1 ? `${num} variants · ` : ""}${aspect_ratio} · ${dims.w}×${dims.h}`;
 
   return (
     <CardShell data-slot="generate-image">
@@ -288,22 +308,15 @@ export const GenerateImageCard: ToolCallMessagePartComponent<Args, Result> = ({
           primary artifact; the grid is compact when variants > 1. */}
       <div className={gridClass}>
         {urls.map((url, idx) => (
-          <div
+          <VariantImage
             key={`${toolCallId}-${idx}`}
-            className="overflow-hidden rounded-lg border border-border/60 bg-muted/40"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={url}
-              alt={`${prompt}${num > 1 ? ` (${idx + 1}/${num})` : ""}`}
-              width={dims.w}
-              height={dims.h}
-              className="block h-auto w-full"
-            />
-          </div>
+            url={url}
+            alt={`Generated image${num > 1 ? ` ${idx + 1}/${num}` : ""}`}
+            w={dims.w}
+            h={dims.h}
+          />
         ))}
       </div>
-      {urls.length === 1 && <p className="text-muted-foreground text-xs">{prompt}</p>}
     </CardShell>
   );
 };

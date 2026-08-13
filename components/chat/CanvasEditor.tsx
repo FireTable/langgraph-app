@@ -291,6 +291,39 @@ function GenerateNode({ id, data, selected }: NodeProps) {
   );
 }
 
+function PreviewImage({ url, w, h }: { url: string; w: number; h: number }) {
+  // ponytail: when the upstream URL 4xx/5xx (Pollinations rate-limited,
+  // CORS-blocked, expired CDN URL, …) the browser renders the broken-
+  // image icon AT the natural size — which collapses the card to a
+  // near-empty box. Swapping in a placeholder keeps the card sized to
+  // the requested dims and gives the user a visual cue that something
+  // failed. The placeholder is an inline SVG data URL so it never
+  // makes another request.
+  const [errored, setErrored] = useState(false);
+  if (errored) {
+    return (
+      <div
+        style={{ width: w, height: h, maxWidth: "100%" }}
+        className="flex items-center justify-center rounded border border-dashed border-border bg-muted/30 text-xs text-muted-foreground"
+      >
+        image unavailable
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt=""
+      width={w}
+      height={h}
+      style={{ width: w, height: h, maxWidth: "100%" }}
+      className="block rounded border border-border"
+      onError={() => setErrored(true)}
+    />
+  );
+}
+
 function PreviewNode({ data, selected }: NodeProps) {
   const fields = (data as { fields?: { url?: string; w?: number; h?: number } }).fields ?? {};
   const url = fields.url;
@@ -316,15 +349,12 @@ function PreviewNode({ data, selected }: NodeProps) {
       />
       <div className="mb-1 text-xs font-medium text-muted-foreground">Image</div>
       {url ? (
+        // ponytail: onError swaps the broken <img> for a placeholder
+        // box. Without it the broken-image icon shows inline at the
+        // container's natural size and the layout collapses — empty
+        // canvas cards look like data-loss bugs.
         // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={url}
-          alt=""
-          width={w}
-          height={h}
-          style={{ width: w, height: h, maxWidth: "100%" }}
-          className="block rounded border border-border"
-        />
+        <PreviewImage url={url} w={w} h={h} />
       ) : (
         <div
           style={{ width: w, height: h, maxWidth: "100%" }}
